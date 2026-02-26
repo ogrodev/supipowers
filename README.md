@@ -1,6 +1,8 @@
+<img width="1024" height="434" alt="image" src="https://github.com/user-attachments/assets/53e1c609-1e85-4c0b-873c-3b66e8f736bf" />
+
 # Supipowers
 
-Pi-native workflow framework inspired by Superpowers.
+Pi-native workflow framework inspired by the amazing work of [obra/Superpowers](https://github.com/obra/superpowers).
 
 Supipowers turns software delivery into a phase-driven workflow with runtime guardrails, adapter routing, quality gates, and traceable execution artifacts.
 
@@ -11,7 +13,7 @@ Supipowers turns software delivery into a phase-driven workflow with runtime gua
 pi install /absolute/path/to/supipowers -l
 ```
 
-### npm (when published)
+### npm (when published - WIP)
 ```bash
 pi install npm:supipowers
 ```
