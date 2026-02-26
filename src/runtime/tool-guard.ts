@@ -20,7 +20,7 @@ export function registerToolGuard(pi: ExtensionAPI): void {
       const blocking = shouldBlockOnMissingGate(config.strictness, "major");
       const reason =
         `Supipowers guard: '${event.toolName}' is blocked in phase '${state.phase}'. ` +
-        "Move workflow to plan_ready/executing first (e.g., /sp-plan then /sp-execute).";
+        "Move workflow to plan_ready/executing first (e.g., /sp-start then /sp-execute).";
 
       if (blocking) {
         return { block: true, reason };

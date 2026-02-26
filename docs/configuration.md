@@ -41,6 +41,15 @@ Or use command fallback:
 
 View mode is persisted per repository in `.pi/supipowers/view-mode.json`.
 
+## QA storage and auth reuse
+`/sp-qa` stores artifacts in:
+- `.pi/supipowers/qa-runs/<run-id>/`
+
+Reusable auth setup for playwright-cli is stored in:
+- `.pi/supipowers/qa/auth/profile.json`
+
+Supipowers ensures `.pi/` is present in `.gitignore` so QA evidence/auth stays local.
+
 ## Finish command modes
 `/sp-finish <mode>` supports:
 - `merge`

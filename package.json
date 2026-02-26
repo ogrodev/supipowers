@@ -1,6 +1,6 @@
 {
   "name": "supipowers",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Pi-native workflow framework inspired by Superpowers.",
   "type": "module",
   "scripts": {
@@ -21,6 +21,7 @@
   "files": [
     "src",
     "docs",
+    "skills",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -41,6 +42,9 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   }
 }

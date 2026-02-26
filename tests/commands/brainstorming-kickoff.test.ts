@@ -9,6 +9,7 @@ describe("brainstorming kickoff prompt", () => {
     expect(prompt).toContain("Ask one clarifying question at a time");
     expect(prompt).toContain("Propose 2-3 viable approaches");
     expect(prompt).toContain("Do NOT implement code");
+    expect(prompt).toContain("explicitly confirms readiness");
     expect(prompt).toContain("Start now with discovery");
   });
 });

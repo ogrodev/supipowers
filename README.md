@@ -27,22 +27,23 @@ pi -e ./src/index.ts
 
 ```text
 /sp-start Build feature X with tests
-/sp-approve
-/sp-plan
-/sp-execute
+# Supipowers auto-approves + auto-plans, then asks if it should execute now
+/sp-execute   # optional resume/retry command
 /sp-finish merge --review-pass
 ```
 
-`/sp-start` now also sends a brainstorming kickoff prompt to the agent (discovery + clarifying questions + approach trade-offs), while keeping the workflow in `brainstorming` until you approve. Objective is required (inline or prompted interactively); when prompted, Enter reuses the previous objective.
+`/sp-start` now auto-advances workflow phases that were previously manual (`approve` + `plan`). It generates the plan artifact immediately and asks whether to execute right away. Objective is required (inline or prompted interactively); when prompted, Enter reuses the previous objective.
 
-UI defaults to a compact one-line footer view. Use `Ctrl+Alt+V` to toggle compact/full visualization. View preference is persisted per repo.
+UI defaults to a compact one-line footer view. Use `F6` (fallback: `Alt+V`) to toggle compact/full visualization. View preference is persisted per repo.
 Additional commands:
 - `/sp-status` — current state, blocker, next action
 - `/sp-stop` — stop active execution
 - `/sp-view [compact|full|toggle|status]` — set or inspect visualization mode
 - `/sp-reset` — reset workflow to idle
 - `/sp-release-setup [preset]` — create repo-specific release pipeline config
-- `/sp-release <version>` — run configured release automation (requires setup)
+- `/sp-release [version]` — run configured release automation (auto-detects next version when omitted)
+- `/sp-qa [workflow|@file] [--url <target>]` — build QA matrix, run playwright-cli checks, store screenshots/findings, and confirm final approve/refuse verdict
+- `/sp-rewind` — interactive rollback to a previous phase (`idle`, `brainstorming`, `planning`, `plan_ready`)
 
 ## Tools
 
@@ -85,6 +86,8 @@ Supipowers writes runtime data under `.pi/supipowers/`:
 - `workflow-events.jsonl`
 - `runs/<run-id>/summary.md`, `details.json`
 - `reports/final-*.md`
+- `qa-runs/<run-id>/matrix.json`, `execution-log.jsonl`, `screenshots/*`, `findings.md`
+- `qa/auth/profile.json` (repo-local reusable auth setup, gitignored)
 
 ## Development
 
@@ -116,11 +119,23 @@ Optional presets:
 Then run release automation:
 
 ```text
-/sp-release 0.1.1
+/sp-release
 ```
+
+By default, Supipowers auto-detects the next version from existing tags/package version and commit history. You can still set one explicitly:
+
+```text
+/sp-release 0.1.1
+/sp-release --bump minor
+```
+
+A release notes draft is generated at `.pi/supipowers/release-notes/<tag>.md`.
+- If a previous release is found, Supipowers mirrors its section structure.
+- If not, Supipowers generates a project-friendly fallback template.
 
 Useful flags:
 - `--dry-run` (validate pipeline only)
+- `--bump patch|minor|major`
 - `--skip-push`
 - `--skip-release`
 - `--skip-tests`

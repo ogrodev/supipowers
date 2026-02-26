@@ -55,7 +55,7 @@ export function evaluateTddGate(
       importance: "major",
       blocking,
       message: "No plan artifact evidence found for TDD flow.",
-      recommendation: "Run /sp-plan before executing implementation.",
+      recommendation: "Run /sp-start (auto-plan) or /sp-execute to prepare plan evidence before implementation.",
     });
   }
 

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 This project follows **Semantic Versioning**.
 
+## [0.1.2] - 2026-02-26
+
+### Added
+- New `/sp-qa` command for QA matrix-driven browser validation with playwright-cli.
+- Repo-local QA evidence pipeline under `.pi/supipowers/qa-runs/<run-id>/` (matrix, command logs, screenshots, findings report).
+- Repo-local reusable QA auth profile at `.pi/supipowers/qa/auth/profile.json`.
+- Playwright skill bundle at `skills/playwright-cli/SKILL.md`, shipped via package manifest.
+- QA modules for input parsing, matrix generation, execution runner, storage, and findings synthesis.
+- QA workflow events: `qa_matrix_prepared` and `qa_run_completed`.
+
+### Changed
+- `/sp-start` auto-advances planning flow and can execute immediately after confirmation.
+- Execution flow reused through shared run-execution helper and auto-plan preparation.
+- Documentation expanded with QA command usage and storage/security behavior.
+
 ## [0.1.1] - 2026-02-26
 
 ### Added

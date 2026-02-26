@@ -10,6 +10,9 @@ export type WorkflowEventType =
   | "execution_stopped"
   | "workflow_finished"
   | "workflow_reset"
+  | "workflow_rewound"
+  | "qa_matrix_prepared"
+  | "qa_run_completed"
   | "recovery_applied";
 
 export interface WorkflowEvent {

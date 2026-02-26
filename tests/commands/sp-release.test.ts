@@ -6,6 +6,7 @@ describe("sp-release args", () => {
     const args = parseReleaseArgs("0.2.0");
 
     expect(args.version).toBe("0.2.0");
+    expect(args.bump).toBeUndefined();
     expect(args.dryRun).toBe(false);
     expect(args.skipTests).toBe(false);
     expect(args.skipPush).toBe(false);
@@ -22,5 +23,20 @@ describe("sp-release args", () => {
     expect(args.skipRelease).toBe(true);
     expect(args.allowDirty).toBe(true);
     expect(args.yes).toBe(true);
+  });
+
+  test("supports auto-version mode with bump flag", () => {
+    const args = parseReleaseArgs("--bump minor --dry-run");
+
+    expect(args.version).toBeUndefined();
+    expect(args.bump).toBe("minor");
+    expect(args.dryRun).toBe(true);
+  });
+
+  test("supports inline bump assignment", () => {
+    const args = parseReleaseArgs("--bump=major");
+
+    expect(args.version).toBeUndefined();
+    expect(args.bump).toBe("major");
   });
 });

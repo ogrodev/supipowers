@@ -67,7 +67,7 @@ export function registerSpReleaseSetupCommand(pi: ExtensionAPI): void {
             `Release pipeline setup complete using preset '${preset}'.`,
             `Config file: ${path}`,
             "You can edit this file to adapt commands for your repo/tech stack.",
-            "Then run: /sp-release <version> --dry-run",
+            "Then run: /sp-release --dry-run",
           ].join("\n"),
           "info",
         );

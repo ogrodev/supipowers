@@ -1,12 +1,12 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { transitionState } from "../engine/state-machine";
 import { appendWorkflowEvent } from "../storage/events-log";
-import { buildBrainstormingKickoffPrompt } from "./brainstorming-kickoff";
+import { autoAdvanceToPlanReady } from "./auto-plan";
+import { runPlanExecution } from "./run-execution";
 import { getRuntime, persistAndRender } from "./shared";
 
 export function registerSpStartCommand(pi: ExtensionAPI): void {
   pi.registerCommand("sp-start", {
-    description: "Initialize workflow and move to brainstorming",
+    description: "Start workflow, auto-generate plan, and optionally execute immediately",
     async handler(args, ctx) {
       const { config, state } = getRuntime(ctx);
 
@@ -30,41 +30,33 @@ export function registerSpStartCommand(pi: ExtensionAPI): void {
         return;
       }
 
-      const result = transitionState(state, {
-        to: "brainstorming",
-        strictness: config.strictness,
-        checkpoints: state.checkpoints,
-        nextAction: "Run guided brainstorming: answer one clarifying question at a time",
-      });
-
-      const nextState = {
-        ...result.state,
-        objective,
-      };
-
-      if (result.ok) {
-        appendWorkflowEvent(ctx.cwd, {
-          ts: Date.now(),
-          type: "workflow_started",
-          phase: nextState.phase,
-          meta: { objective: nextState.objective },
-        });
+      const prepared = autoAdvanceToPlanReady(ctx.cwd, state, config.strictness, objective);
+      if (!prepared.ok) {
+        persistAndRender(ctx, config, prepared.state, prepared.message, "error");
+        return;
       }
 
-      persistAndRender(
-        ctx,
-        config,
-        nextState,
-        result.ok
-          ? "Supipowers started: brainstorming phase active. Brainstorm kickoff dispatched."
-          : `Supipowers start blocked: ${result.reason}`,
-        result.ok ? "info" : "error",
-      );
+      prepared.events.forEach((event) => {
+        appendWorkflowEvent(ctx.cwd, {
+          ts: Date.now(),
+          type: event.type,
+          phase: event.phase,
+          meta: event.meta,
+        });
+      });
 
-      if (!result.ok) return;
+      persistAndRender(ctx, config, prepared.state, `${prepared.message} Execute now?`, "info");
 
-      const kickoffPrompt = buildBrainstormingKickoffPrompt(nextState.objective);
-      pi.sendUserMessage(kickoffPrompt, ctx.isIdle() ? undefined : { deliverAs: "followUp" });
+      const runNow = ctx.hasUI
+        ? await ctx.ui.confirm(
+          "Supipowers plan is ready",
+          `${prepared.message}\n\nDo you want to execute it now? (You can also run /sp-execute later.)`,
+        )
+        : true;
+
+      if (!runNow) return;
+
+      await runPlanExecution(pi, ctx, config, prepared.state);
     },
   });
 }

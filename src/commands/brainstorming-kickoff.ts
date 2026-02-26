@@ -20,7 +20,7 @@ export function buildBrainstormingKickoffPrompt(objective: string): string {
     "   - Ask for explicit approval after each section before continuing.",
     "5) Execution guardrails:",
     "   - Do NOT implement code, scaffold files, or modify source during brainstorming.",
-    "   - Stay in design validation mode until the user approves and runs /sp-approve.",
+    "   - Stay in design validation mode until the user explicitly confirms readiness to proceed.",
     "",
     "Start now with discovery, then ask the first clarifying question.",
   ].join("\n");
