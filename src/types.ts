@@ -14,11 +14,20 @@ export type WorkflowPhase =
   | "blocked"
   | "aborted";
 
+export interface WorkflowCheckpoints {
+  hasDesignApproval: boolean;
+  hasPlanArtifact: boolean;
+  hasReviewPass: boolean;
+}
+
 export interface WorkflowState {
   phase: WorkflowPhase;
   blocker?: string;
   nextAction: string;
   updatedAt: number;
+  objective?: string;
+  planArtifactPath?: string;
+  checkpoints: WorkflowCheckpoints;
 }
 
 export interface SupipowersConfig {
