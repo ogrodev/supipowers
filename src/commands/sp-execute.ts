@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { detectCapabilities } from "../adapters/capability-detector";
 import { executeCurrentPlan } from "../execution/workflow-executor";
 import { appendWorkflowEvent } from "../storage/events-log";
-import { buildWidgetLines } from "../ui/widget";
+import { renderSupipowersUi } from "../ui/render";
 import { getRuntime, persistAndRender } from "./shared";
 
 export function registerSpExecuteCommand(pi: ExtensionAPI): void {
@@ -45,16 +45,14 @@ export function registerSpExecuteCommand(pi: ExtensionAPI): void {
         capabilities,
         (update) => {
           if (!ctx.hasUI) return;
-          if (config.showStatus) {
-            const pct = Math.round(update.progress * 100);
-            ctx.ui.setStatus("supipowers", `Supipowers ${update.adapter} ${pct}% | ${update.message}`);
-          }
-          if (config.showWidget) {
-            const lines = buildWidgetLines(executingState, config.strictness);
-            lines.push(`Execution: ${update.adapter} | ${Math.round(update.progress * 100)}%`);
-            lines.push(`Signal: ${update.phase} — ${update.message}`);
-            ctx.ui.setWidget("supipowers", lines);
-          }
+          const pct = Math.round(update.progress * 100);
+          renderSupipowersUi(ctx, config, executingState, {
+            fullStatusSuffix: ` | ⚙️ ${update.adapter} ${pct}%`,
+            fullWidgetAppend: [
+              `🤖 Execution: ${update.adapter} | ${pct}%`,
+              `📶 Signal: ${update.phase} — ${update.message}`,
+            ],
+          });
         },
       );
       persistAndRender(ctx, config, result.state, result.message, result.ok ? "info" : "warning");

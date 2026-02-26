@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildStatusLine } from "../../src/ui/status";
+import { buildCompactStatusLine, buildStatusLine } from "../../src/ui/status";
 import { buildWidgetLines } from "../../src/ui/widget";
 import type { WorkflowState } from "../../src/types";
 
@@ -20,7 +20,16 @@ describe("status and widget ui", () => {
   test("builds deterministic status line", () => {
     const line = buildStatusLine(state, "balanced");
     expect(line).toContain("Supipowers phase: plan_ready");
-    expect(line).toContain("strictness: balanced");
+    expect(line).toContain("🧱 strictness: balanced");
+  });
+
+  test("builds compact one-liner with blocker boolean", () => {
+    const lineUnlocked = buildCompactStatusLine(state);
+    expect(lineUnlocked).toContain("🎯: Build authentication flow");
+    expect(lineUnlocked).toContain("🔓");
+
+    const lineLocked = buildCompactStatusLine({ ...state, blocker: "waiting for approval" });
+    expect(lineLocked).toContain("🔒");
   });
 
   test("renders widget lines with objective and plan path", () => {

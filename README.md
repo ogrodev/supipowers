@@ -33,10 +33,16 @@ pi -e ./src/index.ts
 /sp-finish merge --review-pass
 ```
 
+`/sp-start` now also sends a brainstorming kickoff prompt to the agent (discovery + clarifying questions + approach trade-offs), while keeping the workflow in `brainstorming` until you approve. Objective is required (inline or prompted interactively); when prompted, Enter reuses the previous objective.
+
+UI defaults to a compact one-line footer view. Use `Ctrl+Alt+V` to toggle compact/full visualization. View preference is persisted per repo.
 Additional commands:
 - `/sp-status` — current state, blocker, next action
 - `/sp-stop` — stop active execution
+- `/sp-view [compact|full|toggle|status]` — set or inspect visualization mode
 - `/sp-reset` — reset workflow to idle
+- `/sp-release-setup [preset]` — create repo-specific release pipeline config
+- `/sp-release <version>` — run configured release automation (requires setup)
 
 ## Tools
 
@@ -89,6 +95,37 @@ npm test
 npm run build
 npm pack --dry-run
 ```
+
+## Local release command
+
+First configure release pipeline for the current repo:
+
+```text
+/sp-release-setup
+```
+
+Optional presets:
+```text
+/sp-release-setup node
+/sp-release-setup python
+/sp-release-setup rust
+/sp-release-setup go
+/sp-release-setup generic
+```
+
+Then run release automation:
+
+```text
+/sp-release 0.1.1
+```
+
+Useful flags:
+- `--dry-run` (validate pipeline only)
+- `--skip-push`
+- `--skip-release`
+- `--skip-tests`
+- `--allow-dirty`
+- `--yes`
 
 ## Release checklist (SemVer baseline)
 

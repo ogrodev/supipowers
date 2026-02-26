@@ -1,0 +1,27 @@
+export function buildBrainstormingKickoffPrompt(objective: string): string {
+  return [
+    "Supipowers brainstorming phase is now active.",
+    "",
+    `Objective: ${objective}`,
+    "",
+    "Follow this workflow exactly before implementation:",
+    "1) Discovery & context:",
+    "   - Inspect relevant files, docs, and project structure first.",
+    "   - Summarize what exists and constraints you detect.",
+    "2) Clarifying questions:",
+    "   - Ask one clarifying question at a time.",
+    "   - Prefer multiple-choice options when possible.",
+    "   - Focus on purpose, constraints, edge-cases, and success criteria.",
+    "3) Explore approaches:",
+    "   - Propose 2-3 viable approaches with trade-offs.",
+    "   - Recommend one approach and justify it with YAGNI in mind.",
+    "4) Present design in sections:",
+    "   - Present one section at a time (architecture, data flow, errors, testing).",
+    "   - Ask for explicit approval after each section before continuing.",
+    "5) Execution guardrails:",
+    "   - Do NOT implement code, scaffold files, or modify source during brainstorming.",
+    "   - Stay in design validation mode until the user approves and runs /sp-approve.",
+    "",
+    "Start now with discovery, then ask the first clarifying question.",
+  ].join("\n");
+}

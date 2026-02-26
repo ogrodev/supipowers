@@ -28,6 +28,16 @@ Inside Pi, run:
 /sp-finish merge --review-pass
 ```
 
+`/sp-start` transitions state and automatically kicks off guided brainstorming in chat.
+
+Visualization defaults to a compact footer one-liner. Toggle with `F6` (fallback: `Alt+V`) to switch between compact and full view.
+
+If your terminal does not pass shortcut keys reliably, use:
+```text
+/sp-view compact
+/sp-view full
+/sp-view status
+```
 ## Development mode (without install)
 ```bash
 cd /absolute/path/to/supipowers
@@ -49,3 +59,10 @@ pi -e ./src/index.ts
 - Workflow events: `.pi/supipowers/workflow-events.jsonl`
 - Runs: `.pi/supipowers/runs/<run-id>/`
 - Final reports: `.pi/supipowers/reports/final-*.md`
+
+## Release quick flow
+```text
+/sp-release-setup
+/sp-release 0.1.1 --dry-run
+/sp-release 0.1.1
+```

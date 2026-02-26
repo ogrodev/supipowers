@@ -7,6 +7,27 @@ You must reach `plan_ready` first:
 3. `/sp-plan`
 4. `/sp-execute`
 
+## `/sp-start` only updates status/header
+`/sp-start` requires an objective. Use inline:
+```text
+/sp-start Implement login flow with tests
+```
+
+If you run `/sp-start` with no args, Supipowers prompts for the objective first. If there is a previous objective, press Enter to reuse it. Supipowers does not transition until it has an objective.
+
+## View toggle shortcut does not work on macOS terminal
+Some terminals do not send `Option`/`Alt` combinations unless meta mode is enabled.
+
+Try:
+- `F6`
+- `Alt+V`
+- command fallback:
+```text
+/sp-view compact
+/sp-view full
+/sp-view status
+```
+
 ## Quality gates are blocking
 Use `sp_revalidate` to inspect blockers and recommendations.
 Typical blockers:
@@ -34,6 +55,18 @@ To verify fallback behavior, inspect `.pi/supipowers/events.jsonl` for:
 Use:
 ```text
 /sp-stop
+```
+
+## Release command fails
+If `/sp-release` fails:
+1. Ensure setup was run (`/sp-release-setup`).
+2. Check working tree cleanliness (`git status --short`).
+3. Verify auth for push/release (`gh auth status`).
+4. Retry with `--dry-run` first.
+
+Example dry-run:
+```text
+/sp-release 0.1.1 --dry-run
 ```
 
 ## How to reset everything

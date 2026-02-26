@@ -10,6 +10,17 @@ export function registerSpApproveCommand(pi: ExtensionAPI): void {
       const { config, state } = getRuntime(ctx);
       let working = state;
 
+      if (working.phase === "idle") {
+        persistAndRender(
+          ctx,
+          config,
+          working,
+          "Cannot approve design before brainstorming starts. Run /sp-start <objective> first.",
+          "warning",
+        );
+        return;
+      }
+
       if (working.phase === "brainstorming") {
         const toPending = transitionState(working, {
           to: "design_pending_approval",
