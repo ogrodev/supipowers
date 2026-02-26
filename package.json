@@ -1,0 +1,36 @@
+{
+  "name": "supipowers",
+  "version": "0.1.0",
+  "description": "Pi-native workflow framework inspired by Superpowers.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.json"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.55.1",
+    "@mariozechner/pi-tui": "^0.55.1",
+    "@sinclair/typebox": "^0.34.48",
+    "@types/node": "^25.3.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
