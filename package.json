@@ -3,18 +3,28 @@
   "version": "0.1.0",
   "description": "Pi-native workflow framework inspired by Superpowers.",
   "type": "module",
-  "private": true,
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.build.json"
   },
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "pi-extension",
+    "workflow",
+    "agent",
+    "superpowers"
   ],
   "author": "",
   "license": "MIT",
+  "files": [
+    "src",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",

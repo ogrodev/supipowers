@@ -342,14 +342,14 @@ npm run typecheck
 ## 10) Milestone Checklist (Single View)
 
 - [x] **M0** Foundation bootstrapped and runnable
-- [ ] **M1** State machine + persistence
-- [ ] **M2** Command UX + status/widget
-- [ ] **M3** Native execution adapter
-- [ ] **M4** Subagent adapter + fallback
-- [ ] **M5** Ant colony adapter + fallback
-- [ ] **M6** Quality gates + revalidation tool
-- [ ] **M7** Finish workflow + reports + recovery
-- [ ] **M8** Packaging + docs + release readiness
+- [x] **M1** State machine + persistence
+- [x] **M2** Command UX + status/widget
+- [x] **M3** Native execution adapter
+- [x] **M4** Subagent adapter + fallback
+- [x] **M5** Ant colony adapter + fallback
+- [x] **M6** Quality gates + revalidation tool
+- [x] **M7** Finish workflow + reports + recovery
+- [x] **M8** Packaging + docs + release readiness
 
 ---
 
