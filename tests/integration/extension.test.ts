@@ -25,5 +25,6 @@ describe("extension entry point", () => {
     expect(registeredCommands).toContain("supi:release");
     expect(registeredCommands).toContain("supi:config");
     expect(registeredCommands).toContain("supi:status");
+    expect(registeredCommands).toContain("supi:update");
   });
 });

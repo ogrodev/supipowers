@@ -21,6 +21,7 @@ export function registerSupiCommand(pi: ExtensionAPI): void {
         "/supi:release  — Release automation",
         "/supi:config   — Manage configuration",
         "/supi:status   — Check running tasks",
+        "/supi:update   — Update to latest version",
       ];
 
       const status = [

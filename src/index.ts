@@ -7,6 +7,7 @@ import { registerRunCommand } from "./commands/run.js";
 import { registerReviewCommand } from "./commands/review.js";
 import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand } from "./commands/release.js";
+import { registerUpdateCommand } from "./commands/update.js";
 
 export default function supipowers(pi: ExtensionAPI): void {
   // Register all commands
@@ -18,6 +19,7 @@ export default function supipowers(pi: ExtensionAPI): void {
   registerReviewCommand(pi);
   registerQaCommand(pi);
   registerReleaseCommand(pi);
+  registerUpdateCommand(pi);
 
   // Session start
   pi.on("session_start", async (_event, ctx) => {
