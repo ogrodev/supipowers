@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { listProfiles } from "../config/profiles.js";
 import type { SupipowersConfig } from "../types.js";
@@ -93,67 +93,69 @@ function buildSettings(cwd: string): SettingDef[] {
   ];
 }
 
+export function handleConfig(ctx: ExtensionContext): void {
+  if (!ctx.hasUI) {
+    ctx.ui.notify("Config UI requires interactive mode", "warning");
+    return;
+  }
+
+  void (async () => {
+    const settings = buildSettings(ctx.cwd);
+
+    while (true) {
+      const config = loadConfig(ctx.cwd);
+
+      const options = settings.map(
+        (s) => `${s.label}: ${s.get(config)}`
+      );
+      options.push("Done");
+
+      const choice = await ctx.ui.select(
+        "Supipowers Settings",
+        options,
+        { helpText: "Select a setting to change · Esc to close" },
+      );
+
+      if (choice === undefined || choice === "Done") break;
+
+      const index = options.indexOf(choice);
+      const setting = settings[index];
+      if (!setting) break;
+
+      if (setting.type === "select" && setting.options) {
+        const value = await ctx.ui.select(
+          setting.label,
+          setting.options,
+          { initialIndex: setting.options.indexOf(setting.get(config)) },
+        );
+        if (value !== undefined) {
+          setting.set(ctx.cwd, value);
+          ctx.ui.notify(`${setting.label} → ${value}`, "info");
+        }
+      } else if (setting.type === "toggle") {
+        const current = setting.get(config);
+        const newValue = current === "on" ? "off" : "on";
+        setting.set(ctx.cwd, newValue);
+        ctx.ui.notify(`${setting.label} → ${newValue}`, "info");
+      } else if (setting.type === "text") {
+        const value = await ctx.ui.input(
+          setting.label,
+          setting.get(config) === "not set" ? undefined : setting.get(config),
+        );
+        if (value !== undefined) {
+          setting.set(ctx.cwd, value);
+          ctx.ui.notify(`${setting.label} → ${value || "cleared"}`, "info");
+        }
+      }
+    }
+  })();
+}
+
 export function registerConfigCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:config", {
     description: "View and manage Supipowers configuration",
-    // Synchronous handler — returning void (not a Promise) prevents OMP's "Working..." indicator
-    handler: ((_args: string, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("Config UI requires interactive mode", "warning");
-        return;
-      }
-
-      ctx.ui.setEditorText("");
-      void (async () => {
-        const settings = buildSettings(ctx.cwd);
-
-        while (true) {
-          const config = loadConfig(ctx.cwd);
-
-          const options = settings.map(
-            (s) => `${s.label}: ${s.get(config)}`
-          );
-          options.push("Done");
-
-          const choice = await ctx.ui.select(
-            "Supipowers Settings",
-            options,
-            { helpText: "Select a setting to change · Esc to close" },
-          );
-
-          if (choice === undefined || choice === "Done") break;
-
-          const index = options.indexOf(choice);
-          const setting = settings[index];
-          if (!setting) break;
-
-          if (setting.type === "select" && setting.options) {
-            const value = await ctx.ui.select(
-              setting.label,
-              setting.options,
-              { initialIndex: setting.options.indexOf(setting.get(config)) },
-            );
-            if (value !== undefined) {
-              setting.set(ctx.cwd, value);
-              ctx.ui.notify(`${setting.label} → ${value}`, "info");
-            }
-          } else if (setting.type === "toggle") {
-            const current = setting.get(config);
-            const newValue = current === "on" ? "off" : "on";
-            setting.set(ctx.cwd, newValue);
-            ctx.ui.notify(`${setting.label} → ${newValue}`, "info");
-          } else if (setting.type === "text") {
-            const value = await ctx.ui.input(
-              setting.label,
-              setting.get(config) === "not set" ? undefined : setting.get(config),
-            );
-            if (value !== undefined) {
-              setting.set(ctx.cwd, value);
-              ctx.ui.notify(`${setting.label} → ${value || "cleared"}`, "info");
-            }
-          }
-        }
-      })();
-    }) as any,
+    async handler(_args, ctx) {
+      handleConfig(ctx);
+    },
   });
 }
