@@ -12,7 +12,7 @@ export function registerReleaseCommand(pi: ExtensionAPI): void {
       let lastTag: string | null = null;
       try {
         const result = await pi.exec("git", ["describe", "--tags", "--abbrev=0"], { cwd: ctx.cwd });
-        if (result.exitCode === 0) lastTag = result.stdout.trim();
+        if (result.code === 0) lastTag = result.stdout.trim();
       } catch {
         // no tags yet
       }

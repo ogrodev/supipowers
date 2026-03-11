@@ -10,13 +10,13 @@ export interface LspServerStatus {
  * Check which LSP servers are installed by looking for their binaries.
  */
 export async function checkInstalledServers(
-  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; exitCode: number }>
+  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; code: number }>
 ): Promise<LspServerStatus[]> {
   const results: LspServerStatus[] = [];
   for (const server of LSP_SERVERS) {
     try {
       const result = await exec("which", [server.server]);
-      results.push({ server, installed: result.exitCode === 0 });
+      results.push({ server, installed: result.code === 0 });
     } catch {
       results.push({ server, installed: false });
     }

@@ -39,7 +39,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
       if (scope === "changed") {
         try {
           const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
-          if (result.exitCode === 0) {
+          if (result.code === 0) {
             changedFiles = result.stdout.split("\n").filter((f) => f.trim().length > 0);
           }
         } catch {

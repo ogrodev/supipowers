@@ -24,7 +24,7 @@ export function handleUpdate(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
     // Check latest version on npm
     const checkResult = await pi.exec("npm", ["view", "supipowers", "version"], { cwd: tmpdir() });
-    if (checkResult.exitCode !== 0) {
+    if (checkResult.code !== 0) {
       ctx.ui.notify("Failed to check for updates — npm view failed", "error");
       return;
     }
@@ -46,7 +46,7 @@ export function handleUpdate(pi: ExtensionAPI, ctx: ExtensionContext): void {
         "npm", ["install", "--prefix", tempDir, `supipowers@${latestVersion}`],
         { cwd: tempDir },
       );
-      if (installResult.exitCode !== 0) {
+      if (installResult.code !== 0) {
         ctx.ui.notify("Failed to download latest version", "error");
         return;
       }

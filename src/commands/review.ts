@@ -49,7 +49,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
       let changedFiles: string[] = [];
       try {
         const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
-        if (result.exitCode === 0) {
+        if (result.code === 0) {
           changedFiles = result.stdout
             .split("\n")
             .map((f) => f.trim())
@@ -62,7 +62,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
       if (changedFiles.length === 0) {
         try {
           const result = await pi.exec("git", ["diff", "--name-only", "--cached"], { cwd: ctx.cwd });
-          if (result.exitCode === 0) {
+          if (result.code === 0) {
             changedFiles = result.stdout
               .split("\n")
               .map((f) => f.trim())

@@ -1,6 +1,6 @@
 {
   "name": "supipowers",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "OMP-native workflow extension inspired by Superpowers.",
   "type": "module",
   "scripts": {
@@ -9,12 +9,23 @@
     "test:watch": "vitest",
     "build": "tsc -p tsconfig.build.json"
   },
-  "keywords": ["omp-extension", "workflow", "agent", "superpowers"],
+  "keywords": [
+    "omp-extension",
+    "workflow",
+    "agent",
+    "superpowers"
+  ],
   "license": "MIT",
   "bin": {
-    "supipowers": "./bin/install.mjs"
+    "supipowers": "bin/install.mjs"
   },
-  "files": ["src", "skills", "bin", "README.md", "LICENSE"],
+  "files": [
+    "src",
+    "skills",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "@clack/prompts": "^0.10.0"
   },
@@ -32,7 +43,11 @@
     "vitest": "^4.0.0"
   },
   "omp": {
-    "extensions": ["./src/index.ts"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
   }
 }

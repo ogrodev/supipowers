@@ -67,7 +67,7 @@ export default function supipowers(pi: ExtensionAPI): void {
 
     pi.exec("npm", ["view", "supipowers", "version"], { cwd: tmpdir() })
       .then((result) => {
-        if (result.exitCode !== 0) return;
+        if (result.code !== 0) return;
         const latest = result.stdout.trim();
         if (latest && latest !== currentVersion) {
           ctx.ui.notify(
