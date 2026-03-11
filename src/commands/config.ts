@@ -102,55 +102,57 @@ export function registerConfigCommand(pi: ExtensionAPI): void {
         return;
       }
 
-      const settings = buildSettings(ctx.cwd);
+      ctx.ui.setEditorText("");
+      void (async () => {
+        const settings = buildSettings(ctx.cwd);
 
-      // Main settings loop
-      while (true) {
-        const config = loadConfig(ctx.cwd);
+        while (true) {
+          const config = loadConfig(ctx.cwd);
 
-        const options = settings.map(
-          (s) => `${s.label}: ${s.get(config)}`
-        );
-        options.push("Done");
-
-        const choice = await ctx.ui.select(
-          "Supipowers Settings",
-          options,
-          { helpText: "Select a setting to change · Esc to close" },
-        );
-
-        if (choice === undefined || choice === "Done") break;
-
-        const index = options.indexOf(choice);
-        const setting = settings[index];
-        if (!setting) break;
-
-        if (setting.type === "select" && setting.options) {
-          const value = await ctx.ui.select(
-            setting.label,
-            setting.options,
-            { initialIndex: setting.options.indexOf(setting.get(config)) },
+          const options = settings.map(
+            (s) => `${s.label}: ${s.get(config)}`
           );
-          if (value !== undefined) {
-            setting.set(ctx.cwd, value);
-            ctx.ui.notify(`${setting.label} → ${value}`, "info");
-          }
-        } else if (setting.type === "toggle") {
-          const current = setting.get(config);
-          const newValue = current === "on" ? "off" : "on";
-          setting.set(ctx.cwd, newValue);
-          ctx.ui.notify(`${setting.label} → ${newValue}`, "info");
-        } else if (setting.type === "text") {
-          const value = await ctx.ui.input(
-            setting.label,
-            setting.get(config) === "not set" ? undefined : setting.get(config),
+          options.push("Done");
+
+          const choice = await ctx.ui.select(
+            "Supipowers Settings",
+            options,
+            { helpText: "Select a setting to change · Esc to close" },
           );
-          if (value !== undefined) {
-            setting.set(ctx.cwd, value);
-            ctx.ui.notify(`${setting.label} → ${value || "cleared"}`, "info");
+
+          if (choice === undefined || choice === "Done") break;
+
+          const index = options.indexOf(choice);
+          const setting = settings[index];
+          if (!setting) break;
+
+          if (setting.type === "select" && setting.options) {
+            const value = await ctx.ui.select(
+              setting.label,
+              setting.options,
+              { initialIndex: setting.options.indexOf(setting.get(config)) },
+            );
+            if (value !== undefined) {
+              setting.set(ctx.cwd, value);
+              ctx.ui.notify(`${setting.label} → ${value}`, "info");
+            }
+          } else if (setting.type === "toggle") {
+            const current = setting.get(config);
+            const newValue = current === "on" ? "off" : "on";
+            setting.set(ctx.cwd, newValue);
+            ctx.ui.notify(`${setting.label} → ${newValue}`, "info");
+          } else if (setting.type === "text") {
+            const value = await ctx.ui.input(
+              setting.label,
+              setting.get(config) === "not set" ? undefined : setting.get(config),
+            );
+            if (value !== undefined) {
+              setting.set(ctx.cwd, value);
+              ctx.ui.notify(`${setting.label} → ${value || "cleared"}`, "info");
+            }
           }
         }
-      }
+      })();
     },
   });
 }
