@@ -11,7 +11,13 @@
   },
   "keywords": ["omp-extension", "workflow", "agent", "superpowers"],
   "license": "MIT",
-  "files": ["src", "skills", "README.md", "LICENSE"],
+  "bin": {
+    "supipowers": "./bin/install.mjs"
+  },
+  "files": ["src", "skills", "bin", "README.md", "LICENSE"],
+  "dependencies": {
+    "@clack/prompts": "^0.10.0"
+  },
   "peerDependencies": {
     "@oh-my-pi/pi-coding-agent": "*",
     "@oh-my-pi/pi-tui": "*",
