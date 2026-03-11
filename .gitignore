@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.omp/supipowers/runs/
+.omp/supipowers/reports/

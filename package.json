@@ -1,0 +1,32 @@
+{
+  "name": "supipowers",
+  "version": "0.1.0",
+  "description": "OMP-native workflow extension inspired by Superpowers.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "keywords": ["omp-extension", "workflow", "agent", "superpowers"],
+  "license": "MIT",
+  "files": ["src", "skills", "README.md", "LICENSE"],
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "*",
+    "@oh-my-pi/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "latest",
+    "@oh-my-pi/pi-tui": "latest",
+    "@sinclair/typebox": "^0.34.48",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  },
+  "omp": {
+    "extensions": ["./src/index.ts"],
+    "skills": ["./skills"]
+  }
+}
