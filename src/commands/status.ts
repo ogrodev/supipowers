@@ -1,10 +1,11 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { findActiveRun, loadAllAgentResults } from "../storage/runs.js";
 
 export function registerStatusCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:status", {
     description: "Check on running sub-agents and task progress",
-    async handler(_args, ctx) {
+    // Synchronous handler — returning void (not a Promise) prevents OMP's "Working..." indicator
+    handler: ((_args: string, ctx: ExtensionCommandContext) => {
       ctx.ui.setEditorText("");
 
       const activeRun = findActiveRun(ctx.cwd);
@@ -41,6 +42,6 @@ export function registerStatusCommand(pi: ExtensionAPI): void {
           helpText: "Esc to close",
         });
       })();
-    },
+    }) as any,
   });
 }

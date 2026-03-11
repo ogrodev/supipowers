@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { loadConfig } from "../config/loader.js";
 import { findActiveRun } from "../storage/runs.js";
 import { loadLatestReport } from "../storage/reports.js";
@@ -7,7 +7,8 @@ import { listPlans } from "../storage/plans.js";
 export function registerSupiCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi", {
     description: "Supipowers overview — show available commands and project status",
-    async handler(_args, ctx) {
+    // Synchronous handler — returning void (not a Promise) prevents OMP's "Working..." indicator
+    handler: ((_args: string, ctx: ExtensionCommandContext) => {
       ctx.ui.setEditorText("");
       void (async () => {
         const config = loadConfig(ctx.cwd);
@@ -47,6 +48,6 @@ export function registerSupiCommand(pi: ExtensionAPI): void {
           }
         }
       })();
-    },
+    }) as any,
   });
 }

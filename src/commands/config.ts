@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { listProfiles } from "../config/profiles.js";
 import type { SupipowersConfig } from "../types.js";
@@ -96,7 +96,8 @@ function buildSettings(cwd: string): SettingDef[] {
 export function registerConfigCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:config", {
     description: "View and manage Supipowers configuration",
-    async handler(_args, ctx) {
+    // Synchronous handler — returning void (not a Promise) prevents OMP's "Working..." indicator
+    handler: ((_args: string, ctx: ExtensionCommandContext) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("Config UI requires interactive mode", "warning");
         return;
@@ -153,6 +154,6 @@ export function registerConfigCommand(pi: ExtensionAPI): void {
           }
         }
       })();
-    },
+    }) as any,
   });
 }

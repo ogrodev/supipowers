@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { readFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -6,7 +6,8 @@ import { homedir, tmpdir } from "node:os";
 export function registerUpdateCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:update", {
     description: "Update supipowers to the latest version",
-    async handler(_args, ctx) {
+    // Synchronous handler — returning void (not a Promise) prevents OMP's "Working..." indicator
+    handler: ((_args: string, ctx: ExtensionCommandContext) => {
       ctx.ui.setEditorText("");
       void (async () => {
         const ompAgent = join(homedir(), ".omp", "agent");
@@ -95,6 +96,6 @@ export function registerUpdateCommand(pi: ExtensionAPI): void {
           }
         }
       })();
-    },
+    }) as any,
   });
 }
