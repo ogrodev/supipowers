@@ -10,30 +10,33 @@ Agentic workflows for [OMP](https://github.com/can1357/oh-my-pi). Plan features,
 bunx supipowers@latest
 ```
 
-The installer checks for OMP, helps you install it if needed, sets up supipowers, and optionally configures LSP servers for your project.
+The installer checks for OMP, helps you install it if needed, copies supipowers into `~/.omp/agent/`, and optionally installs LSP servers for better code intelligence.
 
-### Manual install
+Re-running the installer updates supipowers if a newer version is available. Already up-to-date installs are detected and skipped.
 
-```bash
-# Global (all projects)
-omp install npm:supipowers
+### Update from inside OMP
 
-# Project-local
-omp install npm:supipowers -l
 ```
+/supi:update
+```
+
+Checks npm for the latest version, downloads and installs it — no prompts, no restart needed.
 
 ## Commands
 
-| Command         | What it does                                     |
-| --------------- | ------------------------------------------------ |
-| `/supi`         | Overview — available commands and project status |
-| `/supi:plan`    | Collaborative planning with task breakdown       |
-| `/supi:run`     | Execute a plan with parallel sub-agents          |
-| `/supi:review`  | Quality gates at chosen depth                    |
-| `/supi:qa`      | Run test suite and E2E pipeline                  |
-| `/supi:release` | Version bump, release notes, publish             |
-| `/supi:config`  | View and edit configuration                      |
-| `/supi:status`  | Check running sub-agents and progress            |
+| Command          | What it does                                     |
+| ---------------- | ------------------------------------------------ |
+| `/supi`          | Interactive menu — commands and project status   |
+| `/supi:plan`     | Collaborative planning with task breakdown       |
+| `/supi:run`      | Execute a plan with parallel sub-agents          |
+| `/supi:review`   | Quality gates at chosen depth                    |
+| `/supi:qa`       | Run test suite and E2E pipeline                  |
+| `/supi:release`  | Version bump, release notes, publish             |
+| `/supi:config`   | Interactive settings (TUI)                       |
+| `/supi:status`   | Check running sub-agents and progress            |
+| `/supi:update`   | Update supipowers to latest version              |
+
+Commands like `/supi`, `/supi:config`, `/supi:status`, and `/supi:update` open native OMP TUI dialogs — they don't send chat messages or trigger the AI.
 
 ### Planning
 
@@ -62,21 +65,23 @@ The orchestration loop: dispatch batch → collect results → detect conflicts 
 ### Quality review
 
 ```
-/supi:review           # uses default profile
+/supi:review           # opens profile picker
 /supi:review --quick   # fast: LSP diagnostics + AI scan
 /supi:review --thorough  # deep: full AI review + code quality
 /supi:review --full    # everything: tests + E2E + all gates
 ```
 
+When no flag is provided, a TUI picker lets you choose the review profile interactively.
+
 ### QA
 
 ```
-/supi:qa              # full test suite
+/supi:qa              # opens scope picker
 /supi:qa --changed    # tests for changed files only
 /supi:qa --e2e        # Playwright / E2E only
 ```
 
-Detects your test framework on first run (vitest, jest, pytest, cargo test, go test) and caches it.
+Detects your test framework on first run (vitest, jest, pytest, cargo test, go test) and caches it. When no flag is provided, a TUI picker lets you choose the scope.
 
 ### Release
 
@@ -84,17 +89,15 @@ Detects your test framework on first run (vitest, jest, pytest, cargo test, go t
 /supi:release
 ```
 
-Analyzes commits since last tag, suggests a version bump, generates release notes, and publishes (npm, GitHub release, or manual — configured on first run).
+Analyzes commits since last tag, suggests a version bump, generates release notes, and publishes. On first run, a TUI picker lets you choose your pipeline (npm, GitHub release, or manual).
 
 ## Configuration
 
-Layered config: project (`.omp/supipowers/config.json`) overrides global (`~/.omp/supipowers/config.json`).
+```
+/supi:config
+```
 
-```
-/supi:config                                    # view current config
-/supi:config set orchestration.maxParallelAgents 5
-/supi:config set defaultProfile thorough
-```
+Opens an interactive settings screen with all configuration options. Select a setting to change its value — toggles flip instantly, selects open a picker, text fields open an input dialog.
 
 ### Profiles
 
@@ -115,20 +118,21 @@ Create custom profiles in `.omp/supipowers/profiles/`.
   "defaultProfile": "thorough",
   "orchestration": {
     "maxParallelAgents": 3, // concurrent sub-agents per batch
-    "maxFixRetries": 2, // retry failed tasks
-    "maxNestingDepth": 2, // sub-agent nesting limit
-    "modelPreference": "auto", // "auto" | "fast" | "capable" | "<model-id>"
+    "maxFixRetries": 2,     // retry failed tasks
+    "maxNestingDepth": 2,   // sub-agent nesting limit
+    "modelPreference": "auto"
   },
   "lsp": {
-    "autoDetect": true,
-    "setupGuide": true,
+    "setupGuide": true
   },
   "qa": {
     "framework": null, // auto-detected and cached
-    "command": null,
-  },
+    "command": null
+  }
 }
 ```
+
+Config is stored in `~/.omp/agent/extensions/supipowers/` and managed entirely through `/supi:config`.
 
 ## How it works
 
@@ -138,17 +142,21 @@ Supipowers is built on OMP's extension API. Every command is an immediate action
 
 **Quality gates**: Composable checks selected by profile. LSP diagnostics feed real type errors. AI review catches logic issues. Test gates run your actual test suite. Gates report issues with severity levels (error/warning/info).
 
-**LSP integration**: Sub-agents query LSP before making changes (find references, check diagnostics). If no LSP is active, everything still works — just better with it. Run `/supi:config` for setup guidance.
+**LSP integration**: Sub-agents query LSP before making changes (find references, check diagnostics). If no LSP is active, everything still works — just better with it. The installer offers to set up LSP servers during installation.
+
+**Update checking**: On session start, supipowers checks npm for a newer version in the background. If one is available, a notification tells you to run `/supi:update`.
 
 ## Project structure
 
 ```
 src/
-  index.ts                     # extension entry point
+  index.ts                     # extension entry point + update checker
   commands/                    # slash command handlers
-    supi.ts, plan.ts, run.ts, review.ts, qa.ts, release.ts, config.ts, status.ts
+    supi.ts, plan.ts, run.ts, review.ts, qa.ts, release.ts,
+    config.ts, status.ts, update.ts
   orchestrator/                # sub-agent dispatch & coordination
-    batch-scheduler.ts, dispatcher.ts, result-collector.ts, conflict-resolver.ts, prompts.ts
+    batch-scheduler.ts, dispatcher.ts, result-collector.ts,
+    conflict-resolver.ts, prompts.ts
   quality/                     # composable quality gates
     gate-runner.ts, lsp-gate.ts, ai-review-gate.ts, test-gate.ts
   qa/                          # QA pipeline
@@ -176,7 +184,7 @@ bin/
 ## Development
 
 ```bash
-git clone https://github.com/pedromendes/supipowers.git
+git clone https://github.com/ogrodev/supipowers.git
 cd supipowers
 bun install
 bun run test        # run tests
