@@ -1,0 +1,84 @@
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { loadConfig } from "../config/loader.js";
+import { resolveProfile } from "../config/profiles.js";
+import { buildReviewPrompt } from "../quality/gate-runner.js";
+import { isLspAvailable } from "../lsp/detector.js";
+import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
+
+export function registerReviewCommand(pi: ExtensionAPI): void {
+  pi.registerCommand("supi:review", {
+    description: "Run quality gates at chosen depth (quick/thorough/full-regression)",
+    async handler(args, ctx) {
+      const config = loadConfig(ctx.cwd);
+
+      let profileOverride: string | undefined;
+      if (args?.includes("--quick")) profileOverride = "quick";
+      else if (args?.includes("--thorough")) profileOverride = "thorough";
+      else if (args?.includes("--full")) profileOverride = "full-regression";
+      else if (args?.includes("--profile")) {
+        const match = args.match(/--profile\s+(\S+)/);
+        if (match) profileOverride = match[1];
+      }
+
+      const profile = resolveProfile(ctx.cwd, config, profileOverride);
+      const lsp = isLspAvailable(pi.getActiveTools());
+
+      if (!lsp && profile.gates.lspDiagnostics) {
+        notifyWarning(
+          ctx,
+          "LSP not available",
+          "Review will continue without LSP diagnostics. Run /supi:config for setup."
+        );
+      }
+
+      let changedFiles: string[] = [];
+      try {
+        const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
+        if (result.exitCode === 0) {
+          changedFiles = result.stdout
+            .split("\n")
+            .map((f) => f.trim())
+            .filter((f) => f.length > 0);
+        }
+      } catch {
+        // If git fails, we'll review without file filtering
+      }
+
+      if (changedFiles.length === 0) {
+        try {
+          const result = await pi.exec("git", ["diff", "--name-only", "--cached"], { cwd: ctx.cwd });
+          if (result.exitCode === 0) {
+            changedFiles = result.stdout
+              .split("\n")
+              .map((f) => f.trim())
+              .filter((f) => f.length > 0);
+          }
+        } catch {
+          // continue without
+        }
+      }
+
+      if (changedFiles.length === 0) {
+        notifyInfo(ctx, "No changed files detected", "Reviewing all files in scope");
+      }
+
+      const reviewPrompt = buildReviewPrompt({
+        profile,
+        changedFiles,
+        testCommand: config.qa.command,
+        lspAvailable: lsp,
+      });
+
+      notifyInfo(ctx, `Review started`, `profile: ${profile.name}`);
+
+      pi.sendMessage(
+        {
+          customType: "supi-review",
+          content: [{ type: "text", text: reviewPrompt }],
+          display: "none",
+        },
+        { deliverAs: "steer" }
+      );
+    },
+  });
+}
