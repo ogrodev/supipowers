@@ -21,7 +21,7 @@ export function registerConfigCommand(pi: ExtensionAPI): void {
           `Max fix retries: ${config.orchestration.maxFixRetries}`,
           `Max nesting depth: ${config.orchestration.maxNestingDepth}`,
           `Model preference: ${config.orchestration.modelPreference}`,
-          `LSP auto-detect: ${config.lsp.autoDetect}`,
+          `LSP setup guide: ${config.lsp.setupGuide}`,
           `Notification verbosity: ${config.notifications.verbosity}`,
           `QA framework: ${config.qa.framework ?? "not detected"}`,
           `Release pipeline: ${config.release.pipeline ?? "not configured"}`,

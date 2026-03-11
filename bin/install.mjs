@@ -12,8 +12,8 @@ import {
   note,
 } from "@clack/prompts";
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { resolve, extname, dirname, join } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
@@ -59,53 +59,29 @@ function findOmpBinary() {
 const LSP_SERVERS = [
   {
     language: "TypeScript / JavaScript",
-    extensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
     server: "typescript-language-server",
     installCmd: "bun add -g typescript-language-server typescript",
   },
   {
     language: "Python",
-    extensions: [".py"],
     server: "pyright",
     installCmd: "pip install pyright",
   },
   {
     language: "Rust",
-    extensions: [".rs"],
     server: "rust-analyzer",
     installCmd: "rustup component add rust-analyzer",
   },
   {
     language: "Go",
-    extensions: [".go"],
     server: "gopls",
     installCmd: "go install golang.org/x/tools/gopls@latest",
   },
 ];
 
-function detectLanguages(dir) {
-  const detected = new Set();
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile()) {
-        detected.add(extname(entry.name));
-      } else if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules") {
-        // One level deep
-        try {
-          const subEntries = readdirSync(join(dir, entry.name), { withFileTypes: true });
-          for (const sub of subEntries) {
-            if (sub.isFile()) detected.add(extname(sub.name));
-          }
-        } catch {
-          // skip unreadable dirs
-        }
-      }
-    }
-  } catch {
-    // skip
-  }
-  return detected;
+function isInstalled(binary) {
+  const result = run("which", [binary]);
+  return result.status === 0;
 }
 
 // ── Main ─────────────────────────────────────────────────────
@@ -178,33 +154,33 @@ async function main() {
 
   // ── Step 3: LSP setup (optional) ──────────────────────────
 
-  const detectedExts = detectLanguages(process.cwd());
-  const matchingServers = LSP_SERVERS.filter((srv) =>
-    srv.extensions.some((ext) => detectedExts.has(ext))
-  );
-
-  if (matchingServers.length > 0) {
-    const selected = await multiselect({
-      message: "Detected project languages. Install LSP servers for better code intelligence?",
-      options: matchingServers.map((srv) => ({
+  const selected = await multiselect({
+    message: "Install LSP servers for better code intelligence?",
+    options: LSP_SERVERS.map((srv) => {
+      const installed = isInstalled(srv.server);
+      return {
         value: srv,
         label: srv.language,
-        hint: srv.server,
-      })),
-      required: false,
-    });
+        hint: installed ? `${srv.server} (installed)` : srv.server,
+      };
+    }),
+    required: false,
+  });
 
-    if (!isCancel(selected) && selected.length > 0) {
-      for (const srv of selected) {
-        const ls = spinner();
-        ls.start(`Installing ${srv.server}...`);
-        const [cmd, ...args] = srv.installCmd.split(" ");
-        const r = run(cmd, args);
-        if (r.status !== 0) {
-          ls.stop(`Failed to install ${srv.server} — you can install manually: ${srv.installCmd}`);
-        } else {
-          ls.stop(`${srv.server} installed`);
-        }
+  if (!isCancel(selected) && selected.length > 0) {
+    for (const srv of selected) {
+      if (isInstalled(srv.server)) {
+        note(`${srv.server} is already installed, skipping.`, srv.language);
+        continue;
+      }
+      const ls = spinner();
+      ls.start(`Installing ${srv.server}...`);
+      const [cmd, ...args] = srv.installCmd.split(" ");
+      const r = run(cmd, args);
+      if (r.status !== 0) {
+        ls.stop(`Failed to install ${srv.server} — you can install manually: ${srv.installCmd}`);
+      } else {
+        ls.stop(`${srv.server} installed`);
       }
     }
   }

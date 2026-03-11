@@ -11,7 +11,6 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     modelPreference: "auto",
   },
   lsp: {
-    autoDetect: true,
     setupGuide: true,
   },
   notifications: {

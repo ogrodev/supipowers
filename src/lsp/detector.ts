@@ -1,36 +1,31 @@
 // src/lsp/detector.ts
-import type { SupipowersConfig } from "../types.js";
+import { LSP_SERVERS, type LspServerEntry } from "./setup-guide.js";
 
-export interface LspStatus {
-  available: boolean;
-  servers: LspServerInfo[];
-}
-
-export interface LspServerInfo {
-  name: string;
-  status: "running" | "stopped" | "error";
-  fileTypes: string[];
-  error?: string;
+export interface LspServerStatus {
+  server: LspServerEntry;
+  installed: boolean;
 }
 
 /**
- * Check LSP availability by invoking the lsp tool's "status" action.
- * Uses pi.exec to call the lsp tool programmatically.
+ * Check which LSP servers are installed by looking for their binaries.
  */
-export async function detectLsp(
+export async function checkInstalledServers(
   exec: (cmd: string, args: string[]) => Promise<{ stdout: string; exitCode: number }>
-): Promise<LspStatus> {
-  try {
-    // We check by looking for LSP config files or running servers
-    // In OMP, LSP is a built-in tool — we check if it's in active tools
-    return { available: false, servers: [] };
-  } catch {
-    return { available: false, servers: [] };
+): Promise<LspServerStatus[]> {
+  const results: LspServerStatus[] = [];
+  for (const server of LSP_SERVERS) {
+    try {
+      const result = await exec("which", [server.server]);
+      results.push({ server, installed: result.exitCode === 0 });
+    } catch {
+      results.push({ server, installed: false });
+    }
   }
+  return results;
 }
 
 /**
- * Check if LSP is available from the extension context.
+ * Check if LSP is available from the OMP extension context at runtime.
  * Reads the active tools list to see if "lsp" is registered.
  */
 export function isLspAvailable(activeTools: string[]): boolean {

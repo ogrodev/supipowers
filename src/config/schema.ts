@@ -13,7 +13,6 @@ const ConfigSchema = Type.Object({
     modelPreference: Type.String(),
   }),
   lsp: Type.Object({
-    autoDetect: Type.Boolean(),
     setupGuide: Type.Boolean(),
   }),
   notifications: Type.Object({

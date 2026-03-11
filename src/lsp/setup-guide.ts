@@ -1,13 +1,13 @@
 // src/lsp/setup-guide.ts
 
-export interface SetupInstruction {
+export interface LspServerEntry {
   language: string;
   server: string;
   installCommand: string;
   notes: string;
 }
 
-const COMMON_LSP_SERVERS: SetupInstruction[] = [
+export const LSP_SERVERS: LspServerEntry[] = [
   {
     language: "TypeScript/JavaScript",
     server: "typescript-language-server",
@@ -34,47 +34,16 @@ const COMMON_LSP_SERVERS: SetupInstruction[] = [
   },
 ];
 
-/** Get setup instructions for detected project languages */
-export function getSetupInstructions(detectedLanguages: string[]): SetupInstruction[] {
-  return COMMON_LSP_SERVERS.filter((s) =>
-    detectedLanguages.some((lang) =>
-      s.language.toLowerCase().includes(lang.toLowerCase())
-    )
-  );
-}
-
-/** Detect project languages from file extensions */
-export function detectProjectLanguages(files: string[]): string[] {
-  const extMap: Record<string, string> = {
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".py": "python",
-    ".rs": "rust",
-    ".go": "go",
-    ".java": "java",
-    ".rb": "ruby",
-    ".php": "php",
-  };
-  const languages = new Set<string>();
-  for (const file of files) {
-    const ext = file.slice(file.lastIndexOf("."));
-    if (extMap[ext]) languages.add(extMap[ext]);
-  }
-  return [...languages];
-}
-
-/** Format setup instructions as readable text */
-export function formatSetupGuide(instructions: SetupInstruction[]): string {
-  if (instructions.length === 0) {
-    return "No LSP setup instructions available for your project languages.";
+/** Format all LSP servers as readable text */
+export function formatSetupGuide(servers: LspServerEntry[] = LSP_SERVERS): string {
+  if (servers.length === 0) {
+    return "No LSP servers available.";
   }
   const lines = ["LSP Setup Guide:", ""];
-  for (const inst of instructions) {
-    lines.push(`## ${inst.language} — ${inst.server}`);
-    lines.push(`Install: ${inst.installCommand}`);
-    lines.push(`Note: ${inst.notes}`);
+  for (const srv of servers) {
+    lines.push(`## ${srv.language} — ${srv.server}`);
+    lines.push(`Install: ${srv.installCommand}`);
+    lines.push(`Note: ${srv.notes}`);
     lines.push("");
   }
   return lines.join("\n");

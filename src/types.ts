@@ -110,7 +110,6 @@ export interface SupipowersConfig {
     modelPreference: string;
   };
   lsp: {
-    autoDetect: boolean;
     setupGuide: boolean;
   };
   notifications: {

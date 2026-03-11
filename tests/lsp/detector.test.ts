@@ -1,7 +1,7 @@
 // tests/lsp/detector.test.ts
 import { describe, test, expect } from "vitest";
 import { isLspAvailable } from "../../src/lsp/detector.js";
-import { detectProjectLanguages, getSetupInstructions } from "../../src/lsp/setup-guide.js";
+import { LSP_SERVERS, formatSetupGuide } from "../../src/lsp/setup-guide.js";
 import { buildLspDiagnosticsPrompt } from "../../src/lsp/bridge.js";
 
 describe("isLspAvailable", () => {
@@ -14,25 +14,25 @@ describe("isLspAvailable", () => {
   });
 });
 
-describe("detectProjectLanguages", () => {
-  test("detects typescript from .ts files", () => {
-    const langs = detectProjectLanguages(["src/index.ts", "src/types.ts"]);
-    expect(langs).toContain("typescript");
-  });
-
-  test("detects multiple languages", () => {
-    const langs = detectProjectLanguages(["app.py", "main.go", "index.ts"]);
-    expect(langs).toContain("python");
-    expect(langs).toContain("go");
-    expect(langs).toContain("typescript");
+describe("LSP_SERVERS", () => {
+  test("has entries for common languages", () => {
+    expect(LSP_SERVERS.length).toBeGreaterThan(0);
+    const languages = LSP_SERVERS.map((s) => s.language);
+    expect(languages).toContain("TypeScript/JavaScript");
+    expect(languages).toContain("Python");
   });
 });
 
-describe("getSetupInstructions", () => {
-  test("returns instructions for detected languages", () => {
-    const instructions = getSetupInstructions(["typescript"]);
-    expect(instructions.length).toBeGreaterThan(0);
-    expect(instructions[0].language).toContain("TypeScript");
+describe("formatSetupGuide", () => {
+  test("formats all servers", () => {
+    const guide = formatSetupGuide();
+    expect(guide).toContain("TypeScript/JavaScript");
+    expect(guide).toContain("typescript-language-server");
+  });
+
+  test("returns message for empty list", () => {
+    const guide = formatSetupGuide([]);
+    expect(guide).toContain("No LSP servers available");
   });
 });
 
