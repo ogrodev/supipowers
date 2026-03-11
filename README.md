@@ -1,3 +1,5 @@
+<img width="1584" height="672" alt="image" src="https://github.com/user-attachments/assets/fd446416-4573-488d-890c-6dbd4a13553f" />
+
 # Supipowers
 
 Agentic workflows for [OMP](https://github.com/can1357/oh-my-pi). Plan features, orchestrate sub-agents, run quality gates, and ship releases — all from slash commands.
