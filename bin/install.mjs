@@ -4,7 +4,6 @@ import {
   intro,
   outro,
   confirm,
-  select,
   multiselect,
   spinner,
   isCancel,
@@ -12,7 +11,7 @@ import {
   note,
 } from "@clack/prompts";
 import { spawnSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, cpSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -131,29 +130,40 @@ async function main() {
     ompSpinner.stop(`OMP ${ver} detected`);
   }
 
-  // ── Step 2: Install supipowers ─────────────────────────────
-
-  const scope = await select({
-    message: "Where should supipowers be installed?",
-    options: [
-      { value: "global", label: "Global", hint: "available in all projects" },
-      { value: "local", label: "Project-local", hint: "only this directory" },
-    ],
-  });
-  if (isCancel(scope)) bail("Cancelled.");
-
-  const packageSpec = `npm:supipowers@${VERSION}`;
-  const installArgs = ["install", packageSpec];
-  if (scope === "local") installArgs.push("-l");
+  // ── Step 2: Install supipowers into ~/.omp/agent/ ───────────
 
   const s = spinner();
-  s.start(`Installing supipowers (${scope})...`);
-  const result = run(omp, installArgs);
-  if (result.status !== 0) {
+  s.start("Installing supipowers...");
+
+  const packageRoot = resolve(__dirname, "..");
+  const ompAgent = join(homedir(), ".omp", "agent");
+
+  try {
+    // Copy extension (src/ + package.json) → ~/.omp/agent/extensions/supipowers/
+    const extDir = join(ompAgent, "extensions", "supipowers");
+    mkdirSync(extDir, { recursive: true });
+    cpSync(join(packageRoot, "src"), join(extDir, "src"), { recursive: true });
+    cpSync(join(packageRoot, "package.json"), join(extDir, "package.json"));
+
+    // Copy skills → ~/.omp/agent/skills/<skillname>/SKILL.md
+    const skillsSource = join(packageRoot, "skills");
+    if (existsSync(skillsSource)) {
+      const skillDirs = readdirSync(skillsSource, { withFileTypes: true });
+      for (const entry of skillDirs) {
+        if (!entry.isDirectory()) continue;
+        const skillFile = join(skillsSource, entry.name, "SKILL.md");
+        if (!existsSync(skillFile)) continue;
+        const destDir = join(ompAgent, "skills", entry.name);
+        mkdirSync(destDir, { recursive: true });
+        cpSync(skillFile, join(destDir, "SKILL.md"));
+      }
+    }
+
+    s.stop("supipowers installed");
+  } catch (err) {
     s.stop("Installation failed");
-    bail(result.stderr?.trim() || "omp install failed.");
+    bail(err.message || "Failed to copy files to ~/.omp/agent/");
   }
-  s.stop("supipowers installed");
 
   // ── Step 3: LSP setup (optional) ──────────────────────────
 
