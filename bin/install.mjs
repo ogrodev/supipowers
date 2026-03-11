@@ -91,9 +91,12 @@ async function main() {
 
   // ── Step 1: OMP check ──────────────────────────────────────
 
+  const ompSpinner = spinner();
+  ompSpinner.start("Looking for OMP...");
   let omp = findOmpBinary();
 
   if (!omp) {
+    ompSpinner.stop("OMP not found");
     note(
       "OMP (oh-my-pi) is an AI coding agent that supipowers extends.\n" +
         "It adds sub-agents, LSP integration, and plugin support to pi.\n" +
@@ -125,7 +128,7 @@ async function main() {
   } else {
     const version = run(omp, ["--version"]);
     const ver = version.stdout?.trim() || "unknown";
-    note(`OMP ${ver}`, "OMP detected");
+    ompSpinner.stop(`OMP ${ver} detected`);
   }
 
   // ── Step 2: Install supipowers ─────────────────────────────
@@ -154,16 +157,22 @@ async function main() {
 
   // ── Step 3: LSP setup (optional) ──────────────────────────
 
+  const lspSpinner = spinner();
+  lspSpinner.start("Checking installed LSP servers...");
+  const lspOptions = LSP_SERVERS.map((srv) => {
+    const installed = isInstalled(srv.server);
+    return {
+      value: srv,
+      label: srv.language,
+      hint: installed ? `${srv.server} (installed)` : srv.server,
+    };
+  });
+  const installedCount = lspOptions.filter((o) => o.hint.includes("(installed)")).length;
+  lspSpinner.stop(`Found ${installedCount}/${LSP_SERVERS.length} LSP servers installed`);
+
   const selected = await multiselect({
     message: "Install LSP servers for better code intelligence?",
-    options: LSP_SERVERS.map((srv) => {
-      const installed = isInstalled(srv.server);
-      return {
-        value: srv,
-        label: srv.language,
-        hint: installed ? `${srv.server} (installed)` : srv.server,
-      };
-    }),
+    options: lspOptions,
     required: false,
   });
 
