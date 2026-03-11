@@ -13,30 +13,36 @@ export function registerSupiCommand(pi: ExtensionAPI): void {
       const latestReport = loadLatestReport(ctx.cwd);
       const plans = listPlans(ctx.cwd);
 
-      const lines: string[] = [
-        "# Supipowers",
-        "",
-        "## Commands",
-        "  /supi:plan     — Start collaborative planning",
-        "  /supi:run      — Execute a plan with sub-agents",
-        "  /supi:review   — Run quality gates",
-        "  /supi:qa       — Run QA pipeline",
-        "  /supi:release  — Release automation",
-        "  /supi:config   — Manage configuration",
-        "  /supi:status   — Check running tasks",
-        "",
-        "## Project Status",
-        `  Profile: ${config.defaultProfile}`,
-        `  Plans: ${plans.length}`,
-        `  Active run: ${activeRun ? activeRun.id : "none"}`,
-        `  Last review: ${latestReport ? `${latestReport.timestamp.slice(0, 10)} (${latestReport.passed ? "passed" : "failed"})` : "none"}`,
+      const commands = [
+        "/supi:plan     — Start collaborative planning",
+        "/supi:run      — Execute a plan with sub-agents",
+        "/supi:review   — Run quality gates",
+        "/supi:qa       — Run QA pipeline",
+        "/supi:release  — Release automation",
+        "/supi:config   — Manage configuration",
+        "/supi:status   — Check running tasks",
       ];
 
-      pi.sendMessage({
-        customType: "supi-overview",
-        content: [{ type: "text", text: lines.join("\n") }],
-        display: "inline",
-      });
+      const status = [
+        `Profile: ${config.defaultProfile}`,
+        `Plans: ${plans.length}`,
+        `Active run: ${activeRun ? activeRun.id : "none"}`,
+        `Last review: ${latestReport ? `${latestReport.timestamp.slice(0, 10)} (${latestReport.passed ? "passed" : "failed"})` : "none"}`,
+      ];
+
+      const choice = await ctx.ui.select(
+        "Supipowers",
+        [...commands, "", ...status, "", "Close"],
+        { helpText: "Select a command to run · Esc to close" },
+      );
+
+      if (choice && choice.startsWith("/supi:")) {
+        const cmdName = choice.split(" ")[0].slice(1); // remove leading /
+        const handler = pi.getCommands().find((c) => c.name === cmdName);
+        if (handler) {
+          await handler.handler("", ctx);
+        }
+      }
     },
   });
 }

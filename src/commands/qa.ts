@@ -23,6 +23,20 @@ export function registerQaCommand(pi: ExtensionAPI): void {
 
       if (args?.includes("--changed")) {
         scope = "changed";
+      } else if (args?.includes("--e2e")) {
+        scope = "e2e";
+      } else if (ctx.hasUI && !args?.trim()) {
+        // No flag provided — let the user pick
+        const choice = await ctx.ui.select(
+          "QA scope",
+          ["all — Run all tests", "changed — Only changed files", "e2e — E2E / Playwright only"],
+          { helpText: "Select test scope · Esc to cancel" },
+        );
+        if (!choice) return;
+        scope = choice.split(" — ")[0] as "all" | "changed" | "e2e";
+      }
+
+      if (scope === "changed") {
         try {
           const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
           if (result.exitCode === 0) {
@@ -31,8 +45,6 @@ export function registerQaCommand(pi: ExtensionAPI): void {
         } catch {
           scope = "all";
         }
-      } else if (args?.includes("--e2e")) {
-        scope = "e2e";
       }
 
       notifyInfo(ctx, "QA started", `${framework.name} | scope: ${scope}`);

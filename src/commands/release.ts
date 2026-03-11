@@ -18,32 +18,19 @@ export function registerReleaseCommand(pi: ExtensionAPI): void {
       }
 
       if (!config.release.pipeline) {
-        const prompt = [
-          "# Release Setup",
-          "",
-          "This is your first release with supipowers. How do you publish?",
-          "",
-          "1. **npm** — npm publish to registry",
-          "2. **github** — GitHub Release with gh CLI",
-          "3. **manual** — I'll handle publishing myself",
-          "",
-          "Tell me which option, and I'll save it for future releases.",
-          "",
-          "After you answer, I'll analyze commits and prepare the release.",
-        ].join("\n");
-
-        pi.sendMessage(
-          {
-            customType: "supi-release-setup",
-            content: [{ type: "text", text: prompt }],
-            display: "none",
-          },
-          { deliverAs: "steer" }
+        const choice = await ctx.ui.select(
+          "Release Setup — How do you publish?",
+          ["npm — npm publish to registry", "github — GitHub Release with gh CLI", "manual — I'll handle publishing myself"],
+          { helpText: "Select your release pipeline" },
         );
-        return;
+
+        if (!choice) return;
+        const pipeline = choice.split(" — ")[0];
+        updateConfig(ctx.cwd, { release: { pipeline } });
+        ctx.ui.notify(`Release pipeline set to: ${pipeline}`, "info");
       }
 
-      notifyInfo(ctx, "Release started", `Pipeline: ${config.release.pipeline}`);
+      notifyInfo(ctx, "Release started", `Pipeline: ${config.release.pipeline || "just configured"}`);
 
       const prompt = buildAnalyzerPrompt(lastTag);
 

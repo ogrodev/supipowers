@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { loadConfig } from "../config/loader.js";
-import { resolveProfile } from "../config/profiles.js";
+import { listProfiles, resolveProfile } from "../config/profiles.js";
 import { buildReviewPrompt } from "../quality/gate-runner.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
@@ -18,6 +18,21 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
       else if (args?.includes("--profile")) {
         const match = args.match(/--profile\s+(\S+)/);
         if (match) profileOverride = match[1];
+      }
+
+      // If no flag provided and UI is available, let the user pick
+      if (!profileOverride && ctx.hasUI) {
+        const profiles = listProfiles(ctx.cwd);
+        const choice = await ctx.ui.select(
+          "Review profile",
+          profiles,
+          {
+            initialIndex: profiles.indexOf(config.defaultProfile),
+            helpText: "Select review depth · Esc to cancel",
+          },
+        );
+        if (!choice) return;
+        profileOverride = choice;
       }
 
       const profile = resolveProfile(ctx.cwd, config, profileOverride);
