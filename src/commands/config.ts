@@ -3,10 +3,29 @@ import { loadConfig, updateConfig } from "../config/loader.js";
 import { listProfiles } from "../config/profiles.js";
 import type { SupipowersConfig } from "../types.js";
 
+const FRAMEWORK_OPTIONS = [
+  { value: "", label: "not set — auto-detect on first /supi:qa run", command: null },
+  { value: "vitest", label: "vitest — npx vitest run", command: "npx vitest run" },
+  { value: "jest", label: "jest — npx jest", command: "npx jest" },
+  { value: "mocha", label: "mocha — npx mocha", command: "npx mocha" },
+  { value: "pytest", label: "pytest — pytest", command: "pytest" },
+  { value: "cargo-test", label: "cargo-test — cargo test", command: "cargo test" },
+  { value: "go-test", label: "go-test — go test ./...", command: "go test ./..." },
+  { value: "npm-test", label: "npm-test — npm test", command: "npm test" },
+];
+
+const PIPELINE_OPTIONS = [
+  { value: "", label: "not set — choose on first /supi:release run" },
+  { value: "npm", label: "npm — npm publish to registry" },
+  { value: "github", label: "github — GitHub Release with gh CLI" },
+  { value: "manual", label: "manual — I'll handle publishing myself" },
+];
+
 interface SettingDef {
   label: string;
   key: string;
-  type: "select" | "toggle" | "number" | "text";
+  helpText: string;
+  type: "select" | "toggle";
   options?: string[];
   get: (config: SupipowersConfig) => string;
   set: (cwd: string, value: unknown) => void;
@@ -17,6 +36,7 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "Default profile",
       key: "defaultProfile",
+      helpText: "Review depth used when no flag is passed to /supi:review",
       type: "select",
       options: listProfiles(cwd),
       get: (c) => c.defaultProfile,
@@ -25,6 +45,7 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "Max parallel agents",
       key: "orchestration.maxParallelAgents",
+      helpText: "Sub-agents running concurrently in each /supi:run batch",
       type: "select",
       options: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
       get: (c) => String(c.orchestration.maxParallelAgents),
@@ -33,6 +54,7 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "Max fix retries",
       key: "orchestration.maxFixRetries",
+      helpText: "Times a failed task is retried before marking it blocked",
       type: "select",
       options: ["0", "1", "2", "3", "4", "5"],
       get: (c) => String(c.orchestration.maxFixRetries),
@@ -41,6 +63,7 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "Max nesting depth",
       key: "orchestration.maxNestingDepth",
+      helpText: "How deep sub-agents can spawn other sub-agents",
       type: "select",
       options: ["0", "1", "2", "3", "4", "5"],
       get: (c) => String(c.orchestration.maxNestingDepth),
@@ -49,6 +72,7 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "Model preference",
       key: "orchestration.modelPreference",
+      helpText: "Which model sub-agents use for code generation",
       type: "select",
       options: ["auto", "fast", "balanced", "quality"],
       get: (c) => c.orchestration.modelPreference,
@@ -57,6 +81,7 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "LSP setup guide",
       key: "lsp.setupGuide",
+      helpText: "Show LSP setup tips when no language server is active",
       type: "toggle",
       get: (c) => c.lsp.setupGuide ? "on" : "off",
       set: (d, v) => updateConfig(d, { lsp: { setupGuide: v === "on" } }),
@@ -64,6 +89,7 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "Notification verbosity",
       key: "notifications.verbosity",
+      helpText: "How much detail supipowers shows in notifications",
       type: "select",
       options: ["quiet", "normal", "verbose"],
       get: (c) => c.notifications.verbosity,
@@ -72,23 +98,30 @@ function buildSettings(cwd: string): SettingDef[] {
     {
       label: "QA framework",
       key: "qa.framework",
-      type: "text",
+      helpText: "Test runner used by /supi:qa",
+      type: "select",
+      options: FRAMEWORK_OPTIONS.map((f) => f.label),
       get: (c) => c.qa.framework ?? "not set",
-      set: (d, v) => updateConfig(d, { qa: { framework: v || null } }),
-    },
-    {
-      label: "QA command",
-      key: "qa.command",
-      type: "text",
-      get: (c) => c.qa.command ?? "not set",
-      set: (d, v) => updateConfig(d, { qa: { command: v || null } }),
+      set: (d, v) => {
+        const chosen = FRAMEWORK_OPTIONS.find((f) => f.label === v);
+        if (chosen) {
+          updateConfig(d, { qa: { framework: chosen.value || null, command: chosen.command } });
+        }
+      },
     },
     {
       label: "Release pipeline",
       key: "release.pipeline",
-      type: "text",
+      helpText: "How /supi:release publishes your project",
+      type: "select",
+      options: PIPELINE_OPTIONS.map((p) => p.label),
       get: (c) => c.release.pipeline ?? "not set",
-      set: (d, v) => updateConfig(d, { release: { pipeline: v || null } }),
+      set: (d, v) => {
+        const chosen = PIPELINE_OPTIONS.find((p) => p.label === v);
+        if (chosen) {
+          updateConfig(d, { release: { pipeline: chosen.value || null } });
+        }
+      },
     },
   ];
 }
@@ -123,29 +156,26 @@ export function handleConfig(ctx: ExtensionContext): void {
       if (!setting) break;
 
       if (setting.type === "select" && setting.options) {
+        const currentValue = setting.get(config);
+        const currentIndex = setting.options.findIndex((o) => o.startsWith(currentValue));
         const value = await ctx.ui.select(
           setting.label,
           setting.options,
-          { initialIndex: setting.options.indexOf(setting.get(config)) },
+          {
+            initialIndex: Math.max(0, currentIndex),
+            helpText: setting.helpText,
+          },
         );
         if (value !== undefined) {
           setting.set(ctx.cwd, value);
-          ctx.ui.notify(`${setting.label} → ${value}`, "info");
+          const display = value.split(" — ")[0];
+          ctx.ui.notify(`${setting.label} → ${display}`, "info");
         }
       } else if (setting.type === "toggle") {
         const current = setting.get(config);
         const newValue = current === "on" ? "off" : "on";
         setting.set(ctx.cwd, newValue);
         ctx.ui.notify(`${setting.label} → ${newValue}`, "info");
-      } else if (setting.type === "text") {
-        const value = await ctx.ui.input(
-          setting.label,
-          setting.get(config) === "not set" ? undefined : setting.get(config),
-        );
-        if (value !== undefined) {
-          setting.set(ctx.cwd, value);
-          ctx.ui.notify(`${setting.label} → ${value || "cleared"}`, "info");
-        }
       }
     }
   })();
