@@ -1,4 +1,4 @@
-# supipowers
+# Supipowers
 
 Agentic workflows for [OMP](https://github.com/can1357/oh-my-pi). Plan features, orchestrate sub-agents, run quality gates, and ship releases — all from slash commands.
 
@@ -22,16 +22,16 @@ omp install npm:supipowers -l
 
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `/supi` | Overview — available commands and project status |
-| `/supi:plan` | Collaborative planning with task breakdown |
-| `/supi:run` | Execute a plan with parallel sub-agents |
-| `/supi:review` | Quality gates at chosen depth |
-| `/supi:qa` | Run test suite and E2E pipeline |
-| `/supi:release` | Version bump, release notes, publish |
-| `/supi:config` | View and edit configuration |
-| `/supi:status` | Check running sub-agents and progress |
+| Command         | What it does                                     |
+| --------------- | ------------------------------------------------ |
+| `/supi`         | Overview — available commands and project status |
+| `/supi:plan`    | Collaborative planning with task breakdown       |
+| `/supi:run`     | Execute a plan with parallel sub-agents          |
+| `/supi:review`  | Quality gates at chosen depth                    |
+| `/supi:qa`      | Run test suite and E2E pipeline                  |
+| `/supi:release` | Version bump, release notes, publish             |
+| `/supi:config`  | View and edit configuration                      |
+| `/supi:status`  | Check running sub-agents and progress            |
 
 ### Planning
 
@@ -98,11 +98,11 @@ Layered config: project (`.omp/supipowers/config.json`) overrides global (`~/.om
 
 Three built-in profiles control quality gate depth:
 
-| Profile | LSP | AI Review | Code Quality | Tests | E2E |
-|---|---|---|---|---|---|
-| `quick` | yes | quick scan | no | no | no |
-| `thorough` | yes | deep review | yes | no | no |
-| `full-regression` | yes | deep review | yes | yes | yes |
+| Profile           | LSP | AI Review   | Code Quality | Tests | E2E |
+| ----------------- | --- | ----------- | ------------ | ----- | --- |
+| `quick`           | yes | quick scan  | no           | no    | no  |
+| `thorough`        | yes | deep review | yes          | no    | no  |
+| `full-regression` | yes | deep review | yes          | yes   | yes |
 
 Create custom profiles in `.omp/supipowers/profiles/`.
 
@@ -112,19 +112,19 @@ Create custom profiles in `.omp/supipowers/profiles/`.
 {
   "defaultProfile": "thorough",
   "orchestration": {
-    "maxParallelAgents": 3,    // concurrent sub-agents per batch
-    "maxFixRetries": 2,        // retry failed tasks
-    "maxNestingDepth": 2,      // sub-agent nesting limit
-    "modelPreference": "auto"  // "auto" | "fast" | "capable" | "<model-id>"
+    "maxParallelAgents": 3, // concurrent sub-agents per batch
+    "maxFixRetries": 2, // retry failed tasks
+    "maxNestingDepth": 2, // sub-agent nesting limit
+    "modelPreference": "auto", // "auto" | "fast" | "capable" | "<model-id>"
   },
   "lsp": {
     "autoDetect": true,
-    "setupGuide": true
+    "setupGuide": true,
   },
   "qa": {
-    "framework": null,  // auto-detected and cached
-    "command": null
-  }
+    "framework": null, // auto-detected and cached
+    "command": null,
+  },
 }
 ```
 
