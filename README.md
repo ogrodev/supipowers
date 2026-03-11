@@ -1,4 +1,4 @@
-<img width="1584" height="672" alt="image" src="https://github.com/user-attachments/assets/fd446416-4573-488d-890c-6dbd4a13553f" />
+<img width="1584" height="672" alt="image" src="https://github.com/user-attachments/assets/ec0f3658-54d7-4471-91ba-39297191f055" />
 
 # Supipowers
 
