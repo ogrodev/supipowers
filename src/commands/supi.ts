@@ -15,7 +15,7 @@ export function handleSupi(pi: ExtensionAPI, ctx: ExtensionContext): void {
       "/supi:plan     — Start collaborative planning",
       "/supi:run      — Execute a plan with sub-agents",
       "/supi:review   — Run quality gates",
-      "/supi:qa       — Run QA pipeline",
+      "/supi:qa       — E2E product testing with Playwright",
       "/supi:fix-pr   — Fix PR review comments",
       "/supi:release  — Release automation",
       "/supi:config   — Manage configuration",

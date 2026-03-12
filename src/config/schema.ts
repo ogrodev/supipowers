@@ -25,6 +25,7 @@ const ConfigSchema = Type.Object({
   qa: Type.Object({
     framework: Type.Union([Type.String(), Type.Null()]),
     command: Type.Union([Type.String(), Type.Null()]),
+    e2e: Type.Boolean(),
   }),
   release: Type.Object({
     pipeline: Type.Union([Type.String(), Type.Null()]),

@@ -1,184 +1,268 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { detectAndCache } from "../qa/detector.js";
-import { notifyInfo, notifyError } from "../notifications/renderer.js";
-import { findActiveSession, findSessionWithFailures } from "../storage/qa-sessions.js";
-import {
-  createNewSession,
-  advancePhase,
-  getFailedTests,
-  getNextPhase,
-  getPhaseStatusLine,
-} from "../qa/session.js";
-import { buildDiscoveryPrompt } from "../qa/phases/discovery.js";
-import { buildMatrixPrompt } from "../qa/phases/matrix.js";
-import { buildExecutionPrompt } from "../qa/phases/execution.js";
-import { buildReportingPrompt } from "../qa/phases/reporting.js";
-import type { QaPhase, QaSessionLedger } from "../types.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
+import { loadE2eQaConfig, saveE2eQaConfig, DEFAULT_E2E_QA_CONFIG } from "../qa/config.js";
+import { loadE2eMatrix } from "../qa/matrix.js";
+import { createNewE2eSession } from "../qa/session.js";
+import { buildE2eOrchestratorPrompt } from "../qa/prompt-builder.js";
+import { findActiveSession, getSessionDir } from "../storage/qa-sessions.js";
+import type { E2eQaConfig, AppType, E2eRegression } from "../qa/types.js";
 
-const PHASE_LABELS: Record<QaPhase, string> = {
-  discovery: "Discovery — Scan for test cases",
-  matrix: "Matrix — Build traceability matrix",
-  execution: "Execution — Run tests",
-  reporting: "Reporting — Generate summary",
-};
+function getScriptsDir(): string {
+  return path.join(path.dirname(new URL(import.meta.url).pathname), "..", "qa", "scripts");
+}
+
+function findSkillPath(skillName: string): string | null {
+  const candidates = [
+    path.join(process.cwd(), "skills", skillName, "SKILL.md"),
+    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", "skills", skillName, "SKILL.md"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+const APP_TYPE_OPTIONS = [
+  "nextjs-app — Next.js App Router",
+  "nextjs-pages — Next.js Pages Router",
+  "react-router — React with React Router",
+  "vite — Vite-based app",
+  "express — Express.js server",
+  "generic — Other web app",
+];
+
+const BROWSER_OPTIONS = [
+  "chromium (recommended)",
+  "firefox",
+  "webkit",
+];
+
+const RETRY_OPTIONS = [
+  "1",
+  "2 (recommended)",
+  "3",
+];
+
+async function runSetupWizard(
+  ctx: any,
+  detectedAppType: string | null,
+  detectedDevCommand: string | null,
+  detectedPort: number | null,
+): Promise<E2eQaConfig | null> {
+  // 1. App type
+  const appTypeChoice = await ctx.ui.select(
+    "App type",
+    APP_TYPE_OPTIONS,
+    { helpText: detectedAppType ? `Auto-detected: ${detectedAppType}` : "Select your web app framework" },
+  );
+  if (!appTypeChoice) return null;
+  const appType = appTypeChoice.split(" ")[0] as AppType;
+
+  // 2. Dev command
+  const defaultDev = detectedDevCommand || "npm run dev";
+  const devCommand = await ctx.ui.input(
+    "Dev server command",
+    defaultDev,
+    { helpText: "Command to start your development server" },
+  );
+  if (devCommand === undefined) return null;
+
+  // 3. Port
+  const defaultPort = String(detectedPort || 3000);
+  const portStr = await ctx.ui.input(
+    "Dev server port",
+    defaultPort,
+    { helpText: "Port your dev server runs on" },
+  );
+  if (portStr === undefined) return null;
+  const port = parseInt(portStr, 10) || 3000;
+
+  // 4. Browser
+  const browserChoice = await ctx.ui.select(
+    "Browser for E2E tests",
+    BROWSER_OPTIONS,
+    { helpText: "Playwright browser to use" },
+  );
+  if (!browserChoice) return null;
+  const browser = browserChoice.split(" ")[0] as "chromium" | "firefox" | "webkit";
+
+  // 5. Max retries
+  const retryChoice = await ctx.ui.select(
+    "Max test retries",
+    RETRY_OPTIONS,
+    { helpText: "How many times to retry failing tests" },
+  );
+  if (!retryChoice) return null;
+  const maxRetries = parseInt(retryChoice, 10);
+
+  return {
+    app: {
+      type: appType,
+      devCommand: devCommand || defaultDev,
+      port,
+      baseUrl: `http://localhost:${port}`,
+    },
+    playwright: {
+      browser,
+      headless: true,
+      timeout: 30000,
+    },
+    execution: {
+      maxRetries,
+      maxFlows: 20,
+    },
+  };
+}
 
 export function registerQaCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:qa", {
-    description: "Run QA pipeline with session management (discovery → matrix → execution → reporting)",
+    description: "Run autonomous E2E product testing pipeline with playwright",
     async handler(args, ctx) {
-      const framework = detectAndCache(ctx.cwd);
+      const scriptsDir = getScriptsDir();
 
-      if (!framework) {
-        notifyError(
-          ctx,
-          "No test framework detected",
-          "Configure manually via /supi:config"
-        );
-        return;
+      // ── Step 1: Detect app type ─────────────────────────────────────
+      let detectedType: string | null = null;
+      let detectedDevCommand: string | null = null;
+      let detectedPort: number | null = null;
+
+      try {
+        const detectResult = await pi.exec("bash", [
+          path.join(scriptsDir, "detect-app-type.sh"),
+          ctx.cwd,
+        ], { cwd: ctx.cwd });
+
+        if (detectResult.code === 0) {
+          const detected = JSON.parse(detectResult.stdout.trim());
+          detectedType = detected.type;
+          detectedDevCommand = detected.devCommand;
+          detectedPort = detected.port;
+        }
+      } catch { /* proceed without detection */ }
+
+      // ── Step 2: Ensure playwright ────────────────────────────────────
+      try {
+        const pwResult = await pi.exec("bash", [
+          path.join(scriptsDir, "ensure-playwright.sh"),
+          ctx.cwd,
+        ], { cwd: ctx.cwd });
+
+        if (pwResult.code !== 0) {
+          notifyWarning(ctx, "Playwright setup issue", "Could not verify playwright installation. The agent will handle it.");
+        }
+      } catch {
+        notifyWarning(ctx, "Playwright check skipped", "Will be handled during execution");
       }
 
-      // ── Step 1: Session selection ──────────────────────────────────
-      let ledger: QaSessionLedger | null = null;
+      // ── Step 3: Load or create config ────────────────────────────────
+      let config = loadE2eQaConfig(ctx.cwd);
 
+      if (!config && ctx.hasUI) {
+        config = await runSetupWizard(ctx, detectedType, detectedDevCommand, detectedPort);
+        if (!config) return; // user cancelled
+        saveE2eQaConfig(ctx.cwd, config);
+        ctx.ui.notify("E2E QA config saved to .omp/supipowers/e2e-qa.json", "info");
+      }
+
+      if (!config) {
+        // Use defaults with detected values
+        config = {
+          ...DEFAULT_E2E_QA_CONFIG,
+          app: {
+            type: (detectedType as AppType) || "generic",
+            devCommand: detectedDevCommand || "npm run dev",
+            port: detectedPort || 3000,
+            baseUrl: `http://localhost:${detectedPort || 3000}`,
+          },
+        };
+      }
+
+      // ── Step 4: Check for unresolved regressions ─────────────────────
       const activeSession = findActiveSession(ctx.cwd);
-      const failedSession = findSessionWithFailures(ctx.cwd);
-
-      if (ctx.hasUI && !args?.trim()) {
-        const sessionOptions: string[] = [];
-
-        if (failedSession) {
-          const failCount = failedSession.results.filter((r) => r.status === "fail").length;
-          sessionOptions.push(`Resume ${failedSession.id} (${failCount} failed test${failCount !== 1 ? "s" : ""})`);
-        } else if (activeSession) {
-          const next = getNextPhase(activeSession);
-          sessionOptions.push(`Resume ${activeSession.id} (${next ?? "all phases done"} pending)`);
-        }
-
-        sessionOptions.push("Start new session");
-
-        if (sessionOptions.length > 1) {
-          const choice = await ctx.ui.select(
-            "QA Session",
-            sessionOptions,
-            { helpText: "Select session · Esc to cancel" },
-          );
-          if (!choice) return;
-
-          if (choice.startsWith("Resume")) {
-            ledger = failedSession ?? activeSession;
+      if (activeSession && activeSession.regressions.length > 0 && ctx.hasUI) {
+        const unresolvedRegressions = activeSession.regressions.filter((r: E2eRegression) => !r.resolution);
+        if (unresolvedRegressions.length > 0) {
+          for (const regression of unresolvedRegressions) {
+            const choice = await ctx.ui.select(
+              `Regression: ${regression.flowName}`,
+              [
+                "This is a bug — needs fixing",
+                "Behavior changed intentionally — update the test",
+                "Skip for now",
+              ],
+              { helpText: `Was passing, now fails: ${regression.error}` },
+            );
+            if (!choice) continue;
+            if (choice.startsWith("This is a bug")) regression.resolution = "bug";
+            else if (choice.startsWith("Behavior changed")) regression.resolution = "intentional-change";
+            else regression.resolution = "skipped";
           }
         }
       }
 
-      // Create new session if none selected
-      if (!ledger) {
-        ledger = createNewSession(ctx.cwd, framework.name);
-        notifyInfo(ctx, "QA session created", ledger.id);
+      // ── Step 5: Route discovery ──────────────────────────────────────
+      let discoveredRoutes = "";
+      try {
+        const routeResult = await pi.exec("bash", [
+          path.join(scriptsDir, "discover-routes.sh"),
+          ctx.cwd,
+          config.app.type,
+        ], { cwd: ctx.cwd });
+
+        if (routeResult.code === 0 && routeResult.stdout.trim()) {
+          discoveredRoutes = routeResult.stdout.trim();
+        }
+      } catch { /* agent will discover routes manually */ }
+
+      if (!discoveredRoutes) {
+        discoveredRoutes = '{"path": "/", "file": "unknown", "type": "page", "hasForm": false}';
       }
 
-      // ── Step 2: Phase selection ────────────────────────────────────
-      type PhaseAction =
-        | { type: "run-phase"; phase: QaPhase }
-        | { type: "rerun-failed" };
+      // ── Step 6: Load previous matrix ─────────────────────────────────
+      const previousMatrix = loadE2eMatrix(ctx.cwd);
+      const matrixJson = previousMatrix ? JSON.stringify(previousMatrix, null, 2) : null;
 
-      let action: PhaseAction | null = null;
-      const nextPhase = getNextPhase(ledger);
-      const failedTests = getFailedTests(ledger);
+      // ── Step 7: Create session ───────────────────────────────────────
+      const ledger = createNewE2eSession(ctx.cwd, config);
+      const sessionDir = getSessionDir(ctx.cwd, ledger.id);
 
-      if (ctx.hasUI && !args?.trim()) {
-        const phaseOptions: string[] = [];
-
-        // Offer re-run failed if there are failures
-        if (failedTests.length > 0) {
-          phaseOptions.push(`Re-run ${failedTests.length} failed test${failedTests.length !== 1 ? "s" : ""} only`);
-        }
-
-        // Offer starting from next pending phase
-        if (nextPhase) {
-          phaseOptions.push(PHASE_LABELS[nextPhase]);
-        }
-
-        if (phaseOptions.length > 1) {
-          const statusLine = getPhaseStatusLine(ledger);
-          const choice = await ctx.ui.select(
-            `QA Phase · ${statusLine}`,
-            phaseOptions,
-            { helpText: "Select action · Esc to cancel" },
-          );
-          if (!choice) return;
-
-          if (choice.startsWith("Re-run")) {
-            action = { type: "rerun-failed" };
-          } else {
-            // Extract phase from label
-            const selectedPhase = (Object.entries(PHASE_LABELS) as [QaPhase, string][])
-              .find(([, label]) => label === choice)?.[0];
-            if (selectedPhase) {
-              action = { type: "run-phase", phase: selectedPhase };
-            }
-          }
-        } else if (nextPhase) {
-          // Only one option — just run the next phase
-          action = { type: "run-phase", phase: nextPhase };
-        }
-      } else if (nextPhase) {
-        action = { type: "run-phase", phase: nextPhase };
+      // ── Step 8: Load skill ───────────────────────────────────────────
+      let skillContent = "";
+      const skillPath = findSkillPath("qa-strategy");
+      if (skillPath) {
+        try {
+          skillContent = fs.readFileSync(skillPath, "utf-8");
+        } catch { /* proceed without */ }
       }
 
-      if (!action) {
-        notifyInfo(ctx, "QA pipeline complete", getPhaseStatusLine(ledger));
-        return;
-      }
+      // ── Step 9: Build and send prompt ────────────────────────────────
+      const routeCount = discoveredRoutes.split("\n").filter(Boolean).length;
 
-      // ── Step 3: Execute ────────────────────────────────────────────
-      let prompt: string;
-
-      if (action.type === "rerun-failed") {
-        ledger = advancePhase(ctx.cwd, ledger, "execution", "running");
-        prompt = buildExecutionPrompt(ledger, { failedOnly: true, failedTests });
-        notifyInfo(ctx, "QA re-running failed tests", `${failedTests.length} test(s)`);
-      } else {
-        const phase = action.phase;
-        ledger = advancePhase(ctx.cwd, ledger, phase, "running");
-
-        switch (phase) {
-          case "discovery":
-            prompt = buildDiscoveryPrompt(framework, ctx.cwd);
-            break;
-          case "matrix":
-            prompt = buildMatrixPrompt(ledger);
-            break;
-          case "execution":
-            prompt = buildExecutionPrompt(ledger);
-            break;
-          case "reporting":
-            prompt = buildReportingPrompt(ledger);
-            break;
-        }
-
-        notifyInfo(ctx, `QA phase: ${phase}`, `session: ${ledger.id}`);
-      }
-
-      // Include session context for the sub-agent
-      const sessionContext = [
-        `\n\n## QA Session Context`,
-        ``,
-        `Session ID: ${ledger.id}`,
-        `Session ledger path: .omp/supipowers/qa-sessions/${ledger.id}/ledger.json`,
-        ``,
-        `Current ledger state:`,
-        "```json",
-        JSON.stringify(ledger, null, 2),
-        "```",
-      ].join("\n");
+      const prompt = buildE2eOrchestratorPrompt({
+        cwd: ctx.cwd,
+        appType: config.app,
+        sessionDir,
+        scriptsDir,
+        config,
+        discoveredRoutes,
+        previousMatrix: matrixJson,
+        skillContent,
+      });
 
       pi.sendMessage(
         {
           customType: "supi-qa",
-          content: [{ type: "text", text: prompt + sessionContext }],
+          content: [{ type: "text", text: prompt }],
           display: "none",
         },
-        { deliverAs: "steer" }
+        { deliverAs: "steer" },
+      );
+
+      notifyInfo(
+        ctx,
+        `E2E QA started: ${config.app.type}`,
+        `${routeCount} routes discovered | session ${ledger.id}`,
       );
     },
   });

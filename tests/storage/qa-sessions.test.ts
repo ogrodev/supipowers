@@ -10,24 +10,28 @@ import {
   listSessions,
   findActiveSession,
   findSessionWithFailures,
+  getSessionDir,
 } from "../../src/storage/qa-sessions.js";
-import type { QaSessionLedger } from "../../src/types.js";
+import type { E2eSessionLedger } from "../../src/qa/types.js";
+import { DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
 
-function makeLedger(overrides: Partial<QaSessionLedger> = {}): QaSessionLedger {
+function makeLedger(overrides: Partial<E2eSessionLedger> = {}): E2eSessionLedger {
   return {
     id: "qa-20260311-120000-abcd",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    framework: "vitest",
+    appType: "generic",
+    baseUrl: "http://localhost:3000",
     phases: {
-      discovery: { status: "pending" },
-      matrix: { status: "pending" },
-      execution: { status: "pending" },
-      reporting: { status: "pending" },
+      "flow-discovery": { status: "pending" },
+      "test-generation": { status: "pending" },
+      "execution": { status: "pending" },
+      "reporting": { status: "pending" },
     },
-    tests: [],
-    matrix: [],
+    flows: [],
     results: [],
+    regressions: [],
+    config: DEFAULT_E2E_QA_CONFIG,
     ...overrides,
   };
 }
@@ -67,10 +71,10 @@ describe("qa-sessions storage", () => {
   test("updateSession persists changes", () => {
     const ledger = makeLedger();
     createSession(tmpDir, ledger);
-    ledger.phases.discovery.status = "completed";
+    ledger.phases["flow-discovery"].status = "completed";
     ledger.updatedAt = new Date().toISOString();
     updateSession(tmpDir, ledger);
-    expect(loadSession(tmpDir, ledger.id)?.phases.discovery.status).toBe("completed");
+    expect(loadSession(tmpDir, ledger.id)?.phases["flow-discovery"].status).toBe("completed");
   });
 
   test("listSessions returns sessions sorted newest-first", () => {
@@ -93,10 +97,10 @@ describe("qa-sessions storage", () => {
     const ledger = makeLedger({
       id: "qa-20260311-120000-actv",
       phases: {
-        discovery: { status: "completed" },
-        matrix: { status: "completed" },
-        execution: { status: "pending" },
-        reporting: { status: "pending" },
+        "flow-discovery": { status: "completed" },
+        "test-generation": { status: "completed" },
+        "execution": { status: "pending" },
+        "reporting": { status: "pending" },
       },
     });
     createSession(tmpDir, ledger);
@@ -107,22 +111,22 @@ describe("qa-sessions storage", () => {
     const ledger = makeLedger({
       id: "qa-20260311-120000-done",
       phases: {
-        discovery: { status: "completed" },
-        matrix: { status: "completed" },
-        execution: { status: "completed" },
-        reporting: { status: "completed" },
+        "flow-discovery": { status: "completed" },
+        "test-generation": { status: "completed" },
+        "execution": { status: "completed" },
+        "reporting": { status: "completed" },
       },
     });
     createSession(tmpDir, ledger);
     expect(findActiveSession(tmpDir)).toBeNull();
   });
 
-  test("findSessionWithFailures returns session containing failed tests", () => {
+  test("findSessionWithFailures returns session containing failed results", () => {
     const ledger = makeLedger({
       id: "qa-20260311-120000-fail",
       results: [
-        { testId: "t1", status: "pass", retryCount: 0, lastRunAt: new Date().toISOString() },
-        { testId: "t2", status: "fail", retryCount: 0, lastRunAt: new Date().toISOString(), error: "boom" },
+        { flowId: "login", testFile: "login.spec.ts", status: "pass", retryCount: 0 },
+        { flowId: "signup", testFile: "signup.spec.ts", status: "fail", error: "boom", retryCount: 0 },
       ],
     });
     createSession(tmpDir, ledger);
@@ -133,15 +137,15 @@ describe("qa-sessions storage", () => {
     const ledger = makeLedger({
       id: "qa-20260311-120000-pass",
       results: [
-        { testId: "t1", status: "pass", retryCount: 0, lastRunAt: new Date().toISOString() },
+        { flowId: "login", testFile: "login.spec.ts", status: "pass", retryCount: 0 },
       ],
     });
     createSession(tmpDir, ledger);
     expect(findSessionWithFailures(tmpDir)).toBeNull();
   });
 
-  test("findSessionWithFailures returns null when no results yet", () => {
-    createSession(tmpDir, makeLedger({ id: "qa-20260311-120000-nores" }));
-    expect(findSessionWithFailures(tmpDir)).toBeNull();
+  test("getSessionDir returns correct path", () => {
+    const dir = getSessionDir(tmpDir, "qa-20260311-120000-abcd");
+    expect(dir).toBe(path.join(tmpDir, ".omp", "supipowers", "qa-sessions", "qa-20260311-120000-abcd"));
   });
 });

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { QaSessionLedger } from "../types.js";
+import type { E2eSessionLedger } from "../qa/types.js";
 
 const SESSIONS_DIR = [".omp", "supipowers", "qa-sessions"];
 
@@ -8,7 +8,7 @@ function getSessionsDir(cwd: string): string {
   return path.join(cwd, ...SESSIONS_DIR);
 }
 
-function getSessionDir(cwd: string, sessionId: string): string {
+export function getSessionDir(cwd: string, sessionId: string): string {
   return path.join(getSessionsDir(cwd), sessionId);
 }
 
@@ -22,17 +22,17 @@ export function generateSessionId(): string {
 }
 
 /** Create a new QA session */
-export function createSession(cwd: string, ledger: QaSessionLedger): void {
+export function createSession(cwd: string, ledger: E2eSessionLedger): void {
   const sessionDir = getSessionDir(cwd, ledger.id);
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.writeFileSync(
     path.join(sessionDir, "ledger.json"),
-    JSON.stringify(ledger, null, 2) + "\n"
+    JSON.stringify(ledger, null, 2) + "\n",
   );
 }
 
 /** Load a QA session ledger */
-export function loadSession(cwd: string, sessionId: string): QaSessionLedger | null {
+export function loadSession(cwd: string, sessionId: string): E2eSessionLedger | null {
   const filePath = path.join(getSessionDir(cwd, sessionId), "ledger.json");
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -43,7 +43,7 @@ export function loadSession(cwd: string, sessionId: string): QaSessionLedger | n
 }
 
 /** Update a QA session ledger */
-export function updateSession(cwd: string, ledger: QaSessionLedger): void {
+export function updateSession(cwd: string, ledger: E2eSessionLedger): void {
   const filePath = path.join(getSessionDir(cwd, ledger.id), "ledger.json");
   fs.writeFileSync(filePath, JSON.stringify(ledger, null, 2) + "\n");
 }
@@ -60,12 +60,12 @@ export function listSessions(cwd: string): string[] {
 }
 
 /** Find the latest session with incomplete phases */
-export function findActiveSession(cwd: string): QaSessionLedger | null {
+export function findActiveSession(cwd: string): E2eSessionLedger | null {
   for (const sessionId of listSessions(cwd)) {
     const ledger = loadSession(cwd, sessionId);
     if (!ledger) continue;
     const allCompleted = Object.values(ledger.phases).every(
-      (p) => p.status === "completed"
+      (p) => p.status === "completed",
     );
     if (!allCompleted) return ledger;
   }
@@ -73,7 +73,7 @@ export function findActiveSession(cwd: string): QaSessionLedger | null {
 }
 
 /** Find the latest session with failed test results */
-export function findSessionWithFailures(cwd: string): QaSessionLedger | null {
+export function findSessionWithFailures(cwd: string): E2eSessionLedger | null {
   for (const sessionId of listSessions(cwd)) {
     const ledger = loadSession(cwd, sessionId);
     if (!ledger) continue;

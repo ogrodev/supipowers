@@ -1,37 +1,55 @@
-import type { QaPhase, QaPhaseStatus, QaSessionLedger, QaTestCase, QaTestResult } from "../types.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { E2ePhase, E2ePhaseStatus, E2eSessionLedger, E2eQaConfig } from "./types.js";
 import { generateSessionId, createSession, updateSession } from "../storage/qa-sessions.js";
 
-const PHASE_ORDER: QaPhase[] = ["discovery", "matrix", "execution", "reporting"];
+const PHASE_ORDER: E2ePhase[] = ["flow-discovery", "test-generation", "execution", "reporting"];
 
-/** Create a new QA session with all phases pending */
-export function createNewSession(cwd: string, framework: string): QaSessionLedger {
+const PHASE_LABELS: Record<E2ePhase, string> = {
+  "flow-discovery": "Discovery",
+  "test-generation": "Generation",
+  "execution": "Execution",
+  "reporting": "Reporting",
+};
+
+/** Create a new E2E QA session with all phases pending */
+export function createNewE2eSession(cwd: string, config: E2eQaConfig): E2eSessionLedger {
   const now = new Date().toISOString();
-  const ledger: QaSessionLedger = {
+  const ledger: E2eSessionLedger = {
     id: generateSessionId(),
     createdAt: now,
     updatedAt: now,
-    framework,
+    appType: config.app.type,
+    baseUrl: config.app.baseUrl,
     phases: {
-      discovery: { status: "pending" },
-      matrix: { status: "pending" },
-      execution: { status: "pending" },
-      reporting: { status: "pending" },
+      "flow-discovery": { status: "pending" },
+      "test-generation": { status: "pending" },
+      "execution": { status: "pending" },
+      "reporting": { status: "pending" },
     },
-    tests: [],
-    matrix: [],
+    flows: [],
     results: [],
+    regressions: [],
+    config,
   };
+
+  // Create session with subdirectories
   createSession(cwd, ledger);
+
+  const sessionDir = path.join(cwd, ".omp", "supipowers", "qa-sessions", ledger.id);
+  fs.mkdirSync(path.join(sessionDir, "tests"), { recursive: true });
+  fs.mkdirSync(path.join(sessionDir, "screenshots"), { recursive: true });
+
   return ledger;
 }
 
 /** Update a phase's status and timestamps, persist to disk */
-export function advancePhase(
+export function advanceE2ePhase(
   cwd: string,
-  ledger: QaSessionLedger,
-  phase: QaPhase,
-  status: QaPhaseStatus
-): QaSessionLedger {
+  ledger: E2eSessionLedger,
+  phase: E2ePhase,
+  status: E2ePhaseStatus,
+): E2eSessionLedger {
   const now = new Date().toISOString();
   const record = { ...ledger.phases[phase] };
 
@@ -43,7 +61,7 @@ export function advancePhase(
     record.completedAt = now;
   }
 
-  const updated: QaSessionLedger = {
+  const updated: E2eSessionLedger = {
     ...ledger,
     updatedAt: now,
     phases: { ...ledger.phases, [phase]: record },
@@ -52,42 +70,8 @@ export function advancePhase(
   return updated;
 }
 
-/** Merge new test results into the ledger, upserting by testId */
-export function mergeTestResults(
-  ledger: QaSessionLedger,
-  newResults: QaTestResult[]
-): QaSessionLedger {
-  const resultMap = new Map(ledger.results.map((r) => [r.testId, r]));
-
-  for (const incoming of newResults) {
-    const existing = resultMap.get(incoming.testId);
-    if (existing) {
-      resultMap.set(incoming.testId, {
-        ...incoming,
-        retryCount: existing.retryCount + 1,
-      });
-    } else {
-      resultMap.set(incoming.testId, incoming);
-    }
-  }
-
-  return {
-    ...ledger,
-    updatedAt: new Date().toISOString(),
-    results: Array.from(resultMap.values()),
-  };
-}
-
-/** Get test cases whose latest result is "fail" */
-export function getFailedTests(ledger: QaSessionLedger): QaTestCase[] {
-  const failedIds = new Set(
-    ledger.results.filter((r) => r.status === "fail").map((r) => r.testId)
-  );
-  return ledger.tests.filter((t) => failedIds.has(t.id));
-}
-
 /** Get the next phase that is not completed */
-export function getNextPhase(ledger: QaSessionLedger): QaPhase | null {
+export function getNextE2ePhase(ledger: E2eSessionLedger): E2ePhase | null {
   for (const phase of PHASE_ORDER) {
     if (ledger.phases[phase].status !== "completed") return phase;
   }
@@ -95,9 +79,9 @@ export function getNextPhase(ledger: QaSessionLedger): QaPhase | null {
 }
 
 /** Format phase status for TUI display */
-export function getPhaseStatusLine(ledger: QaSessionLedger): string {
+export function getE2ePhaseStatusLine(ledger: E2eSessionLedger): string {
   return PHASE_ORDER.map((phase) => {
-    const label = phase.charAt(0).toUpperCase() + phase.slice(1);
+    const label = PHASE_LABELS[phase];
     const done = ledger.phases[phase].status === "completed";
     return done ? `[done] ${label}` : `[ ] ${label}`;
   }).join(" · ");

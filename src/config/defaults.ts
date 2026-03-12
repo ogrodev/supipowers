@@ -19,6 +19,7 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   qa: {
     framework: null,
     command: null,
+    e2e: false,
   },
   release: {
     pipeline: null,
