@@ -1,9 +1,28 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { loadConfig } from "../config/loader.js";
 import { savePlan } from "../storage/plans.js";
-import { notifySuccess, notifyInfo } from "../notifications/renderer.js";
+import { notifySuccess, notifyInfo, notifyError } from "../notifications/renderer.js";
+import {
+  generateVisualSessionId,
+  createSessionDir,
+  getScriptsDir,
+  parseServerInfo,
+} from "../visual/companion.js";
+import { buildVisualInstructions } from "../visual/prompt-instructions.js";
+import { buildPlanningPrompt, buildQuickPlanPrompt } from "../planning/prompt-builder.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+/** Module-level tracking for cleanup */
+let activeSessionDir: string | null = null;
+
+export function getActiveVisualSessionDir(): string | null {
+  return activeSessionDir;
+}
+
+export function setActiveVisualSessionDir(dir: string | null): void {
+  activeSessionDir = dir;
+}
 
 export function registerPlanCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:plan", {
@@ -24,39 +43,85 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
       const isQuick = args?.startsWith("--quick");
       const quickDesc = isQuick ? args.replace("--quick", "").trim() : "";
 
+      // ── Visual companion consent ──────────────────────────────────
+      let visualUrl: string | null = null;
+      let visualSessionDir: string | null = null;
+
+      if (ctx.hasUI && !isQuick) {
+        const modeChoice = await ctx.ui.select(
+          "Planning mode",
+          [
+            "Terminal only",
+            "Terminal + Visual companion (opens browser)",
+          ],
+          { helpText: "Visual companion shows mockups and diagrams in a browser · Esc to cancel" },
+        );
+        if (!modeChoice) return;
+
+        if (modeChoice.startsWith("Terminal + Visual")) {
+          const sessionId = generateVisualSessionId();
+          visualSessionDir = createSessionDir(ctx.cwd, sessionId);
+          const scriptsDir = getScriptsDir();
+
+          // Install server dependencies if needed
+          const nodeModules = path.join(scriptsDir, "node_modules");
+          if (!fs.existsSync(nodeModules)) {
+            notifyInfo(ctx, "Installing visual companion dependencies...");
+            const installResult = await pi.exec("npm", ["install", "--production"], { cwd: scriptsDir });
+            if (installResult.code !== 0) {
+              notifyError(ctx, "Failed to install visual companion dependencies", installResult.stderr);
+              visualSessionDir = null;
+            }
+          }
+
+          if (visualSessionDir) {
+            // Stop any previous visual companion
+            if (activeSessionDir) {
+              const stopScript = path.join(scriptsDir, "stop-server.sh");
+              await pi.exec("bash", [stopScript, activeSessionDir], { cwd: scriptsDir });
+            }
+
+            // Start the server (pass session dir via env command since ExecOptions has no env)
+            const startScript = path.join(scriptsDir, "start-server.sh");
+            const startResult = await pi.exec("env", [
+              `SUPI_VISUAL_DIR=${visualSessionDir}`,
+              "bash",
+              startScript,
+            ], { cwd: scriptsDir });
+
+            if (startResult.code === 0) {
+              const serverInfo = parseServerInfo(startResult.stdout);
+              if (serverInfo) {
+                visualUrl = serverInfo.url;
+                activeSessionDir = visualSessionDir;
+                notifyInfo(ctx, "Visual companion ready", visualUrl);
+              } else {
+                notifyError(ctx, "Visual companion started but no connection info received");
+                visualSessionDir = null;
+              }
+            } else {
+              const errorMsg = startResult.stderr || startResult.stdout;
+              notifyError(ctx, "Failed to start visual companion", errorMsg);
+              visualSessionDir = null;
+            }
+          }
+        }
+      }
+
+      // ── Build prompt ──────────────────────────────────────────────
       let prompt: string;
       if (isQuick && quickDesc) {
-        prompt = [
-          "Generate a concise implementation plan for the following task.",
-          "Skip brainstorming — go straight to task breakdown.",
-          "",
-          `Task: ${quickDesc}`,
-          "",
-          "Format the plan as markdown with YAML frontmatter (name, created, tags).",
-          "Each task should have: name, [parallel-safe] or [sequential] annotation,",
-          "**files**, **criteria**, and **complexity** (small/medium/large).",
-          "",
-          skillContent ? "Follow these planning guidelines:\n" + skillContent : "",
-          "",
-          "After generating the plan, save it and confirm with the user.",
-        ].join("\n");
+        prompt = buildQuickPlanPrompt(quickDesc, skillContent || undefined);
       } else {
-        prompt = [
-          "You are starting a collaborative planning session with the user.",
-          "",
-          args ? `The user wants to plan: ${args}` : "Ask the user what they want to build or accomplish.",
-          "",
-          "Process:",
-          "1. Understand the goal — ask clarifying questions (one at a time)",
-          "2. Propose 2-3 approaches with trade-offs",
-          "3. Generate a task breakdown once aligned",
-          "",
-          "Format the final plan as markdown with YAML frontmatter (name, created, tags).",
-          "Each task: name, [parallel-safe] or [sequential] annotation,",
-          "**files**, **criteria**, **complexity** (small/medium/large).",
-          "",
-          skillContent ? "Follow these planning guidelines:\n" + skillContent : "",
-        ].join("\n");
+        prompt = buildPlanningPrompt({
+          topic: args || undefined,
+          skillContent: skillContent || undefined,
+        });
+      }
+
+      // Append visual companion instructions if active
+      if (visualUrl && visualSessionDir) {
+        prompt += "\n\n" + buildVisualInstructions(visualUrl, visualSessionDir);
       }
 
       pi.sendMessage(

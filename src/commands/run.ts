@@ -11,7 +11,7 @@ import {
   loadAllAgentResults,
 } from "../storage/runs.js";
 import { scheduleBatches } from "../orchestrator/batch-scheduler.js";
-import { dispatchAgent, dispatchFixAgent } from "../orchestrator/dispatcher.js";
+import { dispatchAgent, dispatchAgentWithReview, dispatchFixAgent } from "../orchestrator/dispatcher.js";
 import { summarizeBatch, buildRunSummary } from "../orchestrator/result-collector.js";
 import { analyzeConflicts } from "../orchestrator/conflict-resolver.js";
 import { isLspAvailable } from "../lsp/detector.js";
@@ -22,6 +22,8 @@ import {
   notifyError,
   notifySummary,
 } from "../notifications/renderer.js";
+import { buildWorktreePrompt } from "../git/worktree.js";
+import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import type { RunManifest, AgentResult } from "../types.js";
 
 export function registerRunCommand(pi: ExtensionAPI): void {
@@ -32,6 +34,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       const profile = resolveProfile(ctx.cwd, config, args?.replace("--profile ", "") || undefined);
 
       let manifest = findActiveRun(ctx.cwd);
+      let branchName: string | null = null;
 
       if (!manifest) {
         const plans = listPlans(ctx.cwd);
@@ -60,6 +63,36 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         };
         createRun(ctx.cwd, manifest);
         notifyInfo(ctx, `Run started: ${manifest.id}`, `${plan.tasks.length} tasks in ${batches.length} batches`);
+
+        // Offer worktree setup for isolated execution
+        if (ctx.hasUI) {
+          const useWorktree = await ctx.ui.select(
+            "Execution isolation",
+            [
+              "Run in current workspace",
+              "Create isolated worktree (recommended)",
+            ],
+            { helpText: "Worktrees prevent work-in-progress from polluting your workspace" },
+          );
+          if (!useWorktree) return;
+
+          if (useWorktree.startsWith("Create isolated")) {
+            branchName = `supi/${plan.name || manifest.id}`;
+            const worktreeInstructions = buildWorktreePrompt({
+              branchName,
+              cwd: ctx.cwd,
+            });
+            pi.sendMessage(
+              {
+                customType: "supi-worktree-setup",
+                content: [{ type: "text", text: worktreeInstructions }],
+                display: "none",
+              },
+              { deliverAs: "steer" },
+            );
+            notifyInfo(ctx, "Setting up worktree", `Branch: ${branchName}`);
+          }
+        }
       } else {
         notifyInfo(ctx, `Resuming run: ${manifest.id}`);
       }
@@ -89,7 +122,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           const task = plan.tasks.find((t) => t.id === taskId);
           if (!task) return Promise.resolve(null);
 
-          return dispatchAgent({
+          return dispatchAgentWithReview({
             pi,
             ctx,
             task,
@@ -170,6 +203,23 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         `(${runSummary.done} clean, ${runSummary.doneWithConcerns} with concerns, ` +
         `${runSummary.blocked} blocked) | ${runSummary.totalFilesChanged} files | ${durationSec}s`
       );
+
+      // Offer branch finish options if we created a worktree branch
+      if (branchName && manifest.status === "completed") {
+        const finishInstructions = buildBranchFinishPrompt({
+          branchName,
+          baseBranch: "main",
+        });
+        pi.sendMessage(
+          {
+            customType: "supi-branch-finish",
+            content: [{ type: "text", text: finishInstructions }],
+            display: "none",
+          },
+          { deliverAs: "steer" },
+        );
+        notifyInfo(ctx, "Run succeeded", "Follow branch finish instructions to integrate your work");
+      }
     },
   });
 }

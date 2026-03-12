@@ -5,7 +5,8 @@ import { homedir, tmpdir } from "node:os";
 import { registerSupiCommand, handleSupi } from "./commands/supi.js";
 import { registerConfigCommand, handleConfig } from "./commands/config.js";
 import { registerStatusCommand, handleStatus } from "./commands/status.js";
-import { registerPlanCommand } from "./commands/plan.js";
+import { registerPlanCommand, getActiveVisualSessionDir, setActiveVisualSessionDir } from "./commands/plan.js";
+import { getScriptsDir } from "./visual/companion.js";
 import { registerRunCommand } from "./commands/run.js";
 import { registerReviewCommand } from "./commands/review.js";
 import { registerQaCommand } from "./commands/qa.js";
@@ -61,6 +62,14 @@ export default function supipowers(pi: ExtensionAPI): void {
 
   // Session start
   pi.on("session_start", async (_event, ctx) => {
+    // Clean up any leftover visual companion from a previous session
+    const previousVisualDir = getActiveVisualSessionDir();
+    if (previousVisualDir) {
+      const stopScript = join(getScriptsDir(), "stop-server.sh");
+      pi.exec("bash", [stopScript, previousVisualDir], { cwd: getScriptsDir() }).catch(() => {});
+      setActiveVisualSessionDir(null);
+    }
+
     // Check for updates in the background
     const currentVersion = getInstalledVersion();
     if (!currentVersion) return;

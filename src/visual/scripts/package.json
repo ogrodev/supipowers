@@ -1,0 +1,10 @@
+{
+  "name": "supipowers-visual-server",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0",
+    "chokidar": "^4.0.0"
+  }
+}

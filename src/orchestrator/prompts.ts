@@ -1,44 +1,26 @@
 // src/orchestrator/prompts.ts
 import type { PlanTask, SupipowersConfig } from "../types.js";
 import { buildLspValidationPrompt } from "../lsp/bridge.js";
+import { buildImplementerPrompt } from "./agent-prompts.js";
+import { buildReceivingReviewInstructions } from "../discipline/receiving-review.js";
 
 /** Build the system prompt for a sub-agent executing a task */
 export function buildTaskPrompt(
   task: PlanTask,
   planContext: string,
   config: SupipowersConfig,
-  lspAvailable: boolean
+  lspAvailable: boolean,
+  workDir?: string,
 ): string {
-  const sections: string[] = [
-    "# Task Assignment",
-    "",
-    `## Task: ${task.name}`,
-    "",
-    task.description,
-    "",
-    "## Target Files",
-    ...task.files.map((f) => `- ${f}`),
-    "",
-    "## Acceptance Criteria",
-    task.criteria,
-    "",
-    "## Context",
+  const prompt = buildImplementerPrompt({
+    task,
     planContext,
-    "",
-    "## Instructions",
-    "1. Read the target files to understand current state",
-    "2. Implement the changes described above",
-    "3. Ensure acceptance criteria are met",
-    "4. Report your status when done",
-    "",
-    "Report one of these statuses:",
-    "- DONE: Task completed successfully, all criteria met",
-    "- DONE_WITH_CONCERNS: Completed but with caveats (explain what)",
-    "- BLOCKED: Cannot complete (explain why and what's needed)",
-  ];
+    workDir: workDir ?? process.cwd(),
+  });
 
   if (lspAvailable) {
-    sections.push(
+    return [
+      prompt,
       "",
       "## LSP Available",
       "You have access to the LSP tool. Use it to:",
@@ -46,11 +28,11 @@ export function buildTaskPrompt(
       "- Find references before renaming symbols",
       "- Validate your work has no type errors",
       "",
-      buildLspValidationPrompt(task.files)
-    );
+      buildLspValidationPrompt(task.files),
+    ].join("\n");
   }
 
-  return sections.join("\n");
+  return prompt;
 }
 
 /** Build prompt for a fix agent */
@@ -82,6 +64,10 @@ export function buildFixPrompt(
     "2. Identify and fix the issue",
     "3. Verify the acceptance criteria are now met",
     "4. Report your status",
+    "",
+    "---",
+    "",
+    buildReceivingReviewInstructions(),
   ];
 
   if (lspAvailable) {
