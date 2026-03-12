@@ -12,6 +12,7 @@ import { registerReviewCommand } from "./commands/review.js";
 import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
+import { registerFixPrCommand } from "./commands/fix-pr.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -43,6 +44,7 @@ export default function supipowers(pi: ExtensionAPI): void {
   registerQaCommand(pi);
   registerReleaseCommand(pi);
   registerUpdateCommand(pi);
+  registerFixPrCommand(pi);
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
   // message submission, so no chat message appears and no "Working..." indicator
