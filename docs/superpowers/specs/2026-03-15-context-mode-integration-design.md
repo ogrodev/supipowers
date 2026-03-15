@@ -98,9 +98,9 @@ Registers OMP event handlers. Single function called from `src/index.ts`.
 export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersConfig): void;
 ```
 
-Registers three handlers:
+If `config.contextMode.enabled` is false, no handlers are registered (true master toggle). When enabled, registers three handlers, each with its own sub-toggle:
 
-1. **`tool_result`** — Calls `compressToolResult()` when `config.contextMode.enabled` is true. Returns the compressed content or `undefined` to pass through.
+1. **`tool_result`** — Calls `compressToolResult()`. Returns the compressed content or `undefined` to pass through.
 
 2. **`tool_call`** — When `config.contextMode.blockHttpCommands` is true and context-mode is detected: checks if the bash command matches curl/wget/HTTP fetch patterns. If so, returns `{ block: true, reason }` with a message directing the model to use `ctx_fetch_and_index`. If context-mode is not detected, does not block (the model has no alternative).
 
