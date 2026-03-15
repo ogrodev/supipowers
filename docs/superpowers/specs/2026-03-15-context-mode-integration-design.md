@@ -364,8 +364,11 @@ export function extractEvents(
 ): Omit<TrackedEvent, "id">[];
 ```
 
-**Extraction rules by tool type:**
+**General extraction rule (applied first):**
 
+- If `event.isError === true` for any tool type, emit an `"error"` event with `{ toolName: event.toolName, content: textContent }` in addition to any tool-specific events. This ensures all tool failures (not just Bash) are captured for the snapshot's error section.
+
+**Extraction rules by tool type:**
 - **Bash** (`BashToolDetails`): Extract command executed, exit code. If the command is a git operation (`git commit`, `git checkout`, `git merge`, etc.), emit a `"git"` event. If exit code is non-zero, emit an `"error"` event with the stderr. If the command contains `cd`, emit a `"cwd"` event.
 - **Read** (`ReadToolDetails`): Emit a `"file"` event with `{ op: "read", path, lines }`.
 - **Edit** (`EditToolDetails`): Emit a `"file"` event with `{ op: "edit", path, changes }`.
@@ -462,9 +465,9 @@ export function buildResumeSnapshot(
   <files_modified>
     - [deduplicated file paths from "file" write/edit events]
   </files_modified>
-  <unresolved_errors>
-    - [most recent N "error" events, regardless of resolution status]
-  </unresolved_errors>
+  <recent_errors>
+    - [most recent N "error" events from any tool type]
+  </recent_errors>
   <git_state>
     - [latest branch, recent commits from "git" events]
   </git_state>
