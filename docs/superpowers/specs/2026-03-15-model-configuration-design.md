@@ -127,7 +127,7 @@ The dispatcher performs model switching per task:
 1. Save current model (`ctx.model`) and thinking level (`pi.getThinkingLevel()`).
 2. Call `resolveModelString(config.orchestration.models, role, task.model)`.
 3. Call `resolveModel(modelString, ctx.modelRegistry)` to get the `Model` object.
-4. Call `pi.setModel(resolved.model)`.
+4. Call `pi.setModel(resolved.model)`. If it returns `false`, the provider lacks credentials — block the task with `"No API key configured for provider '{provider}'. Configure it in OMP settings."` and skip to step 7 (restore).
 5. If `resolved.thinkingLevel`, call `pi.setThinkingLevel(resolved.thinkingLevel)`.
 6. Dispatch the sub-agent.
 7. Restore previous model and thinking level (runs even on failure).
@@ -219,6 +219,10 @@ Same as "model not found." The plan is portable, dispatch is environment-specifi
 ### Save-and-Restore Safety
 
 The previous model and thinking level are always restored after dispatch, even on failure. A failed dispatch never leaves the session on a half-switched model.
+
+### Model Set Fails (No API Key)
+
+`pi.setModel()` returns `Promise<boolean>` — `false` when the provider has no API key configured. A model can exist in the registry but lack credentials. If `setModel` returns `false`: block the task with a message naming the provider, restore the previous model, and continue the batch. No retry via fix-agent — missing credentials aren't fixable by an agent.
 
 ---
 
