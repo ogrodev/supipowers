@@ -180,4 +180,24 @@ describe("registerContextModeHooks", () => {
     // Handler should not throw even without event store initialized
     expect(() => handler(event, {})).not.toThrow();
   });
+
+  test("registers compaction hooks when compaction enabled", () => {
+    const pi = createMockPi();
+    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const events = pi.on.mock.calls.map((c: any[]) => c[0]);
+    expect(events).toContain("session_before_compact");
+    expect(events).toContain("session.compacting");
+  });
+
+  test("does not register compaction hooks when disabled", () => {
+    const pi = createMockPi();
+    const config = {
+      ...DEFAULT_CONFIG,
+      contextMode: { ...DEFAULT_CONFIG.contextMode, compaction: false },
+    };
+    registerContextModeHooks(pi, config);
+    const events = pi.on.mock.calls.map((c: any[]) => c[0]);
+    expect(events).not.toContain("session_before_compact");
+    expect(events).not.toContain("session.compacting");
+  });
 });

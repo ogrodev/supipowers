@@ -20,7 +20,7 @@ import { registerContextModeHooks } from "./context-mode/hooks.js";
 // message submission and "Working..." indicator
 const TUI_COMMANDS: Record<string, (pi: ExtensionAPI, ctx: any) => void> = {
   "supi": (pi, ctx) => handleSupi(pi, ctx),
-  "supi:config": (_pi, ctx) => handleConfig(ctx),
+  "supi:config": (pi, ctx) => handleConfig(pi, ctx),
   "supi:status": (_pi, ctx) => handleStatus(ctx),
   "supi:update": (pi, ctx) => handleUpdate(pi, ctx),
 };

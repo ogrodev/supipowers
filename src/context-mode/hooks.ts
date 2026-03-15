@@ -5,6 +5,7 @@ import { compressToolResult } from "./compressor.js";
 import { detectContextMode, type ContextModeStatus } from "./detector.js";
 import { EventStore } from "./event-store.js";
 import { extractEvents, extractPromptEvents } from "./event-extractor.js";
+import { buildResumeSnapshot } from "./snapshot-builder.js";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -123,6 +124,34 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
     if (!systemPrompt) return { systemPrompt: skill };
     return { systemPrompt: systemPrompt + "\n\n" + skill };
   });
+
+  // Phase 3: Compaction integration
+  if (config.contextMode.compaction && eventStore) {
+    let pendingSnapshot: string | null = null;
+
+    pi.on("session_before_compact", () => {
+      try {
+        pendingSnapshot = buildResumeSnapshot(eventStore!, sessionId);
+      } catch (e) {
+        (pi as any).logger?.warn?.("context-mode: snapshot build failed", e);
+        pendingSnapshot = null;
+      }
+      return undefined; // don't cancel or replace compaction
+    });
+
+    pi.on("session.compacting", () => {
+      if (!pendingSnapshot) return undefined;
+      const snapshot = pendingSnapshot;
+      pendingSnapshot = null;
+      return {
+        context: snapshot.split("\n"),
+        preserveData: {
+          resumeSnapshot: snapshot,
+          eventCounts: eventStore!.getEventCounts(sessionId),
+        },
+      };
+    });
+  }
 }
 
 /** Get the event store instance (for use by compaction hooks) */

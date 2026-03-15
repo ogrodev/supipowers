@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { listProfiles } from "../config/profiles.js";
+import { checkInstallation } from "../context-mode/installer.js";
 import type { SupipowersConfig } from "../types.js";
 
 const FRAMEWORK_OPTIONS = [
@@ -126,7 +127,7 @@ function buildSettings(cwd: string): SettingDef[] {
   ];
 }
 
-export function handleConfig(ctx: ExtensionContext): void {
+export function handleConfig(pi: ExtensionAPI, ctx: ExtensionContext): void {
   if (!ctx.hasUI) {
     ctx.ui.notify("Config UI requires interactive mode", "warning");
     return;
@@ -179,13 +180,33 @@ export function handleConfig(ctx: ExtensionContext): void {
       }
     }
   })();
+
+  // Context-mode status (async, fire-and-forget)
+  checkInstallation(
+    (cmd: string, args: string[]) => pi.exec(cmd, args),
+    pi.getActiveTools(),
+  ).then((status) => {
+    const lines = [
+      "",
+      "Context Mode:",
+      `  CLI installed: ${status.cliInstalled ? "\u2713" + (status.version ? ` v${status.version}` : "") : "\u2717"}`,
+      `  MCP configured: ${status.mcpConfigured ? "\u2713" : "\u2717"}`,
+      `  Tools available: ${status.toolsAvailable ? "\u2713" : "\u2717"}`,
+    ];
+    if (!status.mcpConfigured && status.cliInstalled) {
+      lines.push("  \u2192 Run `omp mcp add context-mode` to enable");
+    }
+    ctx.ui.notify(lines.join("\n"), "info");
+  }).catch(() => {
+    // Silently ignore — context-mode status is optional
+  });
 }
 
 export function registerConfigCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:config", {
     description: "View and manage Supipowers configuration",
     async handler(_args, ctx) {
-      handleConfig(ctx);
+      handleConfig(pi, ctx);
     },
   });
 }
