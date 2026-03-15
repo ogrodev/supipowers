@@ -153,3 +153,48 @@ export function compressToolResult(
   if (!compressed) return undefined;
   return { content: [{ type: "text", text: compressed }] };
 }
+
+/** Summarization prompt templates by tool type */
+const SUMMARIZE_PROMPTS: Record<string, string> = {
+  bash: "Summarize this command output. Preserve: exit code, key findings, error messages, file paths mentioned. Be concise (under 200 words).",
+  read: "Summarize this file content. Preserve: file structure, key exports/functions, notable patterns. Be concise (under 200 words).",
+  grep: "Summarize these search results. Preserve: match count, most relevant matches, file distribution. Be concise (under 200 words).",
+  find: "Summarize these file paths. Preserve: directory structure, file count, key patterns. Be concise (under 200 words).",
+};
+
+/** Compress with optional LLM summarization for very large outputs */
+export async function compressToolResultWithLLM(
+  event: ToolResultEventLike,
+  threshold: number,
+  llmThreshold: number,
+  summarize: (text: string, toolName: string) => Promise<string>,
+): Promise<ToolResultEventResult | undefined> {
+  // General rules
+  if (event.isError) return undefined;
+  if (hasNonTextContent(event.content)) return undefined;
+  const byteSize = measureTextBytes(event.content);
+  if (byteSize <= threshold) return undefined;
+
+  const text = getCombinedText(event.content);
+
+  // Below LLM threshold: use structural compression
+  if (byteSize < llmThreshold) {
+    return compressToolResult(event, threshold);
+  }
+
+  // Above LLM threshold: try LLM summarization
+  try {
+    const prompt = SUMMARIZE_PROMPTS[event.toolName] ?? "Summarize this output concisely (under 200 words).";
+    const summary = await summarize(`${prompt}\n\n${text}`, event.toolName);
+
+    // Validate: non-empty and reasonably sized
+    if (summary && summary.length >= 50) {
+      return { content: [{ type: "text", text: summary }] };
+    }
+  } catch {
+    // Fall through to structural compression
+  }
+
+  // Fallback
+  return compressToolResult(event, threshold);
+}
