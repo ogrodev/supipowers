@@ -161,4 +161,23 @@ describe("registerContextModeHooks", () => {
     const result = handler(event, {});
     expect(result).toBeUndefined();
   });
+
+  test("tool_result handler extracts events without throwing (fire-and-forget)", () => {
+    const pi = createMockPi();
+    registerContextModeHooks(pi, DEFAULT_CONFIG);
+
+    const handler = pi._handlers.get("tool_result");
+    const event = {
+      type: "tool_result",
+      toolName: "read",
+      toolCallId: "test-id",
+      input: { path: "/src/test.ts" },
+      content: [{ type: "text", text: "content" }],
+      isError: false,
+      details: undefined,
+    };
+
+    // Handler should not throw even without event store initialized
+    expect(() => handler(event, {})).not.toThrow();
+  });
 });
