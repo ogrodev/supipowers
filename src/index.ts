@@ -13,6 +13,8 @@ import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
+import { loadConfig } from "./config/loader.js";
+import { registerContextModeHooks } from "./context-mode/hooks.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -61,6 +63,11 @@ export default function supipowers(pi: ExtensionAPI): void {
     handler(pi, ctx);
     return { handled: true };
   });
+
+  // Context-mode integration
+  const config = loadConfig(process.cwd());
+  registerContextModeHooks(pi, config);
+
 
   // Session start
   pi.on("session_start", async (_event, ctx) => {

@@ -15,6 +15,7 @@ import { dispatchAgent, dispatchAgentWithReview, dispatchFixAgent } from "../orc
 import { summarizeBatch, buildRunSummary } from "../orchestrator/result-collector.js";
 import { analyzeConflicts } from "../orchestrator/conflict-resolver.js";
 import { isLspAvailable } from "../lsp/detector.js";
+import { detectContextMode } from "../context-mode/detector.js";
 import {
   notifyInfo,
   notifySuccess,
@@ -104,6 +105,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       }
       const plan = parsePlan(planContent, manifest.planRef);
       const lsp = isLspAvailable(pi.getActiveTools());
+      const ctxMode = detectContextMode(pi.getActiveTools()).available;
 
       for (const batch of manifest.batches) {
         if (batch.status === "completed") continue;
@@ -129,6 +131,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
             planContext: plan.context,
             config,
             lspAvailable: lsp,
+            contextModeAvailable: ctxMode,
           });
         });
 
@@ -140,7 +143,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           }
         }
 
-        const conflicts = analyzeConflicts(batchResults, plan.tasks);
+        const conflicts = analyzeConflicts(batchResults, plan.tasks, ctxMode);
         if (conflicts.hasConflicts) {
           notifyWarning(
             ctx,
@@ -164,6 +167,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
                 planContext: plan.context,
                 config,
                 lspAvailable: lsp,
+                contextModeAvailable: ctxMode,
                 previousOutput: failed.output,
                 failureReason: failed.output,
               });

@@ -10,17 +10,18 @@ export function buildTaskPrompt(
   planContext: string,
   config: SupipowersConfig,
   lspAvailable: boolean,
+  contextModeAvailable = false,
   workDir?: string,
 ): string {
-  const prompt = buildImplementerPrompt({
+  let result = buildImplementerPrompt({
     task,
     planContext,
     workDir: workDir ?? process.cwd(),
   });
 
   if (lspAvailable) {
-    return [
-      prompt,
+    result = [
+      result,
       "",
       "## LSP Available",
       "You have access to the LSP tool. Use it to:",
@@ -32,7 +33,22 @@ export function buildTaskPrompt(
     ].join("\n");
   }
 
-  return prompt;
+  if (contextModeAvailable) {
+    result = [
+      result,
+      "",
+      "## Context Mode Available",
+      "You have access to context-mode sandbox tools. Prefer them for large operations:",
+      "- Use `ctx_batch_execute` for multi-step operations",
+      "- Use `ctx_search` for querying indexed knowledge",
+      "- Use `ctx_execute` for single commands with large output",
+      "- Do NOT use `curl`/`wget` \u2014 use `ctx_fetch_and_index`",
+      "- Do NOT use Read for analyzing large files \u2014 use `ctx_execute_file`",
+      "- Keep output under 500 words; write large artifacts to files",
+    ].join("\n");
+  }
+
+  return result;
 }
 
 /** Build prompt for a fix agent */
@@ -40,7 +56,8 @@ export function buildFixPrompt(
   task: PlanTask,
   previousOutput: string,
   failureReason: string,
-  lspAvailable: boolean
+  lspAvailable: boolean,
+  contextModeAvailable = false,
 ): string {
   const sections: string[] = [
     "# Fix Assignment",
@@ -74,13 +91,28 @@ export function buildFixPrompt(
     sections.push("", buildLspValidationPrompt(task.files));
   }
 
+  if (contextModeAvailable) {
+    sections.push(
+      "",
+      "## Context Mode Available",
+      "You have access to context-mode sandbox tools. Prefer them for large operations:",
+      "- Use `ctx_batch_execute` for multi-step operations",
+      "- Use `ctx_search` for querying indexed knowledge",
+      "- Use `ctx_execute` for single commands with large output",
+      "- Do NOT use `curl`/`wget` \u2014 use `ctx_fetch_and_index`",
+      "- Do NOT use Read for analyzing large files \u2014 use `ctx_execute_file`",
+      "- Keep output under 500 words; write large artifacts to files",
+    );
+  }
+
   return sections.join("\n");
 }
 
 /** Build prompt for a merge/conflict resolution agent */
 export function buildMergePrompt(
   conflictingFiles: string[],
-  agentOutputs: { taskName: string; output: string }[]
+  agentOutputs: { taskName: string; output: string }[],
+  contextModeAvailable = false,
 ): string {
   const sections: string[] = [
     "# Merge Assignment",
@@ -104,6 +136,14 @@ export function buildMergePrompt(
     "3. Merge the changes so both intents are preserved",
     "4. If changes are incompatible, report BLOCKED with explanation"
   );
+
+  if (contextModeAvailable) {
+    sections.push(
+      "",
+      "## Context Mode Available",
+      "Prefer context-mode sandbox tools for large operations.",
+    );
+  }
 
   return sections.join("\n");
 }

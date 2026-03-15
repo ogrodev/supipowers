@@ -1,27 +1,44 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { PlanTask, AgentResult, AgentStatus, SupipowersConfig } from "../types.js";
+import type {
+  PlanTask,
+  AgentResult,
+  AgentStatus,
+  SupipowersConfig,
+} from "../types.js";
 import { buildTaskPrompt, buildFixPrompt } from "./prompts.js";
 import {
   buildSpecComplianceReviewPrompt,
   buildCodeQualityReviewPrompt,
 } from "./agent-prompts.js";
 import { isLspAvailable } from "../lsp/detector.js";
-import { notifySuccess, notifyWarning, notifyError, notifyInfo } from "../notifications/renderer.js";
+import { detectContextMode } from "../context-mode/detector.js";
+import {
+  notifySuccess,
+  notifyWarning,
+  notifyError,
+  notifyInfo,
+} from "../notifications/renderer.js";
 
 export interface DispatchOptions {
   pi: ExtensionAPI;
-  ctx: { cwd: string; ui: { notify(msg: string, type?: "info" | "warning" | "error"): void } };
+  ctx: {
+    cwd: string;
+    ui: { notify(msg: string, type?: "info" | "warning" | "error"): void };
+  };
   task: PlanTask;
   planContext: string;
   config: SupipowersConfig;
   lspAvailable: boolean;
+  contextModeAvailable: boolean;
 }
 
-export async function dispatchAgent(options: DispatchOptions): Promise<AgentResult> {
-  const { pi, ctx, task, planContext, config, lspAvailable } = options;
+export async function dispatchAgent(
+  options: DispatchOptions,
+): Promise<AgentResult> {
+  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable } = options;
   const startTime = Date.now();
 
-  const prompt = buildTaskPrompt(task, planContext, config, lspAvailable);
+  const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
 
   try {
     const result = await executeSubAgent(pi, prompt, task, config);
@@ -40,7 +57,11 @@ export async function dispatchAgent(options: DispatchOptions): Promise<AgentResu
         notifySuccess(ctx, `Task ${task.id} completed`, task.name);
         break;
       case "done_with_concerns":
-        notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
+        notifyWarning(
+          ctx,
+          `Task ${task.id} done with concerns`,
+          agentResult.concerns,
+        );
         break;
       case "blocked":
         notifyError(ctx, `Task ${task.id} blocked`, agentResult.output);
@@ -72,11 +93,11 @@ async function executeSubAgent(
   pi: ExtensionAPI,
   prompt: string,
   task: PlanTask,
-  config: SupipowersConfig
+  config: SupipowersConfig,
 ): Promise<SubAgentResult> {
   throw new Error(
     "Sub-agent dispatch requires OMP runtime. " +
-    "This will be connected to createAgentSession during integration."
+      "This will be connected to createAgentSession during integration.",
   );
 }
 
@@ -88,7 +109,7 @@ export interface ReviewResult {
 
 /**
  * Dispatch an implementer with 2-stage review (spec compliance + code quality).
- * Follows superpowers' subagent-driven-development pattern:
+ * Follows supipowers' subagent-driven-development pattern:
  * 1. Implementer implements + self-reviews
  * 2. Spec compliance reviewer verifies implementation matches spec
  * 3. If spec issues → re-dispatch implementer with feedback
@@ -98,7 +119,7 @@ export interface ReviewResult {
 export async function dispatchAgentWithReview(
   options: DispatchOptions & { workDir?: string },
 ): Promise<AgentResult> {
-  const { pi, ctx, task, planContext, config, lspAvailable, workDir } = options;
+  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable, workDir } = options;
   const maxReviewRetries = config.orchestration.maxFixRetries;
 
   // Step 1: Dispatch implementer
@@ -111,7 +132,12 @@ export async function dispatchAgentWithReview(
 
   // Step 2: Spec compliance review
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
-    const specReview = await dispatchSpecReview(pi, task, implementResult, config);
+    const specReview = await dispatchSpecReview(
+      pi,
+      task,
+      implementResult,
+      config,
+    );
 
     if (specReview.passed) {
       notifyInfo(ctx, `Task ${task.id} spec review passed`);
@@ -119,14 +145,22 @@ export async function dispatchAgentWithReview(
     }
 
     if (attempt === maxReviewRetries) {
-      notifyWarning(ctx, `Task ${task.id} spec review failed after ${maxReviewRetries + 1} attempts`, specReview.issues);
+      notifyWarning(
+        ctx,
+        `Task ${task.id} spec review failed after ${maxReviewRetries + 1} attempts`,
+        specReview.issues,
+      );
       implementResult.status = "done_with_concerns";
       implementResult.concerns = `Spec compliance issues: ${specReview.issues}`;
       return implementResult;
     }
 
     // Re-dispatch implementer with spec review feedback
-    notifyInfo(ctx, `Task ${task.id} spec issues found, re-dispatching`, specReview.issues);
+    notifyInfo(
+      ctx,
+      `Task ${task.id} spec issues found, re-dispatching`,
+      specReview.issues,
+    );
     const fixResult = await dispatchFixAgent({
       ...options,
       previousOutput: implementResult.output,
@@ -141,7 +175,12 @@ export async function dispatchAgentWithReview(
 
   // Step 3: Code quality review
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
-    const qualityReview = await dispatchQualityReview(pi, task, implementResult, config);
+    const qualityReview = await dispatchQualityReview(
+      pi,
+      task,
+      implementResult,
+      config,
+    );
 
     if (qualityReview.passed) {
       notifyInfo(ctx, `Task ${task.id} quality review passed`);
@@ -149,14 +188,22 @@ export async function dispatchAgentWithReview(
     }
 
     if (attempt === maxReviewRetries) {
-      notifyWarning(ctx, `Task ${task.id} quality review failed after ${maxReviewRetries + 1} attempts`, qualityReview.issues);
+      notifyWarning(
+        ctx,
+        `Task ${task.id} quality review failed after ${maxReviewRetries + 1} attempts`,
+        qualityReview.issues,
+      );
       implementResult.status = "done_with_concerns";
       implementResult.concerns = `Code quality issues: ${qualityReview.issues}`;
       return implementResult;
     }
 
     // Re-dispatch implementer with quality review feedback
-    notifyInfo(ctx, `Task ${task.id} quality issues found, re-dispatching`, qualityReview.issues);
+    notifyInfo(
+      ctx,
+      `Task ${task.id} quality issues found, re-dispatching`,
+      qualityReview.issues,
+    );
     const fixResult = await dispatchFixAgent({
       ...options,
       previousOutput: implementResult.output,
@@ -186,7 +233,8 @@ async function dispatchSpecReview(
 
   try {
     const result = await executeSubAgent(pi, prompt, task, config);
-    const passed = result.status === "done" ||
+    const passed =
+      result.status === "done" ||
       result.output.toLowerCase().includes("spec compliant");
     return {
       passed,
@@ -226,12 +274,19 @@ async function dispatchQualityReview(
 }
 
 export async function dispatchFixAgent(
-  options: DispatchOptions & { previousOutput: string; failureReason: string }
+  options: DispatchOptions & { previousOutput: string; failureReason: string },
 ): Promise<AgentResult> {
-  const { pi, ctx, task, config, lspAvailable, previousOutput, failureReason } = options;
+  const { pi, ctx, task, config, lspAvailable, contextModeAvailable, previousOutput, failureReason } =
+    options;
   const startTime = Date.now();
 
-  const prompt = buildFixPrompt(task, previousOutput, failureReason, lspAvailable);
+  const prompt = buildFixPrompt(
+    task,
+    previousOutput,
+    failureReason,
+    lspAvailable,
+    contextModeAvailable,
+  );
 
   try {
     const result = await executeSubAgent(pi, prompt, task, config);

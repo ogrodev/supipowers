@@ -10,7 +10,8 @@ export interface ConflictResolution {
 
 export function analyzeConflicts(
   results: AgentResult[],
-  tasks: PlanTask[]
+  tasks: PlanTask[],
+  contextModeAvailable = false,
 ): ConflictResolution {
   const conflictingFiles = detectConflicts(results);
 
@@ -33,6 +34,6 @@ export function analyzeConflicts(
   return {
     hasConflicts: true,
     conflictingFiles,
-    mergePrompt: buildMergePrompt(conflictingFiles, agentOutputs),
+    mergePrompt: buildMergePrompt(conflictingFiles, agentOutputs, contextModeAvailable),
   };
 }
