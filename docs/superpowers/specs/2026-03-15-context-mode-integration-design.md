@@ -77,7 +77,7 @@ Pure functions that take tool result content and produce compressed versions. On
 
 **Threshold**: Configurable via `config.contextMode.compressionThreshold`, default 4096 bytes. Results below threshold pass through unmodified.
 
-**Output shape**: When compression applies, the returned `content` array preserves all original `ImageContent` entries (if any) and replaces only the `TextContent` entries with a single compressed `TextContent` entry.
+**Output shape**: When compression applies, the returned `content` array contains a single compressed `TextContent` entry. Since compression only activates for text-only results (ImageContent triggers passthrough), no image preservation logic is needed.
 
 ```typescript
 /** Compress a tool result if it exceeds the threshold */
@@ -158,6 +158,10 @@ export function buildTaskPrompt(
 ```
 
 `buildFixPrompt()` and `buildMergePrompt()` also gain the `contextModeAvailable` parameter and append the same routing section when true.
+
+### `src/orchestrator/conflict-resolver.ts` (modification)
+
+`analyzeConflicts()` gains access to the `contextModeAvailable` flag (passed through from the orchestrator) and forwards it to `buildMergePrompt()`. This is a mechanical plumbing change — add the parameter to the function signature and the call site.
 
 ### `src/types.ts` (modification)
 
@@ -292,8 +296,8 @@ Per tool type:
 - **Find**: file count correct, first N paths preserved
 - Edge cases: empty output, single-line output, output exactly at threshold
 - `isError: true` results pass through unmodified regardless of size
-- Results with ImageContent pass through unmodified
-- Mixed content (TextContent + ImageContent) preserves ImageContent entries
+- Results with ImageContent pass through unmodified (returns `undefined`)
+- Mixed content (TextContent + ImageContent) passes through unmodified (returns `undefined`)
 
 ### `tests/context-mode/hooks.test.ts`
 
@@ -320,6 +324,7 @@ Per tool type:
 | `src/index.ts` | Modify | Call `registerContextModeHooks()` during extension setup |
 | `src/orchestrator/dispatcher.ts` | Modify | Inject routing instructions into sub-agent prompts when ctx_* detected |
 | `src/orchestrator/prompts.ts` | Modify | Add `contextModeAvailable` parameter to prompt builders, append routing section when true |
+| `src/orchestrator/conflict-resolver.ts` | Modify | Forward `contextModeAvailable` flag to `buildMergePrompt()` |
 | `tests/context-mode/detector.test.ts` | Create | Detector unit tests |
 | `tests/context-mode/compressor.test.ts` | Create | Compressor unit tests per tool type |
 | `tests/context-mode/hooks.test.ts` | Create | Hook registration integration tests |
