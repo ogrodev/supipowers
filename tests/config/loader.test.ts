@@ -84,3 +84,27 @@ describe("saveConfig / updateConfig", () => {
     expect(reloaded.orchestration.maxParallelAgents).toBe(7);
   });
 });
+
+
+describe("contextMode config", () => {
+  test("DEFAULT_CONFIG includes contextMode with all fields", () => {
+    const config = DEFAULT_CONFIG;
+    expect(config.contextMode).toBeDefined();
+    expect(config.contextMode.enabled).toBe(true);
+    expect(config.contextMode.compressionThreshold).toBe(4096);
+    expect(config.contextMode.blockHttpCommands).toBe(true);
+    expect(config.contextMode.routingInstructions).toBe(true);
+    expect(config.contextMode.eventTracking).toBe(true);
+    expect(config.contextMode.compaction).toBe(true);
+    expect(config.contextMode.llmSummarization).toBe(false);
+    expect(config.contextMode.llmThreshold).toBe(16384);
+  });
+
+  test("deepMerge applies contextMode overrides", () => {
+    const config = deepMerge(DEFAULT_CONFIG, {
+      contextMode: { compressionThreshold: 8192 },
+    });
+    expect(config.contextMode.compressionThreshold).toBe(8192);
+    expect(config.contextMode.enabled).toBe(true); // untouched fields preserved
+  });
+});

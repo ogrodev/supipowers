@@ -30,6 +30,16 @@ const ConfigSchema = Type.Object({
   release: Type.Object({
     pipeline: Type.Union([Type.String(), Type.Null()]),
   }),
+  contextMode: Type.Object({
+    enabled: Type.Boolean(),
+    compressionThreshold: Type.Number({ minimum: 1024 }),
+    blockHttpCommands: Type.Boolean(),
+    routingInstructions: Type.Boolean(),
+    eventTracking: Type.Boolean(),
+    compaction: Type.Boolean(),
+    llmSummarization: Type.Boolean(),
+    llmThreshold: Type.Number({ minimum: 4096 }),
+  }),
 });
 
 export function validateConfig(data: unknown): { valid: boolean; errors: string[] } {

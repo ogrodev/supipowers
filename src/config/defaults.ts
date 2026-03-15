@@ -24,6 +24,16 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   release: {
     pipeline: null,
   },
+  contextMode: {
+    enabled: true,
+    compressionThreshold: 4096,
+    blockHttpCommands: true,
+    routingInstructions: true,
+    eventTracking: true,
+    compaction: true,
+    llmSummarization: false,
+    llmThreshold: 16384,
+  },
 };
 
 export const BUILTIN_PROFILES: Record<string, Profile> = {

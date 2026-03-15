@@ -99,6 +99,26 @@ export interface ReviewReport {
   passed: boolean;
 }
 
+/** Context-mode integration settings */
+export interface ContextModeConfig {
+  /** Master toggle for all context-mode integration (default: true) */
+  enabled: boolean;
+  /** Byte threshold above which tool results are compressed (default: 4096) */
+  compressionThreshold: number;
+  /** Block curl/wget/HTTP commands and redirect to ctx_fetch_and_index (default: true) */
+  blockHttpCommands: boolean;
+  /** Inject routing instructions into system prompt when ctx_* tools detected (default: true) */
+  routingInstructions: boolean;
+  /** Track events from tool results in SQLite (default: true) */
+  eventTracking: boolean;
+  /** Inject session knowledge into compaction summaries (default: true) */
+  compaction: boolean;
+  /** Use LLM calls for summarizing very large outputs (default: false) */
+  llmSummarization: boolean;
+  /** Byte threshold above which LLM summarization is used instead of structural compression (default: 16384) */
+  llmThreshold: number;
+}
+
 /** Config shape */
 export interface SupipowersConfig {
   version: string;
@@ -123,6 +143,7 @@ export interface SupipowersConfig {
   release: {
     pipeline: string | null;
   };
+  contextMode: ContextModeConfig;
 }
 
 /** Profile shape */
