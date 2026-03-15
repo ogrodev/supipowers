@@ -334,9 +334,23 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_events_fts USING fts5(
   content=session_events,
   content_rowid=id
 );
+
+-- Content-sync triggers required for external-content FTS5 tables
+CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON session_events BEGIN
+  INSERT INTO session_events_fts(rowid, data) VALUES (new.id, new.data);
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON session_events BEGIN
+  INSERT INTO session_events_fts(session_events_fts, rowid, data) VALUES ('delete', old.id, old.data);
+END;
+
+CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON session_events BEGIN
+  INSERT INTO session_events_fts(session_events_fts, rowid, data) VALUES ('delete', old.id, old.data);
+  INSERT INTO session_events_fts(rowid, data) VALUES (new.id, new.data);
+END;
 ```
 
-The FTS5 table is kept in sync via SQLite triggers on INSERT/DELETE.
+The FTS5 table is kept in sync via the triggers above. No manual index management is needed.
 
 #### `src/context-mode/event-extractor.ts`
 
@@ -352,25 +366,33 @@ export function extractEvents(
 
 **Extraction rules by tool type:**
 
-- **Bash** (`BashToolDetails`): Extract command executed, exit code. If the command is a git operation, emit a `"git"` event. If exit code is non-zero, emit an `"error"` event with the stderr. If the command contains `cd`, emit a `"cwd"` event.
+- **Bash** (`BashToolDetails`): Extract command executed, exit code. If the command is a git operation (`git commit`, `git checkout`, `git merge`, etc.), emit a `"git"` event. If exit code is non-zero, emit an `"error"` event with the stderr. If the command contains `cd`, emit a `"cwd"` event.
 - **Read** (`ReadToolDetails`): Emit a `"file"` event with `{ op: "read", path, lines }`.
 - **Edit** (`EditToolDetails`): Emit a `"file"` event with `{ op: "edit", path, changes }`.
 - **Write** (`WriteToolDetails` — undefined details): Emit a `"file"` event with `{ op: "write", path }` extracted from `event.input`.
 - **Grep** (`GrepToolDetails`): Emit a `"file"` event with `{ op: "search", matchCount }`.
 - **Find** (`FindToolDetails`): Emit a `"file"` event with `{ op: "find", fileCount }`.
+- **Custom** (`CustomToolResultEvent`): Handle known tool names:
+  - `todo_write`: Emit a `"task"` event with task content, status, and action (create/update/complete). Parse from `event.input`.
+  - `ctx_execute`, `ctx_batch_execute`, `ctx_search`, etc.: Emit an `"mcp"` event with `{ tool: event.toolName }`.
+  - `task` / sub-agent dispatch tools: Emit a `"subagent"` event with `{ toolName, input }`.
+  - All other custom tools: skip (no event).
+
+**`decision` events** are not extracted from tool results. They are extracted from user prompts in the `before_agent_start` handler using simple heuristics: if the prompt contains directive language (“let's go with”, “use X instead of Y”, “yes”/“no” responses, “I want”), emit a `"decision"` event with the prompt text. This is best-effort — false positives are acceptable since decisions are low-volume and capped in the snapshot.
 
 **Priority assignment:**
 
-| Category | Default Priority | Elevated When |
-|----------|-----------------|---------------|
-| error    | critical        | always        |
-| git      | high            | commits, branch changes |
-| task     | high            | always        |
-| file     | medium          | writes/edits → high |
-| cwd      | low             | always        |
-| mcp      | low             | always        |
-| prompt   | high            | always        |
-| decision | high            | always        |
+| Category  | Default Priority | Elevated When |
+|-----------|-----------------|---------------|
+| error     | critical        | always        |
+| git       | high            | commits, branch changes |
+| task      | high            | always        |
+| decision  | high            | always        |
+| prompt    | high            | always        |
+| subagent  | medium          | always        |
+| file      | medium          | writes/edits → high |
+| mcp       | low             | always        |
+| cwd       | low             | always        |
 
 #### `src/context-mode/hooks.ts` (extension)
 
@@ -441,7 +463,7 @@ export function buildResumeSnapshot(
     - [deduplicated file paths from "file" write/edit events]
   </files_modified>
   <unresolved_errors>
-    - [errors from "error" events not followed by a successful retry]
+    - [most recent N "error" events, regardless of resolution status]
   </unresolved_errors>
   <git_state>
     - [latest branch, recent commits from "git" events]
@@ -767,8 +789,17 @@ Per tool type:
 - **Write**: emits "file" event with write op and path from input
 - **Grep**: emits "file" event with search op and match count
 - **Find**: emits "file" event with find op and file count
+- **Custom (todo_write)**: emits "task" event with task content and status
+- **Custom (ctx_*)**: emits "mcp" event with tool name
+- **Custom (sub-agent)**: emits "subagent" event with tool name and input
+- **Custom (unknown)**: returns empty array
 - Priority assignment matches the priority table
-- Unknown tool types → empty array (no events)
+- Unknown built-in tool types → empty array (no events)
+
+Prompt/decision extraction (via before_agent_start):
+- User prompt → "prompt" event with prompt text
+- Directive language in prompt → "decision" event
+- Non-directive prompt → no "decision" event
 
 ### `tests/context-mode/snapshot-builder.test.ts`
 
