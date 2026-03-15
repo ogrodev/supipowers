@@ -62,6 +62,12 @@ Called once at `session_start`, result cached in module scope. Follows the exist
 
 Pure functions that take tool result content and produce compressed versions. One function per tool type, plus a dispatcher.
 
+**General rules (applied before any tool-specific logic):**
+
+- If `event.isError === true`, pass through unmodified regardless of tool type. Error messages are critical for self-correction and must not be truncated.
+- If `event.content` contains any `ImageContent` entries, pass through unmodified. Compression is text-only; silently dropping images would lose information.
+- Threshold is measured against the total byte length of all `TextContent` entries in `event.content`. `ImageContent` entries are excluded from the byte count.
+
 **Compression strategies by tool type:**
 
 - **Bash**: Keep exit code. If error (non-zero exit), keep the full stderr block. Otherwise keep the first 5 lines (command echo / headers) and last 10 lines (tail), with a `[...compressed: N lines omitted...]` marker. Total line count included.
@@ -71,6 +77,8 @@ Pure functions that take tool result content and produce compressed versions. On
 
 **Threshold**: Configurable via `config.contextMode.compressionThreshold`, default 4096 bytes. Results below threshold pass through unmodified.
 
+**Output shape**: When compression applies, the returned `content` array preserves all original `ImageContent` entries (if any) and replaces only the `TextContent` entries with a single compressed `TextContent` entry.
+
 ```typescript
 /** Compress a tool result if it exceeds the threshold */
 export function compressToolResult(
@@ -79,7 +87,7 @@ export function compressToolResult(
 ): ToolResultEventResult | undefined;
 ```
 
-Returns `undefined` (no modification) when output is below threshold or tool type is unrecognized. Returns `{ content }` with compressed text when compression applies.
+Returns `undefined` (no modification) when: output is below threshold, tool type is unrecognized, `event.isError` is true, or content contains `ImageContent`.
 
 ### `src/context-mode/hooks.ts`
 
@@ -96,23 +104,60 @@ Registers three handlers:
 
 2. **`tool_call`** — When `config.contextMode.blockHttpCommands` is true and context-mode is detected: checks if the bash command matches curl/wget/HTTP fetch patterns. If so, returns `{ block: true, reason }` with a message directing the model to use `ctx_fetch_and_index`. If context-mode is not detected, does not block (the model has no alternative).
 
-3. **`before_agent_start`** — When `config.contextMode.routingInstructions` is true and context-mode is detected: loads `skills/context-mode/SKILL.md` and returns `{ systemPrompt }` to append routing instructions to the system prompt for the current turn.
+3. **`before_agent_start`** — When `config.contextMode.routingInstructions` is true and context-mode is detected: loads `skills/context-mode/SKILL.md` and returns `{ systemPrompt }` with the **existing system prompt concatenated with routing instructions**. The handler reads `event.systemPrompt` (the current system prompt for this turn), appends the routing content after a separator, and returns the combined string. This preserves the base system prompt while adding routing guidance. OMP chains multiple extensions' `systemPrompt` returns, so this is safe to use alongside other extensions.
 
 ### `skills/context-mode/SKILL.md`
 
-Routing instructions adapted from context-mode's ROUTING_BLOCK, tuned for OMP tool names. Loaded by the `before_agent_start` handler when context-mode is detected.
+Routing instructions loaded by the `before_agent_start` handler when context-mode is detected. Adapted from context-mode's ROUTING_BLOCK, tuned for OMP tool names.
 
-Content covers:
-- Tool preference hierarchy: `ctx_batch_execute` > `ctx_search` > `ctx_execute` / `ctx_execute_file`
-- When to use each tool vs. raw equivalents
-- Output constraints (prefer writing artifacts to files over inline output)
-- Sub-agent awareness (these instructions apply within sub-agent sessions too)
+The skill file contains concrete routing directives, not topic outlines. Key sections:
+
+1. **Tool hierarchy** — explicit preference order with examples:
+   - `ctx_batch_execute` for multi-step operations (multiple commands + grep in one call)
+   - `ctx_search` for querying previously indexed knowledge (no re-execution needed)
+   - `ctx_execute` / `ctx_execute_file` for single commands or file processing
+   - Raw Bash/Read/Grep only when editing files (Read before Edit) or running build/test commands where real-time output matters
+
+2. **Forbidden patterns** — explicit prohibitions:
+   - Do not use Bash for `curl`/`wget`/HTTP requests — use `ctx_fetch_and_index`
+   - Do not use Read for large-file analysis — use `ctx_execute_file` to process and summarize
+   - Do not use Bash for directory listing > 20 files — use `ctx_execute`
+
+3. **Output constraints** — keep responses under 500 words, write large artifacts to files rather than inline
+
+4. **Sub-agent awareness** — these instructions apply within sub-agent sessions; sub-agents should follow the same tool preference hierarchy
 
 ### `src/orchestrator/dispatcher.ts` (modification)
 
-Small addition: before building each sub-agent prompt, call `detectContextMode()`. If context-mode tools are present, append routing instructions to the sub-agent's prompt string. This ensures coverage when OMP dispatches sub-agents in isolated sessions that may not inherit the parent's extension handlers.
+Small addition to `dispatchAgent()`: before calling `buildTaskPrompt()`, call `detectContextMode(pi.getActiveTools())`. Pass the resulting `contextModeAvailable: boolean` to `buildTaskPrompt()` alongside the existing `lspAvailable` flag.
 
 Redundant with Layer 3 by design — duplicate instructions are harmless, but a missed injection is a missed compression opportunity.
+
+### `src/orchestrator/prompts.ts` (modification)
+
+`buildTaskPrompt()` gains a new parameter `contextModeAvailable: boolean`. When true, it appends a context-mode routing section to the prompt, structured identically to the existing LSP conditional block:
+
+```typescript
+export function buildTaskPrompt(
+  task: PlanTask,
+  planContext: string,
+  config: SupipowersConfig,
+  lspAvailable: boolean,
+  contextModeAvailable: boolean,  // new parameter
+  workDir?: string,
+): string {
+  // ... existing prompt building ...
+
+  if (contextModeAvailable) {
+    // Append routing section (same pattern as LSP block)
+    // Load and inline the routing instructions from skills/context-mode/SKILL.md
+  }
+
+  // ...
+}
+```
+
+`buildFixPrompt()` and `buildMergePrompt()` also gain the `contextModeAvailable` parameter and append the same routing section when true.
 
 ### `src/types.ts` (modification)
 
@@ -212,7 +257,7 @@ User submits prompt → before_agent_start fires
     Load skills/context-mode/SKILL.md
          │
          ▼
-    Return { systemPrompt: routingInstructions }
+    Return { systemPrompt: event.systemPrompt + "\n\n" + routingInstructions }
          │
          ▼
     System prompt for this turn includes routing guidance
@@ -246,6 +291,9 @@ Per tool type:
 - **Grep**: match count correct, first N matches preserved
 - **Find**: file count correct, first N paths preserved
 - Edge cases: empty output, single-line output, output exactly at threshold
+- `isError: true` results pass through unmodified regardless of size
+- Results with ImageContent pass through unmodified
+- Mixed content (TextContent + ImageContent) preserves ImageContent entries
 
 ### `tests/context-mode/hooks.test.ts`
 
@@ -255,7 +303,7 @@ Per tool type:
 - tool_result handler passes through when compressor returns undefined
 - tool_call handler blocks curl commands when context-mode detected
 - tool_call handler passes through curl when context-mode not detected
-- before_agent_start handler appends routing when context-mode detected
+- before_agent_start handler concatenates routing to event.systemPrompt when context-mode detected
 - before_agent_start handler is no-op when context-mode not detected
 
 ## Files Changed
@@ -268,9 +316,10 @@ Per tool type:
 | `skills/context-mode/SKILL.md` | Create | Routing instructions for system prompt injection |
 | `src/types.ts` | Modify | Add `ContextModeConfig` type and `contextMode` field to `SupipowersConfig` |
 | `src/config/defaults.ts` | Modify | Add default values for `contextMode` config |
+| `src/config/schema.ts` | Modify | Add TypeBox schema for `contextMode` config section |
 | `src/index.ts` | Modify | Call `registerContextModeHooks()` during extension setup |
 | `src/orchestrator/dispatcher.ts` | Modify | Inject routing instructions into sub-agent prompts when ctx_* detected |
-| `src/orchestrator/prompts.ts` | Modify | Accept and include context-mode routing in prompt builder |
+| `src/orchestrator/prompts.ts` | Modify | Add `contextModeAvailable` parameter to prompt builders, append routing section when true |
 | `tests/context-mode/detector.test.ts` | Create | Detector unit tests |
 | `tests/context-mode/compressor.test.ts` | Create | Compressor unit tests per tool type |
 | `tests/context-mode/hooks.test.ts` | Create | Hook registration integration tests |
