@@ -1,6 +1,6 @@
 /**
  * TDD enforcement instructions for sub-agent prompts.
- * Matches superpowers' test-driven-development skill depth.
+ * Matches supipowers' test-driven-development skill depth.
  */
 export function buildTddInstructions(): string {
   return [
@@ -49,7 +49,7 @@ export function buildTddInstructions(): string {
     "- Test passes immediately",
     "- Can't explain why test failed",
     "- Tests added later",
-    "- Rationalizing \"just this once\"",
+    '- Rationalizing "just this once"',
     "",
     "### Testing Anti-Patterns",
     "",

@@ -1,6 +1,6 @@
 /**
  * Systematic debugging instructions for sub-agent prompts.
- * Matches superpowers' systematic-debugging skill depth.
+ * Matches supipowers' systematic-debugging skill depth.
  */
 export function buildDebuggingInstructions(): string {
   return [
@@ -46,12 +46,12 @@ export function buildDebuggingInstructions(): string {
     "",
     "### Red Flags — STOP and Follow the Process",
     "",
-    "- \"Quick fix for now, investigate later\"",
-    "- \"Just try changing X and see if it works\"",
-    "- \"Skip the test, I'll manually verify\"",
-    "- \"It's probably X, let me fix that\"",
-    "- \"I don't fully understand but this might work\"",
-    "- \"One more fix attempt\" (when already tried 2+)",
+    '- "Quick fix for now, investigate later"',
+    '- "Just try changing X and see if it works"',
+    '- "Skip the test, I\'ll manually verify"',
+    '- "It\'s probably X, let me fix that"',
+    '- "I don\'t fully understand but this might work"',
+    '- "One more fix attempt" (when already tried 2+)',
     "- Each fix reveals a new problem in a different place",
   ].join("\n");
 }

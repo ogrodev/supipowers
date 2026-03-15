@@ -2,7 +2,7 @@
 
 ## Overview
 
-Supipowers v2 is an OMP-native extension that brings superpowers-style agentic workflows to the oh-my-pi coding agent. It replaces supipowers v1 with a ground-up rewrite focused on flexibility, opt-in workflows, and full leverage of OMP's infrastructure (sub-agents, LSP, MCP, plugin system).
+Supipowers v2 is an OMP-native extension that brings supipowers-style agentic workflows to the oh-my-pi coding agent. It replaces supipowers v1 with a ground-up rewrite focused on flexibility, opt-in workflows, and full leverage of OMP's infrastructure (sub-agents, LSP, MCP, plugin system).
 
 ## Core Principles
 
@@ -20,13 +20,17 @@ OMP only (`@oh-my-pi/pi-coding-agent`). No degraded mode for vanilla pi.
 All commands use the `/supi:` namespace and are immediate actions, not state transitions.
 
 ### /supi
+
 Overview command. Shows available commands and current project status (active runs, last review, config summary).
 
 ### /supi:plan
+
 Starts collaborative planning immediately. Asks clarifying questions, proposes approaches, refines with the user, and produces a task breakdown. Each task is marked as parallel-safe or sequential, with description, target files, acceptance criteria, and estimated complexity. Supports `--quick "description"` to skip brainstorming for simple tasks. Plans are saved to `.omp/supipowers/plans/`.
 
 ### /supi:run
+
 Executes a plan with sub-agent orchestration. The orchestration loop:
+
 1. Load plan and resolve active profile
 2. Identify next batch of parallel-safe tasks
 3. Dispatch sub-agents (up to `maxParallelAgents` from config)
@@ -39,7 +43,9 @@ Executes a plan with sub-agent orchestration. The orchestration loop:
 Sub-agents have full OMP tool access including LSP, can spawn nested sub-agents, and report status as DONE, DONE_WITH_CONCERNS, or BLOCKED. Resumable: if interrupted, re-running reads the run manifest and picks up from the next incomplete batch.
 
 ### /supi:review
+
 Triggers quality gates at the chosen depth. Uses the active profile by default, overridable with `--quick`, `--thorough`, or `--profile <name>`. Three built-in tiers:
+
 - **Quick**: LSP diagnostics + AI quick scan (~30s)
 - **Thorough**: LSP diagnostics + deep AI code review + code quality analysis (~2-3min)
 - **Full regression**: All of the above + test suite execution + E2E/QA pipeline (~5-15min)
@@ -47,24 +53,30 @@ Triggers quality gates at the chosen depth. Uses the active profile by default, 
 If no LSP is active, notifies the user and offers setup guidance. Review continues without LSP (graceful degradation).
 
 ### /supi:qa
+
 Standalone QA pipeline. Detects test framework on first run and caches the result in config — subsequent runs read from config, no re-detection. Supports scoping: `/supi:qa` (all), `/supi:qa --changed` (changed files only), `/supi:qa --e2e` (Playwright only).
 
 ### /supi:release
+
 Release automation. Analyzes commits since last tag, suggests version bump, generates release notes, tags and publishes (with user confirmation). First-time setup asks about the release process (npm publish, GitHub release, changelog file) and saves to config.
 
 ### /supi:config
+
 View and edit configuration and profiles. Includes LSP setup guidance.
 
 ### /supi:status
+
 Check on running sub-agents and task progress for active runs.
 
 ## Configuration
 
 ### Layered Config
+
 - **Global**: `~/.omp/supipowers/config.json`
 - **Project**: `.omp/supipowers/config.json` (overrides global)
 
 ### Config Shape
+
 ```json
 {
   "defaultProfile": "thorough",
@@ -92,6 +104,7 @@ Check on running sub-agents and task progress for active runs.
 The `qa.framework` and `qa.command` fields are auto-detected on first use and cached. `release.pipeline` is configured on first `/supi:release` invocation.
 
 ### Profiles
+
 Named presets stored in `.omp/supipowers/profiles/`. Three built-in:
 
 - **quick.json**: AI quick scan, LSP diagnostics, no QA
@@ -128,7 +141,7 @@ No workflow state files. No event logs. The run manifest and agent result files 
 
 ## Sub-Agent Orchestration
 
-Based on superpowers' model but enhanced with OMP capabilities:
+Based on supipowers' model but enhanced with OMP capabilities:
 
 - **Parallel execution**: Tasks marked as parallel-safe run concurrently (up to config limit)
 - **Full tool access**: Sub-agents get all OMP tools including LSP queries
@@ -225,22 +238,26 @@ tags: [auth, api]
 # Auth Refactor
 
 ## Context
+
 Brief description of what this plan accomplishes.
 
 ## Tasks
 
 ### 1. Extract auth middleware [parallel-safe]
+
 - **files**: src/middleware/auth.ts, src/middleware/index.ts
 - **criteria**: Auth logic extracted into standalone middleware, existing tests pass
 - **complexity**: small
 
 ### 2. Add JWT validation [sequential: depends on 1]
+
 - **files**: src/middleware/auth.ts, src/utils/jwt.ts
 - **criteria**: JWT tokens validated on protected routes, unit tests added
 - **complexity**: medium
 ```
 
 Each task has:
+
 - **Name** with parallel annotation: `[parallel-safe]` or `[sequential: depends on N]`
 - **files**: Target files the agent will work on
 - **criteria**: Acceptance criteria the orchestrator checks against
@@ -322,16 +339,20 @@ Sub-agents can spawn nested sub-agents up to a configurable depth. Default: `orc
 ## Configuration Details
 
 ### Merge Strategy
+
 Project config deep-merges over global config. Per-key override at every nesting level: if a project config sets `orchestration.maxParallelAgents` but omits `orchestration.modelPreference`, `modelPreference` is inherited from global config.
 
 ### Model Preference
+
 `orchestration.modelPreference` values:
+
 - `"auto"`: Extension selects model based on task complexity — small tasks use cheaper/faster models, large tasks use more capable ones
 - `"fast"`: Always use the fastest available model
 - `"capable"`: Always use the most capable available model
 - `"<model-id>"`: Use a specific model ID
 
 ### Config Versioning
+
 Config files include a `version` field (semver). On load, if the version is older than current, the loader migrates forward automatically and writes the updated config. Breaking changes bump the major version.
 
 ```json
@@ -345,6 +366,7 @@ Config files include a `version` field (semver). On load, if the version is olde
 ## Git & .gitignore Guidance
 
 Recommended `.gitignore` entries:
+
 ```
 # Supipowers - ignore machine-specific artifacts
 .omp/supipowers/runs/
@@ -355,13 +377,13 @@ Plans and config/profiles should be committed — they're shareable project arti
 
 ## What Changed from v1
 
-| v1 | v2 |
-|---|---|
-| Rigid phase state machine | Action-driven commands |
-| Enforced workflow | Opt-in everything |
-| Custom adapter routing (ant-colony/subagent/native) | Direct OMP sub-agent API |
-| Vanilla pi with OMP as nice-to-have | OMP-only |
-| Persistent workflow state | Artifact persistence only |
-| Status widget + view modes | Rich inline notifications |
-| Quality gates as mandatory checkpoints | Quality gates as invocable tools with profiles |
-| QA baked into workflow | QA as standalone command |
+| v1                                                  | v2                                             |
+| --------------------------------------------------- | ---------------------------------------------- |
+| Rigid phase state machine                           | Action-driven commands                         |
+| Enforced workflow                                   | Opt-in everything                              |
+| Custom adapter routing (ant-colony/subagent/native) | Direct OMP sub-agent API                       |
+| Vanilla pi with OMP as nice-to-have                 | OMP-only                                       |
+| Persistent workflow state                           | Artifact persistence only                      |
+| Status widget + view modes                          | Rich inline notifications                      |
+| Quality gates as mandatory checkpoints              | Quality gates as invocable tools with profiles |
+| QA baked into workflow                              | QA as standalone command                       |

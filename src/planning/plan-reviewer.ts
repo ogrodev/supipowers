@@ -1,6 +1,6 @@
 /**
  * Build the prompt for dispatching a plan document reviewer sub-agent.
- * Follows the same pattern as superpowers' plan-document-reviewer-prompt.md.
+ * Follows the same pattern as supipowers' plan-document-reviewer-prompt.md.
  */
 export function buildPlanReviewerPrompt(
   planFilePath: string,

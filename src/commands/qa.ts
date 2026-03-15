@@ -256,7 +256,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
           content: [{ type: "text", text: prompt }],
           display: "none",
         },
-        { deliverAs: "steer" },
+        { deliverAs: "steer", triggerTurn: true },
       );
 
       notifyInfo(

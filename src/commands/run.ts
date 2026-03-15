@@ -25,6 +25,7 @@ import {
 } from "../notifications/renderer.js";
 import { buildWorktreePrompt } from "../git/worktree.js";
 import { buildBranchFinishPrompt } from "../git/branch-finish.js";
+import { detectBaseBranch } from "../git/base-branch.js";
 import type { RunManifest, AgentResult } from "../types.js";
 
 export function registerRunCommand(pi: ExtensionAPI): void {
@@ -89,7 +90,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
                 content: [{ type: "text", text: worktreeInstructions }],
                 display: "none",
               },
-              { deliverAs: "steer" },
+              { deliverAs: "steer", triggerTurn: true },
             );
             notifyInfo(ctx, "Setting up worktree", `Branch: ${branchName}`);
           }
@@ -212,7 +213,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       if (branchName && manifest.status === "completed") {
         const finishInstructions = buildBranchFinishPrompt({
           branchName,
-          baseBranch: "main",
+          baseBranch: await detectBaseBranch((cmd, args) => pi.exec(cmd, args)),
         });
         pi.sendMessage(
           {
@@ -220,7 +221,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
             content: [{ type: "text", text: finishInstructions }],
             display: "none",
           },
-          { deliverAs: "steer" },
+          { deliverAs: "steer", triggerTurn: true },
         );
         notifyInfo(ctx, "Run succeeded", "Follow branch finish instructions to integrate your work");
       }

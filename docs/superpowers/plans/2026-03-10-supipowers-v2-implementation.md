@@ -1,8 +1,8 @@
 # Supipowers v2 Implementation Plan
 
-> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED: Use supipowers:subagent-driven-development (if subagents available) or supipowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build an OMP-native extension that provides superpowers-style agentic workflows with action-driven commands, opt-in quality gates, sub-agent orchestration, and LSP integration.
+**Goal:** Build an OMP-native extension that provides supipowers-style agentic workflows with action-driven commands, opt-in quality gates, sub-agent orchestration, and LSP integration.
 
 **Architecture:** TypeScript OMP extension registering slash commands and tools via `ExtensionAPI`. No state machine — commands are independent actions that read/write artifacts to `.omp/supipowers/`. Sub-agents dispatched via OMP's `createAgentSession`. Notifications via `ctx.ui.notify` and `sendMessage`.
 
@@ -17,6 +17,7 @@
 ### Task 1: Project Scaffolding
 
 **Files:**
+
 - Create: `package.json`
 - Create: `tsconfig.json`
 - Create: `vitest.config.ts`
@@ -29,7 +30,7 @@
 {
   "name": "supipowers",
   "version": "0.1.0",
-  "description": "OMP-native workflow extension inspired by Superpowers.",
+  "description": "OMP-native workflow extension inspired by supipowers.",
   "type": "module",
   "scripts": {
     "test": "vitest run",
@@ -37,7 +38,7 @@
     "test:watch": "vitest",
     "build": "tsc -p tsconfig.build.json"
   },
-  "keywords": ["omp-extension", "workflow", "agent", "superpowers"],
+  "keywords": ["omp-extension", "workflow", "agent", "supipowers"],
   "license": "MIT",
   "files": ["src", "skills", "README.md", "LICENSE"],
   "peerDependencies": {
@@ -134,6 +135,7 @@ git commit -m "feat: scaffold project with omp extension structure"
 ### Task 2: Shared Types
 
 **Files:**
+
 - Create: `src/types.ts`
 
 - [ ] **Step 1: Write the types file**
@@ -208,7 +210,12 @@ export interface RunManifest {
 }
 
 /** Notification severity level */
-export type NotificationLevel = "success" | "warning" | "error" | "info" | "summary";
+export type NotificationLevel =
+  | "success"
+  | "warning"
+  | "error"
+  | "info"
+  | "summary";
 
 /** Notification payload */
 export interface Notification {
@@ -295,6 +302,7 @@ git commit -m "feat: add shared type definitions"
 ### Task 3: Config System
 
 **Files:**
+
 - Create: `src/config/defaults.ts`
 - Create: `src/config/schema.ts`
 - Create: `src/config/loader.ts`
@@ -416,11 +424,14 @@ const ConfigSchema = Type.Object({
   }),
 });
 
-export function validateConfig(data: unknown): { valid: boolean; errors: string[] } {
+export function validateConfig(data: unknown): {
+  valid: boolean;
+  errors: string[];
+} {
   const valid = Value.Check(ConfigSchema, data);
   if (valid) return { valid: true, errors: [] };
   const errors = [...Value.Errors(ConfigSchema, data)].map(
-    (e) => `${e.path}: ${e.message}`
+    (e) => `${e.path}: ${e.message}`,
   );
   return { valid: false, errors };
 }
@@ -460,7 +471,7 @@ function readJsonSafe(filePath: string): Record<string, unknown> | null {
 /** Deep merge source into target. Source values override target. */
 export function deepMerge<T extends Record<string, unknown>>(
   target: T,
-  source: Record<string, unknown>
+  source: Record<string, unknown>,
 ): T {
   const result = { ...target };
   for (const key of Object.keys(source)) {
@@ -476,7 +487,7 @@ export function deepMerge<T extends Record<string, unknown>>(
     ) {
       (result as Record<string, unknown>)[key] = deepMerge(
         targetVal as Record<string, unknown>,
-        sourceVal as Record<string, unknown>
+        sourceVal as Record<string, unknown>,
       );
     } else {
       (result as Record<string, unknown>)[key] = sourceVal;
@@ -523,7 +534,7 @@ export function saveConfig(cwd: string, config: SupipowersConfig): void {
 /** Update specific config fields (deep merge into current) */
 export function updateConfig(
   cwd: string,
-  updates: Record<string, unknown>
+  updates: Record<string, unknown>,
 ): SupipowersConfig {
   const current = loadConfig(cwd);
   const updated = deepMerge(current, updates);
@@ -565,7 +576,7 @@ export function loadProfile(cwd: string, name: string): Profile | null {
 export function resolveProfile(
   cwd: string,
   config: SupipowersConfig,
-  override?: string
+  override?: string,
 ): Profile {
   const name = override ?? config.defaultProfile;
   const profile = loadProfile(cwd, name);
@@ -596,7 +607,7 @@ export function saveProfile(cwd: string, profile: Profile): void {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     path.join(dir, `${profile.name}.json`),
-    JSON.stringify(profile, null, 2) + "\n"
+    JSON.stringify(profile, null, 2) + "\n",
   );
 }
 ```
@@ -609,7 +620,12 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { loadConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
+import {
+  loadConfig,
+  saveConfig,
+  updateConfig,
+  deepMerge,
+} from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 
 describe("deepMerge", () => {
@@ -654,7 +670,7 @@ describe("loadConfig", () => {
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
-      JSON.stringify({ orchestration: { maxParallelAgents: 5 } })
+      JSON.stringify({ orchestration: { maxParallelAgents: 5 } }),
     );
     const config = loadConfig(tmpDir);
     expect(config.orchestration.maxParallelAgents).toBe(5);
@@ -682,7 +698,9 @@ describe("saveConfig / updateConfig", () => {
   });
 
   test("updateConfig deep-merges and persists", () => {
-    const updated = updateConfig(tmpDir, { orchestration: { maxParallelAgents: 7 } });
+    const updated = updateConfig(tmpDir, {
+      orchestration: { maxParallelAgents: 7 },
+    });
     expect(updated.orchestration.maxParallelAgents).toBe(7);
     expect(updated.orchestration.maxFixRetries).toBe(2);
     // Verify it was persisted
@@ -705,7 +723,12 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { loadProfile, resolveProfile, listProfiles, saveProfile } from "../../src/config/profiles.js";
+import {
+  loadProfile,
+  resolveProfile,
+  listProfiles,
+  saveProfile,
+} from "../../src/config/profiles.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { BUILTIN_PROFILES } from "../../src/config/defaults.js";
 
@@ -730,7 +753,11 @@ describe("loadProfile", () => {
   });
 
   test("custom profile overrides built-in", () => {
-    const custom = { ...BUILTIN_PROFILES["quick"], name: "quick", gates: { ...BUILTIN_PROFILES["quick"].gates, codeQuality: true } };
+    const custom = {
+      ...BUILTIN_PROFILES["quick"],
+      name: "quick",
+      gates: { ...BUILTIN_PROFILES["quick"].gates, codeQuality: true },
+    };
     saveProfile(tmpDir, custom);
     const loaded = loadProfile(tmpDir, "quick");
     expect(loaded?.gates.codeQuality).toBe(true);
@@ -808,6 +835,7 @@ git commit -m "feat: add config system with layered loading and profiles"
 ### Task 4: Storage Layer
 
 **Files:**
+
 - Create: `src/storage/plans.ts`
 - Create: `src/storage/runs.ts`
 - Create: `src/storage/reports.ts`
@@ -819,7 +847,12 @@ git commit -m "feat: add config system with layered loading and profiles"
 // src/storage/plans.ts
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Plan, PlanTask, TaskComplexity, TaskParallelism } from "../types.js";
+import type {
+  Plan,
+  PlanTask,
+  TaskComplexity,
+  TaskParallelism,
+} from "../types.js";
 
 const PLANS_DIR = [".omp", "supipowers", "plans"];
 
@@ -846,7 +879,11 @@ export function readPlanFile(cwd: string, name: string): string | null {
 }
 
 /** Save a plan markdown file */
-export function savePlan(cwd: string, filename: string, content: string): string {
+export function savePlan(
+  cwd: string,
+  filename: string,
+  content: string,
+): string {
   const dir = getPlansDir(cwd);
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, filename);
@@ -914,7 +951,15 @@ function parseTasksFromMarkdown(content: string): PlanTask[] {
     const criteria = parseCriteria(body);
     const complexity = parseComplexity(body);
 
-    tasks.push({ id, name, description: name, files, criteria, complexity, parallelism });
+    tasks.push({
+      id,
+      name,
+      description: name,
+      files,
+      criteria,
+      complexity,
+      parallelism,
+    });
   }
   return tasks;
 }
@@ -981,7 +1026,7 @@ export function createRun(cwd: string, manifest: RunManifest): void {
   fs.mkdirSync(path.join(runDir, "agents"), { recursive: true });
   fs.writeFileSync(
     path.join(runDir, "manifest.json"),
-    JSON.stringify(manifest, null, 2) + "\n"
+    JSON.stringify(manifest, null, 2) + "\n",
   );
 }
 
@@ -1006,12 +1051,12 @@ export function updateRun(cwd: string, manifest: RunManifest): void {
 export function saveAgentResult(
   cwd: string,
   runId: string,
-  result: AgentResult
+  result: AgentResult,
 ): void {
   const filePath = path.join(
     getRunDir(cwd, runId),
     "agents",
-    `task-${result.taskId}.json`
+    `task-${result.taskId}.json`,
   );
   fs.writeFileSync(filePath, JSON.stringify(result, null, 2) + "\n");
 }
@@ -1020,12 +1065,12 @@ export function saveAgentResult(
 export function loadAgentResult(
   cwd: string,
   runId: string,
-  taskId: number
+  taskId: number,
 ): AgentResult | null {
   const filePath = path.join(
     getRunDir(cwd, runId),
     "agents",
-    `task-${taskId}.json`
+    `task-${taskId}.json`,
   );
   if (!fs.existsSync(filePath)) return null;
   try {
@@ -1036,10 +1081,7 @@ export function loadAgentResult(
 }
 
 /** Load all agent results for a run */
-export function loadAllAgentResults(
-  cwd: string,
-  runId: string
-): AgentResult[] {
+export function loadAllAgentResults(cwd: string, runId: string): AgentResult[] {
   const agentsDir = path.join(getRunDir(cwd, runId), "agents");
   if (!fs.existsSync(agentsDir)) return [];
   return fs
@@ -1070,7 +1112,10 @@ export function listRuns(cwd: string): string[] {
 export function findActiveRun(cwd: string): RunManifest | null {
   for (const runId of listRuns(cwd)) {
     const manifest = loadRun(cwd, runId);
-    if (manifest && (manifest.status === "running" || manifest.status === "paused")) {
+    if (
+      manifest &&
+      (manifest.status === "running" || manifest.status === "paused")
+    ) {
       return manifest;
     }
   }
@@ -1273,7 +1318,9 @@ describe("parsePlan", () => {
 
   test("extracts context", () => {
     const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
-    expect(plan.context).toBe("Refactoring the auth module for better separation.");
+    expect(plan.context).toBe(
+      "Refactoring the auth module for better separation.",
+    );
   });
 
   test("parses tasks", () => {
@@ -1288,12 +1335,18 @@ describe("parsePlan", () => {
 
   test("parses sequential annotation with dependencies", () => {
     const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
-    expect(plan.tasks[1].parallelism).toEqual({ type: "sequential", dependsOn: [1] });
+    expect(plan.tasks[1].parallelism).toEqual({
+      type: "sequential",
+      dependsOn: [1],
+    });
   });
 
   test("parses files list", () => {
     const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
-    expect(plan.tasks[0].files).toEqual(["src/middleware/auth.ts", "src/middleware/index.ts"]);
+    expect(plan.tasks[0].files).toEqual([
+      "src/middleware/auth.ts",
+      "src/middleware/index.ts",
+    ]);
   });
 
   test("parses complexity", () => {
@@ -1304,7 +1357,9 @@ describe("parsePlan", () => {
 
   test("parses criteria", () => {
     const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
-    expect(plan.tasks[0].criteria).toBe("Auth logic extracted, existing tests pass");
+    expect(plan.tasks[0].criteria).toBe(
+      "Auth logic extracted, existing tests pass",
+    );
   });
 });
 ```
@@ -1326,6 +1381,7 @@ git commit -m "feat: add storage layer for plans, runs, and reports"
 ### Task 5: Notification System
 
 **Files:**
+
 - Create: `src/notifications/types.ts`
 - Create: `src/notifications/renderer.ts`
 - Test: `tests/notifications/renderer.test.ts`
@@ -1338,11 +1394,11 @@ export type { Notification, NotificationLevel } from "../types.js";
 
 /** Icons mapped to notification levels */
 export const LEVEL_ICONS: Record<string, string> = {
-  success: "\u2713",  // ✓
-  warning: "\u26A0",  // ⚠
-  error: "\u2717",    // ✗
-  info: "\u25C9",     // ◉
-  summary: "\u25B8",  // ▸
+  success: "\u2713", // ✓
+  warning: "\u26A0", // ⚠
+  error: "\u2717", // ✗
+  info: "\u25C9", // ◉
+  summary: "\u25B8", // ▸
 };
 
 /** Map notification levels to ctx.ui.notify types */
@@ -1374,8 +1430,10 @@ export function formatNotification(notification: Notification): string {
 
 /** Send a notification through OMP's UI */
 export function sendNotification(
-  ctx: { ui: { notify(message: string, type?: "info" | "warning" | "error"): void } },
-  notification: Notification
+  ctx: {
+    ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  },
+  notification: Notification,
 ): void {
   const message = formatNotification(notification);
   const type = NOTIFY_TYPE_MAP[notification.level] ?? "info";
@@ -1384,45 +1442,55 @@ export function sendNotification(
 
 /** Convenience: send a success notification */
 export function notifySuccess(
-  ctx: { ui: { notify(message: string, type?: "info" | "warning" | "error"): void } },
+  ctx: {
+    ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  },
   title: string,
-  detail?: string
+  detail?: string,
 ): void {
   sendNotification(ctx, { level: "success", title, detail });
 }
 
 /** Convenience: send a warning notification */
 export function notifyWarning(
-  ctx: { ui: { notify(message: string, type?: "info" | "warning" | "error"): void } },
+  ctx: {
+    ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  },
   title: string,
-  detail?: string
+  detail?: string,
 ): void {
   sendNotification(ctx, { level: "warning", title, detail });
 }
 
 /** Convenience: send an error notification */
 export function notifyError(
-  ctx: { ui: { notify(message: string, type?: "info" | "warning" | "error"): void } },
+  ctx: {
+    ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  },
   title: string,
-  detail?: string
+  detail?: string,
 ): void {
   sendNotification(ctx, { level: "error", title, detail });
 }
 
 /** Convenience: send an info notification */
 export function notifyInfo(
-  ctx: { ui: { notify(message: string, type?: "info" | "warning" | "error"): void } },
+  ctx: {
+    ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  },
   title: string,
-  detail?: string
+  detail?: string,
 ): void {
   sendNotification(ctx, { level: "info", title, detail });
 }
 
 /** Convenience: send a summary notification */
 export function notifySummary(
-  ctx: { ui: { notify(message: string, type?: "info" | "warning" | "error"): void } },
+  ctx: {
+    ui: { notify(message: string, type?: "info" | "warning" | "error"): void };
+  },
   title: string,
-  detail?: string
+  detail?: string,
 ): void {
   sendNotification(ctx, { level: "summary", title, detail });
 }
@@ -1433,7 +1501,10 @@ export function notifySummary(
 ```ts
 // tests/notifications/renderer.test.ts
 import { describe, test, expect, vi } from "vitest";
-import { formatNotification, sendNotification } from "../../src/notifications/renderer.js";
+import {
+  formatNotification,
+  sendNotification,
+} from "../../src/notifications/renderer.js";
 
 describe("formatNotification", () => {
   test("formats success with icon", () => {
@@ -1458,7 +1529,10 @@ describe("sendNotification", () => {
     const notify = vi.fn();
     const ctx = { ui: { notify } };
     sendNotification(ctx, { level: "error", title: "Oops" });
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("Oops"), "error");
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining("Oops"),
+      "error",
+    );
   });
 
   test("maps success level to info type", () => {
@@ -1489,6 +1563,7 @@ git commit -m "feat: add notification system with level-based rendering"
 ### Task 6: LSP Integration Layer
 
 **Files:**
+
 - Create: `src/lsp/detector.ts`
 - Create: `src/lsp/bridge.ts`
 - Create: `src/lsp/setup-guide.ts`
@@ -1517,7 +1592,10 @@ export interface LspServerInfo {
  * Uses pi.exec to call the lsp tool programmatically.
  */
 export async function detectLsp(
-  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; exitCode: number }>
+  exec: (
+    cmd: string,
+    args: string[],
+  ) => Promise<{ stdout: string; exitCode: number }>,
 ): Promise<LspStatus> {
   try {
     // We check by looking for LSP config files or running servers
@@ -1641,11 +1719,13 @@ const COMMON_LSP_SERVERS: SetupInstruction[] = [
 ];
 
 /** Get setup instructions for detected project languages */
-export function getSetupInstructions(detectedLanguages: string[]): SetupInstruction[] {
+export function getSetupInstructions(
+  detectedLanguages: string[],
+): SetupInstruction[] {
   return COMMON_LSP_SERVERS.filter((s) =>
     detectedLanguages.some((lang) =>
-      s.language.toLowerCase().includes(lang.toLowerCase())
-    )
+      s.language.toLowerCase().includes(lang.toLowerCase()),
+    ),
   );
 }
 
@@ -1693,7 +1773,10 @@ export function formatSetupGuide(instructions: SetupInstruction[]): string {
 // tests/lsp/detector.test.ts
 import { describe, test, expect } from "vitest";
 import { isLspAvailable } from "../../src/lsp/detector.js";
-import { detectProjectLanguages, getSetupInstructions } from "../../src/lsp/setup-guide.js";
+import {
+  detectProjectLanguages,
+  getSetupInstructions,
+} from "../../src/lsp/setup-guide.js";
 import { buildLspDiagnosticsPrompt } from "../../src/lsp/bridge.js";
 
 describe("isLspAvailable", () => {
@@ -1755,6 +1838,7 @@ git commit -m "feat: add LSP integration layer with detection, bridge, and setup
 ### Task 7: Extension Entry Point & Base Commands
 
 **Files:**
+
 - Create: `src/index.ts`
 - Create: `src/commands/supi.ts`
 - Create: `src/commands/config.ts`
@@ -1772,7 +1856,8 @@ import { listPlans } from "../storage/plans.js";
 
 export function registerSupiCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi", {
-    description: "Supipowers overview — show available commands and project status",
+    description:
+      "Supipowers overview — show available commands and project status",
     async handler(_args, ctx) {
       const config = loadConfig(ctx.cwd);
       const activeRun = findActiveRun(ctx.cwd);
@@ -1882,7 +1967,11 @@ export function registerConfigCommand(pi: ExtensionAPI): void {
         return;
       }
 
-      notifyInfo(ctx, "Usage", "/supi:config or /supi:config set <key> <value>");
+      notifyInfo(
+        ctx,
+        "Usage",
+        "/supi:config or /supi:config set <key> <value>",
+      );
     },
   });
 }
@@ -1911,14 +2000,18 @@ export function registerStatusCommand(pi: ExtensionAPI): void {
       const completedIds = new Set(results.map((r) => r.taskId));
       const totalTasks = activeRun.batches.reduce(
         (sum, b) => sum + b.taskIds.length,
-        0
+        0,
       );
       const completedCount = results.length;
       const doneCount = results.filter((r) => r.status === "done").length;
-      const concernCount = results.filter((r) => r.status === "done_with_concerns").length;
+      const concernCount = results.filter(
+        (r) => r.status === "done_with_concerns",
+      ).length;
       const blockedCount = results.filter((r) => r.status === "blocked").length;
 
-      const currentBatch = activeRun.batches.find((b) => b.status !== "completed");
+      const currentBatch = activeRun.batches.find(
+        (b) => b.status !== "completed",
+      );
 
       const lines = [
         `# Run: ${activeRun.id}`,
@@ -1983,6 +2076,7 @@ git commit -m "feat: add extension entry point with /supi, /supi:config, /supi:s
 ### Task 8: Planning Command & Skill
 
 **Files:**
+
 - Create: `src/commands/plan.ts`
 - Create: `skills/planning/SKILL.md`
 
@@ -2029,7 +2123,9 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
           "Each task should have: name, [parallel-safe] or [sequential] annotation,",
           "**files**, **criteria**, and **complexity** (small/medium/large).",
           "",
-          skillContent ? "Follow these planning guidelines:\n" + skillContent : "",
+          skillContent
+            ? "Follow these planning guidelines:\n" + skillContent
+            : "",
           "",
           "After generating the plan, save it and confirm with the user.",
         ].join("\n");
@@ -2037,7 +2133,9 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
         prompt = [
           "You are starting a collaborative planning session with the user.",
           "",
-          args ? `The user wants to plan: ${args}` : "Ask the user what they want to build or accomplish.",
+          args
+            ? `The user wants to plan: ${args}`
+            : "Ask the user what they want to build or accomplish.",
           "",
           "Process:",
           "1. Understand the goal — ask clarifying questions (one at a time)",
@@ -2048,7 +2146,9 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
           "Each task: name, [parallel-safe] or [sequential] annotation,",
           "**files**, **criteria**, **complexity** (small/medium/large).",
           "",
-          skillContent ? "Follow these planning guidelines:\n" + skillContent : "",
+          skillContent
+            ? "Follow these planning guidelines:\n" + skillContent
+            : "",
         ].join("\n");
       }
 
@@ -2059,10 +2159,14 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
           content: [{ type: "text", text: prompt }],
           display: "none",
         },
-        { deliverAs: "steer" }
+        { deliverAs: "steer" },
       );
 
-      notifyInfo(ctx, "Planning started", args ? `Topic: ${args}` : "Describe what you want to build");
+      notifyInfo(
+        ctx,
+        "Planning started",
+        args ? `Topic: ${args}` : "Describe what you want to build",
+      );
     },
   });
 }
@@ -2083,10 +2187,11 @@ function findSkillPath(skillName: string): string | null {
 - [ ] **Step 2: Write planning skill**
 
 ```markdown
-<!-- skills/planning/SKILL.md -->
----
+## <!-- skills/planning/SKILL.md -->
+
 name: planning
 description: Guides collaborative planning and task breakdown for implementation
+
 ---
 
 # Planning Skill
@@ -2102,6 +2207,7 @@ Guide the user through planning an implementation. This skill is loaded by `/sup
 ## Task Format
 
 Each task must have:
+
 - Name with parallelism: `[parallel-safe]` or `[sequential: depends on N]`
 - **files**: Exact paths the agent will touch
 - **criteria**: Acceptance criteria (testable)
@@ -2110,25 +2216,30 @@ Each task must have:
 ## Plan Structure
 
 Use this template:
-
 ```
+
 ---
+
 name: <feature-name>
 created: <YYYY-MM-DD>
 tags: [<relevant>, <tags>]
+
 ---
 
 # <Feature Name>
 
 ## Context
+
 <What this plan accomplishes and why>
 
 ## Tasks
 
 ### 1. <Task name> [parallel-safe]
+
 - **files**: src/path/to/file.ts
 - **criteria**: <what success looks like>
 - **complexity**: small
+
 ```
 
 ## Principles
@@ -2152,6 +2263,7 @@ git commit -m "feat: add /supi:plan command with planning skill"
 ### Task 9: Orchestrator — Batch Scheduler
 
 **Files:**
+
 - Create: `src/orchestrator/batch-scheduler.ts`
 - Test: `tests/orchestrator/batch-scheduler.test.ts`
 
@@ -2168,7 +2280,7 @@ import type { PlanTask, RunBatch } from "../types.js";
  */
 export function scheduleBatches(
   tasks: PlanTask[],
-  maxParallel: number
+  maxParallel: number,
 ): RunBatch[] {
   const batches: RunBatch[] = [];
   const completed = new Set<number>();
@@ -2186,7 +2298,7 @@ export function scheduleBatches(
         ready.push(task.id);
       } else if (task.parallelism.type === "sequential") {
         const depsReady = task.parallelism.dependsOn.every((dep) =>
-          completed.has(dep)
+          completed.has(dep),
         );
         if (depsReady) ready.push(task.id);
       }
@@ -2319,6 +2431,7 @@ git commit -m "feat: add batch scheduler for parallel task grouping"
 ### Task 10: Orchestrator — Prompt Templates
 
 **Files:**
+
 - Create: `src/orchestrator/prompts.ts`
 
 - [ ] **Step 1: Write prompt templates**
@@ -2333,7 +2446,7 @@ export function buildTaskPrompt(
   task: PlanTask,
   planContext: string,
   config: SupipowersConfig,
-  lspAvailable: boolean
+  lspAvailable: boolean,
 ): string {
   const sections: string[] = [
     "# Task Assignment",
@@ -2372,7 +2485,7 @@ export function buildTaskPrompt(
       "- Find references before renaming symbols",
       "- Validate your work has no type errors",
       "",
-      buildLspValidationPrompt(task.files)
+      buildLspValidationPrompt(task.files),
     );
   }
 
@@ -2384,7 +2497,7 @@ export function buildFixPrompt(
   task: PlanTask,
   previousOutput: string,
   failureReason: string,
-  lspAvailable: boolean
+  lspAvailable: boolean,
 ): string {
   const sections: string[] = [
     "# Fix Assignment",
@@ -2420,7 +2533,7 @@ export function buildFixPrompt(
 /** Build prompt for a merge/conflict resolution agent */
 export function buildMergePrompt(
   conflictingFiles: string[],
-  agentOutputs: { taskName: string; output: string }[]
+  agentOutputs: { taskName: string; output: string }[],
 ): string {
   const sections: string[] = [
     "# Merge Assignment",
@@ -2442,7 +2555,7 @@ export function buildMergePrompt(
     "1. Read each conflicting file",
     "2. Understand what each agent intended",
     "3. Merge the changes so both intents are preserved",
-    "4. If changes are incompatible, report BLOCKED with explanation"
+    "4. If changes are incompatible, report BLOCKED with explanation",
   );
 
   return sections.join("\n");
@@ -2461,6 +2574,7 @@ git commit -m "feat: add orchestrator prompt templates for task, fix, and merge 
 ### Task 11: Orchestrator — Dispatcher & Result Collector
 
 **Files:**
+
 - Create: `src/orchestrator/dispatcher.ts`
 - Create: `src/orchestrator/result-collector.ts`
 - Create: `src/orchestrator/conflict-resolver.ts`
@@ -2470,14 +2584,26 @@ git commit -m "feat: add orchestrator prompt templates for task, fix, and merge 
 ```ts
 // src/orchestrator/dispatcher.ts
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { PlanTask, AgentResult, AgentStatus, SupipowersConfig } from "../types.js";
+import type {
+  PlanTask,
+  AgentResult,
+  AgentStatus,
+  SupipowersConfig,
+} from "../types.js";
 import { buildTaskPrompt, buildFixPrompt } from "./prompts.js";
 import { isLspAvailable } from "../lsp/detector.js";
-import { notifySuccess, notifyWarning, notifyError } from "../notifications/renderer.js";
+import {
+  notifySuccess,
+  notifyWarning,
+  notifyError,
+} from "../notifications/renderer.js";
 
 export interface DispatchOptions {
   pi: ExtensionAPI;
-  ctx: { cwd: string; ui: { notify(msg: string, type?: "info" | "warning" | "error"): void } };
+  ctx: {
+    cwd: string;
+    ui: { notify(msg: string, type?: "info" | "warning" | "error"): void };
+  };
   task: PlanTask;
   planContext: string;
   config: SupipowersConfig;
@@ -2485,7 +2611,9 @@ export interface DispatchOptions {
 }
 
 /** Dispatch a sub-agent for a single task */
-export async function dispatchAgent(options: DispatchOptions): Promise<AgentResult> {
+export async function dispatchAgent(
+  options: DispatchOptions,
+): Promise<AgentResult> {
   const { pi, ctx, task, planContext, config, lspAvailable } = options;
   const startTime = Date.now();
 
@@ -2512,7 +2640,11 @@ export async function dispatchAgent(options: DispatchOptions): Promise<AgentResu
         notifySuccess(ctx, `Task ${task.id} completed`, task.name);
         break;
       case "done_with_concerns":
-        notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
+        notifyWarning(
+          ctx,
+          `Task ${task.id} done with concerns`,
+          agentResult.concerns,
+        );
         break;
       case "blocked":
         notifyError(ctx, `Task ${task.id} blocked`, agentResult.output);
@@ -2544,7 +2676,7 @@ async function executeSubAgent(
   pi: ExtensionAPI,
   prompt: string,
   task: PlanTask,
-  config: SupipowersConfig
+  config: SupipowersConfig,
 ): Promise<SubAgentResult> {
   // This will be implemented with OMP's createAgentSession API.
   // For now, provide a structure that can be filled in when we
@@ -2559,18 +2691,24 @@ async function executeSubAgent(
 
   throw new Error(
     "Sub-agent dispatch requires OMP runtime. " +
-    "This will be connected to createAgentSession during integration."
+      "This will be connected to createAgentSession during integration.",
   );
 }
 
 /** Dispatch a fix agent for a failed task */
 export async function dispatchFixAgent(
-  options: DispatchOptions & { previousOutput: string; failureReason: string }
+  options: DispatchOptions & { previousOutput: string; failureReason: string },
 ): Promise<AgentResult> {
-  const { pi, ctx, task, config, lspAvailable, previousOutput, failureReason } = options;
+  const { pi, ctx, task, config, lspAvailable, previousOutput, failureReason } =
+    options;
   const startTime = Date.now();
 
-  const prompt = buildFixPrompt(task, previousOutput, failureReason, lspAvailable);
+  const prompt = buildFixPrompt(
+    task,
+    previousOutput,
+    failureReason,
+    lspAvailable,
+  );
 
   try {
     const result = await executeSubAgent(pi, prompt, task, config);
@@ -2615,13 +2753,13 @@ export interface BatchSummary {
 /** Summarize results for a batch */
 export function summarizeBatch(
   batch: RunBatch,
-  results: AgentResult[]
+  results: AgentResult[],
 ): BatchSummary {
   const batchResults = results.filter((r) => batch.taskIds.includes(r.taskId));
 
   const done = batchResults.filter((r) => r.status === "done").length;
   const doneWithConcerns = batchResults.filter(
-    (r) => r.status === "done_with_concerns"
+    (r) => r.status === "done_with_concerns",
   ).length;
   const blocked = batchResults.filter((r) => r.status === "blocked").length;
 
@@ -2632,9 +2770,7 @@ export function summarizeBatch(
     doneWithConcerns,
     blocked,
     allPassed: blocked === 0,
-    concerns: batchResults
-      .filter((r) => r.concerns)
-      .map((r) => r.concerns!),
+    concerns: batchResults.filter((r) => r.concerns).map((r) => r.concerns!),
     blockers: batchResults
       .filter((r) => r.status === "blocked")
       .map((r) => r.output),
@@ -2667,7 +2803,9 @@ export function buildRunSummary(allResults: AgentResult[]): {
   return {
     totalTasks: allResults.length,
     done: allResults.filter((r) => r.status === "done").length,
-    doneWithConcerns: allResults.filter((r) => r.status === "done_with_concerns").length,
+    doneWithConcerns: allResults.filter(
+      (r) => r.status === "done_with_concerns",
+    ).length,
     blocked: allResults.filter((r) => r.status === "blocked").length,
     totalFilesChanged: new Set(allResults.flatMap((r) => r.filesChanged)).size,
     totalDuration: allResults.reduce((sum, r) => sum + r.duration, 0),
@@ -2692,7 +2830,7 @@ export interface ConflictResolution {
 /** Analyze batch results for file conflicts and prepare resolution */
 export function analyzeConflicts(
   results: AgentResult[],
-  tasks: PlanTask[]
+  tasks: PlanTask[],
 ): ConflictResolution {
   const conflictingFiles = detectConflicts(results);
 
@@ -2702,7 +2840,7 @@ export function analyzeConflicts(
 
   // Build merge prompt with outputs from conflicting agents
   const conflictingResults = results.filter((r) =>
-    r.filesChanged.some((f) => conflictingFiles.includes(f))
+    r.filesChanged.some((f) => conflictingFiles.includes(f)),
   );
 
   const agentOutputs = conflictingResults.map((r) => {
@@ -2733,6 +2871,7 @@ git commit -m "feat: add orchestrator dispatcher, result collector, and conflict
 ### Task 12: Run Command
 
 **Files:**
+
 - Create: `src/commands/run.ts`
 
 - [ ] **Step 1: Write /supi:run command**
@@ -2753,7 +2892,10 @@ import {
 } from "../storage/runs.js";
 import { scheduleBatches } from "../orchestrator/batch-scheduler.js";
 import { dispatchAgent, dispatchFixAgent } from "../orchestrator/dispatcher.js";
-import { summarizeBatch, buildRunSummary } from "../orchestrator/result-collector.js";
+import {
+  summarizeBatch,
+  buildRunSummary,
+} from "../orchestrator/result-collector.js";
 import { analyzeConflicts } from "../orchestrator/conflict-resolver.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import {
@@ -2770,7 +2912,11 @@ export function registerRunCommand(pi: ExtensionAPI): void {
     description: "Execute a plan with sub-agent orchestration",
     async handler(args, ctx) {
       const config = loadConfig(ctx.cwd);
-      const profile = resolveProfile(ctx.cwd, config, args?.replace("--profile ", "") || undefined);
+      const profile = resolveProfile(
+        ctx.cwd,
+        config,
+        args?.replace("--profile ", "") || undefined,
+      );
 
       // Check for active run to resume
       let manifest = findActiveRun(ctx.cwd);
@@ -2779,7 +2925,11 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         // Find the plan to execute
         const plans = listPlans(ctx.cwd);
         if (plans.length === 0) {
-          notifyError(ctx, "No plans found", "Run /supi:plan first to create a plan");
+          notifyError(
+            ctx,
+            "No plans found",
+            "Run /supi:plan first to create a plan",
+          );
           return;
         }
 
@@ -2791,7 +2941,10 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         }
 
         const plan = parsePlan(planContent, planName);
-        const batches = scheduleBatches(plan.tasks, config.orchestration.maxParallelAgents);
+        const batches = scheduleBatches(
+          plan.tasks,
+          config.orchestration.maxParallelAgents,
+        );
 
         manifest = {
           id: generateRunId(),
@@ -2802,7 +2955,11 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           batches,
         };
         createRun(ctx.cwd, manifest);
-        notifyInfo(ctx, `Run started: ${manifest.id}`, `${plan.tasks.length} tasks in ${batches.length} batches`);
+        notifyInfo(
+          ctx,
+          `Run started: ${manifest.id}`,
+          `${plan.tasks.length} tasks in ${batches.length} batches`,
+        );
       } else {
         notifyInfo(ctx, `Resuming run: ${manifest.id}`);
       }
@@ -2826,7 +2983,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         notifyInfo(
           ctx,
           `Batch ${batch.index + 1}/${manifest.batches.length}`,
-          `${batch.taskIds.length} tasks`
+          `${batch.taskIds.length} tasks`,
         );
 
         // Dispatch agents for this batch
@@ -2859,20 +3016,30 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           notifyWarning(
             ctx,
             "File conflicts detected",
-            conflicts.conflictingFiles.join(", ")
+            conflicts.conflictingFiles.join(", "),
           );
           // TODO: dispatch merge agent when OMP runtime available
         }
 
         // Handle failures with fix agents
-        const failedResults = batchResults.filter((r) => r.status === "blocked");
+        const failedResults = batchResults.filter(
+          (r) => r.status === "blocked",
+        );
         for (const failed of failedResults) {
           if (config.orchestration.maxFixRetries > 0) {
             const task = plan.tasks.find((t) => t.id === failed.taskId);
             if (!task) continue;
 
-            for (let retry = 0; retry < config.orchestration.maxFixRetries; retry++) {
-              notifyInfo(ctx, `Retrying task ${failed.taskId}`, `attempt ${retry + 1}`);
+            for (
+              let retry = 0;
+              retry < config.orchestration.maxFixRetries;
+              retry++
+            ) {
+              notifyInfo(
+                ctx,
+                `Retrying task ${failed.taskId}`,
+                `attempt ${retry + 1}`,
+              );
               const fixResult = await dispatchFixAgent({
                 pi,
                 ctx,
@@ -2900,7 +3067,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           notifyWarning(
             ctx,
             `Batch ${batch.index + 1} had issues`,
-            `${summary.blocked} blocked, ${summary.doneWithConcerns} with concerns`
+            `${summary.blocked} blocked, ${summary.doneWithConcerns} with concerns`,
           );
         }
       }
@@ -2918,8 +3085,8 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         ctx,
         "Run complete",
         `${runSummary.done + runSummary.doneWithConcerns}/${runSummary.totalTasks} tasks done ` +
-        `(${runSummary.done} clean, ${runSummary.doneWithConcerns} with concerns, ` +
-        `${runSummary.blocked} blocked) | ${runSummary.totalFilesChanged} files | ${durationSec}s`
+          `(${runSummary.done} clean, ${runSummary.doneWithConcerns} with concerns, ` +
+          `${runSummary.blocked} blocked) | ${runSummary.totalFilesChanged} files | ${durationSec}s`,
       );
     },
   });
@@ -2954,6 +3121,7 @@ git commit -m "feat: add /supi:run command with full orchestration loop"
 ### Task 13: Quality Gates
 
 **Files:**
+
 - Create: `src/quality/gate-runner.ts`
 - Create: `src/quality/lsp-gate.ts`
 - Create: `src/quality/ai-review-gate.ts`
@@ -2986,7 +3154,12 @@ export function createLspGateResult(
   hasErrors: boolean,
   errorCount: number,
   warningCount: number,
-  issues: { severity: "error" | "warning" | "info"; message: string; file?: string; line?: number }[]
+  issues: {
+    severity: "error" | "warning" | "info";
+    message: string;
+    file?: string;
+    line?: number;
+  }[],
 ): GateResult {
   return {
     gate: "lsp-diagnostics",
@@ -3005,7 +3178,7 @@ import type { GateResult } from "../types.js";
 /** Build prompt for AI code review */
 export function buildAiReviewPrompt(
   changedFiles: string[],
-  depth: "quick" | "deep"
+  depth: "quick" | "deep",
 ): string {
   const depthInstructions =
     depth === "quick"
@@ -3036,7 +3209,12 @@ export function buildAiReviewPrompt(
 
 /** Create gate result from parsed review */
 export function createAiReviewResult(
-  issues: { severity: "error" | "warning" | "info"; message: string; file?: string; line?: number }[]
+  issues: {
+    severity: "error" | "warning" | "info";
+    message: string;
+    file?: string;
+    line?: number;
+  }[],
 ): GateResult {
   const hasErrors = issues.some((i) => i.severity === "error");
   return {
@@ -3057,12 +3235,13 @@ import type { GateResult } from "../types.js";
 export function buildTestGatePrompt(
   testCommand: string | null,
   changedOnly: boolean,
-  changedFiles?: string[]
+  changedFiles?: string[],
 ): string {
   const cmd = testCommand ?? "npm test";
-  const scope = changedOnly && changedFiles
-    ? `Only run tests related to: ${changedFiles.join(", ")}`
-    : "Run the full test suite.";
+  const scope =
+    changedOnly && changedFiles
+      ? `Only run tests related to: ${changedFiles.join(", ")}`
+      : "Run the full test suite.";
 
   return [
     scope,
@@ -3080,7 +3259,7 @@ export function createTestGateResult(
   passed: boolean,
   totalTests: number,
   failedTests: number,
-  failures: { message: string; file?: string }[]
+  failures: { message: string; file?: string }[],
 ): GateResult {
   return {
     gate: "test-suite",
@@ -3111,9 +3290,13 @@ export interface GateRunnerOptions {
 }
 
 /** Determine which gates to run based on profile */
-export function getActiveGates(profile: Profile, lspAvailable: boolean): string[] {
+export function getActiveGates(
+  profile: Profile,
+  lspAvailable: boolean,
+): string[] {
   const gates: string[] = [];
-  if (profile.gates.lspDiagnostics && lspAvailable) gates.push("lsp-diagnostics");
+  if (profile.gates.lspDiagnostics && lspAvailable)
+    gates.push("lsp-diagnostics");
   if (profile.gates.aiReview.enabled) gates.push("ai-review");
   if (profile.gates.codeQuality) gates.push("code-quality");
   if (profile.gates.testSuite) gates.push("test-suite");
@@ -3134,14 +3317,18 @@ export function buildReviewPrompt(options: GateRunnerOptions): string {
   ];
 
   if (profile.gates.lspDiagnostics && lspAvailable) {
-    sections.push("## 1. LSP Diagnostics", buildLspGatePrompt(changedFiles), "");
+    sections.push(
+      "## 1. LSP Diagnostics",
+      buildLspGatePrompt(changedFiles),
+      "",
+    );
   }
 
   if (profile.gates.aiReview.enabled) {
     sections.push(
       "## 2. Code Review",
       buildAiReviewPrompt(changedFiles, profile.gates.aiReview.depth),
-      ""
+      "",
     );
   }
 
@@ -3149,7 +3336,7 @@ export function buildReviewPrompt(options: GateRunnerOptions): string {
     sections.push(
       "## 3. Test Suite",
       buildTestGatePrompt(testCommand, false),
-      ""
+      "",
     );
   }
 
@@ -3159,7 +3346,7 @@ export function buildReviewPrompt(options: GateRunnerOptions): string {
 /** Create a review report from gate results */
 export function createReviewReport(
   profile: string,
-  gates: GateResult[]
+  gates: GateResult[],
 ): ReviewReport {
   return {
     profile,
@@ -3175,7 +3362,10 @@ export function createReviewReport(
 ```ts
 // tests/quality/gate-runner.test.ts
 import { describe, test, expect } from "vitest";
-import { getActiveGates, createReviewReport } from "../../src/quality/gate-runner.js";
+import {
+  getActiveGates,
+  createReviewReport,
+} from "../../src/quality/gate-runner.js";
 import { BUILTIN_PROFILES } from "../../src/config/defaults.js";
 
 describe("getActiveGates", () => {
@@ -3214,7 +3404,11 @@ describe("createReviewReport", () => {
   test("report fails when any gate fails", () => {
     const report = createReviewReport("thorough", [
       { gate: "lsp", passed: true, issues: [] },
-      { gate: "ai-review", passed: false, issues: [{ severity: "error", message: "bug" }] },
+      {
+        gate: "ai-review",
+        passed: false,
+        issues: [{ severity: "error", message: "bug" }],
+      },
     ]);
     expect(report.passed).toBe(false);
   });
@@ -3238,6 +3432,7 @@ git commit -m "feat: add composable quality gates with profile-based selection"
 ### Task 14: Review Command
 
 **Files:**
+
 - Create: `src/commands/review.ts`
 
 - [ ] **Step 1: Write /supi:review command**
@@ -3253,7 +3448,8 @@ import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
 
 export function registerReviewCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:review", {
-    description: "Run quality gates at chosen depth (quick/thorough/full-regression)",
+    description:
+      "Run quality gates at chosen depth (quick/thorough/full-regression)",
     async handler(args, ctx) {
       const config = loadConfig(ctx.cwd);
 
@@ -3274,14 +3470,16 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
         notifyWarning(
           ctx,
           "LSP not available",
-          "Review will continue without LSP diagnostics. Run /supi:config for setup."
+          "Review will continue without LSP diagnostics. Run /supi:config for setup.",
         );
       }
 
       // Get changed files (git diff)
       let changedFiles: string[] = [];
       try {
-        const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
+        const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], {
+          cwd: ctx.cwd,
+        });
         if (result.exitCode === 0) {
           changedFiles = result.stdout
             .split("\n")
@@ -3295,7 +3493,11 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
       if (changedFiles.length === 0) {
         // Also check staged files
         try {
-          const result = await pi.exec("git", ["diff", "--name-only", "--cached"], { cwd: ctx.cwd });
+          const result = await pi.exec(
+            "git",
+            ["diff", "--name-only", "--cached"],
+            { cwd: ctx.cwd },
+          );
           if (result.exitCode === 0) {
             changedFiles = result.stdout
               .split("\n")
@@ -3308,7 +3510,11 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
       }
 
       if (changedFiles.length === 0) {
-        notifyInfo(ctx, "No changed files detected", "Reviewing all files in scope");
+        notifyInfo(
+          ctx,
+          "No changed files detected",
+          "Reviewing all files in scope",
+        );
       }
 
       const reviewPrompt = buildReviewPrompt({
@@ -3327,7 +3533,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
           content: [{ type: "text", text: reviewPrompt }],
           display: "none",
         },
-        { deliverAs: "steer" }
+        { deliverAs: "steer" },
       );
     },
   });
@@ -3357,6 +3563,7 @@ git commit -m "feat: add /supi:review command with profile-based quality gates"
 ### Task 15: QA Pipeline
 
 **Files:**
+
 - Create: `src/qa/detector.ts`
 - Create: `src/qa/runner.ts`
 - Create: `src/qa/playwright.ts`
@@ -3377,11 +3584,31 @@ export interface DetectedFramework {
   command: string;
 }
 
-const FRAMEWORK_SIGNATURES: { name: string; files: string[]; command: string }[] = [
-  { name: "vitest", files: ["vitest.config.ts", "vitest.config.js", "vitest.config.mts"], command: "npx vitest run" },
-  { name: "jest", files: ["jest.config.ts", "jest.config.js", "jest.config.mjs"], command: "npx jest" },
-  { name: "mocha", files: [".mocharc.yml", ".mocharc.json", ".mocharc.js"], command: "npx mocha" },
-  { name: "pytest", files: ["pytest.ini", "pyproject.toml", "conftest.py"], command: "pytest" },
+const FRAMEWORK_SIGNATURES: {
+  name: string;
+  files: string[];
+  command: string;
+}[] = [
+  {
+    name: "vitest",
+    files: ["vitest.config.ts", "vitest.config.js", "vitest.config.mts"],
+    command: "npx vitest run",
+  },
+  {
+    name: "jest",
+    files: ["jest.config.ts", "jest.config.js", "jest.config.mjs"],
+    command: "npx jest",
+  },
+  {
+    name: "mocha",
+    files: [".mocharc.yml", ".mocharc.json", ".mocharc.js"],
+    command: "npx mocha",
+  },
+  {
+    name: "pytest",
+    files: ["pytest.ini", "pyproject.toml", "conftest.py"],
+    command: "pytest",
+  },
   { name: "cargo-test", files: ["Cargo.toml"], command: "cargo test" },
   { name: "go-test", files: ["go.mod"], command: "go test ./..." },
 ];
@@ -3393,7 +3620,10 @@ export function detectFramework(cwd: string): DetectedFramework | null {
   if (fs.existsSync(pkgPath)) {
     try {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-      if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') {
+      if (
+        pkg.scripts?.test &&
+        pkg.scripts.test !== 'echo "Error: no test specified" && exit 1'
+      ) {
         // Detect framework from test script
         const testScript = pkg.scripts.test;
         for (const sig of FRAMEWORK_SIGNATURES) {
@@ -3432,7 +3662,9 @@ export function detectAndCache(cwd: string): DetectedFramework | null {
   // Detect and cache
   const detected = detectFramework(cwd);
   if (detected) {
-    updateConfig(cwd, { qa: { framework: detected.name, command: detected.command } });
+    updateConfig(cwd, {
+      qa: { framework: detected.name, command: detected.command },
+    });
   }
   return detected;
 }
@@ -3447,7 +3679,7 @@ export function detectAndCache(cwd: string): DetectedFramework | null {
 export function buildQaRunPrompt(
   command: string,
   scope: "all" | "changed" | "e2e",
-  changedFiles?: string[]
+  changedFiles?: string[],
 ): string {
   const sections: string[] = ["# QA Pipeline", ""];
 
@@ -3461,14 +3693,14 @@ export function buildQaRunPrompt(
         ...(changedFiles ?? []).map((f) => `- ${f}`),
         "",
         `Base command: \`${command}\``,
-        "Filter to only tests relevant to the files above."
+        "Filter to only tests relevant to the files above.",
       );
       break;
     case "e2e":
       sections.push(
         "Run end-to-end tests only.",
         "Use Playwright or the configured E2E framework.",
-        "Command: `npx playwright test`"
+        "Command: `npx playwright test`",
       );
       break;
   }
@@ -3485,7 +3717,7 @@ export function buildQaRunPrompt(
     "- Test name",
     "- File path",
     "- Error message",
-    "- Stack trace (first 5 lines)"
+    "- Stack trace (first 5 lines)",
   );
 
   return sections.join("\n");
@@ -3541,7 +3773,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
         notifyError(
           ctx,
           "No test framework detected",
-          "Configure manually: /supi:config set qa.framework vitest && /supi:config set qa.command 'npx vitest run'"
+          "Configure manually: /supi:config set qa.framework vitest && /supi:config set qa.command 'npx vitest run'",
         );
         return;
       }
@@ -3553,9 +3785,13 @@ export function registerQaCommand(pi: ExtensionAPI): void {
       if (args?.includes("--changed")) {
         scope = "changed";
         try {
-          const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
+          const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], {
+            cwd: ctx.cwd,
+          });
           if (result.exitCode === 0) {
-            changedFiles = result.stdout.split("\n").filter((f) => f.trim().length > 0);
+            changedFiles = result.stdout
+              .split("\n")
+              .filter((f) => f.trim().length > 0);
           }
         } catch {
           // fallback to all
@@ -3575,7 +3811,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
           content: [{ type: "text", text: prompt }],
           display: "none",
         },
-        { deliverAs: "steer" }
+        { deliverAs: "steer" },
       );
     },
   });
@@ -3604,7 +3840,10 @@ describe("detectFramework", () => {
   });
 
   test("detects vitest from config file", () => {
-    fs.writeFileSync(path.join(tmpDir, "vitest.config.ts"), "export default {}");
+    fs.writeFileSync(
+      path.join(tmpDir, "vitest.config.ts"),
+      "export default {}",
+    );
     const result = detectFramework(tmpDir);
     expect(result?.name).toBe("vitest");
   });
@@ -3612,7 +3851,7 @@ describe("detectFramework", () => {
   test("detects from package.json test script", () => {
     fs.writeFileSync(
       path.join(tmpDir, "package.json"),
-      JSON.stringify({ scripts: { test: "vitest run" } })
+      JSON.stringify({ scripts: { test: "vitest run" } }),
     );
     const result = detectFramework(tmpDir);
     expect(result?.name).toBe("vitest");
@@ -3648,6 +3887,7 @@ git commit -m "feat: add QA pipeline with framework detection, runner, and /supi
 ### Task 16: Release Automation
 
 **Files:**
+
 - Create: `src/release/analyzer.ts`
 - Create: `src/release/notes.ts`
 - Create: `src/release/publisher.ts`
@@ -3688,7 +3928,10 @@ export function buildAnalyzerPrompt(lastTag: string | null): string {
 // src/release/notes.ts
 
 /** Build prompt to generate release notes */
-export function buildNotesPrompt(version: string, lastTag: string | null): string {
+export function buildNotesPrompt(
+  version: string,
+  lastTag: string | null,
+): string {
   const sinceArg = lastTag ? `${lastTag}..HEAD` : "HEAD~20..HEAD";
   return [
     "# Generate Release Notes",
@@ -3723,7 +3966,7 @@ export function buildNotesPrompt(version: string, lastTag: string | null): strin
 /** Build prompt to execute release */
 export function buildPublishPrompt(
   version: string,
-  pipeline: string | null
+  pipeline: string | null,
 ): string {
   const steps: string[] = [
     "# Publish Release",
@@ -3748,7 +3991,7 @@ export function buildPublishPrompt(
   steps.push(
     "",
     "IMPORTANT: Ask for user confirmation before tagging and publishing.",
-    "Show them the version, changelog, and what will be published."
+    "Show them the version, changelog, and what will be published.",
   );
 
   return steps.join("\n");
@@ -3773,7 +4016,11 @@ export function registerReleaseCommand(pi: ExtensionAPI): void {
       // Get last tag
       let lastTag: string | null = null;
       try {
-        const result = await pi.exec("git", ["describe", "--tags", "--abbrev=0"], { cwd: ctx.cwd });
+        const result = await pi.exec(
+          "git",
+          ["describe", "--tags", "--abbrev=0"],
+          { cwd: ctx.cwd },
+        );
         if (result.exitCode === 0) lastTag = result.stdout.trim();
       } catch {
         // no tags yet
@@ -3801,12 +4048,16 @@ export function registerReleaseCommand(pi: ExtensionAPI): void {
             content: [{ type: "text", text: prompt }],
             display: "none",
           },
-          { deliverAs: "steer" }
+          { deliverAs: "steer" },
         );
         return;
       }
 
-      notifyInfo(ctx, "Release started", `Pipeline: ${config.release.pipeline}`);
+      notifyInfo(
+        ctx,
+        "Release started",
+        `Pipeline: ${config.release.pipeline}`,
+      );
 
       const prompt = buildAnalyzerPrompt(lastTag);
 
@@ -3816,7 +4067,7 @@ export function registerReleaseCommand(pi: ExtensionAPI): void {
           content: [{ type: "text", text: prompt }],
           display: "none",
         },
-        { deliverAs: "steer" }
+        { deliverAs: "steer" },
       );
     },
   });
@@ -3871,6 +4122,7 @@ git commit -m "feat: add release automation with /supi:release command"
 ### Task 17: Skills
 
 **Files:**
+
 - Create: `skills/code-review/SKILL.md`
 - Create: `skills/debugging/SKILL.md`
 - Create: `skills/qa-strategy/SKILL.md`
@@ -3878,10 +4130,11 @@ git commit -m "feat: add release automation with /supi:release command"
 - [ ] **Step 1: Write code review skill**
 
 ```markdown
-<!-- skills/code-review/SKILL.md -->
----
+## <!-- skills/code-review/SKILL.md -->
+
 name: code-review
 description: Deep code review methodology for thorough quality assessment
+
 ---
 
 # Code Review Skill
@@ -3891,29 +4144,34 @@ Systematic approach to reviewing code changes.
 ## Review Checklist
 
 ### Correctness
+
 - Does the code do what it claims?
 - Are edge cases handled?
 - Are error conditions handled?
 
 ### Security
+
 - Input validation at system boundaries?
 - SQL injection, XSS, command injection risks?
 - Secrets in code or logs?
 - Authentication/authorization checks?
 
 ### Performance
+
 - Unnecessary loops or allocations?
 - N+1 query patterns?
 - Missing indexes for frequent queries?
 - Large payloads or unbounded lists?
 
 ### Maintainability
+
 - Clear naming (functions, variables, files)?
 - Single responsibility per unit?
 - Unnecessary abstractions or premature optimization?
 - Comments where logic isn't self-evident?
 
 ### Testing
+
 - Tests cover the happy path?
 - Tests cover error/edge cases?
 - Tests are deterministic (no flaky tests)?
@@ -3929,10 +4187,11 @@ Systematic approach to reviewing code changes.
 - [ ] **Step 2: Write debugging skill**
 
 ```markdown
-<!-- skills/debugging/SKILL.md -->
----
+## <!-- skills/debugging/SKILL.md -->
+
 name: debugging
 description: Systematic debugging approach — investigate before fixing
+
 ---
 
 # Debugging Skill
@@ -3958,10 +4217,11 @@ description: Systematic debugging approach — investigate before fixing
 - [ ] **Step 3: Write QA strategy skill**
 
 ```markdown
-<!-- skills/qa-strategy/SKILL.md -->
----
+## <!-- skills/qa-strategy/SKILL.md -->
+
 name: qa-strategy
 description: QA test planning for comprehensive coverage
+
 ---
 
 # QA Strategy Skill
@@ -3982,12 +4242,14 @@ description: QA test planning for comprehensive coverage
 ## Coverage Priorities
 
 Focus testing effort on:
+
 1. Business logic (highest value)
 2. Error handling paths
 3. Edge cases in input validation
 4. Integration points (API boundaries, DB queries)
 
 Don't test:
+
 - Framework boilerplate
 - Simple getters/setters
 - Third-party library behavior

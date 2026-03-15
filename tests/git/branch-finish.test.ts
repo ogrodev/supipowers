@@ -96,4 +96,36 @@ describe("buildBranchFinishPrompt", () => {
     });
     expect(prompt).toContain("gh pr create");
   });
+
+  test("throws on unsafe branch name", () => {
+    expect(() => buildBranchFinishPrompt({ branchName: "main; rm -rf /", baseBranch: "main" })).toThrow("Unsafe branchName");
+  });
+
+  test("throws on unsafe base branch", () => {
+    expect(() => buildBranchFinishPrompt({ branchName: "feature/ok", baseBranch: "main$(cmd)" })).toThrow("Unsafe baseBranch");
+  });
+
+  test("throws on unsafe worktree path", () => {
+    expect(() => buildBranchFinishPrompt({ branchName: "feature/ok", baseBranch: "main", worktreePath: "/path;rm -rf /" })).toThrow("Unsafe worktreePath");
+  });
+
+  test("option 4 includes worktree remove when worktreePath provided", () => {
+    const prompt = buildBranchFinishPrompt({
+      branchName: "feature/auth",
+      baseBranch: "main",
+      worktreePath: "/project/.worktrees/auth",
+    });
+    expect(prompt).toContain("git worktree remove /project/.worktrees/auth");
+    expect(prompt).toContain("git branch -D feature/auth");
+  });
+
+  test("option 4 does not include worktree remove without worktreePath", () => {
+    const prompt = buildBranchFinishPrompt({
+      branchName: "feature/auth",
+      baseBranch: "main",
+    });
+    const option4Section = prompt.split("Option 4")[1];
+    expect(option4Section).toBeDefined();
+    expect(option4Section).not.toContain("git worktree remove");
+  });
 });

@@ -172,7 +172,7 @@ export function registerFixPrCommand(pi: ExtensionAPI): void {
           content: [{ type: "text", text: prompt }],
           display: "none",
         },
-        { deliverAs: "steer" },
+        { deliverAs: "steer", triggerTurn: true },
       );
 
       notifyInfo(ctx, `Fix-PR started: PR #${prNumber}`, `${commentCount} comments to assess | session ${ledger.id}`);

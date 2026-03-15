@@ -91,6 +91,12 @@ describe("planning prompt builder", () => {
       const prompt = buildPlanningPrompt({});
       expect(prompt).toContain("5");
     });
+
+    test("does not have duplicate 'after the spec review loop' text", () => {
+      const prompt = buildPlanningPrompt({});
+      const matches = prompt.match(/After the spec review loop passes/g);
+      expect(matches).toHaveLength(1);
+    });
   });
 
   describe("buildQuickPlanPrompt", () => {
@@ -113,6 +119,14 @@ describe("planning prompt builder", () => {
     test("appends skill content when provided", () => {
       const prompt = buildQuickPlanPrompt("task", "Custom rules");
       expect(prompt).toContain("Custom rules");
+    });
+
+    test("includes YAML frontmatter example", () => {
+      const prompt = buildQuickPlanPrompt("add user auth");
+      expect(prompt).toContain("```yaml");
+      expect(prompt).toContain("name: <feature-name>");
+      expect(prompt).toContain("created: YYYY-MM-DD");
+      expect(prompt).toContain("tags: [tag1, tag2]");
     });
   });
 });

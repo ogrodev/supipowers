@@ -92,7 +92,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
           content: [{ type: "text", text: reviewPrompt }],
           display: "none",
         },
-        { deliverAs: "steer" }
+        { deliverAs: "steer", triggerTurn: true }
       );
     },
   });

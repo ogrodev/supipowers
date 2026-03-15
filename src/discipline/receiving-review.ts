@@ -1,6 +1,6 @@
 /**
  * Receiving code review instructions for sub-agent prompts.
- * Matches superpowers' receiving-code-review skill:
+ * Matches supipowers' receiving-code-review skill:
  * technical rigor and verification, not performative agreement.
  */
 export function buildReceivingReviewInstructions(): string {
@@ -22,9 +22,9 @@ export function buildReceivingReviewInstructions(): string {
     "### Forbidden Responses",
     "",
     "Never use performative agreement:",
-    "- \"You're absolutely right!\"",
-    "- \"Great point!\"",
-    "- \"Excellent catch!\"",
+    '- "You\'re absolutely right!"',
+    '- "Great point!"',
+    '- "Excellent catch!"',
     "",
     "Instead: restate requirements, ask clarifying questions, take action.",
     "",
@@ -41,7 +41,7 @@ export function buildReceivingReviewInstructions(): string {
     "",
     "### YAGNI Check",
     "",
-    "For suggested \"professional features\" — grep the codebase for actual usage.",
+    'For suggested "professional features" — grep the codebase for actual usage.',
     "If unused, suggest removal instead of implementing.",
     "",
     "### Implementation Order",

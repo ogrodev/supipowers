@@ -10,7 +10,7 @@ export interface PlanningPromptOptions {
  * Build the comprehensive planning prompt that encodes the full brainstorming flow.
  * This is the steering prompt sent to the agent when `/supi:plan` runs.
  *
- * Follows superpowers' brainstorming skill flow:
+ * Follows supipowers' brainstorming skill flow:
  * 1. Explore project context
  * 2. Ask clarifying questions (one at a time)
  * 3. Propose 2-3 approaches with trade-offs
@@ -103,8 +103,6 @@ export function buildPlanningPrompt(options: PlanningPromptOptions): string {
     // ── Phase 7: User Gate ───────────────────────────────────────
     "## Phase 7: User Review Gate",
     "",
-    "After the spec review loop passes:",
-    "",
     "After the spec review loop passes, ask the user to review the spec before proceeding:",
     "",
     '> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."',
@@ -137,12 +135,7 @@ export function buildPlanningPrompt(options: PlanningPromptOptions): string {
   ];
 
   if (skillContent) {
-    sections.push(
-      "## Additional Planning Guidelines",
-      "",
-      skillContent,
-      "",
-    );
+    sections.push("## Additional Planning Guidelines", "", skillContent, "");
   }
 
   return sections.join("\n");
@@ -152,14 +145,26 @@ export function buildPlanningPrompt(options: PlanningPromptOptions): string {
  * Build the quick plan prompt that skips brainstorming.
  * Used when `/supi:plan --quick <description>` is invoked.
  */
-export function buildQuickPlanPrompt(description: string, skillContent?: string): string {
+export function buildQuickPlanPrompt(
+  description: string,
+  skillContent?: string,
+): string {
   const sections: string[] = [
     "Generate a concise implementation plan for the following task.",
     "Skip brainstorming — go straight to task breakdown.",
     "",
     `Task: ${description}`,
     "",
-    "Format the plan as markdown with YAML frontmatter (name, created, tags).",
+    "Format the plan as markdown with YAML frontmatter:",
+    "",
+    "```yaml",
+    "---",
+    "name: <feature-name>",
+    "created: YYYY-MM-DD",
+    "tags: [tag1, tag2]",
+    "---",
+    "```",
+    "",
     "Each task should have: name, [parallel-safe] or [sequential] annotation,",
     "**files**, **criteria**, and **complexity** (small/medium/large).",
     "",
@@ -167,11 +172,7 @@ export function buildQuickPlanPrompt(description: string, skillContent?: string)
   ];
 
   if (skillContent) {
-    sections.push(
-      "",
-      "Follow these planning guidelines:",
-      skillContent,
-    );
+    sections.push("", "Follow these planning guidelines:", skillContent);
   }
 
   return sections.join("\n");

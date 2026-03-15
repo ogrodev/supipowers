@@ -7,7 +7,7 @@ describe("plan writer prompt", () => {
   describe("structure", () => {
     test("includes scope check", () => {
       const prompt = buildPlanWriterPrompt({ specPath });
-      expect(prompt).toContain("scope");
+      expect(prompt).toContain("Scope Check");
       expect(prompt).toContain("subsystem");
     });
 
@@ -101,11 +101,18 @@ describe("plan writer prompt", () => {
     });
   });
 
-  describe("plan reviewer prompt template", () => {
-    test("includes the reviewer prompt template", () => {
+  describe("plan review loop", () => {
+    test("includes reviewer dispatch instructions", () => {
       const prompt = buildPlanWriterPrompt({ specPath });
-      expect(prompt).toContain("Spec Alignment");
-      expect(prompt).toContain("Task Decomposition");
+      expect(prompt).toContain("plan-document-reviewer sub-agent");
+      expect(prompt).toContain("completeness, spec alignment, task decomposition");
+      expect(prompt).toContain("plan file path, the spec file path, and the chunk number");
+    });
+
+    test("does not embed the full reviewer prompt", () => {
+      const prompt = buildPlanWriterPrompt({ specPath });
+      // The old pattern embedded a full reviewer prompt with a placeholder path
+      expect(prompt).not.toContain("<plan-file-path>");
     });
   });
 });

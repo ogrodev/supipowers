@@ -118,6 +118,20 @@ describe("implementer prompt", () => {
     });
     expect(prompt).toContain("rejects invalid formats");
   });
+
+  test("shows placeholder when task has no files", () => {
+    const emptyFilesTask: PlanTask = {
+      ...sampleTask,
+      files: [],
+    };
+    const prompt = buildImplementerPrompt({
+      task: emptyFilesTask,
+      planContext: "",
+      workDir: "/tmp",
+    });
+    expect(prompt).toContain("No specific files targeted");
+    expect(prompt).toContain("determine from task description");
+  });
 });
 
 describe("spec compliance review prompt", () => {

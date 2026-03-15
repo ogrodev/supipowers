@@ -1,6 +1,6 @@
 /**
  * Build the prompt for dispatching a spec document reviewer sub-agent.
- * Follows the same pattern as superpowers' spec-document-reviewer-prompt.md.
+ * Follows the same pattern as supipowers' spec-document-reviewer-prompt.md.
  */
 export function buildSpecReviewerPrompt(specFilePath: string): string {
   return [
@@ -12,7 +12,7 @@ export function buildSpecReviewerPrompt(specFilePath: string): string {
     "",
     "| Category | What to Look For |",
     "|----------|------------------|",
-    "| Completeness | TODO markers, placeholders, \"TBD\", incomplete sections |",
+    '| Completeness | TODO markers, placeholders, "TBD", incomplete sections |',
     "| Coverage | Missing error handling, edge cases, integration points |",
     "| Consistency | Internal contradictions, conflicting requirements |",
     "| Clarity | Ambiguous requirements that could be interpreted multiple ways |",

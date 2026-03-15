@@ -1,3 +1,5 @@
+import { assertSafeRef, assertSafePath } from "./sanitize.js";
+
 export interface FinishOption {
   id: "merge" | "pr" | "keep" | "discard";
   label: string;
@@ -19,14 +21,20 @@ export interface BranchFinishPromptOptions {
 
 /**
  * Build the prompt that guides the agent through finishing a development branch.
- * Follows superpowers' finishing-a-development-branch skill:
+ * Follows supipowers' finishing-a-development-branch skill:
  * - Verify tests pass first
  * - Present exactly 4 options
  * - Execute chosen option
  * - Clean up worktree (conditional)
  */
-export function buildBranchFinishPrompt(options: BranchFinishPromptOptions): string {
+export function buildBranchFinishPrompt(
+  options: BranchFinishPromptOptions,
+): string {
   const { branchName, baseBranch, worktreePath } = options;
+
+  assertSafeRef(branchName, "branchName");
+  assertSafeRef(baseBranch, "baseBranch");
+  if (worktreePath) assertSafePath(worktreePath, "worktreePath");
 
   const sections: string[] = [
     "## Finish Development Branch",
@@ -77,6 +85,7 @@ export function buildBranchFinishPrompt(options: BranchFinishPromptOptions): str
     "",
     "```bash",
     `git checkout ${baseBranch}`,
+    ...(worktreePath ? [`git worktree remove ${worktreePath}`] : []),
     `git branch -D ${branchName}`,
     "```",
   ];
@@ -88,7 +97,7 @@ export function buildBranchFinishPrompt(options: BranchFinishPromptOptions): str
       "",
       `Worktree at: \`${worktreePath}\``,
       "",
-      "- **Options 1 and 4:** Clean up the worktree:",
+      "- **Option 1:** Clean up the worktree:",
       "  ```bash",
       `  git worktree remove ${worktreePath}`,
       "  ```",

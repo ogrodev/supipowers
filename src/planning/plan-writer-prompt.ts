@@ -1,4 +1,3 @@
-import { buildPlanReviewerPrompt } from "./plan-reviewer.js";
 
 export interface PlanWriterOptions {
   specPath: string;
@@ -8,7 +7,7 @@ export interface PlanWriterOptions {
  * Build the plan writing prompt that guides the agent through creating
  * a comprehensive implementation plan from an approved spec.
  *
- * Follows superpowers' writing-plans skill:
+ * Follows supipowers' writing-plans skill:
  * - Scope check
  * - File structure mapping
  * - Bite-sized tasks with TDD steps
@@ -139,13 +138,11 @@ export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
     "",
     "Use `## Chunk N: <name>` headings to delimit chunks. Each chunk should be under 1000 lines and logically self-contained.",
     "",
-    "1. Dispatch the reviewer with this prompt:",
-    "",
-    "```",
-    buildPlanReviewerPrompt("<plan-file-path>", specPath, 1),
-    "```",
-    "",
-    "(Replace `<plan-file-path>` with actual path and adjust Chunk number.)",
+    "1. Dispatch a plan-document-reviewer sub-agent for each chunk.",
+    "   The reviewer checks: completeness, spec alignment, task decomposition,",
+    "   file structure, file size rules, checkbox syntax, and chunk size.",
+    "   Provide the reviewer with: the plan file path, the spec file path, and the chunk number.",
+
     "",
     "2. If **Issues Found**: fix the issues, re-dispatch the reviewer",
     "3. Repeat until **Approved** (max 5 iterations, then surface to human for guidance)",

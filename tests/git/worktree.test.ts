@@ -116,9 +116,54 @@ describe("detectProjectSetup", () => {
     expect(result.installCommand).toBeNull();
     cleanup();
   });
+
+  test("detects Bun project with bun.lock", () => {
+    setup();
+    fs.writeFileSync(path.join(tmpDir, "bun.lock"), "");
+    const result = detectProjectSetup(tmpDir);
+    expect(result.type).toBe("node");
+    expect(result.installCommand).toBe("bun install");
+    cleanup();
+  });
+
+  test("detects Bun project with bun.lockb", () => {
+    setup();
+    fs.writeFileSync(path.join(tmpDir, "bun.lockb"), "");
+    const result = detectProjectSetup(tmpDir);
+    expect(result.type).toBe("node");
+    expect(result.installCommand).toBe("bun install");
+    cleanup();
+  });
+
+  test("prefers Bun over npm when both bun.lock and package.json exist", () => {
+    setup();
+    fs.writeFileSync(path.join(tmpDir, "bun.lock"), "");
+    fs.writeFileSync(path.join(tmpDir, "package.json"), "{}");
+    const result = detectProjectSetup(tmpDir);
+    expect(result.installCommand).toBe("bun install");
+    cleanup();
+  });
+
+  test("prefers pyproject.toml over requirements.txt when both exist", () => {
+    setup();
+    fs.writeFileSync(path.join(tmpDir, "pyproject.toml"), "");
+    fs.writeFileSync(path.join(tmpDir, "requirements.txt"), "");
+    const result = detectProjectSetup(tmpDir);
+    expect(result.installCommand).toBe("poetry install");
+    cleanup();
+  });
 });
 
 describe("buildWorktreePrompt", () => {
+  test("throws on unsafe branch name", () => {
+    expect(() => buildWorktreePrompt({ branchName: "main; rm -rf /", cwd: "/project" })).toThrow("Unsafe branchName");
+  });
+
+  test("includes bun install in prompt table", () => {
+    const prompt = buildWorktreePrompt({ branchName: "feature/auth", cwd: "/project" });
+    expect(prompt).toContain("bun install");
+  });
+
   test("includes branch name", () => {
     const prompt = buildWorktreePrompt({ branchName: "feature/auth", cwd: "/project" });
     expect(prompt).toContain("feature/auth");

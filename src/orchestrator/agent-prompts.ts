@@ -13,7 +13,7 @@ export interface ImplementerPromptOptions {
 
 /**
  * Build the prompt for an implementer sub-agent.
- * Follows superpowers' implementer-prompt.md pattern:
+ * Follows supipowers' implementer-prompt.md pattern:
  * - Full task description
  * - Ask-before-starting section
  * - TDD and code organization guidance
@@ -21,7 +21,9 @@ export interface ImplementerPromptOptions {
  * - Self-review before reporting
  * - Structured report format
  */
-export function buildImplementerPrompt(options: ImplementerPromptOptions): string {
+export function buildImplementerPrompt(
+  options: ImplementerPromptOptions,
+): string {
   const { task, planContext, workDir } = options;
 
   return [
@@ -33,7 +35,9 @@ export function buildImplementerPrompt(options: ImplementerPromptOptions): strin
     "",
     "## Target Files",
     "",
-    ...task.files.map((f) => `- ${f}`),
+    ...(task.files.length > 0
+      ? task.files.map((f) => `- ${f}`)
+      : ["(No specific files targeted \u2014 determine from task description)"]),
     "",
     "## Acceptance Criteria",
     "",
@@ -152,12 +156,14 @@ export interface SpecComplianceReviewOptions {
 
 /**
  * Build the prompt for a spec compliance reviewer sub-agent.
- * Follows superpowers' spec-reviewer-prompt.md pattern:
+ * Follows supipowers' spec-reviewer-prompt.md pattern:
  * - Do not trust the implementer's report
  * - Verify by reading actual code
  * - Check for missing, extra, and misunderstood requirements
  */
-export function buildSpecComplianceReviewPrompt(options: SpecComplianceReviewOptions): string {
+export function buildSpecComplianceReviewPrompt(
+  options: SpecComplianceReviewOptions,
+): string {
   const { taskRequirements, implementerReport } = options;
 
   return [
@@ -225,12 +231,14 @@ export interface CodeQualityReviewOptions {
 
 /**
  * Build the prompt for a code quality reviewer sub-agent.
- * Follows superpowers' code-quality-reviewer-prompt.md pattern:
+ * Follows supipowers' code-quality-reviewer-prompt.md pattern:
  * - Review git diff between base and head
  * - Check file responsibilities and unit decomposition
  * - Categorize issues as Critical/Important/Minor
  */
-export function buildCodeQualityReviewPrompt(options: CodeQualityReviewOptions): string {
+export function buildCodeQualityReviewPrompt(
+  options: CodeQualityReviewOptions,
+): string {
   const { taskSummary, implementerReport, baseSha, headSha } = options;
 
   return [
