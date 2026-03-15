@@ -27,4 +27,23 @@ describe("extension entry point", () => {
     expect(registeredCommands).toContain("supi:status");
     expect(registeredCommands).toContain("supi:update");
   });
+
+  test("registers context-mode hooks when enabled", () => {
+    const mockPi = {
+      registerCommand: vi.fn(),
+      registerTool: vi.fn(),
+      on: vi.fn(),
+      sendMessage: vi.fn(),
+      getActiveTools: vi.fn(() => []),
+      exec: vi.fn(),
+    } as any;
+
+    supipowers(mockPi);
+
+    // Verify context-mode hooks are registered
+    const onCalls = mockPi.on.mock.calls.map((c: any[]) => c[0]);
+    expect(onCalls).toContain("tool_result");
+    expect(onCalls).toContain("tool_call");
+    expect(onCalls).toContain("before_agent_start");
+  });
 });
