@@ -33,6 +33,7 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     compaction: true,
     llmSummarization: false,
     llmThreshold: 16384,
+    enforceRouting: true,
   },
 };
 

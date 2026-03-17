@@ -6,25 +6,13 @@ import { detectContextMode, type ContextModeStatus } from "./detector.js";
 import { EventStore } from "./event-store.js";
 import { extractEvents, extractPromptEvents } from "./event-extractor.js";
 import { buildResumeSnapshot } from "./snapshot-builder.js";
+import { routeToolCall } from "./routing.js";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Cached detection result
 let cachedStatus: ContextModeStatus | null = null;
-
-/** HTTP command patterns for blocking */
-const HTTP_PATTERNS = [
-  /^\s*curl\s/,
-  /^\s*wget\s/,
-  /\bcurl\s+(-[a-zA-Z]*\s+)*https?:\/\//,
-  /\bwget\s+(-[a-zA-Z]*\s+)*https?:\/\//,
-];
-
-function isHttpCommand(command: unknown): boolean {
-  if (typeof command !== "string") return false;
-  return HTTP_PATTERNS.some((p) => p.test(command));
-}
 
 function loadRoutingSkill(): string | null {
   try {
@@ -77,24 +65,14 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
     return compressed;
   });
 
-  // Phase 1: Command blocking
+  // Phase 1: Tool routing — block native tools and redirect to ctx_* equivalents
   pi.on("tool_call", (event) => {
-    if (!config.contextMode.blockHttpCommands) return;
-    if (event.toolName !== "bash") return;
-
-    const command = event.input?.command;
-    if (!isHttpCommand(command)) return;
-
-    // Only block if context-mode has a replacement tool
     if (!cachedStatus) cachedStatus = detectContextMode(pi.getActiveTools());
-    if (!cachedStatus.tools.ctxFetchAndIndex) return;
 
-    return {
-      block: true,
-      reason:
-        "Use ctx_fetch_and_index instead of curl/wget. " +
-        "It fetches the URL, indexes the content, and returns a compressed summary.",
-    };
+    return routeToolCall(event.toolName, event.input as any, cachedStatus, {
+      enforceRouting: config.contextMode.enforceRouting,
+      blockHttpCommands: config.contextMode.blockHttpCommands,
+    });
   });
 
   // Phase 1: Routing instructions + Phase 2: Prompt event extraction

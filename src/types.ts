@@ -117,6 +117,8 @@ export interface ContextModeConfig {
   llmSummarization: boolean;
   /** Byte threshold above which LLM summarization is used instead of structural compression (default: 16384) */
   llmThreshold: number;
+  /** Hard-block native search/read tools when ctx_* equivalents are available (default: true) */
+  enforceRouting: boolean;
 }
 
 /** Config shape */
