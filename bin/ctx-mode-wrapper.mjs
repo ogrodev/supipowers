@@ -10,15 +10,49 @@
 // rules since that's what OMP actually loads as system prompt.
 
 import { resolve, join, dirname } from "node:path";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, copyFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import os from "node:os";
 
 const __wrapperDir = dirname(fileURLToPath(import.meta.url));
 
 // Capture the real project directory BEFORE start.mjs clobbers it
 const projectDir = resolve(process.cwd());
 process.env.CLAUDE_PROJECT_DIR = projectDir;
+
+// Redirect context-mode's FTS5 database to a project-scoped directory.
+// ContentStore uses `join(tmpdir(), "context-mode-<pid>.db")`.
+// By patching os.tmpdir, the DB lives in .omp/context-mode/ instead of /tmp/.
+// We also copy the previous session's DB to the new PID filename so indexed
+// content persists across sessions (context-mode creates per-PID filenames).
+const ctxDbDir = join(projectDir, ".omp", "context-mode");
+if (!existsSync(ctxDbDir)) mkdirSync(ctxDbDir, { recursive: true });
+
+// Find the most recent existing DB and copy it for the new session
+const currentDbName = `context-mode-${process.pid}.db`;
+try {
+  const existing = readdirSync(ctxDbDir)
+    .filter(f => f.match(/^context-mode-\d+\.db$/) && f !== currentDbName);
+  if (existing.length > 0) {
+    // Pick the newest by mtime
+    const newest = existing
+      .map(f => ({ name: f, mtime: statSync(join(ctxDbDir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)[0];
+    if (newest) {
+      copyFileSync(join(ctxDbDir, newest.name), join(ctxDbDir, currentDbName));
+      // Also copy WAL/SHM if they exist
+      for (const suffix of ["-wal", "-shm"]) {
+        const src = join(ctxDbDir, newest.name + suffix);
+        if (existsSync(src)) {
+          copyFileSync(src, join(ctxDbDir, currentDbName + suffix));
+        }
+      }
+    }
+  }
+} catch { /* best effort */ }
+
+os.tmpdir = () => ctxDbDir;
 
 // Resolve start.mjs path from the first CLI argument
 const startMjs = process.argv[2];
