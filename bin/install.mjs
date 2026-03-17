@@ -170,9 +170,10 @@ async function main() {
         rmSync(extDir, { recursive: true });
       }
 
-      // Copy extension (src/ + package.json) → ~/.omp/agent/extensions/supipowers/
+      // Copy extension (src/ + bin/ + package.json) → ~/.omp/agent/extensions/supipowers/
       mkdirSync(extDir, { recursive: true });
       cpSync(join(packageRoot, "src"), join(extDir, "src"), { recursive: true });
+      cpSync(join(packageRoot, "bin"), join(extDir, "bin"), { recursive: true });
       cpSync(join(packageRoot, "package.json"), join(extDir, "package.json"));
 
       // Copy skills → ~/.omp/agent/skills/<skillname>/SKILL.md
@@ -233,9 +234,12 @@ async function main() {
     }
 
     const startMjs = join(ctxInstallPath, "start.mjs");
+    // Use our wrapper script that captures cwd as CLAUDE_PROJECT_DIR
+    // before context-mode's start.mjs clobbers it with process.chdir(__dirname)
+    const wrapperMjs = join(extDir, "bin", "ctx-mode-wrapper.mjs");
     mcpConfig.mcpServers["context-mode"] = {
       command: "node",
-      args: [startMjs],
+      args: [wrapperMjs, startMjs],
     };
 
     const { writeFileSync: writeFs } = await import("node:fs");
