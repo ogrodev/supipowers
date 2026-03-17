@@ -67,9 +67,11 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
 
   // Phase 1: Tool routing — block native tools and redirect to ctx_* equivalents
   pi.on("tool_call", (event) => {
-    if (!cachedStatus) cachedStatus = detectContextMode(pi.getActiveTools());
+    // Always re-detect: MCP tools may load after extension init
+    const status = detectContextMode(pi.getActiveTools());
+    cachedStatus = status;
 
-    return routeToolCall(event.toolName, event.input as any, cachedStatus, {
+    return routeToolCall(event.toolName, event.input as any, status, {
       enforceRouting: config.contextMode.enforceRouting,
       blockHttpCommands: config.contextMode.blockHttpCommands,
     });

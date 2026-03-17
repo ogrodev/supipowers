@@ -83,6 +83,11 @@ function isInstalled(binary) {
   return result.status === 0;
 }
 
+// ── CLI Flags ────────────────────────────────────────────────
+
+const args = process.argv.slice(2);
+const skipLsp = args.includes("--skip-lsp");
+
 // ── Main ─────────────────────────────────────────────────────
 
 async function main() {
@@ -191,41 +196,45 @@ async function main() {
     }
   }
 
-  // ── Step 3: LSP setup (optional) ──────────────────────────
+  // ── Step 3: LSP setup (optional, skipped with --skip-lsp) ──
 
-  const lspSpinner = spinner();
-  lspSpinner.start("Checking installed LSP servers...");
-  const lspOptions = LSP_SERVERS.map((srv) => {
-    const installed = isInstalled(srv.server);
-    return {
-      value: srv,
-      label: srv.language,
-      hint: installed ? `${srv.server} (installed)` : srv.server,
-    };
-  });
-  const installedCount = lspOptions.filter((o) => o.hint.includes("(installed)")).length;
-  lspSpinner.stop(`Found ${installedCount}/${LSP_SERVERS.length} LSP servers installed`);
+  if (skipLsp) {
+    note("LSP setup skipped (--skip-lsp)", "LSP");
+  } else {
+    const lspSpinner = spinner();
+    lspSpinner.start("Checking installed LSP servers...");
+    const lspOptions = LSP_SERVERS.map((srv) => {
+      const installed = isInstalled(srv.server);
+      return {
+        value: srv,
+        label: srv.language,
+        hint: installed ? `${srv.server} (installed)` : srv.server,
+      };
+    });
+    const installedCount = lspOptions.filter((o) => o.hint.includes("(installed)")).length;
+    lspSpinner.stop(`Found ${installedCount}/${LSP_SERVERS.length} LSP servers installed`);
 
-  const selected = await multiselect({
-    message: "Install LSP servers for better code intelligence?",
-    options: lspOptions,
-    required: false,
-  });
+    const selected = await multiselect({
+      message: "Install LSP servers for better code intelligence?",
+      options: lspOptions,
+      required: false,
+    });
 
-  if (!isCancel(selected) && selected.length > 0) {
-    for (const srv of selected) {
-      if (isInstalled(srv.server)) {
-        note(`${srv.server} is already installed, skipping.`, srv.language);
-        continue;
-      }
-      const ls = spinner();
-      ls.start(`Installing ${srv.server}...`);
-      const [cmd, ...args] = srv.installCmd.split(" ");
-      const r = run(cmd, args);
-      if (r.status !== 0) {
-        ls.stop(`Failed to install ${srv.server} — you can install manually: ${srv.installCmd}`);
-      } else {
-        ls.stop(`${srv.server} installed`);
+    if (!isCancel(selected) && selected.length > 0) {
+      for (const srv of selected) {
+        if (isInstalled(srv.server)) {
+          note(`${srv.server} is already installed, skipping.`, srv.language);
+          continue;
+        }
+        const ls = spinner();
+        ls.start(`Installing ${srv.server}...`);
+        const [cmd, ...installArgs] = srv.installCmd.split(" ");
+        const r = run(cmd, installArgs);
+        if (r.status !== 0) {
+          ls.stop(`Failed to install ${srv.server} — you can install manually: ${srv.installCmd}`);
+        } else {
+          ls.stop(`${srv.server} installed`);
+        }
       }
     }
   }

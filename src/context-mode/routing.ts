@@ -73,6 +73,28 @@ export function routeToolCall(
     };
   }
 
+  // Find/Glob → block, redirect to ctx_execute or ctx_batch_execute
+  if (options.enforceRouting && toolName === "find") {
+    if (!status.tools.ctxExecute) return undefined;
+    return {
+      block: true,
+      reason:
+        'Use ctx_execute(language: "shell", code: "find ...") or ctx_batch_execute instead of Find/Glob. ' +
+        "Results are indexed and compressed to save context window.",
+    };
+  }
+
+  // Fetch/WebFetch → block, redirect to ctx_fetch_and_index
+  if (toolName === "fetch" || toolName === "web_fetch") {
+    if (!status.tools.ctxFetchAndIndex) return undefined;
+    return {
+      block: true,
+      reason:
+        "Use ctx_fetch_and_index instead of Fetch/WebFetch. " +
+        "It fetches the URL, indexes the content, and returns a compressed summary.",
+    };
+  }
+
   // Read (full-file, no limit/offset) → block, redirect to ctx_execute_file
   if (options.enforceRouting && toolName === "read") {
     if (!status.tools.ctxExecuteFile) return undefined;

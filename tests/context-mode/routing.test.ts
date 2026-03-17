@@ -217,6 +217,41 @@ describe("routeToolCall", () => {
     expect(result).toBeUndefined();
   });
 
+  test("blocks Find/Glob when ctxExecute available", () => {
+    const result = routeToolCall("find", { pattern: "**/*.ts" }, ALL_TOOLS, ENFORCE);
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.reason).toContain("ctx_execute");
+  });
+
+  test("allows Find/Glob when ctxExecute not available", () => {
+    const result = routeToolCall("find", { pattern: "**/*.ts" }, NO_TOOLS, ENFORCE);
+    expect(result).toBeUndefined();
+  });
+
+  test("allows Find/Glob when enforceRouting disabled", () => {
+    const result = routeToolCall("find", { pattern: "**/*.ts" }, ALL_TOOLS, NO_ENFORCE);
+    expect(result).toBeUndefined();
+  });
+
+  test("blocks Fetch/WebFetch when ctxFetchAndIndex available", () => {
+    const result = routeToolCall("fetch", { url: "https://example.com" }, ALL_TOOLS, ENFORCE);
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.reason).toContain("ctx_fetch_and_index");
+  });
+
+  test("blocks web_fetch variant", () => {
+    const result = routeToolCall("web_fetch", { url: "https://example.com" }, ALL_TOOLS, ENFORCE);
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+  });
+
+  test("allows Fetch when ctxFetchAndIndex not available", () => {
+    const result = routeToolCall("fetch", { url: "https://example.com" }, NO_TOOLS, ENFORCE);
+    expect(result).toBeUndefined();
+  });
+
   test("allows unknown tools through", () => {
     const result = routeToolCall("edit", { file_path: "/foo.ts" }, ALL_TOOLS, ENFORCE);
     expect(result).toBeUndefined();
