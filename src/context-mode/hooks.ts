@@ -92,11 +92,9 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
       }
     }
 
-    // Phase 1: routing instructions
-    if (!config.contextMode.routingInstructions) return;
-    // Always re-detect: MCP tools may load after extension init
-    cachedStatus = detectContextMode(pi.getActiveTools());
-    if (!cachedStatus.available) return;
+    // Phase 1: routing instructions — always inject when enforceRouting is on,
+    // regardless of MCP tool detection (tools may load after this hook fires)
+    if (!config.contextMode.routingInstructions && !config.contextMode.enforceRouting) return;
 
     const skill = loadRoutingSkill();
     if (!skill) return;
