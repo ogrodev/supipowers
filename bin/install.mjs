@@ -196,6 +196,55 @@ async function main() {
     }
   }
 
+  // ── Step 2b: Register context-mode MCP server (if installed) ──
+
+  const ctxSpinner = spinner();
+  ctxSpinner.start("Checking for context-mode...");
+
+  // Find context-mode installation (Claude Code plugin cache)
+  const ctxCacheBase = join(homedir(), ".claude", "plugins", "cache", "context-mode", "context-mode");
+  let ctxInstallPath = null;
+  if (existsSync(ctxCacheBase)) {
+    // Find the latest version directory
+    const versions = readdirSync(ctxCacheBase, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+      .reverse();
+    if (versions.length > 0) {
+      const candidate = join(ctxCacheBase, versions[0], "start.mjs");
+      if (existsSync(candidate)) {
+        ctxInstallPath = join(ctxCacheBase, versions[0]);
+      }
+    }
+  }
+
+  if (ctxInstallPath) {
+    // Register as MCP server in ~/.omp/agent/mcp.json
+    const mcpConfigPath = join(homedir(), ".omp", "agent", "mcp.json");
+    let mcpConfig = { mcpServers: {} };
+    if (existsSync(mcpConfigPath)) {
+      try {
+        mcpConfig = JSON.parse(readFileSync(mcpConfigPath, "utf8"));
+        if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
+      } catch {
+        mcpConfig = { mcpServers: {} };
+      }
+    }
+
+    const startMjs = join(ctxInstallPath, "start.mjs");
+    mcpConfig.mcpServers["context-mode"] = {
+      command: "node",
+      args: [startMjs],
+    };
+
+    const { writeFileSync: writeFs } = await import("node:fs");
+    writeFs(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+    ctxSpinner.stop(`context-mode registered as MCP server (${ctxInstallPath})`);
+  } else {
+    ctxSpinner.stop("context-mode not found (install it as a Claude Code plugin for context window protection)");
+  }
+
   // ── Step 3: LSP setup (optional, skipped with --skip-lsp) ──
 
   if (skipLsp) {

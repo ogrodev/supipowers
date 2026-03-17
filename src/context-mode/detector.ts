@@ -24,13 +24,26 @@ const TOOL_SUFFIXES: Array<[string, keyof ContextModeStatus["tools"]]> = [
 ];
 
 /**
- * Extract the short tool name from a potentially MCP-namespaced tool name.
- * MCP tools use the format: mcp__<server>__<tool_name>
- * Native tools use bare names like: lsp, bash, etc.
+ * Check if a tool name matches a context-mode tool suffix.
+ * Handles multiple naming conventions:
+ *   - Bare names: "ctx_execute"
+ *   - Claude Code MCP: "mcp__plugin_context-mode_context-mode__ctx_execute"
+ *   - OMP MCP: "mcp_context_mode_ctx_execute"
+ *
+ * We match by checking if the tool contains a known context-mode server
+ * prefix followed by the suffix, or is the bare suffix itself.
  */
-function getShortName(tool: string): string {
-  const lastSep = tool.lastIndexOf("__");
-  return lastSep >= 0 ? tool.slice(lastSep + 2) : tool;
+const CONTEXT_MODE_PREFIXES = [
+  "mcp__plugin_context-mode_context-mode__",  // Claude Code
+  "mcp_context_mode_",                        // OMP
+];
+
+function matchesSuffix(tool: string, suffix: string): boolean {
+  if (tool === suffix) return true;
+  for (const prefix of CONTEXT_MODE_PREFIXES) {
+    if (tool === prefix + suffix) return true;
+  }
+  return false;
 }
 
 /** Detect context-mode MCP tool availability from the active tools list */
@@ -45,9 +58,8 @@ export function detectContextMode(activeTools: string[]): ContextModeStatus {
   };
 
   for (const tool of activeTools) {
-    const shortName = getShortName(tool);
     for (const [suffix, key] of TOOL_SUFFIXES) {
-      if (shortName === suffix) {
+      if (matchesSuffix(tool, suffix)) {
         tools[key] = true;
         break;
       }
