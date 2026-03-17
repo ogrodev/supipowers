@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "defaultProfile": "thorough",
+  "orchestration": {
+    "maxParallelAgents": 3,
+    "maxFixRetries": 2,
+    "maxNestingDepth": 2,
+    "modelPreference": "auto"
+  },
+  "lsp": {
+    "setupGuide": true
+  },
+  "notifications": {
+    "verbosity": "normal"
+  },
+  "qa": {
+    "framework": null,
+    "command": null,
+    "e2e": false
+  },
+  "release": {
+    "pipeline": "npm"
+  }
+}
