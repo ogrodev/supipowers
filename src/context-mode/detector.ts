@@ -13,14 +13,25 @@ export interface ContextModeStatus {
   };
 }
 
-const TOOL_MAP: Record<string, keyof ContextModeStatus["tools"]> = {
-  ctx_execute: "ctxExecute",
-  ctx_batch_execute: "ctxBatchExecute",
-  ctx_execute_file: "ctxExecuteFile",
-  ctx_index: "ctxIndex",
-  ctx_search: "ctxSearch",
-  ctx_fetch_and_index: "ctxFetchAndIndex",
-};
+/** Suffixes to match against full MCP-namespaced tool names */
+const TOOL_SUFFIXES: Array<[string, keyof ContextModeStatus["tools"]]> = [
+  ["ctx_execute", "ctxExecute"],
+  ["ctx_batch_execute", "ctxBatchExecute"],
+  ["ctx_execute_file", "ctxExecuteFile"],
+  ["ctx_index", "ctxIndex"],
+  ["ctx_search", "ctxSearch"],
+  ["ctx_fetch_and_index", "ctxFetchAndIndex"],
+];
+
+/**
+ * Extract the short tool name from a potentially MCP-namespaced tool name.
+ * MCP tools use the format: mcp__<server>__<tool_name>
+ * Native tools use bare names like: lsp, bash, etc.
+ */
+function getShortName(tool: string): string {
+  const lastSep = tool.lastIndexOf("__");
+  return lastSep >= 0 ? tool.slice(lastSep + 2) : tool;
+}
 
 /** Detect context-mode MCP tool availability from the active tools list */
 export function detectContextMode(activeTools: string[]): ContextModeStatus {
@@ -34,8 +45,13 @@ export function detectContextMode(activeTools: string[]): ContextModeStatus {
   };
 
   for (const tool of activeTools) {
-    const key = TOOL_MAP[tool];
-    if (key) tools[key] = true;
+    const shortName = getShortName(tool);
+    for (const [suffix, key] of TOOL_SUFFIXES) {
+      if (shortName === suffix) {
+        tools[key] = true;
+        break;
+      }
+    }
   }
 
   const available = Object.values(tools).some(Boolean);
