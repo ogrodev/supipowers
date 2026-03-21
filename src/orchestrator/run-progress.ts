@@ -12,6 +12,7 @@ export interface TaskProgress {
   completedAt?: number;
   errorReason?: string;
   concerns?: string;
+  dependsOn: number[];
 }
 
 /** Shared state store for a single run — written by dispatcher, read by renderer */
@@ -19,7 +20,7 @@ export class RunProgressState {
   readonly tasks = new Map<number, TaskProgress>();
   batchLabel = "";
 
-  addTask(taskId: number, name: string): void {
+  addTask(taskId: number, name: string, dependsOn: number[] = []): void {
     this.tasks.set(taskId, {
       taskId,
       name,
@@ -28,6 +29,7 @@ export class RunProgressState {
       toolCount: 0,
       filesChanged: 0,
       startedAt: Date.now(),
+      dependsOn,
     });
   }
 

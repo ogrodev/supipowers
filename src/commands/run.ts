@@ -189,7 +189,8 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       // Create shared progress state and send inline progress message
       const progress = new RunProgressState();
       for (const task of plan.tasks) {
-        progress.addTask(task.id, task.name);
+        const deps = task.parallelism.type === "sequential" ? task.parallelism.dependsOn : [];
+        progress.addTask(task.id, task.name, deps);
       }
       // On resume, mark already-completed tasks
       const existingResults = loadAllAgentResults(ctx.cwd, manifest!.id);

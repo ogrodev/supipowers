@@ -97,10 +97,19 @@ class InlineProgressComponent implements Component {
       const prefix = isLast ? tree.last : tree.branch;
       const cfg = STATUS_CONFIG[task.status];
       const icon = this.#theme.fg(cfg.color, cfg.icon(this.#spinnerFrame));
+      const taskLabel = this.#theme.fg(cfg.color, `T${task.taskId}`);
       const name = this.#theme.bold(task.name);
 
-      const parts: string[] = [`${prefix} ${icon} ${name}`];
+      const parts: string[] = [`${prefix} ${icon} ${taskLabel} ${sep} ${name}`];
       this.#appendTaskMeta(task, parts, sep);
+
+      // Show dependencies for pending tasks
+      if (task.status === "pending" && task.dependsOn.length > 0) {
+        const depLabels = task.dependsOn.map((d) => `T${d}`).join(", ");
+        parts.push(` ${sep} `);
+        parts.push(this.#theme.fg("dim", `Depends on ${depLabels}`));
+      }
+
       lines.push(parts.join(""));
     });
 
