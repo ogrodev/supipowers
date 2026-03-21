@@ -9,6 +9,7 @@ describe("extension entry point", () => {
         registeredCommands.push(name);
       }),
       registerTool: vi.fn(),
+      registerMessageRenderer: vi.fn(),
       on: vi.fn(),
       sendMessage: vi.fn(),
       getActiveTools: vi.fn(() => []),
@@ -32,6 +33,7 @@ describe("extension entry point", () => {
     const mockPi = {
       registerCommand: vi.fn(),
       registerTool: vi.fn(),
+      registerMessageRenderer: vi.fn(),
       on: vi.fn(),
       sendMessage: vi.fn(),
       getActiveTools: vi.fn(() => []),
