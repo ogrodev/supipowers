@@ -1,6 +1,6 @@
 {
   "name": "supipowers",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "OMP-native workflow extension inspired by supipowers.",
   "type": "module",
   "scripts": {
