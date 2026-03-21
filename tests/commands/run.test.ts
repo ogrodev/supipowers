@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { parseRunArgs, formatAge } from "../../src/commands/run.js";
 
 describe("parseRunArgs", () => {
@@ -54,31 +54,33 @@ describe("parseRunArgs", () => {
 });
 
 describe("formatAge", () => {
+  let origDateNow: () => number;
+
   beforeEach(() => {
-    vi.useFakeTimers();
+    origDateNow = Date.now;
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    Date.now = origDateNow;
   });
 
   test("formats minutes", () => {
-    vi.setSystemTime(new Date("2026-03-15T10:30:00Z"));
+    Date.now = () => new Date("2026-03-15T10:30:00Z").getTime();
     expect(formatAge("2026-03-15T10:15:00Z")).toBe("15m");
   });
 
   test("formats hours and minutes", () => {
-    vi.setSystemTime(new Date("2026-03-15T12:45:00Z"));
+    Date.now = () => new Date("2026-03-15T12:45:00Z").getTime();
     expect(formatAge("2026-03-15T10:15:00Z")).toBe("2h 30m");
   });
 
   test("formats days and hours", () => {
-    vi.setSystemTime(new Date("2026-03-17T10:15:00Z"));
+    Date.now = () => new Date("2026-03-17T10:15:00Z").getTime();
     expect(formatAge("2026-03-15T10:15:00Z")).toBe("2d 0h");
   });
 
   test("clamps future dates to 0m", () => {
-    vi.setSystemTime(new Date("2026-03-15T10:00:00Z"));
+    Date.now = () => new Date("2026-03-15T10:00:00Z").getTime();
     expect(formatAge("2026-03-15T10:30:00Z")).toBe("0m");
   });
 
@@ -87,7 +89,7 @@ describe("formatAge", () => {
   });
 
   test("formats zero age as 0m", () => {
-    vi.setSystemTime(new Date("2026-03-15T10:00:00Z"));
+    Date.now = () => new Date("2026-03-15T10:00:00Z").getTime();
     expect(formatAge("2026-03-15T10:00:00Z")).toBe("0m");
   });
 });

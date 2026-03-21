@@ -80,6 +80,7 @@ export class AgentGridWidget implements Component {
   #spinnerFrame = 0;
   #intervalId: ReturnType<typeof setInterval> | null = null;
   #cachedLines: string[] | undefined;
+  #cachedWidth: number | undefined;
 
   constructor(tui: TUI, theme: Theme) {
     this.#tui = tui;
@@ -160,7 +161,7 @@ export class AgentGridWidget implements Component {
   // ── Component Interface ────────────────────────────────────────
 
   render(width: number): string[] {
-    if (this.#cachedLines) return this.#cachedLines;
+    if (this.#cachedLines && this.#cachedWidth === width) return this.#cachedLines;
     if (this.#tasks.size === 0) return [];
 
     const tasks = [...this.#tasks.values()];
@@ -178,11 +179,13 @@ export class AgentGridWidget implements Component {
     }
 
     this.#cachedLines = lines;
+    this.#cachedWidth = width;
     return lines;
   }
 
   invalidate(): void {
     this.#cachedLines = undefined;
+    this.#cachedWidth = undefined;
   }
 
   dispose(): void {
@@ -254,9 +257,9 @@ export class AgentGridWidget implements Component {
       suffix = "BLOCKED";
     }
 
-    const title = this.#truncate(`${icon} Task ${task.taskId}: ${task.name}`, inner - suffix.length - 3);
+    const title = this.#truncate(`${icon} Task ${task.taskId}: ${task.name}`, inner - suffix.length - 4);
     const headerContent = `${title} ── ${suffix}`;
-    const headerPad = Math.max(0, inner - this.#visibleLength(headerContent));
+    const headerPad = Math.max(0, inner - this.#visibleLength(headerContent) - 1);
 
     const lines = [
       this.#theme.fg(color, `${box.tl}${box.h} ${headerContent}${this.#pad(box.h, headerPad)} ${box.tr}`),

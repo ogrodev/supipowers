@@ -148,13 +148,17 @@ describe("registerContextModeHooks", () => {
     const result = handler(event, {});
     expect(result).toBeDefined();
     expect(result.systemPrompt).toContain("You are an assistant.");
-    expect(result.systemPrompt).toContain("Context Mode");
+    expect(result.systemPrompt).toContain("context-mode");
   });
 
-  test("before_agent_start handler is no-op when context-mode not detected", () => {
+  test("before_agent_start handler is no-op when routing disabled", () => {
     const pi = createMockPi();
     pi.getActiveTools.mockReturnValue(["bash", "read"]);
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const config: SupipowersConfig = {
+      ...DEFAULT_CONFIG,
+      contextMode: { ...DEFAULT_CONFIG.contextMode, routingInstructions: false, enforceRouting: false },
+    };
+    registerContextModeHooks(pi, config);
 
     const handler = pi._handlers.get("before_agent_start");
     const event = { prompt: "fix the bug", systemPrompt: "You are an assistant." };

@@ -151,6 +151,7 @@ async function executeSubAgent(
   const filesChanged = new Set<string>();
   const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
   const pendingToolArgs = new Map<string, Record<string, unknown>>();
+  const tag = `Task ${task.id}`;
   let lastThinkingPreview = "";
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "message_update") {
@@ -159,7 +160,11 @@ async function executeSubAgent(
       const preview = content.split("\n").filter(Boolean).pop()?.slice(0, 80) ?? "";
       if (preview && preview !== lastThinkingPreview) {
         lastThinkingPreview = preview;
-        widget?.setThinking(task.id, preview);
+        if (widget) {
+          widget.setThinking(task.id, preview);
+        } else if (ctx) {
+          ctx.ui.notify(`${tag}: thinking — ${preview}`, "info");
+        }
       }
     }
     if (event.type === "tool_execution_start") {
@@ -167,7 +172,11 @@ async function executeSubAgent(
       if (FILE_TOOLS.has(event.toolName) && args?.file_path) {
         pendingToolArgs.set(event.toolCallId, args);
       }
-      widget?.addActivity(task.id, formatToolAction(event.toolName, args));
+      if (widget) {
+        widget.addActivity(task.id, formatToolAction(event.toolName, args));
+      } else if (ctx) {
+        ctx.ui.notify(`${tag}: ${formatToolAction(event.toolName, args)}`, "info");
+      }
     }
     if (event.type === "tool_execution_end") {
       const args = pendingToolArgs.get(event.toolCallId);

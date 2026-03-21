@@ -192,6 +192,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         widget = await widgetReady;
       }
 
+      try {
       for (const batch of manifest.batches) {
         if (batch.status === "completed") continue;
 
@@ -254,6 +255,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
                 config,
                 lspAvailable: lsp,
                 contextModeAvailable: ctxMode,
+                widget,
                 previousOutput: failed.output,
                 failureReason: failed.output,
               });
@@ -285,10 +287,6 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       manifest.completedAt = new Date().toISOString();
       updateRun(ctx.cwd, manifest);
 
-      // Unmount agent grid widget
-      if (ctx.hasUI) {
-        ctx.ui.setWidget("supi-agents", undefined);
-      }
 
       const durationSec = Math.round(runSummary.totalDuration / 1000);
       notifySummary(
@@ -314,6 +312,13 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           { deliverAs: "steer", triggerTurn: true },
         );
         notifyInfo(ctx, "Run succeeded", "Follow branch finish instructions to integrate your work");
+      }
+      } finally {
+        // Ensure widget interval timer is cleaned up even on exception
+        widget?.dispose();
+        if (ctx.hasUI) {
+          ctx.ui.setWidget("supi-agents", undefined);
+        }
       }
     },
   });
