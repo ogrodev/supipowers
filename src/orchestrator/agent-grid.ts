@@ -11,7 +11,7 @@
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const MIN_CARD_WIDTH = 38;
 const MAX_ACTIVITY_LOG = 4;
-const ANIMATION_INTERVAL_MS = 120;
+const ANIMATION_INTERVAL_MS = 200;
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -212,10 +212,11 @@ export class AgentGridWidget implements Component {
   }
 
   #computeCardWidth(termWidth: number): number {
+    if (termWidth < MIN_CARD_WIDTH) return termWidth; // terminal too narrow, use full width
     const maxWidth = Math.floor(termWidth / 2);
     const cardsPerRow = Math.max(1, Math.floor(termWidth / MIN_CARD_WIDTH));
     const computed = Math.floor(termWidth / cardsPerRow);
-    return Math.min(computed, Math.max(MIN_CARD_WIDTH, maxWidth));
+    return Math.max(MIN_CARD_WIDTH, Math.min(computed, maxWidth));
   }
 
   #renderCard(task: TaskCardState, width: number): string[] {
@@ -311,9 +312,11 @@ export class AgentGridWidget implements Component {
     for (let i = 0; i < MAX_ACTIVITY_LOG; i++) {
       const entry = logLines[i];
       if (entry) {
-        const isThinking = !entry.startsWith(""); // tool entries have icons
         const text = this.#truncate(` ${entry}`, inner);
-        const styled = isThinking ? this.#theme.fg("dim", text) : text;
+        // Tool entries start with action verbs (Reading, Editing, Running, etc.)
+        // Thinking entries are plain text from the agent
+        const isToolAction = /^ (?:Reading|Editing|Writing|Running|Searching|Finding|Spawning|Glob|Grep|Bash|Edit|Read|Write)/.test(entry);
+        const styled = isToolAction ? text : this.#theme.fg("dim", text);
         lines.push(this.#line(styled, inner, color));
       } else {
         lines.push(this.#line("", inner, color));
@@ -372,10 +375,34 @@ export class AgentGridWidget implements Component {
 
   #truncate(text: string, maxLen: number): string {
     if (this.#visibleLength(text) <= maxLen) return text;
-    // Strip ANSI to measure, then truncate visible chars
-    const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
-    if (stripped.length <= maxLen) return text;
-    return stripped.slice(0, maxLen - 1) + "…";
+    // Walk through the string, counting only visible chars, preserving ANSI sequences
+    const ansiRegex = /\x1b\[[0-9;]*m/g;
+    let result = "";
+    let visible = 0;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = ansiRegex.exec(text)) !== null) {
+      // Add visible chars before this ANSI sequence
+      const before = text.slice(lastIndex, match.index);
+      const remaining = maxLen - 1 - visible;
+      if (before.length > remaining) {
+        result += before.slice(0, remaining) + "…";
+        return result + "\x1b[0m"; // reset styling
+      }
+      result += before;
+      visible += before.length;
+      result += match[0]; // preserve ANSI sequence
+      lastIndex = match.index + match[0].length;
+    }
+    // Handle remaining text after last ANSI sequence
+    const tail = text.slice(lastIndex);
+    const remaining = maxLen - 1 - visible;
+    if (tail.length > remaining) {
+      result += tail.slice(0, remaining) + "…";
+      return result + "\x1b[0m";
+    }
+    result += tail;
+    return result;
   }
 
   #visibleLength(text: string): number {

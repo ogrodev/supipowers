@@ -179,13 +179,17 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       // Mount agent grid widget for live progress visualization
       let widget: AgentGridWidget | undefined;
       if (ctx.hasUI) {
-        ctx.ui.setWidget("supi-agents", createAgentGridFactory((w) => {
-          widget = w;
-          // Add all tasks to the grid
-          for (const task of plan.tasks) {
-            w.addTask(task.id, task.name);
-          }
-        }));
+        const widgetReady = new Promise<AgentGridWidget>((resolve) => {
+          ctx.ui.setWidget("supi-agents", createAgentGridFactory((w) => {
+            widget = w;
+            for (const task of plan.tasks) {
+              w.addTask(task.id, task.name);
+            }
+            resolve(w);
+          }));
+        });
+        // Wait for TUI to instantiate the widget before dispatching agents
+        widget = await widgetReady;
       }
 
       for (const batch of manifest.batches) {

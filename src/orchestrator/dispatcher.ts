@@ -219,15 +219,12 @@ function extractTextContent(content: unknown): string {
 }
 
 function parseAgentStatus(output: string): AgentStatus {
-  const upper = output.toUpperCase();
-  if (upper.includes("BLOCKED") || upper.includes("NEEDS_CONTEXT")) {
-    return "blocked";
-  }
-  if (upper.includes("DONE_WITH_CONCERNS")) {
-    return "done_with_concerns";
-  }
-  // "DONE" appears in both "DONE" and "DONE_WITH_CONCERNS", so check after
-  if (upper.includes("**STATUS:** DONE") || upper.includes("STATUS: DONE")) {
+  // Look for structured "**Status:** X" or "Status: X" patterns to avoid false positives
+  const statusMatch = output.match(/\*?\*?status\*?\*?:\s*(BLOCKED|NEEDS_CONTEXT|DONE_WITH_CONCERNS|DONE)/i);
+  if (statusMatch) {
+    const val = statusMatch[1].toUpperCase();
+    if (val === "BLOCKED" || val === "NEEDS_CONTEXT") return "blocked";
+    if (val === "DONE_WITH_CONCERNS") return "done_with_concerns";
     return "done";
   }
   // Default: if agent completed without explicit status, treat as done
@@ -416,7 +413,7 @@ async function dispatchQualityReview(
 export async function dispatchFixAgent(
   options: DispatchOptions & { previousOutput: string; failureReason: string },
 ): Promise<AgentResult> {
-  const { pi, ctx, task, config, lspAvailable, contextModeAvailable, previousOutput, failureReason } =
+  const { pi, ctx, task, config, lspAvailable, contextModeAvailable, previousOutput, failureReason, widget } =
     options;
   const startTime = Date.now();
 
@@ -428,8 +425,10 @@ export async function dispatchFixAgent(
     contextModeAvailable,
   );
 
+  widget?.setStatus(task.id, "running");
+
   try {
-    const result = await executeSubAgent(pi, prompt, task, config);
+    const result = await executeSubAgent(pi, prompt, task, config, ctx, widget);
     return {
       taskId: task.id,
       status: result.status,
