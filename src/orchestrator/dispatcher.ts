@@ -18,6 +18,7 @@ import {
   notifyError,
   notifyInfo,
 } from "../notifications/renderer.js";
+import type { AgentGridWidget } from "./agent-grid.js";
 
 export interface DispatchOptions {
   pi: ExtensionAPI;
@@ -30,18 +31,22 @@ export interface DispatchOptions {
   config: SupipowersConfig;
   lspAvailable: boolean;
   contextModeAvailable: boolean;
+  widget?: AgentGridWidget;
 }
 
 export async function dispatchAgent(
   options: DispatchOptions,
 ): Promise<AgentResult> {
-  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable } = options;
+  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable, widget } = options;
   const startTime = Date.now();
 
   const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
 
+  // Initialize widget card if available
+  widget?.setStatus(task.id, "running");
+
   try {
-    const result = await executeSubAgent(pi, prompt, task, config, ctx);
+    const result = await executeSubAgent(pi, prompt, task, config, ctx, widget);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -52,28 +57,31 @@ export async function dispatchAgent(
       duration: Date.now() - startTime,
     };
 
+    // Update widget with final status
     switch (agentResult.status) {
       case "done":
+        widget?.setStatus(task.id, "done");
         notifySuccess(ctx, `Task ${task.id} completed`, task.name);
         break;
       case "done_with_concerns":
-        notifyWarning(
-          ctx,
-          `Task ${task.id} done with concerns`,
-          agentResult.concerns,
-        );
+        widget?.setStatus(task.id, "done_with_concerns", agentResult.concerns);
+        notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
         break;
       case "blocked":
+        widget?.setStatus(task.id, "blocked", agentResult.output);
         notifyError(ctx, `Task ${task.id} blocked`, agentResult.output);
         break;
     }
 
     return agentResult;
   } catch (error) {
+    const errorMsg = `Agent error: ${error instanceof Error ? error.message : String(error)}`;
+    widget?.setStatus(task.id, "blocked", errorMsg);
+
     const agentResult: AgentResult = {
       taskId: task.id,
       status: "blocked",
-      output: `Agent error: ${error instanceof Error ? error.message : String(error)}`,
+      output: errorMsg,
       filesChanged: [],
       duration: Date.now() - startTime,
     };
@@ -123,11 +131,9 @@ async function executeSubAgent(
   task: PlanTask,
   config: SupipowersConfig,
   ctx?: NotifyCtx,
+  widget?: AgentGridWidget,
 ): Promise<SubAgentResult> {
   const { createAgentSession } = pi.pi;
-  const tag = `Task ${task.id}`;
-
-  ctx?.ui.notify(`${tag}: starting — ${task.name}`, "info");
 
   const { session } = await createAgentSession({
     cwd: process.cwd(),
@@ -145,33 +151,29 @@ async function executeSubAgent(
   const filesChanged = new Set<string>();
   const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
   const pendingToolArgs = new Map<string, Record<string, unknown>>();
-  let toolCount = 0;
   let lastThinkingPreview = "";
   const unsubscribe = session.subscribe((event) => {
-    if (event.type === "message_update" && ctx) {
-      // Show thinking preview — only emit when it changes meaningfully
+    if (event.type === "message_update") {
       const msg = event.message as { content?: unknown } | undefined;
       const content = extractTextContent(msg?.content);
       const preview = content.split("\n").filter(Boolean).pop()?.slice(0, 80) ?? "";
       if (preview && preview !== lastThinkingPreview) {
         lastThinkingPreview = preview;
-        ctx.ui.notify(`${tag}: thinking — ${preview}`, "info");
+        widget?.setThinking(task.id, preview);
       }
     }
     if (event.type === "tool_execution_start") {
-      toolCount++;
       const args = event.args as Record<string, unknown> | undefined;
       if (FILE_TOOLS.has(event.toolName) && args?.file_path) {
         pendingToolArgs.set(event.toolCallId, args);
       }
-      if (ctx) {
-        ctx.ui.notify(`${tag}: ${formatToolAction(event.toolName, args)}`, "info");
-      }
+      widget?.addActivity(task.id, formatToolAction(event.toolName, args));
     }
     if (event.type === "tool_execution_end") {
       const args = pendingToolArgs.get(event.toolCallId);
       if (args?.file_path && !event.isError) {
         filesChanged.add(String(args.file_path));
+        widget?.addFileChanged(task.id);
       }
       pendingToolArgs.delete(event.toolCallId);
     }
@@ -189,10 +191,6 @@ async function executeSubAgent(
     const lastMsg = lastAssistant as { content?: unknown } | undefined;
     const output = extractTextContent(lastMsg?.content);
     const status = parseAgentStatus(output);
-
-    if (ctx) {
-      ctx.ui.notify(`${tag}: finished — ${toolCount} tool calls, ${filesChanged.size} files changed`, "info");
-    }
 
     return {
       status,
@@ -271,6 +269,7 @@ export async function dispatchAgentWithReview(
   }
 
   // Step 2: Spec compliance review
+  options.widget?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
     const specReview = await dispatchSpecReview(
       pi,
@@ -314,6 +313,7 @@ export async function dispatchAgentWithReview(
   }
 
   // Step 3: Code quality review
+  options.widget?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
     const qualityReview = await dispatchQualityReview(
       pi,

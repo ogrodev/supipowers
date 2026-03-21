@@ -27,6 +27,7 @@ import { buildWorktreePrompt } from "../git/worktree.js";
 import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import type { RunManifest, AgentResult } from "../types.js";
+import { AgentGridWidget, createAgentGridFactory } from "../orchestrator/agent-grid.js";
 
 interface ParsedRunArgs {
   profile?: string;
@@ -175,6 +176,18 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       const lsp = isLspAvailable(pi.getActiveTools());
       const ctxMode = detectContextMode(pi.getActiveTools()).available;
 
+      // Mount agent grid widget for live progress visualization
+      let widget: AgentGridWidget | undefined;
+      if (ctx.hasUI) {
+        ctx.ui.setWidget("supi-agents", createAgentGridFactory((w) => {
+          widget = w;
+          // Add all tasks to the grid
+          for (const task of plan.tasks) {
+            w.addTask(task.id, task.name);
+          }
+        }));
+      }
+
       for (const batch of manifest.batches) {
         if (batch.status === "completed") continue;
 
@@ -200,6 +213,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
             config,
             lspAvailable: lsp,
             contextModeAvailable: ctxMode,
+            widget,
           });
         });
 
@@ -266,6 +280,11 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       manifest.status = runSummary.blocked > 0 ? "failed" : "completed";
       manifest.completedAt = new Date().toISOString();
       updateRun(ctx.cwd, manifest);
+
+      // Unmount agent grid widget
+      if (ctx.hasUI) {
+        ctx.ui.setWidget("supi-agents", undefined);
+      }
 
       const durationSec = Math.round(runSummary.totalDuration / 1000);
       notifySummary(
