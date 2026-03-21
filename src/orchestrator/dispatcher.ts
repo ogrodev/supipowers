@@ -95,10 +95,91 @@ async function executeSubAgent(
   task: PlanTask,
   config: SupipowersConfig,
 ): Promise<SubAgentResult> {
-  throw new Error(
-    "Sub-agent dispatch requires OMP runtime. " +
-      "This will be connected to createAgentSession during integration.",
-  );
+  const { createAgentSession } = pi.pi;
+
+  const { session } = await createAgentSession({
+    cwd: process.cwd(),
+    hasUI: false,
+    taskDepth: 1,
+    parentTaskPrefix: `task-${task.id}`,
+  });
+
+  // Track files changed by monitoring tool calls
+  const filesChanged = new Set<string>();
+  const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
+  const pendingToolArgs = new Map<string, Record<string, unknown>>();
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "tool_execution_start" && FILE_TOOLS.has(event.toolName)) {
+      if (event.args?.file_path) {
+        pendingToolArgs.set(event.toolCallId, event.args as Record<string, unknown>);
+      }
+    }
+    if (event.type === "tool_execution_end" && !event.isError) {
+      const args = pendingToolArgs.get(event.toolCallId);
+      if (args?.file_path) {
+        filesChanged.add(String(args.file_path));
+      }
+      pendingToolArgs.delete(event.toolCallId);
+    }
+  });
+
+  try {
+    await session.prompt(prompt, { expandPromptTemplates: false });
+
+    // Extract the last assistant message
+    const messages = session.state.messages;
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+
+    const output = extractTextContent(lastAssistant?.content);
+    const status = parseAgentStatus(output);
+
+    return {
+      status,
+      output,
+      concerns: status === "done_with_concerns"
+        ? extractConcerns(output)
+        : undefined,
+      filesChanged: [...filesChanged],
+    };
+  } finally {
+    unsubscribe();
+    await session.dispose();
+  }
+}
+
+function extractTextContent(content: unknown): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((block: { type?: string }) => block.type === "text")
+      .map((block: { text?: string }) => block.text ?? "")
+      .join("\n");
+  }
+  return String(content);
+}
+
+function parseAgentStatus(output: string): AgentStatus {
+  const upper = output.toUpperCase();
+  if (upper.includes("BLOCKED") || upper.includes("NEEDS_CONTEXT")) {
+    return "blocked";
+  }
+  if (upper.includes("DONE_WITH_CONCERNS")) {
+    return "done_with_concerns";
+  }
+  // "DONE" appears in both "DONE" and "DONE_WITH_CONCERNS", so check after
+  if (upper.includes("**STATUS:** DONE") || upper.includes("STATUS: DONE")) {
+    return "done";
+  }
+  // Default: if agent completed without explicit status, treat as done
+  return "done";
+}
+
+function extractConcerns(output: string): string {
+  const match = output.match(/(?:concerns?|issues?|worries):\s*(.+?)(?:\n\n|$)/is);
+  return match?.[1]?.trim() ?? "";
 }
 
 /** Review result from a spec compliance or code quality reviewer */
