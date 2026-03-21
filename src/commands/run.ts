@@ -27,7 +27,7 @@ import { buildWorktreePrompt } from "../git/worktree.js";
 import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import type { RunManifest, AgentResult } from "../types.js";
-import { AgentGridWidget, createAgentGridFactory } from "../orchestrator/agent-grid.js";
+import { AgentGridWidget } from "../orchestrator/agent-grid.js";
 
 interface ParsedRunArgs {
   profile?: string;
@@ -90,7 +90,17 @@ export function registerRunCommand(pi: ExtensionAPI): void {
             updateRun(ctx.cwd, manifest);
             manifest = null;
           } else {
-            notifyInfo(ctx, `Resuming run: ${manifest.id}`);
+            const completedBatches = manifest.batches.filter((b) => b.status === "completed").length;
+            const totalBatches = manifest.batches.length;
+            const completedTasks = manifest.batches
+              .filter((b) => b.status === "completed")
+              .reduce((sum, b) => sum + b.taskIds.length, 0);
+            const totalTasks = manifest.batches.reduce((sum, b) => sum + b.taskIds.length, 0);
+            notifyInfo(
+              ctx,
+              `Resuming run: ${manifest.id}`,
+              `${completedTasks}/${totalTasks} tasks done, ${completedBatches}/${totalBatches} batches completed`,
+            );
           }
         } else {
           // No UI — resume automatically
@@ -179,17 +189,24 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       // Mount agent grid widget for live progress visualization
       let widget: AgentGridWidget | undefined;
       if (ctx.hasUI) {
-        const widgetReady = new Promise<AgentGridWidget>((resolve) => {
-          ctx.ui.setWidget("supi-agents", createAgentGridFactory((w) => {
-            widget = w;
-            for (const task of plan.tasks) {
-              w.addTask(task.id, task.name);
+        ctx.ui.setWidget("supi-agents", (tui, theme) => {
+          widget = new AgentGridWidget(tui, theme);
+          for (const task of plan.tasks) {
+            widget.addTask(task.id, task.name);
+          }
+          // On resume, mark already-completed tasks in the widget
+          const existingResults = loadAllAgentResults(ctx.cwd, manifest!.id);
+          for (const result of existingResults) {
+            if (result.status === "done") {
+              widget.setStatus(result.taskId, "done");
+            } else if (result.status === "done_with_concerns") {
+              widget.setStatus(result.taskId, "done_with_concerns", result.concerns);
+            } else if (result.status === "blocked") {
+              widget.setStatus(result.taskId, "blocked", result.output);
             }
-            resolve(w);
-          }));
+          }
+          return widget;
         });
-        // Wait for TUI to instantiate the widget before dispatching agents
-        widget = await widgetReady;
       }
 
       try {

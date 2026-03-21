@@ -425,15 +425,3 @@ export class AgentGridWidget implements Component {
   }
 }
 
-// ── Factory ────────────────────────────────────────────────────────
-
-/** Create the widget factory for ctx.ui.setWidget */
-export function createAgentGridFactory(
-  onCreated: (widget: AgentGridWidget) => void,
-): (tui: TUI, theme: Theme) => AgentGridWidget {
-  return (tui: TUI, theme: Theme) => {
-    const widget = new AgentGridWidget(tui, theme);
-    onCreated(widget);
-    return widget;
-  };
-}

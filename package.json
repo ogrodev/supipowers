@@ -38,7 +38,9 @@
     "@oh-my-pi/pi-coding-agent": "latest",
     "@oh-my-pi/pi-tui": "latest",
     "@sinclair/typebox": "^0.34.48",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.8.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
   },
