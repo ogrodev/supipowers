@@ -134,6 +134,11 @@ async function executeSubAgent(
     hasUI: false,
     taskDepth: 1,
     parentTaskPrefix: `task-${task.id}`,
+    // Prevent sub-agent from re-loading supipowers (causes recursive init error)
+    disableExtensionDiscovery: true,
+    skills: [],
+    promptTemplates: [],
+    slashCommands: [],
   });
 
   // Track files changed and emit live progress
