@@ -15,6 +15,7 @@ import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
+import { registerProgressRenderer } from "./orchestrator/progress-renderer.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -47,6 +48,9 @@ export default function supipowers(pi: ExtensionAPI): void {
   registerReleaseCommand(pi);
   registerUpdateCommand(pi);
   registerFixPrCommand(pi);
+
+  // Register custom message renderers
+  registerProgressRenderer(pi);
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
   // message submission, so no chat message appears and no "Working..." indicator
