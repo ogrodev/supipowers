@@ -74,20 +74,28 @@ function extractContext(content: string): string {
   return contextMatch?.[1]?.trim() ?? "";
 }
 
+/** Strip fenced code blocks to prevent matching task headers inside examples */
+function stripCodeBlocks(content: string): string {
+  return content.replace(/```[\s\S]*?```/g, "");
+}
+
 function parseTasksFromMarkdown(content: string): PlanTask[] {
   const tasks: PlanTask[] = [];
-  const taskRegex = /### (\d+)\. (.+)/g;
+  // Strip code blocks so we don't match headers inside examples
+  const stripped = stripCodeBlocks(content);
+  // Match both "### 1. Name" and "### Task 1: Name" formats, anchored to line start
+  const taskRegex = /^### (?:Task )?(\d+)[.:] (.+)/gm;
   let match: RegExpExecArray | null;
 
-  while ((match = taskRegex.exec(content)) !== null) {
+  while ((match = taskRegex.exec(stripped)) !== null) {
     const id = parseInt(match[1], 10);
     const headerLine = match[2];
     const startIdx = match.index + match[0].length;
-    const nextTaskMatch = /\n### \d+\. /.exec(content.slice(startIdx));
+    const nextTaskMatch = /\n### (?:Task )?\d+[.:] /.exec(stripped.slice(startIdx));
     const endIdx = nextTaskMatch
       ? startIdx + nextTaskMatch.index
-      : content.length;
-    const body = content.slice(startIdx, endIdx);
+      : stripped.length;
+    const body = stripped.slice(startIdx, endIdx);
 
     const name = headerLine.replace(/\[.*?\]/g, "").trim();
     const parallelism = parseParallelism(headerLine);
@@ -111,18 +119,48 @@ function parseParallelism(header: string): TaskParallelism {
 }
 
 function parseFiles(body: string): string[] {
-  const filesMatch = body.match(/\*\*files?\*\*:\s*(.+)/i);
-  if (!filesMatch) return [];
-  return filesMatch[1].split(",").map((s) => s.trim());
+  // Match header only (no greedy \s* that eats newlines)
+  // Supports: **files**: ..., **File**: ..., **Files:** ...
+  const headerMatch = body.match(/\*\*files?\*\*:/i) ?? body.match(/\*\*files?:\*\*/i);
+  if (!headerMatch) return [];
+
+  const afterHeader = body.slice(headerMatch.index! + headerMatch[0].length);
+  const firstLine = afterHeader.split("\n")[0].trim();
+
+  // Single-line format: **files**: src/a.ts, src/b.ts
+  if (firstLine && !firstLine.startsWith("-")) {
+    return firstLine.split(",").map((s) => s.trim());
+  }
+
+  // Multi-line format: **Files:**\n- Modify: `src/a.ts`\n- Create: `src/b.ts`
+  const lines = afterHeader.split("\n");
+  const files: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("-")) {
+      if (trimmed === "") continue; // skip blank lines between header and list
+      break; // non-list line = end of files section
+    }
+    // Strip "- Modify: `src/types.ts`" → "src/types.ts"
+    const content = trimmed.slice(1).trim(); // remove leading -
+    const afterPrefix = content.replace(/^(?:Modify|Create|Test|Delete|Rename|Move):\s*/i, "");
+    const filePath = afterPrefix.replace(/`/g, "").replace(/\s*\(.*\)\s*$/, "").trim();
+    if (filePath && !filePath.startsWith("(")) {
+      files.push(filePath);
+    }
+  }
+  return files;
 }
 
 function parseCriteria(body: string): string {
-  const match = body.match(/\*\*criteria\*\*:\s*(.+)/i);
+  // Match both **criteria**: ... and **Criteria:** ...
+  const match = body.match(/\*\*criteria\*\*:\s*(.+)/i) ?? body.match(/\*\*criteria:\*\*\s*(.+)/i);
   return match?.[1]?.trim() ?? "";
 }
 
 function parseComplexity(body: string): TaskComplexity {
-  const match = body.match(/\*\*complexity\*\*:\s*(\w+)/i);
+  // Match both **complexity**: ... and **Complexity:** ...
+  const match = body.match(/\*\*complexity\*\*:\s*(\w+)/i) ?? body.match(/\*\*complexity:\*\*\s*(\w+)/i);
   const val = match?.[1]?.toLowerCase();
   if (val === "small" || val === "medium" || val === "large") return val;
   return "medium";

@@ -28,16 +28,76 @@ import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import type { RunManifest, AgentResult } from "../types.js";
 
+interface ParsedRunArgs {
+  profile?: string;
+  plan?: string;
+}
+
+export function parseRunArgs(args: string | undefined): ParsedRunArgs {
+  if (!args) return {};
+  const result: ParsedRunArgs = {};
+  const profileMatch = args.match(/--profile\s+(\S+)/);
+  if (profileMatch && !profileMatch[1].startsWith("--")) {
+    result.profile = profileMatch[1];
+  }
+  const planMatch = args.match(/--plan\s+(\S+)/);
+  if (planMatch && !planMatch[1].startsWith("--")) {
+    result.plan = planMatch[1];
+  }
+  // If no flags were matched, treat the whole string as a plan name (backwards compat)
+  if (!result.profile && !result.plan) {
+    const trimmed = args.trim();
+    if (trimmed && !trimmed.startsWith("--")) result.plan = trimmed;
+  }
+  return result;
+}
+
+export function formatAge(isoDate: string): string {
+  const ms = Math.max(0, Date.now() - new Date(isoDate).getTime());
+  if (Number.isNaN(ms)) return "unknown";
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ${mins % 60}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
 export function registerRunCommand(pi: ExtensionAPI): void {
   pi.registerCommand("supi:run", {
     description: "Execute a plan with sub-agent orchestration",
     async handler(args, ctx) {
       const config = loadConfig(ctx.cwd);
-      const profile = resolveProfile(ctx.cwd, config, args?.replace("--profile ", "") || undefined);
+      const parsed = parseRunArgs(args);
+      const profile = resolveProfile(ctx.cwd, config, parsed.profile);
 
       let manifest = findActiveRun(ctx.cwd);
       let branchName: string | null = null;
 
+      // Handle active run: prompt user to resume or start fresh
+      if (manifest) {
+        if (ctx.hasUI) {
+          const age = formatAge(manifest.startedAt);
+          const choice = await ctx.ui.select(
+            `Found active run ${manifest.id} for plan '${manifest.planRef}' (started ${age} ago)`,
+            ["Resume", "Start fresh"],
+          );
+          if (!choice) return;
+
+          if (choice === "Start fresh") {
+            manifest.status = "cancelled";
+            manifest.completedAt = new Date().toISOString();
+            updateRun(ctx.cwd, manifest);
+            manifest = null;
+          } else {
+            notifyInfo(ctx, `Resuming run: ${manifest.id}`);
+          }
+        } else {
+          // No UI — resume automatically
+          notifyInfo(ctx, `Resuming run: ${manifest.id}`);
+        }
+      }
+
+      // Create a new run if no active run or user chose "Start fresh"
       if (!manifest) {
         const plans = listPlans(ctx.cwd);
         if (plans.length === 0) {
@@ -45,7 +105,8 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           return;
         }
 
-        const planName = args?.trim() || plans[0];
+        const planName = parsed.plan || plans[0];
+        notifyInfo(ctx, "Using plan", planName);
         const planContent = readPlanFile(ctx.cwd, planName);
         if (!planContent) {
           notifyError(ctx, "Plan not found", planName);
@@ -53,6 +114,14 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         }
 
         const plan = parsePlan(planContent, planName);
+        if (plan.tasks.length === 0) {
+          notifyError(
+            ctx,
+            "No tasks found in plan",
+            "Task headers must use '### N. Name' or '### Task N: Name' format",
+          );
+          return;
+        }
         const batches = scheduleBatches(plan.tasks, config.orchestration.maxParallelAgents);
 
         manifest = {
@@ -95,8 +164,6 @@ export function registerRunCommand(pi: ExtensionAPI): void {
             notifyInfo(ctx, "Setting up worktree", `Branch: ${branchName}`);
           }
         }
-      } else {
-        notifyInfo(ctx, `Resuming run: ${manifest.id}`);
       }
 
       const planContent = readPlanFile(ctx.cwd, manifest.planRef);
