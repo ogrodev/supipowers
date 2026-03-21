@@ -27,7 +27,7 @@ import { buildWorktreePrompt } from "../git/worktree.js";
 import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import type { RunManifest, AgentResult } from "../types.js";
-import { AgentGridWidget } from "../orchestrator/agent-grid.js";
+import { RunProgressState, activeRuns } from "../orchestrator/run-progress.js";
 
 interface ParsedRunArgs {
   profile?: string;
@@ -186,28 +186,33 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       const lsp = isLspAvailable(pi.getActiveTools());
       const ctxMode = detectContextMode(pi.getActiveTools()).available;
 
-      // Mount agent grid widget for live progress visualization
-      let widget: AgentGridWidget | undefined;
-      if (ctx.hasUI) {
-        ctx.ui.setWidget("supi-agents", (tui, theme) => {
-          widget = new AgentGridWidget(tui, theme);
-          for (const task of plan.tasks) {
-            widget.addTask(task.id, task.name);
-          }
-          // On resume, mark already-completed tasks in the widget
-          const existingResults = loadAllAgentResults(ctx.cwd, manifest!.id);
-          for (const result of existingResults) {
-            if (result.status === "done") {
-              widget.setStatus(result.taskId, "done");
-            } else if (result.status === "done_with_concerns") {
-              widget.setStatus(result.taskId, "done_with_concerns", result.concerns);
-            } else if (result.status === "blocked") {
-              widget.setStatus(result.taskId, "blocked", result.output);
-            }
-          }
-          return widget;
-        });
+      // Create shared progress state and send inline progress message
+      const progress = new RunProgressState();
+      for (const task of plan.tasks) {
+        progress.addTask(task.id, task.name);
       }
+      // On resume, mark already-completed tasks
+      const existingResults = loadAllAgentResults(ctx.cwd, manifest!.id);
+      for (const result of existingResults) {
+        if (result.status === "done") {
+          progress.setStatus(result.taskId, "done");
+        } else if (result.status === "done_with_concerns") {
+          progress.setStatus(result.taskId, "done_with_concerns", result.concerns);
+        } else if (result.status === "blocked") {
+          progress.setStatus(result.taskId, "blocked", result.output);
+        }
+      }
+      activeRuns.set(manifest.id, progress);
+
+      // Send inline progress message — the registered renderer will display it
+      pi.sendMessage(
+        {
+          customType: "supi-run-progress",
+          content: [{ type: "text", text: "Running tasks..." }],
+          display: "custom",
+          details: { runId: manifest.id },
+        },
+      );
 
       try {
       for (const batch of manifest.batches) {
@@ -221,6 +226,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           `Batch ${batch.index + 1}/${manifest.batches.length}`,
           `${batch.taskIds.length} tasks`
         );
+        progress.batchLabel = `Batch ${batch.index + 1}/${manifest.batches.length}`;
 
         const batchResults: AgentResult[] = [];
         const agentPromises = batch.taskIds.map((taskId) => {
@@ -235,7 +241,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
             config,
             lspAvailable: lsp,
             contextModeAvailable: ctxMode,
-            widget,
+            progress,
           });
         });
 
@@ -272,7 +278,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
                 config,
                 lspAvailable: lsp,
                 contextModeAvailable: ctxMode,
-                widget,
+                progress,
                 previousOutput: failed.output,
                 failureReason: failed.output,
               });
@@ -331,11 +337,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         notifyInfo(ctx, "Run succeeded", "Follow branch finish instructions to integrate your work");
       }
       } finally {
-        // Ensure widget interval timer is cleaned up even on exception
-        widget?.dispose();
-        if (ctx.hasUI) {
-          ctx.ui.setWidget("supi-agents", undefined);
-        }
+        activeRuns.delete(manifest.id);
       }
     },
   });
