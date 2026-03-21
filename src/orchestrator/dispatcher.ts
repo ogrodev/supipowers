@@ -18,7 +18,7 @@ import {
   notifyError,
   notifyInfo,
 } from "../notifications/renderer.js";
-import type { AgentGridWidget } from "./agent-grid.js";
+import type { RunProgressState } from "./run-progress.js";
 
 export interface DispatchOptions {
   pi: ExtensionAPI;
@@ -31,22 +31,22 @@ export interface DispatchOptions {
   config: SupipowersConfig;
   lspAvailable: boolean;
   contextModeAvailable: boolean;
-  widget?: AgentGridWidget;
+  progress?: RunProgressState;
 }
 
 export async function dispatchAgent(
   options: DispatchOptions,
 ): Promise<AgentResult> {
-  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable, widget } = options;
+  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable, progress } = options;
   const startTime = Date.now();
 
   const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
 
   // Initialize widget card if available
-  widget?.setStatus(task.id, "running");
+  progress?.setStatus(task.id, "running");
 
   try {
-    const result = await executeSubAgent(pi, prompt, task, config, ctx, widget);
+    const result = await executeSubAgent(pi, prompt, task, config, ctx, progress);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -60,15 +60,15 @@ export async function dispatchAgent(
     // Update widget with final status
     switch (agentResult.status) {
       case "done":
-        widget?.setStatus(task.id, "done");
+        progress?.setStatus(task.id, "done");
         notifySuccess(ctx, `Task ${task.id} completed`, task.name);
         break;
       case "done_with_concerns":
-        widget?.setStatus(task.id, "done_with_concerns", agentResult.concerns);
+        progress?.setStatus(task.id, "done_with_concerns", agentResult.concerns);
         notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
         break;
       case "blocked":
-        widget?.setStatus(task.id, "blocked", agentResult.output);
+        progress?.setStatus(task.id, "blocked", agentResult.output);
         notifyError(ctx, `Task ${task.id} blocked`, agentResult.output);
         break;
     }
@@ -76,7 +76,7 @@ export async function dispatchAgent(
     return agentResult;
   } catch (error) {
     const errorMsg = `Agent error: ${error instanceof Error ? error.message : String(error)}`;
-    widget?.setStatus(task.id, "blocked", errorMsg);
+    progress?.setStatus(task.id, "blocked", errorMsg);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -131,7 +131,7 @@ async function executeSubAgent(
   task: PlanTask,
   config: SupipowersConfig,
   ctx?: NotifyCtx,
-  widget?: AgentGridWidget,
+  progress?: RunProgressState,
 ): Promise<SubAgentResult> {
   const { createAgentSession } = pi.pi;
 
@@ -160,8 +160,8 @@ async function executeSubAgent(
       const preview = content.split("\n").filter(Boolean).pop()?.slice(0, 80) ?? "";
       if (preview && preview !== lastThinkingPreview) {
         lastThinkingPreview = preview;
-        if (widget) {
-          widget.setThinking(task.id, preview);
+        if (progress) {
+          progress.setActivity(task.id, preview);
         } else if (ctx) {
           ctx.ui.notify(`${tag}: thinking — ${preview}`, "info");
         }
@@ -172,8 +172,9 @@ async function executeSubAgent(
       if (FILE_TOOLS.has(event.toolName) && args?.file_path) {
         pendingToolArgs.set(event.toolCallId, args);
       }
-      if (widget) {
-        widget.addActivity(task.id, formatToolAction(event.toolName, args));
+      if (progress) {
+        progress.setActivity(task.id, formatToolAction(event.toolName, args));
+        progress.incrementTools(task.id);
       } else if (ctx) {
         ctx.ui.notify(`${tag}: ${formatToolAction(event.toolName, args)}`, "info");
       }
@@ -182,7 +183,7 @@ async function executeSubAgent(
       const args = pendingToolArgs.get(event.toolCallId);
       if (args?.file_path && !event.isError) {
         filesChanged.add(String(args.file_path));
-        widget?.addFileChanged(task.id);
+        progress?.incrementFiles(task.id);
       }
       pendingToolArgs.delete(event.toolCallId);
     }
@@ -275,7 +276,7 @@ export async function dispatchAgentWithReview(
   }
 
   // Step 2: Spec compliance review
-  options.widget?.setStatus(task.id, "reviewing");
+  options.progress?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
     const specReview = await dispatchSpecReview(
       pi,
@@ -319,7 +320,7 @@ export async function dispatchAgentWithReview(
   }
 
   // Step 3: Code quality review
-  options.widget?.setStatus(task.id, "reviewing");
+  options.progress?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
     const qualityReview = await dispatchQualityReview(
       pi,
@@ -422,7 +423,7 @@ async function dispatchQualityReview(
 export async function dispatchFixAgent(
   options: DispatchOptions & { previousOutput: string; failureReason: string },
 ): Promise<AgentResult> {
-  const { pi, ctx, task, config, lspAvailable, contextModeAvailable, previousOutput, failureReason, widget } =
+  const { pi, ctx, task, config, lspAvailable, contextModeAvailable, previousOutput, failureReason, progress } =
     options;
   const startTime = Date.now();
 
@@ -434,10 +435,10 @@ export async function dispatchFixAgent(
     contextModeAvailable,
   );
 
-  widget?.setStatus(task.id, "running");
+  progress?.setStatus(task.id, "running");
 
   try {
-    const result = await executeSubAgent(pi, prompt, task, config, ctx, widget);
+    const result = await executeSubAgent(pi, prompt, task, config, ctx, progress);
     return {
       taskId: task.id,
       status: result.status,
