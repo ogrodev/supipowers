@@ -41,7 +41,7 @@ export async function dispatchAgent(
   const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
 
   try {
-    const result = await executeSubAgent(pi, prompt, task, config);
+    const result = await executeSubAgent(pi, prompt, task, config, ctx);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -89,13 +89,45 @@ interface SubAgentResult {
   filesChanged: string[];
 }
 
+type NotifyCtx = { ui: { notify(msg: string, type?: "info" | "warning" | "error"): void } };
+
+/** Shorten a file path for display */
+function shortenPath(filePath: string): string {
+  const parts = filePath.split("/");
+  return parts.length > 3
+    ? `.../${parts.slice(-3).join("/")}`
+    : filePath;
+}
+
+/** Format a tool call for display */
+function formatToolAction(toolName: string, args?: Record<string, unknown>): string {
+  const path = args?.file_path ? shortenPath(String(args.file_path)) : "";
+  switch (toolName) {
+    case "Read": return `Reading ${path}`;
+    case "Edit": return `Editing ${path}`;
+    case "Write": return `Writing ${path}`;
+    case "Bash": {
+      const cmd = String(args?.command ?? "").slice(0, 60);
+      return `Running: ${cmd}${String(args?.command ?? "").length > 60 ? "..." : ""}`;
+    }
+    case "Grep": return `Searching for ${args?.pattern ?? "pattern"}`;
+    case "Glob": return `Finding files ${args?.pattern ?? ""}`;
+    case "Agent": return "Spawning sub-agent";
+    default: return `${toolName}${path ? ` ${path}` : ""}`;
+  }
+}
+
 async function executeSubAgent(
   pi: ExtensionAPI,
   prompt: string,
   task: PlanTask,
   config: SupipowersConfig,
+  ctx?: NotifyCtx,
 ): Promise<SubAgentResult> {
   const { createAgentSession } = pi.pi;
+  const tag = `Task ${task.id}`;
+
+  ctx?.ui.notify(`${tag}: starting — ${task.name}`, "info");
 
   const { session } = await createAgentSession({
     cwd: process.cwd(),
@@ -104,19 +136,36 @@ async function executeSubAgent(
     parentTaskPrefix: `task-${task.id}`,
   });
 
-  // Track files changed by monitoring tool calls
+  // Track files changed and emit live progress
   const filesChanged = new Set<string>();
   const FILE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
   const pendingToolArgs = new Map<string, Record<string, unknown>>();
+  let toolCount = 0;
+  let lastThinkingPreview = "";
   const unsubscribe = session.subscribe((event) => {
-    if (event.type === "tool_execution_start" && FILE_TOOLS.has(event.toolName)) {
-      if (event.args?.file_path) {
-        pendingToolArgs.set(event.toolCallId, event.args as Record<string, unknown>);
+    if (event.type === "message_update" && ctx) {
+      // Show thinking preview — only emit when it changes meaningfully
+      const msg = event.message as { content?: unknown } | undefined;
+      const content = extractTextContent(msg?.content);
+      const preview = content.split("\n").filter(Boolean).pop()?.slice(0, 80) ?? "";
+      if (preview && preview !== lastThinkingPreview) {
+        lastThinkingPreview = preview;
+        ctx.ui.notify(`${tag}: thinking — ${preview}`, "info");
       }
     }
-    if (event.type === "tool_execution_end" && !event.isError) {
+    if (event.type === "tool_execution_start") {
+      toolCount++;
+      const args = event.args as Record<string, unknown> | undefined;
+      if (FILE_TOOLS.has(event.toolName) && args?.file_path) {
+        pendingToolArgs.set(event.toolCallId, args);
+      }
+      if (ctx) {
+        ctx.ui.notify(`${tag}: ${formatToolAction(event.toolName, args)}`, "info");
+      }
+    }
+    if (event.type === "tool_execution_end") {
       const args = pendingToolArgs.get(event.toolCallId);
-      if (args?.file_path) {
+      if (args?.file_path && !event.isError) {
         filesChanged.add(String(args.file_path));
       }
       pendingToolArgs.delete(event.toolCallId);
@@ -132,8 +181,13 @@ async function executeSubAgent(
       .reverse()
       .find((m) => m.role === "assistant");
 
-    const output = extractTextContent(lastAssistant?.content);
+    const lastMsg = lastAssistant as { content?: unknown } | undefined;
+    const output = extractTextContent(lastMsg?.content);
     const status = parseAgentStatus(output);
+
+    if (ctx) {
+      ctx.ui.notify(`${tag}: finished — ${toolCount} tool calls, ${filesChanged.size} files changed`, "info");
+    }
 
     return {
       status,
