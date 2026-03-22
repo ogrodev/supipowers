@@ -48,7 +48,7 @@ interface Theme {
   symbol(key: string): string;
 }
 
-/** Component interface as defined by @oh-my-pi/pi-tui */
+/** Component interface for platform message renderers */
 interface Component {
   render(width: number): string[];
   invalidate(): void;

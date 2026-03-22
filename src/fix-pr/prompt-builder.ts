@@ -13,7 +13,7 @@ export interface FixPrPromptOptions {
 }
 
 function buildReplyInstructions(config: FixPrConfig): string {
-  const { commentPolicy, repo, } = config;
+  const { commentPolicy } = config;
   const replyCmd = `gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies -f body="..."`;
 
   switch (commentPolicy) {

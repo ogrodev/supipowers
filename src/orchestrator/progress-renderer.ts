@@ -29,12 +29,6 @@ interface RunProgressDetails {
   runId: string;
 }
 
-type MessageRenderer<T> = (
-  message: CustomMessage<T>,
-  options: { expanded: boolean },
-  theme: Theme,
-) => Component | undefined;
-
 import type { Platform } from "../platform/types.js";
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -169,7 +163,7 @@ class InlineProgressComponent implements Component {
 export function registerProgressRenderer(platform: Platform): void {
   platform.registerMessageRenderer<RunProgressDetails>(
     "supi-run-progress",
-    (message, _options, theme) => {
+    (message: CustomMessage<RunProgressDetails>, _options: any, theme: Theme) => {
       const { runId } = message.details;
       if (!runId) return undefined;
       return new InlineProgressComponent(runId, theme);
