@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { formatCheckResult, formatSummary } from "../../src/commands/doctor.js";
+import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit } from "../../src/commands/doctor.js";
+import type { Platform } from "../../src/platform/types.js";
 
 describe("doctor formatting", () => {
   it("formats a passing two-phase check", () => {
@@ -71,5 +72,72 @@ describe("doctor formatting", () => {
     expect(summary).toContain("1 passed");
     expect(summary).toContain("2 warnings"); // Config functional fail + npm presence fail
     expect(summary).toContain("1 critical"); // Git presence fail is critical (core infra)
+  });
+});
+
+describe("core infrastructure checks", () => {
+  const mockPlatform = (overrides?: Partial<Platform>) => ({
+    name: "omp" as const,
+    exec: async (cmd: string, args: string[]) => ({ stdout: "", stderr: "", code: 0 }),
+    paths: {
+      dotDir: ".omp",
+      dotDirDisplay: ".omp",
+      project: (cwd: string, ...s: string[]) => `/tmp/test/.omp/supipowers/${s.join("/")}`,
+      global: (...s: string[]) => `/tmp/test-global/.omp/supipowers/${s.join("/")}`,
+      agent: (...s: string[]) => `/tmp/test-global/.omp/agent/${s.join("/")}`,
+    },
+    capabilities: { agentSessions: true, compactionHooks: true, customWidgets: true, registerTool: false },
+    ...overrides,
+  } as unknown as Platform);
+
+  it("checkPlatform reports platform name and exec status", async () => {
+    const p = mockPlatform({
+      exec: async () => ({ stdout: "ok\n", stderr: "", code: 0 }),
+    });
+    const result = await checkPlatform(p);
+    expect(result.name).toBe("Platform");
+    expect(result.presence.ok).toBe(true);
+    expect(result.presence.detail).toContain("OMP");
+    expect(result.functional!.ok).toBe(true);
+  });
+
+  it("checkPlatform reports exec failure", async () => {
+    const p = mockPlatform({
+      exec: async () => { throw new Error("boom"); },
+    });
+    const result = await checkPlatform(p);
+    expect(result.presence.ok).toBe(true);
+    expect(result.functional!.ok).toBe(false);
+  });
+
+  it("checkGit detects version and repo", async () => {
+    const p = mockPlatform({
+      exec: async (cmd: string, args: string[]) => {
+        if (args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+        if (args[0] === "rev-parse") return { stdout: "true\n", stderr: "", code: 0 };
+        if (args[0] === "branch") return { stdout: "feat/doctor\n", stderr: "", code: 0 };
+        return { stdout: "", stderr: "", code: 1 };
+      },
+    });
+    const result = await checkGit(p);
+    expect(result.presence.ok).toBe(true);
+    expect(result.presence.detail).toContain("2.43.0");
+    expect(result.functional!.ok).toBe(true);
+    expect(result.functional!.detail).toContain("feat/doctor");
+  });
+
+  it("checkGit reports missing git", async () => {
+    const p = mockPlatform({
+      exec: async () => ({ stdout: "", stderr: "", code: 127 }),
+    });
+    const result = await checkGit(p);
+    expect(result.presence.ok).toBe(false);
+  });
+
+  it("checkEventStore verifies better-sqlite3 loads", async () => {
+    const result = await checkEventStore();
+    // In test env, better-sqlite3 is in devDependencies so should resolve
+    expect(result.presence.ok).toBe(true);
+    expect(result.functional!.ok).toBe(true);
   });
 });
