@@ -1,6 +1,7 @@
 
 export interface PlanWriterOptions {
   specPath: string;
+  dotDirDisplay: string;
 }
 
 /**
@@ -15,7 +16,7 @@ export interface PlanWriterOptions {
  * - Execution handoff
  */
 export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
-  const { specPath } = options;
+  const { specPath, dotDirDisplay } = options;
 
   const sections: string[] = [
     "You are writing a comprehensive implementation plan from an approved design spec.",
@@ -152,7 +153,7 @@ export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
     // ── Save Location ────────────────────────────────────────────
     "## Step 5: Save Plan",
     "",
-    "Save the plan to `.omp/supipowers/plans/YYYY-MM-DD-<feature-name>.md`",
+    `Save the plan to \`${dotDirDisplay}/supipowers/plans/YYYY-MM-DD-<feature-name>.md\``,
     "",
 
     // ── Execution Handoff ────────────────────────────────────────

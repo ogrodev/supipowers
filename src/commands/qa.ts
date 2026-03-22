@@ -248,6 +248,7 @@ export function registerQaCommand(platform: Platform): void {
         discoveredRoutes,
         previousMatrix: matrixJson,
         skillContent,
+        dotDirDisplay: platform.paths.dotDirDisplay,
       });
 
       platform.sendMessage(

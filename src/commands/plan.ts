@@ -113,6 +113,7 @@ export function registerPlanCommand(platform: Platform): void {
         prompt = buildPlanningPrompt({
           topic: args || undefined,
           skillContent: skillContent || undefined,
+          dotDirDisplay: platform.paths.dotDirDisplay,
         });
       }
 

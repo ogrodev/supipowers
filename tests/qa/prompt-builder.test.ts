@@ -13,6 +13,7 @@ function makeOptions(overrides: Partial<E2ePromptOptions> = {}): E2ePromptOption
     discoveredRoutes: '{"path": "/login", "file": "app/login/page.tsx", "type": "page", "hasForm": true}\n{"path": "/dashboard", "file": "app/dashboard/page.tsx", "type": "page", "hasForm": false}',
     previousMatrix: null,
     skillContent: "",
+    dotDirDisplay: ".omp",
     ...overrides,
   };
 }

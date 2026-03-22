@@ -9,10 +9,11 @@ export interface E2ePromptOptions {
   discoveredRoutes: string;
   previousMatrix: string | null;
   skillContent: string;
+  dotDirDisplay: string;
 }
 
 export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
-  const { appType, sessionDir, scriptsDir, config, discoveredRoutes, previousMatrix, skillContent } = options;
+  const { appType, sessionDir, scriptsDir, config, discoveredRoutes, previousMatrix, skillContent, dotDirDisplay } = options;
   const { playwright, execution } = config;
 
   const sections: string[] = [
@@ -40,7 +41,7 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     sections.push(
       "## Previous Matrix",
       "",
-      "Last-known flow states from `.omp/supipowers/e2e-matrix.json`:",
+      `Last-known flow states from \`${dotDirDisplay}/supipowers/e2e-matrix.json\`:`,
       "",
       "```json",
       previousMatrix,
@@ -167,7 +168,7 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "- This is a **regression** — record it in the ledger's `regressions` array:",
     '  `{ "flowId": "...", "flowName": "...", "previousStatus": "pass", "currentStatus": "fail", "error": "..." }`',
     "",
-    "Update the persistent matrix at `.omp/supipowers/e2e-matrix.json`:",
+    `Update the persistent matrix at \`${dotDirDisplay}/supipowers/e2e-matrix.json\`:`,
     "- Update `lastStatus` and `lastTestedAt` for each tested flow",
     "- Add new flows with `lastStatus: \"untested\"` and `addedAt` timestamp",
     "- Mark removed flows with `removedAt` timestamp (don't delete them)",

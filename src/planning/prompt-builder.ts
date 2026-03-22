@@ -4,6 +4,7 @@ import { buildPlanWriterPrompt } from "./plan-writer-prompt.js";
 export interface PlanningPromptOptions {
   topic?: string;
   skillContent?: string;
+  dotDirDisplay: string;
 }
 
 /**
@@ -21,7 +22,7 @@ export interface PlanningPromptOptions {
  * 8. Handoff to implementation plan
  */
 export function buildPlanningPrompt(options: PlanningPromptOptions): string {
-  const { topic, skillContent } = options;
+  const { topic, skillContent, dotDirDisplay } = options;
 
   const sections: string[] = [
     "You are starting a collaborative planning session with the user.",
@@ -116,7 +117,7 @@ export function buildPlanningPrompt(options: PlanningPromptOptions): string {
     "Once the user approves the spec, write a comprehensive implementation plan.",
     "Follow these plan writing instructions:",
     "",
-    buildPlanWriterPrompt({ specPath: "<path-to-approved-spec>" }),
+    buildPlanWriterPrompt({ specPath: "<path-to-approved-spec>", dotDirDisplay }),
     "",
     "(Replace `<path-to-approved-spec>` with the actual spec file path from Phase 5.)",
     "",
