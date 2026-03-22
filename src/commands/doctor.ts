@@ -259,6 +259,75 @@ export async function checkNpm(platform: Platform): Promise<CheckResult> {
   }
 }
 
+export async function runDoctorChecks(platform: Platform, cwd: string): Promise<SectionResult[]> {
+  const activeTools = platform.getActiveTools();
+
+  // Core Infrastructure
+  const core: CheckResult[] = [
+    await checkPlatform(platform),
+    await checkConfig(platform, cwd),
+    await checkStorage(platform, cwd),
+    await checkEventStore(),
+    await checkGit(platform),
+  ];
+
+  // Integrations
+  const mcpResult = checkMcp(activeTools);
+  const integrations: CheckResult[] = [
+    await checkGitHubCli(platform),
+    checkLsp(activeTools),
+    mcpResult,
+    checkContextMode(activeTools),
+    await checkNpm(platform),
+  ];
+
+  // Platform Capabilities
+  const mcpAvailable = mcpResult.presence.ok;
+  const capChecks = checkCapabilities(platform.capabilities, mcpAvailable);
+
+  return [
+    { title: "Core Infrastructure", checks: core },
+    { title: "Integrations", checks: integrations },
+    { title: "Platform Capabilities", checks: capChecks },
+  ];
+}
+
+function formatReport(sections: SectionResult[]): string {
+  const lines: string[] = ["/supi:doctor", ""];
+  for (const section of sections) {
+    lines.push(section.title);
+    for (const check of section.checks) {
+      lines.push(...formatCheckResult(check));
+    }
+    lines.push("");
+  }
+  lines.push(formatSummary(sections));
+  return lines.join("\n");
+}
+
+export function handleDoctor(platform: Platform, ctx: PlatformContext): void {
+  if (!ctx.hasUI) return;
+
+  void (async () => {
+    try {
+      const sections = await runDoctorChecks(platform, ctx.cwd);
+      const report = formatReport(sections);
+      ctx.ui.notify(report, "info");
+    } catch (err) {
+      ctx.ui.notify(`Doctor failed: ${(err as Error).message}`, "error");
+    }
+  })();
+}
+
+export function registerDoctorCommand(platform: Platform): void {
+  platform.registerCommand("supi:doctor", {
+    description: "Run health checks on supipowers features and integrations",
+    async handler(_args: string | undefined, ctx: any) {
+      handleDoctor(platform, ctx);
+    },
+  });
+}
+
 const CAPABILITY_LABELS: Record<keyof PlatformCapabilities, string> = {
   agentSessions: "Sub-agent orchestration (/supi:run)",
   compactionHooks: "Context compression",

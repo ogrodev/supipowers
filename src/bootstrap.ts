@@ -12,6 +12,7 @@ import { registerReviewCommand } from "./commands/review.js";
 import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
+import { registerDoctorCommand, handleDoctor } from "./commands/doctor.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
@@ -24,6 +25,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
   "supi:config": (platform, ctx) => handleConfig(platform, ctx),
   "supi:status": (platform, ctx) => handleStatus(platform, ctx),
   "supi:update": (platform, ctx) => handleUpdate(platform, ctx),
+  "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
 };
 
 function getInstalledVersion(platform: Platform): string | null {
@@ -48,6 +50,7 @@ export function bootstrap(platform: Platform): void {
   registerReleaseCommand(platform);
   registerUpdateCommand(platform);
   registerFixPrCommand(platform);
+  registerDoctorCommand(platform);
 
   // Register custom message renderers
   registerProgressRenderer(platform);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit, checkGitHubCli, checkLsp, checkMcp, checkContextMode, checkNpm, checkCapabilities } from "../../src/commands/doctor.js";
+import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit, checkGitHubCli, checkLsp, checkMcp, checkContextMode, checkNpm, checkCapabilities, runDoctorChecks } from "../../src/commands/doctor.js";
 import type { Platform } from "../../src/platform/types.js";
 
 describe("doctor formatting", () => {
@@ -234,6 +234,39 @@ describe("integration checks", () => {
     const result = await checkNpm(p);
     expect(result.presence.ok).toBe(true);
     expect(result.functional!.ok).toBe(false);
+  });
+});
+
+describe("runDoctorChecks", () => {
+  it("returns three sections", async () => {
+    const platform = {
+      name: "omp" as const,
+      exec: async (cmd: string, args: string[]) => {
+        if (cmd === "echo") return { stdout: "ok\n", stderr: "", code: 0 };
+        if (cmd === "git" && args[0] === "--version") return { stdout: "git version 2.43.0", stderr: "", code: 0 };
+        if (cmd === "git" && args[0] === "rev-parse") return { stdout: "true\n", stderr: "", code: 0 };
+        if (cmd === "git" && args[0] === "branch") return { stdout: "main\n", stderr: "", code: 0 };
+        if (cmd === "gh") return { stdout: "", stderr: "", code: 127 };
+        if (cmd === "npm" && args[0] === "--version") return { stdout: "10.8.0\n", stderr: "", code: 0 };
+        if (cmd === "npm" && args[0] === "ping") return { stdout: "", stderr: "", code: 0 };
+        return { stdout: "", stderr: "", code: 1 };
+      },
+      getActiveTools: () => ["bash", "read", "lsp"],
+      paths: {
+        dotDir: ".omp",
+        dotDirDisplay: ".omp",
+        project: (cwd: string, ...s: string[]) => `/tmp/.omp/supipowers/${s.join("/")}`,
+        global: (...s: string[]) => `/tmp/global/.omp/supipowers/${s.join("/")}`,
+        agent: (...s: string[]) => `/tmp/global/.omp/agent/${s.join("/")}`,
+      },
+      capabilities: { agentSessions: true, compactionHooks: true, customWidgets: true, registerTool: false },
+    } as unknown as Platform;
+
+    const sections = await runDoctorChecks(platform, "/tmp/test");
+    expect(sections).toHaveLength(3);
+    expect(sections[0].title).toBe("Core Infrastructure");
+    expect(sections[1].title).toBe("Integrations");
+    expect(sections[2].title).toBe("Platform Capabilities");
   });
 });
 

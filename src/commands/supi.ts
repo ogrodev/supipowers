@@ -20,6 +20,7 @@ export function handleSupi(platform: Platform, ctx: PlatformContext): void {
       "/supi:release  — Release automation",
       "/supi:config   — Manage configuration",
       "/supi:status   — Check running tasks",
+      "/supi:doctor   — Run health checks",
       "/supi:update   — Update to latest version",
     ];
 
