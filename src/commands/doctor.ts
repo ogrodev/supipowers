@@ -2,6 +2,8 @@ import type { Platform, PlatformContext } from "../platform/types.js";
 import { existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../config/loader.js";
+import { detectContextMode } from "../context-mode/detector.js";
+import { isLspAvailable } from "../lsp/detector.js";
 
 export interface CheckResult {
   name: string;
@@ -159,3 +161,101 @@ export function formatSummary(sections: SectionResult[]): string {
 
   return `Summary: ${passed} passed, ${warnings} warning${warnings !== 1 ? "s" : ""}, ${critical} critical`;
 }
+
+export async function checkGitHubCli(platform: Platform): Promise<CheckResult> {
+  try {
+    const vResult = await platform.exec("gh", ["--version"]);
+    if (vResult.code !== 0) {
+      return { name: "GitHub CLI", presence: { ok: false, detail: "gh not found" } };
+    }
+    const vMatch = vResult.stdout.match(/gh version ([\d.]+)/);
+    const version = vMatch ? vMatch[1] : "unknown";
+    const presence = { ok: true, detail: `v${version}` };
+
+    const authResult = await platform.exec("gh", ["auth", "status"]);
+    const output = authResult.stderr || authResult.stdout;
+    const userMatch = output.match(/account\s+(\S+)/);
+    if (authResult.code === 0 && userMatch) {
+      return { name: "GitHub CLI", presence, functional: { ok: true, detail: `Authenticated (${userMatch[1]})` } };
+    }
+    return { name: "GitHub CLI", presence, functional: { ok: false, detail: "Not authenticated" } };
+  } catch {
+    return { name: "GitHub CLI", presence: { ok: false, detail: "gh not found" } };
+  }
+}
+
+export function checkLsp(activeTools: string[]): CheckResult {
+  const available = isLspAvailable(activeTools);
+  return {
+    name: "LSP",
+    presence: { ok: available, detail: available ? "LSP tool detected" : "LSP tool not available" },
+  };
+}
+
+export function checkMcp(activeTools: string[]): CheckResult {
+  const mcpTools = activeTools.filter((t) => t.startsWith("mcp__"));
+  if (mcpTools.length === 0) {
+    return { name: "MCP", presence: { ok: false, detail: "No MCP tools detected" } };
+  }
+
+  const servers = new Set<string>();
+  for (const tool of mcpTools) {
+    const withoutPrefix = tool.slice("mcp__".length);
+    const lastSep = withoutPrefix.lastIndexOf("__");
+    if (lastSep > 0) {
+      servers.add(withoutPrefix.slice(0, lastSep));
+    }
+  }
+
+  return {
+    name: "MCP",
+    presence: { ok: true, detail: "MCP tools detected" },
+    functional: { ok: true, detail: `${mcpTools.length} tools, ${servers.size} server${servers.size !== 1 ? "s" : ""}` },
+  };
+}
+
+const CTX_TOOL_NAMES: Record<string, string> = {
+  ctxExecute: "ctx_execute",
+  ctxBatchExecute: "ctx_batch_execute",
+  ctxExecuteFile: "ctx_execute_file",
+  ctxIndex: "ctx_index",
+  ctxSearch: "ctx_search",
+  ctxFetchAndIndex: "ctx_fetch_and_index",
+};
+
+export function checkContextMode(activeTools: string[]): CheckResult {
+  const status = detectContextMode(activeTools);
+  if (!status.available) {
+    return { name: "Context Mode", presence: { ok: false, detail: "No context-mode tools detected" } };
+  }
+
+  const foundNames = Object.entries(status.tools)
+    .filter(([, v]) => v)
+    .map(([k]) => CTX_TOOL_NAMES[k] || k);
+
+  return {
+    name: "Context Mode",
+    presence: { ok: true, detail: "Tools available" },
+    functional: { ok: true, detail: foundNames.join(", ") },
+  };
+}
+
+export async function checkNpm(platform: Platform): Promise<CheckResult> {
+  try {
+    const vResult = await platform.exec("npm", ["--version"]);
+    if (vResult.code !== 0) {
+      return { name: "npm", presence: { ok: false, detail: "npm not found" } };
+    }
+    const version = vResult.stdout.trim();
+    const presence = { ok: true, detail: `v${version}` };
+
+    const pingResult = await platform.exec("npm", ["ping"]);
+    if (pingResult.code === 0) {
+      return { name: "npm", presence, functional: { ok: true, detail: "Registry reachable" } };
+    }
+    return { name: "npm", presence, functional: { ok: false, detail: "Registry unreachable" } };
+  } catch {
+    return { name: "npm", presence: { ok: false, detail: "npm not found" } };
+  }
+}
+

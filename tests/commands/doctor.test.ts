@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit } from "../../src/commands/doctor.js";
+import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit, checkGitHubCli, checkLsp, checkMcp, checkContextMode, checkNpm } from "../../src/commands/doctor.js";
 import type { Platform } from "../../src/platform/types.js";
 
 describe("doctor formatting", () => {
@@ -141,3 +141,99 @@ describe("core infrastructure checks", () => {
     expect(result.functional!.ok).toBe(true);
   });
 });
+
+describe("integration checks", () => {
+  const mockPlatform = (execFn: Platform["exec"]) => ({
+    name: "omp" as const,
+    exec: execFn,
+    getActiveTools: () => [] as string[],
+    paths: { dotDir: ".omp" },
+    capabilities: { agentSessions: true, compactionHooks: true, customWidgets: true, registerTool: false },
+  } as unknown as Platform);
+
+  it("checkGitHubCli detects version and auth", async () => {
+    const p = mockPlatform(async (cmd, args) => {
+      if (cmd === "gh" && args[0] === "--version") return { stdout: "gh version 2.62.0 (2024-10-01)\n", stderr: "", code: 0 };
+      if (cmd === "gh" && args[0] === "auth") return { stdout: "", stderr: "Logged in to github.com account pedromendes", code: 0 };
+      return { stdout: "", stderr: "", code: 1 };
+    });
+    const result = await checkGitHubCli(p);
+    expect(result.presence.ok).toBe(true);
+    expect(result.presence.detail).toContain("2.62.0");
+    expect(result.functional!.ok).toBe(true);
+    expect(result.functional!.detail).toContain("pedromendes");
+  });
+
+  it("checkMcp detects tools and counts servers", () => {
+    const tools = [
+      "mcp__plugin_figma_figma__get_screenshot",
+      "mcp__plugin_figma_figma__get_metadata",
+      "mcp__plugin_context-mode_context-mode__ctx_execute",
+      "bash",
+      "read",
+    ];
+    const result = checkMcp(tools);
+    expect(result.presence.ok).toBe(true);
+    expect(result.functional!.detail).toContain("3 tools");
+    expect(result.functional!.detail).toContain("2 servers");
+  });
+
+  it("checkMcp reports no MCP tools", () => {
+    const result = checkMcp(["bash", "read", "edit"]);
+    expect(result.presence.ok).toBe(false);
+    expect(result.presence.detail).toContain("No MCP tools");
+  });
+
+  it("checkContextMode uses detectContextMode", () => {
+    const tools = [
+      "mcp__plugin_context-mode_context-mode__ctx_execute",
+      "mcp__plugin_context-mode_context-mode__ctx_search",
+      "mcp__plugin_context-mode_context-mode__ctx_batch_execute",
+    ];
+    const result = checkContextMode(tools);
+    expect(result.presence.ok).toBe(true);
+    expect(result.functional!.ok).toBe(true);
+    expect(result.functional!.detail).toContain("ctx_execute");
+    expect(result.functional!.detail).toContain("ctx_search");
+  });
+
+  it("checkLsp detects lsp tool", () => {
+    const result = checkLsp(["bash", "lsp", "read"]);
+    expect(result.presence.ok).toBe(true);
+  });
+
+  it("checkLsp reports missing lsp", () => {
+    const result = checkLsp(["bash", "read"]);
+    expect(result.presence.ok).toBe(false);
+  });
+
+  it("checkNpm detects version and registry", async () => {
+    const p = mockPlatform(async (cmd, args) => {
+      if (cmd === "npm" && args[0] === "--version") return { stdout: "10.8.0\n", stderr: "", code: 0 };
+      if (cmd === "npm" && args[0] === "ping") return { stdout: "", stderr: "", code: 0 };
+      return { stdout: "", stderr: "", code: 1 };
+    });
+    const result = await checkNpm(p);
+    expect(result.presence.ok).toBe(true);
+    expect(result.presence.detail).toContain("10.8.0");
+    expect(result.functional!.ok).toBe(true);
+  });
+
+  it("checkNpm reports missing npm", async () => {
+    const p = mockPlatform(async () => ({ stdout: "", stderr: "", code: 127 }));
+    const result = await checkNpm(p);
+    expect(result.presence.ok).toBe(false);
+  });
+
+  it("checkNpm reports unreachable registry", async () => {
+    const p = mockPlatform(async (cmd, args) => {
+      if (cmd === "npm" && args[0] === "--version") return { stdout: "10.8.0\n", stderr: "", code: 0 };
+      if (cmd === "npm" && args[0] === "ping") return { stdout: "", stderr: "", code: 1 };
+      return { stdout: "", stderr: "", code: 1 };
+    });
+    const result = await checkNpm(p);
+    expect(result.presence.ok).toBe(true);
+    expect(result.functional!.ok).toBe(false);
+  });
+});
+
