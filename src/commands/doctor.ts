@@ -1,4 +1,4 @@
-import type { Platform, PlatformContext } from "../platform/types.js";
+import type { Platform, PlatformContext, PlatformCapabilities } from "../platform/types.js";
 import { existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../config/loader.js";
@@ -257,5 +257,37 @@ export async function checkNpm(platform: Platform): Promise<CheckResult> {
   } catch {
     return { name: "npm", presence: { ok: false, detail: "npm not found" } };
   }
+}
+
+const CAPABILITY_LABELS: Record<keyof PlatformCapabilities, string> = {
+  agentSessions: "Sub-agent orchestration (/supi:run)",
+  compactionHooks: "Context compression",
+  customWidgets: "Progress widgets",
+  registerTool: "Custom tool registration",
+};
+
+export function checkCapabilities(
+  capabilities: PlatformCapabilities,
+  mcpAvailable: boolean,
+): CheckResult[] {
+  const results: CheckResult[] = [];
+
+  for (const [key, label] of Object.entries(CAPABILITY_LABELS)) {
+    const ok = capabilities[key as keyof PlatformCapabilities];
+    results.push({
+      name: key,
+      presence: { ok, detail: ok ? label : `Not available — ${label}` },
+    });
+  }
+
+  results.push({
+    name: "MCP",
+    presence: {
+      ok: mcpAvailable,
+      detail: mcpAvailable ? "Detected via active tools" : "Not detected",
+    },
+  });
+
+  return results;
 }
 

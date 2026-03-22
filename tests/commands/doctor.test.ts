@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit, checkGitHubCli, checkLsp, checkMcp, checkContextMode, checkNpm } from "../../src/commands/doctor.js";
+import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit, checkGitHubCli, checkLsp, checkMcp, checkContextMode, checkNpm, checkCapabilities } from "../../src/commands/doctor.js";
 import type { Platform } from "../../src/platform/types.js";
 
 describe("doctor formatting", () => {
@@ -237,3 +237,25 @@ describe("integration checks", () => {
   });
 });
 
+describe("platform capabilities", () => {
+  it("maps capabilities to feature descriptions", () => {
+    const caps = { agentSessions: true, compactionHooks: true, customWidgets: false, registerTool: true };
+    const mcpAvailable = true;
+    const results = checkCapabilities(caps, mcpAvailable);
+    expect(results).toHaveLength(5);
+
+    const widgets = results.find((r) => r.name === "customWidgets");
+    expect(widgets!.presence.ok).toBe(false);
+    expect(widgets!.presence.detail).toContain("Progress widgets");
+
+    const mcp = results.find((r) => r.name === "MCP");
+    expect(mcp!.presence.ok).toBe(true);
+  });
+
+  it("reports MCP not detected", () => {
+    const caps = { agentSessions: true, compactionHooks: true, customWidgets: true, registerTool: true };
+    const results = checkCapabilities(caps, false);
+    const mcp = results.find((r) => r.name === "MCP");
+    expect(mcp!.presence.ok).toBe(false);
+  });
+});
