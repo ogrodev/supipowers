@@ -10,6 +10,7 @@ A diagnostic command that verifies all supipowers features are accessible and wo
 - Type: TUI-only (intercepted at input level, no chat message or "Working..." indicator)
 - File: `src/commands/doctor.ts`
 - Registration: added to `TUI_COMMANDS` in `bootstrap.ts`
+- Handler signature: `(platform: Platform, ctx: any) => void` — wraps async logic in `void (async () => { ... })()`
 
 ## Check Result Shape
 
@@ -32,19 +33,19 @@ Each check function is async and returns a `CheckResult`. Checks run sequentiall
 | Check | Presence | Functional |
 |-------|----------|------------|
 | Platform | Report detected platform name (Pi/OMP) | Run `platform.exec("echo", ["ok"])` to verify exec works |
-| Config | Check if config file exists at `platform.paths.project(cwd, "config.yaml")` and `platform.paths.global("config.yaml")` | Parse with `loadConfig()`, report active profile name |
+| Config | Check if config file exists at `platform.paths.project(cwd, "config.json")` and `platform.paths.global("config.json")` | Parse with `loadConfig(platform.paths, cwd)`, report `config.defaultProfile` |
 | Storage | Check if project storage dir exists at `platform.paths.project(cwd)` | Create and delete a temp file to verify writable |
-| EventStore | Try `require.resolve("better-sqlite3")` or dynamic import | Open in-memory Database, exec `CREATE VIRTUAL TABLE ... USING fts5(...)`, close |
+| EventStore | Try dynamic `import("better-sqlite3")` | Open in-memory Database, exec `CREATE VIRTUAL TABLE ... USING fts5(...)`, close |
 | Git | Run `git --version`, parse version string | Run `git rev-parse --is-inside-work-tree` and `git branch --show-current` |
 
 ### Section 2: Integrations
 
 | Check | Presence | Functional |
 |-------|----------|------------|
-| GitHub CLI | Run `gh --version`, parse version string | Run `gh auth status`, parse username from output |
-| LSP | Check `platform.getActiveTools()` for LSP-related tool names | Presence-only (no lightweight way to ping LSP) |
-| MCP | Check if any tool in `platform.getActiveTools()` starts with `mcp__` | Count MCP tools found, report total |
-| Context Mode | Check `platform.getActiveTools()` for tools containing `context-mode` | List which ctx tools are available (ctx_execute, ctx_search, ctx_batch_execute, etc.) |
+| GitHub CLI | Run `gh --version`, parse version string | Run `gh auth status`, parse username from stderr output |
+| LSP | Check `platform.getActiveTools()` for tools containing `"lsp"` (case-insensitive) | Presence-only (no lightweight way to ping LSP) |
+| MCP | Check if any tool in `platform.getActiveTools()` starts with `mcp__` | Count MCP tools, extract unique server names from `mcp__<server>__<tool>` pattern |
+| Context Mode | Use `detectContextMode(activeTools)` from `src/context-mode/detector.ts` | Report which ctx tools are available from the returned `ContextModeStatus.tools` |
 | npm | Run `npm --version`, parse version string | Run `npm ping`, check exit code |
 
 ### Section 3: Platform Capabilities
@@ -63,7 +64,7 @@ MCP is not in `PlatformCapabilities` — it's derived from the active tools dete
 
 ## Output Format
 
-Rendered via `ctx.ui.notify()` calls — one per line for clean sequential output.
+All checks run first, results are collected into `SectionResult[]`, then the full report is rendered at once via a single `ctx.ui.notify()` call with the formatted multi-line string. This avoids pacing issues and ensures the output appears as one coherent block.
 
 ```
 /supi:doctor
@@ -71,8 +72,8 @@ Rendered via `ctx.ui.notify()` calls — one per line for clean sequential outpu
 Core Infrastructure
   Platform .......... ✓ OMP detected
                       ✓ exec works
-  Config ............ ✓ Found .omp/supipowers/config.yaml
-                      ✓ Parsed (profile: thorough)
+  Config ............ ✓ Found .omp/supipowers/config.json
+                      ✓ Parsed (defaultProfile: thorough)
   Storage ........... ✓ .omp/supipowers/ exists
                       ✓ Writable
   EventStore ........ ✓ better-sqlite3 available
@@ -85,7 +86,7 @@ Integrations
                       ✓ Authenticated (pedromendes)
   LSP ............... ✓ LSP tools detected
   Context Mode ...... ✓ Tools available (ctx_execute, ctx_search, ...)
-  MCP ............... ✓ Active (12 tools from 3 servers)
+  MCP ............... ✓ Active (12 tools, 3 servers)
   npm ............... ✓ v10.8.0
                       ✓ Registry reachable
 
@@ -96,7 +97,7 @@ Platform Capabilities
   registerTool ...... ✗ Not available — custom tools disabled
   MCP ............... ✓ Detected via active tools
 
-Summary: 16 passed, 1 warning, 0 critical
+Summary: 15 passed, 1 warning, 0 critical
 ```
 
 ## Summary Line Logic
@@ -108,11 +109,13 @@ Summary: 16 passed, 1 warning, 0 critical
 ## Implementation Notes
 
 - All shell commands use `platform.exec()` — no direct `child_process` imports
-- Config loading reuses `loadConfig()` from `src/config/loader.ts`
+- Config loading reuses `loadConfig(platform.paths, cwd)` from `src/config/loader.ts`
 - EventStore check uses dynamic `import("better-sqlite3")` to avoid crashing if missing
-- MCP/context-mode detection reads `platform.getActiveTools()` once and reuses the result
+- Context-mode detection reuses `detectContextMode()` from `src/context-mode/detector.ts`
+- MCP server names extracted by splitting tool names on `__` — e.g., `mcp__plugin_figma_figma__get_screenshot` yields server `plugin_figma_figma`
+- `platform.getActiveTools()` is called once and the result is shared across LSP, MCP, and context-mode checks
 - No new dependencies required
-- Guard with `ctx.hasUI` — in non-interactive modes, skip or return structured JSON
+- Guard with `ctx.hasUI` — in non-interactive modes, return early (no output)
 
 ## What It Does Not Do
 
