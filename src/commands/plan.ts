@@ -1,5 +1,5 @@
 import type { Platform } from "../platform/types.js";
-import { loadConfig } from "../config/loader.js";
+
 import { notifyInfo, notifyError } from "../notifications/renderer.js";
 import {
   generateVisualSessionId,
@@ -27,8 +27,6 @@ export function registerPlanCommand(platform: Platform): void {
   platform.registerCommand("supi:plan", {
     description: "Start collaborative planning for a feature or task",
     async handler(args: string | undefined, ctx: any) {
-      const config = loadConfig(platform.paths, ctx.cwd);
-
       const skillPath = findSkillPath("planning");
       let skillContent = "";
       if (skillPath) {
@@ -39,8 +37,8 @@ export function registerPlanCommand(platform: Platform): void {
         }
       }
 
-      const isQuick = args?.startsWith("--quick");
-      const quickDesc = isQuick ? args.replace("--quick", "").trim() : "";
+      const isQuick = args?.startsWith("--quick") ?? false;
+      const quickDesc = isQuick ? args!.replace("--quick", "").trim() : "";
 
       // ── Visual companion consent ──────────────────────────────────
       let visualUrl: string | null = null;

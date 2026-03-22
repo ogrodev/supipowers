@@ -1,5 +1,4 @@
 // src/lsp/bridge.ts
-import type { Platform } from "../platform/types.js";
 
 export interface DiagnosticsResult {
   file: string;

@@ -25,7 +25,7 @@ import {
 import { buildWorktreePrompt } from "../git/worktree.js";
 import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import { detectBaseBranch } from "../git/base-branch.js";
-import type { RunManifest, AgentResult } from "../types.js";
+import type { AgentResult } from "../types.js";
 import { RunProgressState, activeRuns } from "../orchestrator/run-progress.js";
 
 interface ParsedRunArgs {
