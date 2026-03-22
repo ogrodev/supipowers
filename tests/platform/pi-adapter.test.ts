@@ -80,10 +80,10 @@ describe("createPiAdapter", () => {
     const raw = createMockPiApi();
     const adapter = createPiAdapter(raw);
     adapter.sendMessage("hello", { deliverAs: undefined });
-    // spread with undefined overwrites the default — this is acceptable
-    // since callers should omit the key rather than pass undefined
-    expect(raw.sendMessage).toHaveBeenCalledWith("hello", expect.objectContaining({
+    // ?? operator treats undefined as missing — defaults are preserved
+    expect(raw.sendMessage).toHaveBeenCalledWith("hello", {
+      deliverAs: "steer",
       triggerTurn: true,
-    }));
+    });
   });
 });

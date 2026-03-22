@@ -8,7 +8,12 @@ export function createOmpAdapter(pi: any): Platform {
     getCommands: () => pi.getCommands(),
     getActiveTools: () => pi.getActiveTools(),
     exec: (cmd, args, opts) => pi.exec(cmd, args, opts),
-    sendMessage: (content, opts) => pi.sendMessage(content, opts),
+    sendMessage: (content, opts) => {
+      pi.sendMessage(content, {
+        deliverAs: opts?.deliverAs ?? "steer",
+        triggerTurn: opts?.triggerTurn ?? true,
+      });
+    },
     registerMessageRenderer: (type, fn) => pi.registerMessageRenderer(type, fn),
 
     on: (event: string, handler: any) => {

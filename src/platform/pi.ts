@@ -10,9 +10,8 @@ export function createPiAdapter(pi: any): Platform {
     exec: (cmd, args, opts) => pi.exec(cmd, args, opts),
     sendMessage: (content, opts) => {
       pi.sendMessage(content, {
-        deliverAs: "steer",
-        triggerTurn: true,
-        ...opts,
+        deliverAs: opts?.deliverAs ?? "steer",
+        triggerTurn: opts?.triggerTurn ?? true,
       });
     },
     registerMessageRenderer: (type, fn) => pi.registerMessageRenderer(type, fn),

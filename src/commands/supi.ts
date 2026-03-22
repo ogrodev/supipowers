@@ -43,7 +43,9 @@ export function handleSupi(platform: Platform, ctx: PlatformContext): void {
         await cmd.handler("", ctx as any);
       }
     }
-  })();
+  })().catch((err) => {
+    ctx.ui.notify(`Supipowers error: ${(err as Error).message}`, "error");
+  });
 }
 
 export function registerSupiCommand(platform: Platform): void {
