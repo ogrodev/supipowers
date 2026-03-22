@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import { loadConfig } from "../config/loader.js";
 import { resolveProfile } from "../config/profiles.js";
 import { listPlans, readPlanFile, parsePlan } from "../storage/plans.js";
@@ -63,15 +63,15 @@ export function formatAge(isoDate: string): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
-export function registerRunCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:run", {
+export function registerRunCommand(platform: Platform): void {
+  platform.registerCommand("supi:run", {
     description: "Execute a plan with sub-agent orchestration",
     async handler(args, ctx) {
-      const config = loadConfig(ctx.cwd);
+      const config = loadConfig(platform.paths, ctx.cwd);
       const parsed = parseRunArgs(args);
-      const profile = resolveProfile(ctx.cwd, config, parsed.profile);
+      const profile = resolveProfile(platform.paths, ctx.cwd, config, parsed.profile);
 
-      let manifest = findActiveRun(ctx.cwd);
+      let manifest = findActiveRun(platform.paths, ctx.cwd);
       let branchName: string | null = null;
 
       // Handle active run: prompt user to resume or start fresh
@@ -87,7 +87,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           if (choice === "Start fresh") {
             manifest.status = "cancelled";
             manifest.completedAt = new Date().toISOString();
-            updateRun(ctx.cwd, manifest);
+            updateRun(platform.paths, ctx.cwd, manifest);
             manifest = null;
           } else {
             const completedBatches = manifest.batches.filter((b) => b.status === "completed").length;
@@ -110,7 +110,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
 
       // Create a new run if no active run or user chose "Start fresh"
       if (!manifest) {
-        const plans = listPlans(ctx.cwd);
+        const plans = listPlans(platform.paths, ctx.cwd);
         if (plans.length === 0) {
           notifyError(ctx, "No plans found", "Run /supi:plan first to create a plan");
           return;
@@ -118,7 +118,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
 
         const planName = parsed.plan || plans[0];
         notifyInfo(ctx, "Using plan", planName);
-        const planContent = readPlanFile(ctx.cwd, planName);
+        const planContent = readPlanFile(platform.paths, ctx.cwd, planName);
         if (!planContent) {
           notifyError(ctx, "Plan not found", planName);
           return;
@@ -143,7 +143,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           startedAt: new Date().toISOString(),
           batches,
         };
-        createRun(ctx.cwd, manifest);
+        createRun(platform.paths, ctx.cwd, manifest);
         notifyInfo(ctx, `Run started: ${manifest.id}`, `${plan.tasks.length} tasks in ${batches.length} batches`);
 
         // Offer worktree setup for isolated execution
@@ -164,7 +164,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
               branchName,
               cwd: ctx.cwd,
             });
-            pi.sendMessage(
+            platform.sendMessage(
               {
                 customType: "supi-worktree-setup",
                 content: [{ type: "text", text: worktreeInstructions }],
@@ -177,14 +177,14 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         }
       }
 
-      const planContent = readPlanFile(ctx.cwd, manifest.planRef);
+      const planContent = readPlanFile(platform.paths, ctx.cwd, manifest.planRef);
       if (!planContent) {
         notifyError(ctx, "Plan file missing", manifest.planRef);
         return;
       }
       const plan = parsePlan(planContent, manifest.planRef);
-      const lsp = isLspAvailable(pi.getActiveTools());
-      const ctxMode = detectContextMode(pi.getActiveTools()).available;
+      const lsp = isLspAvailable(platform.getActiveTools());
+      const ctxMode = detectContextMode(platform.getActiveTools()).available;
 
       // Create shared progress state and send inline progress message
       const progress = new RunProgressState();
@@ -193,7 +193,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         progress.addTask(task.id, task.name, deps);
       }
       // On resume, mark already-completed tasks
-      const existingResults = loadAllAgentResults(ctx.cwd, manifest!.id);
+      const existingResults = loadAllAgentResults(platform.paths, ctx.cwd, manifest!.id);
       for (const result of existingResults) {
         if (result.status === "done") {
           progress.setStatus(result.taskId, "done");
@@ -206,7 +206,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       activeRuns.set(manifest.id, progress);
 
       // Send inline progress message — the registered renderer will display it
-      pi.sendMessage(
+      platform.sendMessage(
         {
           customType: "supi-run-progress",
           content: [{ type: "text", text: "Running tasks..." }],
@@ -220,7 +220,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         if (batch.status === "completed") continue;
 
         batch.status = "running";
-        updateRun(ctx.cwd, manifest);
+        updateRun(platform.paths, ctx.cwd, manifest);
 
         notifyInfo(
           ctx,
@@ -235,7 +235,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
           if (!task) return Promise.resolve(null);
 
           return dispatchAgentWithReview({
-            pi,
+            pi: platform as any,
             ctx,
             task,
             planContext: plan.context,
@@ -250,7 +250,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         for (const result of results) {
           if (result) {
             batchResults.push(result);
-            saveAgentResult(ctx.cwd, manifest.id, result);
+            saveAgentResult(platform.paths, ctx.cwd, manifest.id, result);
           }
         }
 
@@ -272,7 +272,7 @@ export function registerRunCommand(pi: ExtensionAPI): void {
             for (let retry = 0; retry < config.orchestration.maxFixRetries; retry++) {
               notifyInfo(ctx, `Retrying task ${failed.taskId}`, `attempt ${retry + 1}`);
               const fixResult = await dispatchFixAgent({
-                pi,
+                pi: platform as any,
                 ctx,
                 task,
                 planContext: plan.context,
@@ -283,17 +283,17 @@ export function registerRunCommand(pi: ExtensionAPI): void {
                 previousOutput: failed.output,
                 failureReason: failed.output,
               });
-              saveAgentResult(ctx.cwd, manifest.id, fixResult);
+              saveAgentResult(platform.paths, ctx.cwd, manifest.id, fixResult);
               if (fixResult.status !== "blocked") break;
             }
           }
         }
 
-        const allResults = loadAllAgentResults(ctx.cwd, manifest.id);
+        const allResults = loadAllAgentResults(platform.paths, ctx.cwd, manifest.id);
         const summary = summarizeBatch(batch, allResults);
 
         batch.status = summary.allPassed ? "completed" : "failed";
-        updateRun(ctx.cwd, manifest);
+        updateRun(platform.paths, ctx.cwd, manifest);
 
         if (!summary.allPassed) {
           notifyWarning(
@@ -304,12 +304,12 @@ export function registerRunCommand(pi: ExtensionAPI): void {
         }
       }
 
-      const allResults = loadAllAgentResults(ctx.cwd, manifest.id);
+      const allResults = loadAllAgentResults(platform.paths, ctx.cwd, manifest.id);
       const runSummary = buildRunSummary(allResults);
 
       manifest.status = runSummary.blocked > 0 ? "failed" : "completed";
       manifest.completedAt = new Date().toISOString();
-      updateRun(ctx.cwd, manifest);
+      updateRun(platform.paths, ctx.cwd, manifest);
 
 
       const durationSec = Math.round(runSummary.totalDuration / 1000);
@@ -325,9 +325,9 @@ export function registerRunCommand(pi: ExtensionAPI): void {
       if (branchName && manifest.status === "completed") {
         const finishInstructions = buildBranchFinishPrompt({
           branchName,
-          baseBranch: await detectBaseBranch((cmd, args) => pi.exec(cmd, args)),
+          baseBranch: await detectBaseBranch((cmd, args) => platform.exec(cmd, args)),
         });
-        pi.sendMessage(
+        platform.sendMessage(
           {
             customType: "supi-branch-finish",
             content: [{ type: "text", text: finishInstructions }],

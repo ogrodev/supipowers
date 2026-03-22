@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import { loadConfig } from "../config/loader.js";
 import { savePlan } from "../storage/plans.js";
 import { notifySuccess, notifyInfo, notifyError } from "../notifications/renderer.js";
@@ -24,11 +24,11 @@ export function setActiveVisualSessionDir(dir: string | null): void {
   activeSessionDir = dir;
 }
 
-export function registerPlanCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:plan", {
+export function registerPlanCommand(platform: Platform): void {
+  platform.registerCommand("supi:plan", {
     description: "Start collaborative planning for a feature or task",
     async handler(args, ctx) {
-      const config = loadConfig(ctx.cwd);
+      const config = loadConfig(platform.paths, ctx.cwd);
 
       const skillPath = findSkillPath("planning");
       let skillContent = "";
@@ -60,14 +60,14 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
 
         if (modeChoice.startsWith("Terminal + Visual")) {
           const sessionId = generateVisualSessionId();
-          visualSessionDir = createSessionDir(ctx.cwd, sessionId);
+          visualSessionDir = createSessionDir(platform.paths, ctx.cwd, sessionId);
           const scriptsDir = getScriptsDir();
 
           // Install server dependencies if needed
           const nodeModules = path.join(scriptsDir, "node_modules");
           if (!fs.existsSync(nodeModules)) {
             notifyInfo(ctx, "Installing visual companion dependencies...");
-            const installResult = await pi.exec("npm", ["install", "--production"], { cwd: scriptsDir });
+            const installResult = await platform.exec("npm", ["install", "--production"], { cwd: scriptsDir });
             if (installResult.code !== 0) {
               notifyError(ctx, "Failed to install visual companion dependencies", installResult.stderr);
               visualSessionDir = null;
@@ -78,12 +78,12 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
             // Stop any previous visual companion
             if (activeSessionDir) {
               const stopScript = path.join(scriptsDir, "stop-server.sh");
-              await pi.exec("bash", [stopScript, activeSessionDir], { cwd: scriptsDir });
+              await platform.exec("bash", [stopScript, activeSessionDir], { cwd: scriptsDir });
             }
 
             // Start the server (pass session dir via env command since ExecOptions has no env)
             const startScript = path.join(scriptsDir, "start-server.sh");
-            const startResult = await pi.exec("env", [
+            const startResult = await platform.exec("env", [
               `SUPI_VISUAL_DIR=${visualSessionDir}`,
               "bash",
               startScript,
@@ -124,7 +124,7 @@ export function registerPlanCommand(pi: ExtensionAPI): void {
         prompt += "\n\n" + buildVisualInstructions(visualUrl, visualSessionDir);
       }
 
-      pi.sendMessage(
+      platform.sendMessage(
         {
           customType: "supi-plan-start",
           content: [{ type: "text", text: prompt }],

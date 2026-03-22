@@ -1,15 +1,15 @@
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { Platform, PlatformContext } from "../platform/types.js";
 import { loadConfig } from "../config/loader.js";
 import { findActiveRun } from "../storage/runs.js";
 import { loadLatestReport } from "../storage/reports.js";
 import { listPlans } from "../storage/plans.js";
 
-export function handleSupi(pi: ExtensionAPI, ctx: ExtensionContext): void {
+export function handleSupi(platform: Platform, ctx: PlatformContext): void {
   void (async () => {
-    const config = loadConfig(ctx.cwd);
-    const activeRun = findActiveRun(ctx.cwd);
-    const latestReport = loadLatestReport(ctx.cwd);
-    const plans = listPlans(ctx.cwd);
+    const config = loadConfig(platform.paths, ctx.cwd);
+    const activeRun = findActiveRun(platform.paths, ctx.cwd);
+    const latestReport = loadLatestReport(platform.paths, ctx.cwd);
+    const plans = listPlans(platform.paths, ctx.cwd);
 
     const commands = [
       "/supi:plan     — Start collaborative planning",
@@ -38,20 +38,20 @@ export function handleSupi(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
     if (choice && choice.startsWith("/supi:")) {
       const cmdName = choice.split(" ")[0].slice(1); // remove leading /
-      const cmd = pi.getCommands().find((c) => c.name === cmdName);
+      const cmd = platform.getCommands().find((c) => c.name === cmdName);
       if (cmd) {
-        await cmd.handler("", ctx as any);
+        await (cmd as any).handler("", ctx as any);
       }
     }
   })();
 }
 
-export function registerSupiCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi", {
+export function registerSupiCommand(platform: Platform): void {
+  platform.registerCommand("supi", {
     description: "Supipowers overview — show available commands and project status",
     async handler(_args, ctx) {
       // Handled via input event interception — this is a fallback for non-interactive contexts
-      handleSupi(pi, ctx);
+      handleSupi(platform, ctx);
     },
   });
 }

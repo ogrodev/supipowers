@@ -1,17 +1,17 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { buildAnalyzerPrompt } from "../release/analyzer.js";
 import { notifyInfo } from "../notifications/renderer.js";
 
-export function registerReleaseCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:release", {
+export function registerReleaseCommand(platform: Platform): void {
+  platform.registerCommand("supi:release", {
     description: "Release automation — version bump, notes, publish",
     async handler(_args, ctx) {
-      const config = loadConfig(ctx.cwd);
+      const config = loadConfig(platform.paths, ctx.cwd);
 
       let lastTag: string | null = null;
       try {
-        const result = await pi.exec("git", ["describe", "--tags", "--abbrev=0"], { cwd: ctx.cwd });
+        const result = await platform.exec("git", ["describe", "--tags", "--abbrev=0"], { cwd: ctx.cwd });
         if (result.code === 0) lastTag = result.stdout.trim();
       } catch {
         // no tags yet
@@ -26,7 +26,7 @@ export function registerReleaseCommand(pi: ExtensionAPI): void {
 
         if (!choice) return;
         const pipeline = choice.split(" — ")[0];
-        updateConfig(ctx.cwd, { release: { pipeline } });
+        updateConfig(platform.paths, ctx.cwd, { release: { pipeline } });
         ctx.ui.notify(`Release pipeline set to: ${pipeline}`, "info");
       }
 
@@ -34,7 +34,7 @@ export function registerReleaseCommand(pi: ExtensionAPI): void {
 
       const prompt = buildAnalyzerPrompt(lastTag);
 
-      pi.sendMessage(
+      platform.sendMessage(
         {
           customType: "supi-release",
           content: [{ type: "text", text: prompt }],

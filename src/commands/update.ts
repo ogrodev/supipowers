@@ -1,12 +1,12 @@
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { Platform, PlatformContext } from "../platform/types.js";
 import { readFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 
-export function handleUpdate(pi: ExtensionAPI, ctx: ExtensionContext): void {
+export function handleUpdate(platform: Platform, ctx: PlatformContext): void {
   void (async () => {
-    const ompAgent = join(homedir(), ".omp", "agent");
-    const extDir = join(ompAgent, "extensions", "supipowers");
+    const agentDir = platform.paths.agent();
+    const extDir = join(agentDir, "extensions", "supipowers");
     const installedPkgPath = join(extDir, "package.json");
 
     // Get current installed version
@@ -23,7 +23,7 @@ export function handleUpdate(pi: ExtensionAPI, ctx: ExtensionContext): void {
     ctx.ui.notify(`Current version: v${currentVersion}`, "info");
 
     // Check latest version on npm
-    const checkResult = await pi.exec("npm", ["view", "supipowers", "version"], { cwd: tmpdir() });
+    const checkResult = await platform.exec("npm", ["view", "supipowers", "version"], { cwd: tmpdir() });
     if (checkResult.code !== 0) {
       ctx.ui.notify("Failed to check for updates — npm view failed", "error");
       return;
@@ -42,7 +42,7 @@ export function handleUpdate(pi: ExtensionAPI, ctx: ExtensionContext): void {
     mkdirSync(tempDir, { recursive: true });
 
     try {
-      const installResult = await pi.exec(
+      const installResult = await platform.exec(
         "npm", ["install", "--prefix", tempDir, `supipowers@${latestVersion}`],
         { cwd: tempDir },
       );
@@ -75,7 +75,7 @@ export function handleUpdate(pi: ExtensionAPI, ctx: ExtensionContext): void {
           if (!entry.isDirectory()) continue;
           const skillFile = join(skillsSource, entry.name, "SKILL.md");
           if (!existsSync(skillFile)) continue;
-          const destDir = join(ompAgent, "skills", entry.name);
+          const destDir = join(agentDir, "skills", entry.name);
           mkdirSync(destDir, { recursive: true });
           cpSync(skillFile, join(destDir, "SKILL.md"));
         }
@@ -93,11 +93,11 @@ export function handleUpdate(pi: ExtensionAPI, ctx: ExtensionContext): void {
   })();
 }
 
-export function registerUpdateCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:update", {
+export function registerUpdateCommand(platform: Platform): void {
+  platform.registerCommand("supi:update", {
     description: "Update supipowers to the latest version",
     async handler(_args, ctx) {
-      handleUpdate(pi, ctx);
+      handleUpdate(platform, ctx);
     },
   });
 }

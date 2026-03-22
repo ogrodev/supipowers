@@ -22,7 +22,7 @@ import { registerProgressRenderer } from "./orchestrator/progress-renderer.js";
 const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
   "supi": (platform, ctx) => handleSupi(platform, ctx),
   "supi:config": (platform, ctx) => handleConfig(platform, ctx),
-  "supi:status": (_platform, ctx) => handleStatus(ctx),
+  "supi:status": (platform, ctx) => handleStatus(platform, ctx),
   "supi:update": (platform, ctx) => handleUpdate(platform, ctx),
 };
 

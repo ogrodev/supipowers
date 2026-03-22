@@ -1,15 +1,15 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import { loadConfig } from "../config/loader.js";
 import { listProfiles, resolveProfile } from "../config/profiles.js";
 import { buildReviewPrompt } from "../quality/gate-runner.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
 
-export function registerReviewCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:review", {
+export function registerReviewCommand(platform: Platform): void {
+  platform.registerCommand("supi:review", {
     description: "Run quality gates at chosen depth (quick/thorough/full-regression)",
     async handler(args, ctx) {
-      const config = loadConfig(ctx.cwd);
+      const config = loadConfig(platform.paths, ctx.cwd);
 
       let profileOverride: string | undefined;
       if (args?.includes("--quick")) profileOverride = "quick";
@@ -22,7 +22,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
 
       // If no flag provided and UI is available, let the user pick
       if (!profileOverride && ctx.hasUI) {
-        const profiles = listProfiles(ctx.cwd);
+        const profiles = listProfiles(platform.paths, ctx.cwd);
         const choice = await ctx.ui.select(
           "Review profile",
           profiles,
@@ -35,8 +35,8 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
         profileOverride = choice;
       }
 
-      const profile = resolveProfile(ctx.cwd, config, profileOverride);
-      const lsp = isLspAvailable(pi.getActiveTools());
+      const profile = resolveProfile(platform.paths, ctx.cwd, config, profileOverride);
+      const lsp = isLspAvailable(platform.getActiveTools());
 
       if (!lsp && profile.gates.lspDiagnostics) {
         notifyWarning(
@@ -48,7 +48,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
 
       let changedFiles: string[] = [];
       try {
-        const result = await pi.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
+        const result = await platform.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
         if (result.code === 0) {
           changedFiles = result.stdout
             .split("\n")
@@ -61,7 +61,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
 
       if (changedFiles.length === 0) {
         try {
-          const result = await pi.exec("git", ["diff", "--name-only", "--cached"], { cwd: ctx.cwd });
+          const result = await platform.exec("git", ["diff", "--name-only", "--cached"], { cwd: ctx.cwd });
           if (result.code === 0) {
             changedFiles = result.stdout
               .split("\n")
@@ -86,7 +86,7 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
 
       notifyInfo(ctx, `Review started`, `profile: ${profile.name}`);
 
-      pi.sendMessage(
+      platform.sendMessage(
         {
           customType: "supi-review",
           content: [{ type: "text", text: reviewPrompt }],

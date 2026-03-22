@@ -1,5 +1,5 @@
 // src/lsp/bridge.ts
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 
 export interface DiagnosticsResult {
   file: string;

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadFixPrConfig, saveFixPrConfig, DEFAULT_FIX_PR_CONFIG } from "../fix-pr/config.js";
@@ -27,8 +27,8 @@ function findSkillPath(skillName: string): string | null {
   return null;
 }
 
-export function registerFixPrCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:fix-pr", {
+export function registerFixPrCommand(platform: Platform): void {
+  platform.registerCommand("supi:fix-pr", {
     description: "Fix PR review comments with token-optimized agent orchestration",
     async handler(args, ctx) {
       // ── Step 1: Detect PR ──────────────────────────────────────────
@@ -43,7 +43,7 @@ export function registerFixPrCommand(pi: ExtensionAPI): void {
 
       // Detect repo
       try {
-        const repoResult = await pi.exec("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], { cwd: ctx.cwd });
+        const repoResult = await platform.exec("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], { cwd: ctx.cwd });
         if (repoResult.code === 0) repo = repoResult.stdout.trim();
       } catch { /* ignore */ }
 
@@ -55,7 +55,7 @@ export function registerFixPrCommand(pi: ExtensionAPI): void {
       // Detect PR number from current branch if not provided
       if (!prNumber) {
         try {
-          const prResult = await pi.exec("gh", ["pr", "view", "--json", "number", "-q", ".number"], { cwd: ctx.cwd });
+          const prResult = await platform.exec("gh", ["pr", "view", "--json", "number", "-q", ".number"], { cwd: ctx.cwd });
           if (prResult.code === 0) prNumber = parseInt(prResult.stdout.trim(), 10);
         } catch { /* ignore */ }
       }
@@ -66,13 +66,13 @@ export function registerFixPrCommand(pi: ExtensionAPI): void {
       }
 
       // ── Step 2: Load or create config ──────────────────────────────
-      let config = loadFixPrConfig(ctx.cwd);
+      let config = loadFixPrConfig(platform.paths, ctx.cwd);
 
       if (!config && ctx.hasUI) {
         config = await runSetupWizard(ctx);
         if (!config) return; // user cancelled
-        saveFixPrConfig(ctx.cwd, config);
-        ctx.ui.notify("Fix-PR config saved to .omp/supipowers/fix-pr.json", "info");
+        saveFixPrConfig(platform.paths, ctx.cwd, config);
+        ctx.ui.notify(`Fix-PR config saved to ${platform.paths.dotDirDisplay}/supipowers/fix-pr.json`, "info");
       }
 
       if (!config) {
@@ -81,7 +81,7 @@ export function registerFixPrCommand(pi: ExtensionAPI): void {
       }
 
       // ── Step 3: Session handling ───────────────────────────────────
-      let activeSession = findActiveFixPrSession(ctx.cwd);
+      let activeSession = findActiveFixPrSession(platform.paths, ctx.cwd);
 
       if (activeSession && ctx.hasUI) {
         const choice = await ctx.ui.select(
@@ -109,15 +109,15 @@ export function registerFixPrCommand(pi: ExtensionAPI): void {
       };
 
       if (!activeSession) {
-        createFixPrSession(ctx.cwd, ledger);
+        createFixPrSession(platform.paths, ctx.cwd, ledger);
       }
 
       // ── Step 4: Fetch initial comments ─────────────────────────────
-      const sessionDir = getSessionDir(ctx.cwd, ledger.id);
+      const sessionDir = getSessionDir(platform.paths, ctx.cwd, ledger.id);
       const scriptsDir = getScriptsDir();
       const snapshotPath = path.join(sessionDir, "snapshots", `comments-${ledger.iteration}.jsonl`);
 
-      const fetchResult = await pi.exec("bash", [
+      const fetchResult = await platform.exec("bash", [
         path.join(scriptsDir, "fetch-pr-comments.sh"),
         repo,
         String(prNumber),
@@ -166,7 +166,7 @@ export function registerFixPrCommand(pi: ExtensionAPI): void {
         skillContent,
       });
 
-      pi.sendMessage(
+      platform.sendMessage(
         {
           customType: "supi-fix-pr",
           content: [{ type: "text", text: prompt }],

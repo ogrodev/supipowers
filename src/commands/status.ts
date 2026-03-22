@@ -1,15 +1,15 @@
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { Platform, PlatformContext } from "../platform/types.js";
 import { findActiveRun, loadAllAgentResults } from "../storage/runs.js";
 
-export function handleStatus(ctx: ExtensionContext): void {
-  const activeRun = findActiveRun(ctx.cwd);
+export function handleStatus(platform: Platform, ctx: PlatformContext): void {
+  const activeRun = findActiveRun(platform.paths, ctx.cwd);
   if (!activeRun) {
     ctx.ui.notify("No active runs — use /supi:run to execute a plan", "info");
     return;
   }
 
   void (async () => {
-    const results = loadAllAgentResults(ctx.cwd, activeRun.id);
+    const results = loadAllAgentResults(platform.paths, ctx.cwd, activeRun.id);
     const totalTasks = activeRun.batches.reduce(
       (sum, b) => sum + b.taskIds.length,
       0
@@ -38,11 +38,11 @@ export function handleStatus(ctx: ExtensionContext): void {
   })();
 }
 
-export function registerStatusCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:status", {
+export function registerStatusCommand(platform: Platform): void {
+  platform.registerCommand("supi:status", {
     description: "Check on running sub-agents and task progress",
     async handler(_args, ctx) {
-      handleStatus(ctx);
+      handleStatus(platform, ctx);
     },
   });
 }

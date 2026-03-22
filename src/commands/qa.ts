@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
@@ -116,8 +116,8 @@ async function runSetupWizard(
   };
 }
 
-export function registerQaCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:qa", {
+export function registerQaCommand(platform: Platform): void {
+  platform.registerCommand("supi:qa", {
     description: "Run autonomous E2E product testing pipeline with playwright",
     async handler(args, ctx) {
       const scriptsDir = getScriptsDir();
@@ -128,7 +128,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
       let detectedPort: number | null = null;
 
       try {
-        const detectResult = await pi.exec("bash", [
+        const detectResult = await platform.exec("bash", [
           path.join(scriptsDir, "detect-app-type.sh"),
           ctx.cwd,
         ], { cwd: ctx.cwd });
@@ -143,7 +143,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
 
       // ── Step 2: Ensure playwright ────────────────────────────────────
       try {
-        const pwResult = await pi.exec("bash", [
+        const pwResult = await platform.exec("bash", [
           path.join(scriptsDir, "ensure-playwright.sh"),
           ctx.cwd,
         ], { cwd: ctx.cwd });
@@ -156,13 +156,13 @@ export function registerQaCommand(pi: ExtensionAPI): void {
       }
 
       // ── Step 3: Load or create config ────────────────────────────────
-      let config = loadE2eQaConfig(ctx.cwd);
+      let config = loadE2eQaConfig(platform.paths, ctx.cwd);
 
       if (!config && ctx.hasUI) {
         config = await runSetupWizard(ctx, detectedType, detectedDevCommand, detectedPort);
         if (!config) return; // user cancelled
-        saveE2eQaConfig(ctx.cwd, config);
-        ctx.ui.notify("E2E QA config saved to .omp/supipowers/e2e-qa.json", "info");
+        saveE2eQaConfig(platform.paths, ctx.cwd, config);
+        ctx.ui.notify(`E2E QA config saved to ${platform.paths.dotDirDisplay}/supipowers/e2e-qa.json`, "info");
       }
 
       if (!config) {
@@ -179,7 +179,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
       }
 
       // ── Step 4: Check for unresolved regressions ─────────────────────
-      const activeSession = findActiveSession(ctx.cwd);
+      const activeSession = findActiveSession(platform.paths, ctx.cwd);
       if (activeSession && activeSession.regressions.length > 0 && ctx.hasUI) {
         const unresolvedRegressions = activeSession.regressions.filter((r: E2eRegression) => !r.resolution);
         if (unresolvedRegressions.length > 0) {
@@ -204,7 +204,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
       // ── Step 5: Route discovery ──────────────────────────────────────
       let discoveredRoutes = "";
       try {
-        const routeResult = await pi.exec("bash", [
+        const routeResult = await platform.exec("bash", [
           path.join(scriptsDir, "discover-routes.sh"),
           ctx.cwd,
           config.app.type,
@@ -220,12 +220,12 @@ export function registerQaCommand(pi: ExtensionAPI): void {
       }
 
       // ── Step 6: Load previous matrix ─────────────────────────────────
-      const previousMatrix = loadE2eMatrix(ctx.cwd);
+      const previousMatrix = loadE2eMatrix(platform.paths, ctx.cwd);
       const matrixJson = previousMatrix ? JSON.stringify(previousMatrix, null, 2) : null;
 
       // ── Step 7: Create session ───────────────────────────────────────
-      const ledger = createNewE2eSession(ctx.cwd, config);
-      const sessionDir = getSessionDir(ctx.cwd, ledger.id);
+      const ledger = createNewE2eSession(platform.paths, ctx.cwd, config);
+      const sessionDir = getSessionDir(platform.paths, ctx.cwd, ledger.id);
 
       // ── Step 8: Load skill ───────────────────────────────────────────
       let skillContent = "";
@@ -250,7 +250,7 @@ export function registerQaCommand(pi: ExtensionAPI): void {
         skillContent,
       });
 
-      pi.sendMessage(
+      platform.sendMessage(
         {
           customType: "supi-qa",
           content: [{ type: "text", text: prompt }],

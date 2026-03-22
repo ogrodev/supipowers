@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { Platform, PlatformContext } from "../platform/types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { listProfiles } from "../config/profiles.js";
 import { checkInstallation } from "../context-mode/installer.js";
@@ -32,16 +32,17 @@ interface SettingDef {
   set: (cwd: string, value: unknown) => void;
 }
 
-function buildSettings(cwd: string): SettingDef[] {
+function buildSettings(platform: Platform, cwd: string): SettingDef[] {
+  const { paths } = platform;
   return [
     {
       label: "Default profile",
       key: "defaultProfile",
       helpText: "Review depth used when no flag is passed to /supi:review",
       type: "select",
-      options: listProfiles(cwd),
+      options: listProfiles(paths, cwd),
       get: (c) => c.defaultProfile,
-      set: (d, v) => updateConfig(d, { defaultProfile: v }),
+      set: (d, v) => updateConfig(paths, d, { defaultProfile: v }),
     },
     {
       label: "Max parallel agents",
@@ -50,7 +51,7 @@ function buildSettings(cwd: string): SettingDef[] {
       type: "select",
       options: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
       get: (c) => String(c.orchestration.maxParallelAgents),
-      set: (d, v) => updateConfig(d, { orchestration: { maxParallelAgents: Number(v) } }),
+      set: (d, v) => updateConfig(paths, d, { orchestration: { maxParallelAgents: Number(v) } }),
     },
     {
       label: "Max fix retries",
@@ -59,7 +60,7 @@ function buildSettings(cwd: string): SettingDef[] {
       type: "select",
       options: ["0", "1", "2", "3", "4", "5"],
       get: (c) => String(c.orchestration.maxFixRetries),
-      set: (d, v) => updateConfig(d, { orchestration: { maxFixRetries: Number(v) } }),
+      set: (d, v) => updateConfig(paths, d, { orchestration: { maxFixRetries: Number(v) } }),
     },
     {
       label: "Max nesting depth",
@@ -68,7 +69,7 @@ function buildSettings(cwd: string): SettingDef[] {
       type: "select",
       options: ["0", "1", "2", "3", "4", "5"],
       get: (c) => String(c.orchestration.maxNestingDepth),
-      set: (d, v) => updateConfig(d, { orchestration: { maxNestingDepth: Number(v) } }),
+      set: (d, v) => updateConfig(paths, d, { orchestration: { maxNestingDepth: Number(v) } }),
     },
     {
       label: "Model preference",
@@ -77,7 +78,7 @@ function buildSettings(cwd: string): SettingDef[] {
       type: "select",
       options: ["auto", "fast", "balanced", "quality"],
       get: (c) => c.orchestration.modelPreference,
-      set: (d, v) => updateConfig(d, { orchestration: { modelPreference: v } }),
+      set: (d, v) => updateConfig(paths, d, { orchestration: { modelPreference: v } }),
     },
     {
       label: "LSP setup guide",
@@ -85,7 +86,7 @@ function buildSettings(cwd: string): SettingDef[] {
       helpText: "Show LSP setup tips when no language server is active",
       type: "toggle",
       get: (c) => c.lsp.setupGuide ? "on" : "off",
-      set: (d, v) => updateConfig(d, { lsp: { setupGuide: v === "on" } }),
+      set: (d, v) => updateConfig(paths, d, { lsp: { setupGuide: v === "on" } }),
     },
     {
       label: "Notification verbosity",
@@ -94,7 +95,7 @@ function buildSettings(cwd: string): SettingDef[] {
       type: "select",
       options: ["quiet", "normal", "verbose"],
       get: (c) => c.notifications.verbosity,
-      set: (d, v) => updateConfig(d, { notifications: { verbosity: v } }),
+      set: (d, v) => updateConfig(paths, d, { notifications: { verbosity: v } }),
     },
     {
       label: "QA framework",
@@ -106,7 +107,7 @@ function buildSettings(cwd: string): SettingDef[] {
       set: (d, v) => {
         const chosen = FRAMEWORK_OPTIONS.find((f) => f.label === v);
         if (chosen) {
-          updateConfig(d, { qa: { framework: chosen.value || null, command: chosen.command } });
+          updateConfig(paths, d, { qa: { framework: chosen.value || null, command: chosen.command } });
         }
       },
     },
@@ -120,24 +121,24 @@ function buildSettings(cwd: string): SettingDef[] {
       set: (d, v) => {
         const chosen = PIPELINE_OPTIONS.find((p) => p.label === v);
         if (chosen) {
-          updateConfig(d, { release: { pipeline: chosen.value || null } });
+          updateConfig(paths, d, { release: { pipeline: chosen.value || null } });
         }
       },
     },
   ];
 }
 
-export function handleConfig(pi: ExtensionAPI, ctx: ExtensionContext): void {
+export function handleConfig(platform: Platform, ctx: PlatformContext): void {
   if (!ctx.hasUI) {
     ctx.ui.notify("Config UI requires interactive mode", "warning");
     return;
   }
 
   void (async () => {
-    const settings = buildSettings(ctx.cwd);
+    const settings = buildSettings(platform, ctx.cwd);
 
     while (true) {
-      const config = loadConfig(ctx.cwd);
+      const config = loadConfig(platform.paths, ctx.cwd);
 
       const options = settings.map(
         (s) => `${s.label}: ${s.get(config)}`
@@ -183,8 +184,8 @@ export function handleConfig(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
   // Context-mode status (async, fire-and-forget)
   checkInstallation(
-    (cmd: string, args: string[]) => pi.exec(cmd, args),
-    pi.getActiveTools(),
+    (cmd: string, args: string[]) => platform.exec(cmd, args),
+    platform.getActiveTools(),
   ).then((status) => {
     const lines = [
       "",
@@ -202,11 +203,11 @@ export function handleConfig(pi: ExtensionAPI, ctx: ExtensionContext): void {
   });
 }
 
-export function registerConfigCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("supi:config", {
+export function registerConfigCommand(platform: Platform): void {
+  platform.registerCommand("supi:config", {
     description: "View and manage Supipowers configuration",
     async handler(_args, ctx) {
-      handleConfig(pi, ctx);
+      handleConfig(platform, ctx);
     },
   });
 }

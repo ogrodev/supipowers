@@ -13,7 +13,9 @@ describe("extension entry point", () => {
       on: vi.fn(),
       sendMessage: vi.fn(),
       getActiveTools: vi.fn(() => []),
+      getCommands: vi.fn(() => []),
       exec: vi.fn(),
+      createAgentSession: vi.fn(),
     } as any;
 
     expect(() => supipowers(mockPi)).not.toThrow();
@@ -37,7 +39,9 @@ describe("extension entry point", () => {
       on: vi.fn(),
       sendMessage: vi.fn(),
       getActiveTools: vi.fn(() => []),
+      getCommands: vi.fn(() => []),
       exec: vi.fn(),
+      createAgentSession: vi.fn(),
     } as any;
 
     supipowers(mockPi);
