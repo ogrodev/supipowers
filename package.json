@@ -1,7 +1,7 @@
 {
   "name": "supipowers",
-  "version": "0.8.0",
-  "description": "OMP-native workflow extension inspired by supipowers.",
+  "version": "1.0.0",
+  "description": "Workflow extension for Pi and OMP coding agents.",
   "type": "module",
   "scripts": {
     "test": "vitest run",
@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "keywords": [
+    "pi-extension",
     "omp-extension",
     "workflow",
     "agent",
@@ -26,13 +27,34 @@
     "README.md",
     "LICENSE"
   ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
   "dependencies": {
     "@clack/prompts": "^0.10.0"
   },
   "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
     "@oh-my-pi/pi-coding-agent": "*",
-    "@oh-my-pi/pi-tui": "*",
     "@sinclair/typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": { "optional": true },
+    "@oh-my-pi/pi-coding-agent": { "optional": true },
+    "@oh-my-pi/pi-tui": { "optional": true }
   },
   "devDependencies": {
     "@oh-my-pi/pi-coding-agent": "latest",
@@ -43,13 +65,5 @@
     "better-sqlite3": "^12.8.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
-  },
-  "omp": {
-    "extensions": [
-      "./src/index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ]
   }
 }
