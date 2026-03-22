@@ -11,7 +11,7 @@ import {
   note,
 } from "@clack/prompts";
 import { spawnSync } from "node:child_process";
-import { readFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -53,6 +53,27 @@ function findOmpBinary() {
   return null;
 }
 
+function findPiBinary() {
+  // Check PATH first
+  const check = run("pi", ["--version"]);
+  if (!check.error && check.status === 0) return "pi";
+
+  // Fallback: check common npm/bun global locations
+  for (const candidate of [
+    join(homedir(), ".bun", "bin", "pi"),
+    join(homedir(), ".npm-global", "bin", "pi"),
+    "/usr/local/bin/pi",
+    "/opt/homebrew/bin/pi",
+  ]) {
+    if (existsSync(candidate)) {
+      const fallback = run(candidate, ["--version"]);
+      if (!fallback.error && fallback.status === 0) return candidate;
+    }
+  }
+
+  return null;
+}
+
 // ── LSP Server Data ──────────────────────────────────────────
 
 const LSP_SERVERS = [
@@ -88,58 +109,16 @@ function isInstalled(binary) {
 const args = process.argv.slice(2);
 const skipLsp = args.includes("--skip-lsp");
 
-// ── Main ─────────────────────────────────────────────────────
+// ── Install to platform ──────────────────────────────────────
 
-async function main() {
-  intro(`supipowers v${VERSION}`);
-
-  // ── Step 1: OMP check ──────────────────────────────────────
-
-  const ompSpinner = spinner();
-  ompSpinner.start("Looking for OMP...");
-  let omp = findOmpBinary();
-
-  if (!omp) {
-    ompSpinner.stop("OMP not found");
-    note(
-      "OMP (oh-my-pi) is an AI coding agent that supipowers extends.\n" +
-        "It adds sub-agents, LSP integration, and plugin support to pi.\n" +
-        "Learn more: https://github.com/can1357/oh-my-pi",
-      "OMP not found"
-    );
-
-    const shouldInstall = await confirm({
-      message: "Install OMP now?",
-    });
-    if (isCancel(shouldInstall) || !shouldInstall) {
-      bail("Cannot continue without OMP.");
-    }
-
-    const s = spinner();
-    s.start("Installing OMP via bun...");
-    const result = run("bun", ["add", "-g", "@oh-my-pi/pi-coding-agent"]);
-    if (result.status !== 0) {
-      s.stop("OMP installation failed");
-      bail(result.stderr?.trim() || "Unknown error during OMP install.");
-    }
-    s.stop("OMP installed successfully");
-
-    // Re-detect after install
-    omp = findOmpBinary();
-    if (!omp) {
-      bail("OMP was installed but the binary was not found in PATH. Try restarting your shell.");
-    }
-  } else {
-    const version = run(omp, ["--version"]);
-    const ver = version.stdout?.trim() || "unknown";
-    ompSpinner.stop(`OMP ${ver} detected`);
-  }
-
-  // ── Step 2: Install / update supipowers into ~/.omp/agent/ ──
-
-  const packageRoot = resolve(__dirname, "..");
-  const ompAgent = join(homedir(), ".omp", "agent");
-  const extDir = join(ompAgent, "extensions", "supipowers");
+/**
+ * Install supipowers to a given platform directory (.pi or .omp).
+ * @param {string} platformDir  - e.g. ".pi" or ".omp"
+ * @param {string} packageRoot  - absolute path to this package's root
+ */
+function installToPlatform(platformDir, packageRoot) {
+  const agentDir = join(homedir(), platformDir, "agent");
+  const extDir = join(agentDir, "extensions", "supipowers");
   const installedPkgPath = join(extDir, "package.json");
 
   // Check for existing installation
@@ -154,59 +133,73 @@ async function main() {
   }
 
   if (installedVersion === VERSION) {
-    note(`supipowers v${VERSION} is already installed and up to date.`, "Up to date");
-  } else {
-    const action = installedVersion ? "Updating" : "Installing";
-    if (installedVersion) {
-      note(`v${installedVersion} → v${VERSION}`, "Updating supipowers");
-    }
-
-    const s = spinner();
-    s.start(`${action} supipowers...`);
-
-    try {
-      // Clean previous installation to remove stale files
-      if (existsSync(extDir)) {
-        rmSync(extDir, { recursive: true });
-      }
-
-      // Copy extension (src/ + bin/ + package.json) → ~/.omp/agent/extensions/supipowers/
-      mkdirSync(extDir, { recursive: true });
-      cpSync(join(packageRoot, "src"), join(extDir, "src"), { recursive: true });
-      cpSync(join(packageRoot, "bin"), join(extDir, "bin"), { recursive: true });
-      cpSync(join(packageRoot, "package.json"), join(extDir, "package.json"));
-
-      // Copy skills → ~/.omp/agent/skills/<skillname>/SKILL.md
-      const skillsSource = join(packageRoot, "skills");
-      if (existsSync(skillsSource)) {
-        const skillDirs = readdirSync(skillsSource, { withFileTypes: true });
-        for (const entry of skillDirs) {
-          if (!entry.isDirectory()) continue;
-          const skillFile = join(skillsSource, entry.name, "SKILL.md");
-          if (!existsSync(skillFile)) continue;
-          const destDir = join(ompAgent, "skills", entry.name);
-          mkdirSync(destDir, { recursive: true });
-          cpSync(skillFile, join(destDir, "SKILL.md"));
-        }
-      }
-
-      s.stop(installedVersion ? `supipowers updated to v${VERSION}` : `supipowers v${VERSION} installed`);
-    } catch (err) {
-      s.stop(`${action} failed`);
-      bail(err.message || "Failed to copy files to ~/.omp/agent/");
-    }
+    note(
+      `supipowers v${VERSION} is already installed and up to date.`,
+      `Up to date (${platformDir})`
+    );
+    return extDir;
   }
 
-  // ── Step 2b: Register context-mode MCP server (if installed) ──
+  const action = installedVersion ? "Updating" : "Installing";
+  if (installedVersion) {
+    note(`v${installedVersion} → v${VERSION}`, `Updating supipowers (${platformDir})`);
+  }
 
+  const s = spinner();
+  s.start(`${action} supipowers to ~/${platformDir}/agent/...`);
+
+  try {
+    // Clean previous installation to remove stale files
+    if (existsSync(extDir)) {
+      rmSync(extDir, { recursive: true });
+    }
+
+    // Copy extension (src/ + bin/ + package.json) → ~/<platform>/agent/extensions/supipowers/
+    mkdirSync(extDir, { recursive: true });
+    cpSync(join(packageRoot, "src"), join(extDir, "src"), { recursive: true });
+    cpSync(join(packageRoot, "bin"), join(extDir, "bin"), { recursive: true });
+    cpSync(join(packageRoot, "package.json"), join(extDir, "package.json"));
+
+    // Copy skills → ~/<platform>/agent/skills/<skillname>/SKILL.md
+    const skillsSource = join(packageRoot, "skills");
+    if (existsSync(skillsSource)) {
+      const skillDirs = readdirSync(skillsSource, { withFileTypes: true });
+      for (const entry of skillDirs) {
+        if (!entry.isDirectory()) continue;
+        const skillFile = join(skillsSource, entry.name, "SKILL.md");
+        if (!existsSync(skillFile)) continue;
+        const destDir = join(agentDir, "skills", entry.name);
+        mkdirSync(destDir, { recursive: true });
+        cpSync(skillFile, join(destDir, "SKILL.md"));
+      }
+    }
+
+    s.stop(
+      installedVersion
+        ? `supipowers updated to v${VERSION} (${platformDir})`
+        : `supipowers v${VERSION} installed (${platformDir})`
+    );
+  } catch (err) {
+    s.stop(`${action} failed (${platformDir})`);
+    bail(err.message || `Failed to copy files to ~/${platformDir}/agent/`);
+  }
+
+  return extDir;
+}
+
+/**
+ * Register context-mode MCP server in the given platform's mcp.json.
+ * @param {string} platformDir - e.g. ".pi" or ".omp"
+ * @param {string} extDir      - path to the installed extensions/supipowers/ dir
+ */
+function registerContextMode(platformDir, extDir) {
   const ctxSpinner = spinner();
-  ctxSpinner.start("Checking for context-mode...");
+  ctxSpinner.start(`Checking for context-mode (${platformDir})...`);
 
   // Find context-mode installation (Claude Code plugin cache)
   const ctxCacheBase = join(homedir(), ".claude", "plugins", "cache", "context-mode", "context-mode");
   let ctxInstallPath = null;
   if (existsSync(ctxCacheBase)) {
-    // Find the latest version directory
     const versions = readdirSync(ctxCacheBase, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
@@ -221,8 +214,7 @@ async function main() {
   }
 
   if (ctxInstallPath) {
-    // Register as MCP server in ~/.omp/agent/mcp.json
-    const mcpConfigPath = join(homedir(), ".omp", "agent", "mcp.json");
+    const mcpConfigPath = join(homedir(), platformDir, "agent", "mcp.json");
     let mcpConfig = { mcpServers: {} };
     if (existsSync(mcpConfigPath)) {
       try {
@@ -242,14 +234,105 @@ async function main() {
       args: [wrapperMjs, startMjs],
     };
 
-    const { writeFileSync: writeFs } = await import("node:fs");
-    writeFs(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-    ctxSpinner.stop(`context-mode registered as MCP server (${ctxInstallPath})`);
+    mkdirSync(join(homedir(), platformDir, "agent"), { recursive: true });
+    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+    ctxSpinner.stop(`context-mode registered in ~/${platformDir}/agent/mcp.json`);
   } else {
-    ctxSpinner.stop("context-mode not found (install it as a Claude Code plugin for context window protection)");
+    ctxSpinner.stop(
+      `context-mode not found — install it as a Claude Code plugin for context window protection (${platformDir})`
+    );
+  }
+}
+
+// ── Main ─────────────────────────────────────────────────────
+
+async function main() {
+  intro(`supipowers v${VERSION}`);
+
+  // ── Step 1: Detect platforms ───────────────────────────────
+
+  const detectSpinner = spinner();
+  detectSpinner.start("Looking for Pi and OMP...");
+  const piBin = findPiBinary();
+  const ompBin = findOmpBinary();
+
+  const piVer = piBin ? run(piBin, ["--version"]).stdout?.trim() || "unknown" : null;
+  const ompVer = ompBin ? run(ompBin, ["--version"]).stdout?.trim() || "unknown" : null;
+
+  const detected = [];
+  if (piBin) detected.push(`Pi ${piVer}`);
+  if (ompBin) detected.push(`OMP ${ompVer}`);
+  detectSpinner.stop(detected.length ? `Detected: ${detected.join(", ")}` : "No agents found");
+
+  // ── Step 2: Determine install targets ─────────────────────
+
+  /** @type {Array<{name: string, dir: string}>} */
+  let targets = [];
+
+  if (piBin && ompBin) {
+    // Both found — let user pick
+    const chosen = await multiselect({
+      message: "Both Pi and OMP detected. Install supipowers to which?",
+      options: [
+        { value: { name: "Pi", dir: ".pi" }, label: `Pi (${piVer})`, hint: piBin },
+        { value: { name: "OMP", dir: ".omp" }, label: `OMP (${ompVer})`, hint: ompBin },
+      ],
+      required: true,
+    });
+    if (isCancel(chosen)) bail("Installation cancelled.");
+    targets = chosen;
+  } else if (piBin) {
+    // Only Pi found
+    const ok = await confirm({ message: `Install supipowers to Pi (${piVer})?` });
+    if (isCancel(ok) || !ok) bail("Installation cancelled.");
+    targets = [{ name: "Pi", dir: ".pi" }];
+  } else if (ompBin) {
+    // Only OMP found
+    const ok = await confirm({ message: `Install supipowers to OMP (${ompVer})?` });
+    if (isCancel(ok) || !ok) bail("Installation cancelled.");
+    targets = [{ name: "OMP", dir: ".omp" }];
+  } else {
+    // Neither found — offer to install Pi
+    note(
+      "Pi is an AI coding agent that supipowers extends.\n" +
+        "It adds sub-agents, LSP integration, and plugin support.\n" +
+        "Learn more: https://github.com/mariozechner/pi-coding-agent",
+      "No agent found"
+    );
+
+    const shouldInstall = await confirm({ message: "Install Pi now via npm?" });
+    if (isCancel(shouldInstall) || !shouldInstall) {
+      bail("Cannot continue without Pi or OMP.");
+    }
+
+    const s = spinner();
+    s.start("Installing Pi via npm...");
+    const result = run("npm", ["install", "-g", "@mariozechner/pi-coding-agent"]);
+    if (result.status !== 0) {
+      s.stop("Pi installation failed");
+      bail(result.stderr?.trim() || "Unknown error during Pi install.");
+    }
+    s.stop("Pi installed successfully");
+
+    const newPiBin = findPiBinary();
+    if (!newPiBin) {
+      bail("Pi was installed but the binary was not found in PATH. Try restarting your shell.");
+    }
+    targets = [{ name: "Pi", dir: ".pi" }];
   }
 
-  // ── Step 3: LSP setup (optional, skipped with --skip-lsp) ──
+  // ── Step 3: Install supipowers to each chosen target ──────
+
+  const packageRoot = resolve(__dirname, "..");
+
+  for (const target of targets) {
+    const extDir = installToPlatform(target.dir, packageRoot);
+
+    // ── Step 3b: Register context-mode MCP server ───────────
+    registerContextMode(target.dir, extDir);
+  }
+
+  // ── Step 4: LSP setup (optional, skipped with --skip-lsp) ──
 
   if (skipLsp) {
     note("LSP setup skipped (--skip-lsp)", "LSP");
@@ -294,7 +377,8 @@ async function main() {
 
   // ── Done ───────────────────────────────────────────────────
 
-  outro("supipowers is ready! Run `omp` to start using it.");
+  const targetNames = targets.map((t) => t.name.toLowerCase()).join(" or ");
+  outro(`supipowers is ready! Run \`${targetNames}\` to start using it.`);
 }
 
 main().catch((e) => {
