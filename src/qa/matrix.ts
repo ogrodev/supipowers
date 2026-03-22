@@ -1,11 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { E2eMatrix, E2eFlowRecord, E2eTestResult, E2eRegression } from "./types.js";
+import type { PlatformPaths } from "../platform/types.js";
 
 const MATRIX_FILENAME = "e2e-matrix.json";
 
-function getMatrixPath(cwd: string): string {
-  return path.join(cwd, ".omp", "supipowers", MATRIX_FILENAME);
+function getMatrixPath(paths: PlatformPaths, cwd: string): string {
+  return paths.project(cwd, MATRIX_FILENAME);
 }
 
 export function createEmptyMatrix(appType: string): E2eMatrix {
@@ -17,8 +18,8 @@ export function createEmptyMatrix(appType: string): E2eMatrix {
   };
 }
 
-export function loadE2eMatrix(cwd: string): E2eMatrix | null {
-  const matrixPath = getMatrixPath(cwd);
+export function loadE2eMatrix(paths: PlatformPaths, cwd: string): E2eMatrix | null {
+  const matrixPath = getMatrixPath(paths, cwd);
   if (!fs.existsSync(matrixPath)) return null;
   try {
     return JSON.parse(fs.readFileSync(matrixPath, "utf-8")) as E2eMatrix;
@@ -27,8 +28,8 @@ export function loadE2eMatrix(cwd: string): E2eMatrix | null {
   }
 }
 
-export function saveE2eMatrix(cwd: string, matrix: E2eMatrix): void {
-  const matrixPath = getMatrixPath(cwd);
+export function saveE2eMatrix(paths: PlatformPaths, cwd: string, matrix: E2eMatrix): void {
+  const matrixPath = getMatrixPath(paths, cwd);
   fs.mkdirSync(path.dirname(matrixPath), { recursive: true });
   fs.writeFileSync(matrixPath, JSON.stringify(matrix, null, 2));
 }

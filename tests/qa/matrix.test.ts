@@ -10,6 +10,9 @@ import {
   detectRegressions,
 } from "../../src/qa/matrix.js";
 import type { E2eFlowRecord, E2eTestResult } from "../../src/qa/types.js";
+import { createPaths } from "../../src/platform/types.js";
+
+const paths = createPaths(".omp");
 
 describe("E2E Matrix", () => {
   let tmpDir: string;
@@ -31,14 +34,14 @@ describe("E2E Matrix", () => {
   });
 
   test("loadE2eMatrix returns null when no matrix exists", () => {
-    expect(loadE2eMatrix(tmpDir)).toBeNull();
+    expect(loadE2eMatrix(paths, tmpDir)).toBeNull();
   });
 
   test("saveE2eMatrix creates file and loadE2eMatrix reads it", () => {
     const matrix = createEmptyMatrix("vite");
-    saveE2eMatrix(tmpDir, matrix);
+    saveE2eMatrix(paths, tmpDir, matrix);
 
-    const loaded = loadE2eMatrix(tmpDir);
+    const loaded = loadE2eMatrix(paths, tmpDir);
     expect(loaded).not.toBeNull();
     expect(loaded!.appType).toBe("vite");
   });
@@ -47,7 +50,7 @@ describe("E2E Matrix", () => {
     const matrixDir = path.join(tmpDir, ".omp", "supipowers");
     fs.mkdirSync(matrixDir, { recursive: true });
     fs.writeFileSync(path.join(matrixDir, "e2e-matrix.json"), "broken");
-    expect(loadE2eMatrix(tmpDir)).toBeNull();
+    expect(loadE2eMatrix(paths, tmpDir)).toBeNull();
   });
 
   test("detectRegressions finds pass-to-fail transitions", () => {

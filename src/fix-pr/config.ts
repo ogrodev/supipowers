@@ -1,11 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FixPrConfig } from "./types.js";
+import type { PlatformPaths } from "../platform/types.js";
 
 const CONFIG_FILENAME = "fix-pr.json";
 
-function getConfigPath(cwd: string): string {
-  return path.join(cwd, ".omp", "supipowers", CONFIG_FILENAME);
+function getConfigPath(paths: PlatformPaths, cwd: string): string {
+  return paths.project(cwd, CONFIG_FILENAME);
 }
 
 export const DEFAULT_FIX_PR_CONFIG: FixPrConfig = {
@@ -19,8 +20,8 @@ export const DEFAULT_FIX_PR_CONFIG: FixPrConfig = {
   },
 };
 
-export function loadFixPrConfig(cwd: string): FixPrConfig | null {
-  const configPath = getConfigPath(cwd);
+export function loadFixPrConfig(paths: PlatformPaths, cwd: string): FixPrConfig | null {
+  const configPath = getConfigPath(paths, cwd);
   if (!fs.existsSync(configPath)) return null;
   try {
     return JSON.parse(fs.readFileSync(configPath, "utf-8")) as FixPrConfig;
@@ -29,8 +30,8 @@ export function loadFixPrConfig(cwd: string): FixPrConfig | null {
   }
 }
 
-export function saveFixPrConfig(cwd: string, config: FixPrConfig): void {
-  const configPath = getConfigPath(cwd);
+export function saveFixPrConfig(paths: PlatformPaths, cwd: string, config: FixPrConfig): void {
+  const configPath = getConfigPath(paths, cwd);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }

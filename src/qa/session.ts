@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { E2ePhase, E2ePhaseStatus, E2eSessionLedger, E2eQaConfig } from "./types.js";
+import type { PlatformPaths } from "../platform/types.js";
 import { generateSessionId, createSession, updateSession } from "../storage/qa-sessions.js";
 
 const PHASE_ORDER: E2ePhase[] = ["flow-discovery", "test-generation", "execution", "reporting"];
@@ -13,7 +14,7 @@ const PHASE_LABELS: Record<E2ePhase, string> = {
 };
 
 /** Create a new E2E QA session with all phases pending */
-export function createNewE2eSession(cwd: string, config: E2eQaConfig): E2eSessionLedger {
+export function createNewE2eSession(paths: PlatformPaths, cwd: string, config: E2eQaConfig): E2eSessionLedger {
   const now = new Date().toISOString();
   const ledger: E2eSessionLedger = {
     id: generateSessionId(),
@@ -34,9 +35,9 @@ export function createNewE2eSession(cwd: string, config: E2eQaConfig): E2eSessio
   };
 
   // Create session with subdirectories
-  createSession(cwd, ledger);
+  createSession(paths, cwd, ledger);
 
-  const sessionDir = path.join(cwd, ".omp", "supipowers", "qa-sessions", ledger.id);
+  const sessionDir = paths.project(cwd, "qa-sessions", ledger.id);
   fs.mkdirSync(path.join(sessionDir, "tests"), { recursive: true });
   fs.mkdirSync(path.join(sessionDir, "screenshots"), { recursive: true });
 
@@ -45,6 +46,7 @@ export function createNewE2eSession(cwd: string, config: E2eQaConfig): E2eSessio
 
 /** Update a phase's status and timestamps, persist to disk */
 export function advanceE2ePhase(
+  paths: PlatformPaths,
   cwd: string,
   ledger: E2eSessionLedger,
   phase: E2ePhase,
@@ -66,7 +68,7 @@ export function advanceE2ePhase(
     updatedAt: now,
     phases: { ...ledger.phases, [phase]: record },
   };
-  updateSession(cwd, updated);
+  updateSession(paths, cwd, updated);
   return updated;
 }
 

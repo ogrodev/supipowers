@@ -3,6 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { loadE2eQaConfig, saveE2eQaConfig, DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
+import { createPaths } from "../../src/platform/types.js";
+
+const paths = createPaths(".omp");
 
 describe("E2E QA config", () => {
   let tmpDir: string;
@@ -25,23 +28,23 @@ describe("E2E QA config", () => {
   });
 
   test("loadE2eQaConfig returns null when no config exists", () => {
-    expect(loadE2eQaConfig(tmpDir)).toBeNull();
+    expect(loadE2eQaConfig(paths, tmpDir)).toBeNull();
   });
 
   test("saveE2eQaConfig creates config file and loadE2eQaConfig reads it", () => {
     const config = { ...DEFAULT_E2E_QA_CONFIG };
     config.app = { ...config.app, type: "nextjs-app" as const, port: 3000, baseUrl: "http://localhost:3000", devCommand: "npm run dev" };
 
-    saveE2eQaConfig(tmpDir, config);
+    saveE2eQaConfig(paths, tmpDir, config);
 
-    const loaded = loadE2eQaConfig(tmpDir);
+    const loaded = loadE2eQaConfig(paths, tmpDir);
     expect(loaded).not.toBeNull();
     expect(loaded!.app.type).toBe("nextjs-app");
     expect(loaded!.app.port).toBe(3000);
   });
 
   test("saveE2eQaConfig creates parent directories if missing", () => {
-    saveE2eQaConfig(tmpDir, DEFAULT_E2E_QA_CONFIG);
+    saveE2eQaConfig(paths, tmpDir, DEFAULT_E2E_QA_CONFIG);
     const configPath = path.join(tmpDir, ".omp", "supipowers", "e2e-qa.json");
     expect(fs.existsSync(configPath)).toBe(true);
   });
@@ -50,16 +53,16 @@ describe("E2E QA config", () => {
     const configDir = path.join(tmpDir, ".omp", "supipowers");
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(path.join(configDir, "e2e-qa.json"), "not json");
-    expect(loadE2eQaConfig(tmpDir)).toBeNull();
+    expect(loadE2eQaConfig(paths, tmpDir)).toBeNull();
   });
 
   test("saveE2eQaConfig overwrites existing config", () => {
-    saveE2eQaConfig(tmpDir, DEFAULT_E2E_QA_CONFIG);
+    saveE2eQaConfig(paths, tmpDir, DEFAULT_E2E_QA_CONFIG);
 
     const updated = { ...DEFAULT_E2E_QA_CONFIG, execution: { maxRetries: 5, maxFlows: 10 } };
-    saveE2eQaConfig(tmpDir, updated);
+    saveE2eQaConfig(paths, tmpDir, updated);
 
-    const loaded = loadE2eQaConfig(tmpDir);
+    const loaded = loadE2eQaConfig(paths, tmpDir);
     expect(loaded!.execution.maxRetries).toBe(5);
     expect(loaded!.execution.maxFlows).toBe(10);
   });
