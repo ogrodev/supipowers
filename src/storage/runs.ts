@@ -1,15 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { RunManifest, AgentResult } from "../types.js";
+import type { PlatformPaths } from "../platform/types.js";
 
-const RUNS_DIR = [".omp", "supipowers", "runs"];
-
-function getRunsDir(cwd: string): string {
-  return path.join(cwd, ...RUNS_DIR);
+function getRunsDir(paths: PlatformPaths, cwd: string): string {
+  return paths.project(cwd, "runs");
 }
 
-function getRunDir(cwd: string, runId: string): string {
-  return path.join(getRunsDir(cwd), runId);
+function getRunDir(paths: PlatformPaths, cwd: string, runId: string): string {
+  return path.join(getRunsDir(paths, cwd), runId);
 }
 
 /** Generate a unique run ID */
@@ -22,8 +21,8 @@ export function generateRunId(): string {
 }
 
 /** Create a new run */
-export function createRun(cwd: string, manifest: RunManifest): void {
-  const runDir = getRunDir(cwd, manifest.id);
+export function createRun(paths: PlatformPaths, cwd: string, manifest: RunManifest): void {
+  const runDir = getRunDir(paths, cwd, manifest.id);
   fs.mkdirSync(path.join(runDir, "agents"), { recursive: true });
   fs.writeFileSync(
     path.join(runDir, "manifest.json"),
@@ -32,8 +31,8 @@ export function createRun(cwd: string, manifest: RunManifest): void {
 }
 
 /** Load a run manifest */
-export function loadRun(cwd: string, runId: string): RunManifest | null {
-  const filePath = path.join(getRunDir(cwd, runId), "manifest.json");
+export function loadRun(paths: PlatformPaths, cwd: string, runId: string): RunManifest | null {
+  const filePath = path.join(getRunDir(paths, cwd, runId), "manifest.json");
   if (!fs.existsSync(filePath)) return null;
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -43,19 +42,20 @@ export function loadRun(cwd: string, runId: string): RunManifest | null {
 }
 
 /** Update a run manifest */
-export function updateRun(cwd: string, manifest: RunManifest): void {
-  const filePath = path.join(getRunDir(cwd, manifest.id), "manifest.json");
+export function updateRun(paths: PlatformPaths, cwd: string, manifest: RunManifest): void {
+  const filePath = path.join(getRunDir(paths, cwd, manifest.id), "manifest.json");
   fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2) + "\n");
 }
 
 /** Save an agent result */
 export function saveAgentResult(
+  paths: PlatformPaths,
   cwd: string,
   runId: string,
   result: AgentResult
 ): void {
   const filePath = path.join(
-    getRunDir(cwd, runId),
+    getRunDir(paths, cwd, runId),
     "agents",
     `task-${result.taskId}.json`
   );
@@ -64,12 +64,13 @@ export function saveAgentResult(
 
 /** Load an agent result */
 export function loadAgentResult(
+  paths: PlatformPaths,
   cwd: string,
   runId: string,
   taskId: number
 ): AgentResult | null {
   const filePath = path.join(
-    getRunDir(cwd, runId),
+    getRunDir(paths, cwd, runId),
     "agents",
     `task-${taskId}.json`
   );
@@ -83,10 +84,11 @@ export function loadAgentResult(
 
 /** Load all agent results for a run */
 export function loadAllAgentResults(
+  paths: PlatformPaths,
   cwd: string,
   runId: string
 ): AgentResult[] {
-  const agentsDir = path.join(getRunDir(cwd, runId), "agents");
+  const agentsDir = path.join(getRunDir(paths, cwd, runId), "agents");
   if (!fs.existsSync(agentsDir)) return [];
   return fs
     .readdirSync(agentsDir)
@@ -102,8 +104,8 @@ export function loadAllAgentResults(
 }
 
 /** List all runs, newest first */
-export function listRuns(cwd: string): string[] {
-  const dir = getRunsDir(cwd);
+export function listRuns(paths: PlatformPaths, cwd: string): string[] {
+  const dir = getRunsDir(paths, cwd);
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
@@ -113,9 +115,9 @@ export function listRuns(cwd: string): string[] {
 }
 
 /** Find the latest active run (running or paused) */
-export function findActiveRun(cwd: string): RunManifest | null {
-  for (const runId of listRuns(cwd)) {
-    const manifest = loadRun(cwd, runId);
+export function findActiveRun(paths: PlatformPaths, cwd: string): RunManifest | null {
+  for (const runId of listRuns(paths, cwd)) {
+    const manifest = loadRun(paths, cwd, runId);
     if (manifest && (manifest.status === "running" || manifest.status === "paused")) {
       return manifest;
     }

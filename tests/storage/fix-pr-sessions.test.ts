@@ -12,6 +12,9 @@ import { DEFAULT_FIX_PR_CONFIG } from "../../src/fix-pr/config.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { createPaths } from "../../src/platform/types.js";
+
+const paths = createPaths(".omp");
 
 function makeLedger(overrides?: Partial<FixPrSessionLedger>): FixPrSessionLedger {
   return {
@@ -61,8 +64,8 @@ describe("session CRUD", () => {
   test("createFixPrSession creates session directory and ledger", () => {
     setup();
     const ledger = makeLedger();
-    createFixPrSession(tmpDir, ledger);
-    const sessionDir = getSessionDir(tmpDir, ledger.id);
+    createFixPrSession(paths, tmpDir, ledger);
+    const sessionDir = getSessionDir(paths, tmpDir, ledger.id);
     expect(fs.existsSync(sessionDir)).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "ledger.json"))).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "snapshots"))).toBe(true);
@@ -72,8 +75,8 @@ describe("session CRUD", () => {
   test("loadFixPrSession reads ledger back", () => {
     setup();
     const ledger = makeLedger();
-    createFixPrSession(tmpDir, ledger);
-    const loaded = loadFixPrSession(tmpDir, ledger.id);
+    createFixPrSession(paths, tmpDir, ledger);
+    const loaded = loadFixPrSession(paths, tmpDir, ledger.id);
     expect(loaded).not.toBeNull();
     expect(loaded!.prNumber).toBe(42);
     expect(loaded!.repo).toBe("owner/repo");
@@ -82,7 +85,7 @@ describe("session CRUD", () => {
 
   test("loadFixPrSession returns null for missing session", () => {
     setup();
-    const loaded = loadFixPrSession(tmpDir, "fpr-nonexistent");
+    const loaded = loadFixPrSession(paths, tmpDir, "fpr-nonexistent");
     expect(loaded).toBeNull();
     cleanup();
   });
@@ -90,11 +93,11 @@ describe("session CRUD", () => {
   test("updateFixPrSession overwrites ledger", () => {
     setup();
     const ledger = makeLedger();
-    createFixPrSession(tmpDir, ledger);
+    createFixPrSession(paths, tmpDir, ledger);
     ledger.iteration = 2;
     ledger.commentsProcessed = [1, 2, 3];
-    updateFixPrSession(tmpDir, ledger);
-    const loaded = loadFixPrSession(tmpDir, ledger.id);
+    updateFixPrSession(paths, tmpDir, ledger);
+    const loaded = loadFixPrSession(paths, tmpDir, ledger.id);
     expect(loaded!.iteration).toBe(2);
     expect(loaded!.commentsProcessed).toEqual([1, 2, 3]);
     cleanup();
@@ -103,8 +106,8 @@ describe("session CRUD", () => {
   test("findActiveFixPrSession finds running session", () => {
     setup();
     const ledger = makeLedger({ status: "running" });
-    createFixPrSession(tmpDir, ledger);
-    const found = findActiveFixPrSession(tmpDir);
+    createFixPrSession(paths, tmpDir, ledger);
+    const found = findActiveFixPrSession(paths, tmpDir);
     expect(found).not.toBeNull();
     expect(found!.id).toBe(ledger.id);
     cleanup();
@@ -113,15 +116,15 @@ describe("session CRUD", () => {
   test("findActiveFixPrSession returns null when no running sessions", () => {
     setup();
     const ledger = makeLedger({ status: "completed" });
-    createFixPrSession(tmpDir, ledger);
-    const found = findActiveFixPrSession(tmpDir);
+    createFixPrSession(paths, tmpDir, ledger);
+    const found = findActiveFixPrSession(paths, tmpDir);
     expect(found).toBeNull();
     cleanup();
   });
 
   test("getSessionDir returns correct path", () => {
     setup();
-    const dir = getSessionDir(tmpDir, "fpr-20260312-143000-a1b2");
+    const dir = getSessionDir(paths, tmpDir, "fpr-20260312-143000-a1b2");
     expect(dir).toContain("fix-pr-sessions");
     expect(dir).toContain("fpr-20260312-143000-a1b2");
     cleanup();

@@ -13,6 +13,9 @@ import {
   findActiveRun,
 } from "../../src/storage/runs.js";
 import type { RunManifest, AgentResult } from "../../src/types.js";
+import { createPaths } from "../../src/platform/types.js";
+
+const paths = createPaths(".omp");
 
 describe("runs storage", () => {
   let tmpDir: string;
@@ -44,8 +47,8 @@ describe("runs storage", () => {
       startedAt: new Date().toISOString(),
       batches: [{ index: 0, taskIds: [1, 2], status: "pending" }],
     };
-    createRun(tmpDir, manifest);
-    const loaded = loadRun(tmpDir, manifest.id);
+    createRun(paths, tmpDir, manifest);
+    const loaded = loadRun(paths, tmpDir, manifest.id);
     expect(loaded).toEqual(manifest);
   });
 
@@ -58,10 +61,10 @@ describe("runs storage", () => {
       startedAt: new Date().toISOString(),
       batches: [{ index: 0, taskIds: [1], status: "pending" }],
     };
-    createRun(tmpDir, manifest);
+    createRun(paths, tmpDir, manifest);
     manifest.status = "completed";
-    updateRun(tmpDir, manifest);
-    expect(loadRun(tmpDir, manifest.id)?.status).toBe("completed");
+    updateRun(paths, tmpDir, manifest);
+    expect(loadRun(paths, tmpDir, manifest.id)?.status).toBe("completed");
   });
 
   test("agent results roundtrip", () => {
@@ -73,7 +76,7 @@ describe("runs storage", () => {
       startedAt: new Date().toISOString(),
       batches: [],
     };
-    createRun(tmpDir, manifest);
+    createRun(paths, tmpDir, manifest);
 
     const result: AgentResult = {
       taskId: 1,
@@ -82,9 +85,9 @@ describe("runs storage", () => {
       filesChanged: ["src/foo.ts"],
       duration: 5000,
     };
-    saveAgentResult(tmpDir, "run-test", result);
-    expect(loadAgentResult(tmpDir, "run-test", 1)).toEqual(result);
-    expect(loadAllAgentResults(tmpDir, "run-test")).toHaveLength(1);
+    saveAgentResult(paths, tmpDir, "run-test", result);
+    expect(loadAgentResult(paths, tmpDir, "run-test", 1)).toEqual(result);
+    expect(loadAllAgentResults(paths, tmpDir, "run-test")).toHaveLength(1);
   });
 
   test("findActiveRun returns running run", () => {
@@ -96,11 +99,11 @@ describe("runs storage", () => {
       startedAt: new Date().toISOString(),
       batches: [],
     };
-    createRun(tmpDir, manifest);
-    expect(findActiveRun(tmpDir)?.id).toBe("run-active");
+    createRun(paths, tmpDir, manifest);
+    expect(findActiveRun(paths, tmpDir)?.id).toBe("run-active");
   });
 
   test("findActiveRun returns null when no active runs", () => {
-    expect(findActiveRun(tmpDir)).toBeNull();
+    expect(findActiveRun(paths, tmpDir)).toBeNull();
   });
 });

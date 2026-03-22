@@ -1,15 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { E2eSessionLedger } from "../qa/types.js";
+import type { PlatformPaths } from "../platform/types.js";
 
-const SESSIONS_DIR = [".omp", "supipowers", "qa-sessions"];
-
-function getSessionsDir(cwd: string): string {
-  return path.join(cwd, ...SESSIONS_DIR);
+function getSessionsDir(paths: PlatformPaths, cwd: string): string {
+  return paths.project(cwd, "qa-sessions");
 }
 
-export function getSessionDir(cwd: string, sessionId: string): string {
-  return path.join(getSessionsDir(cwd), sessionId);
+export function getSessionDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getSessionsDir(paths, cwd), sessionId);
 }
 
 /** Generate a unique QA session ID */
@@ -22,8 +21,8 @@ export function generateSessionId(): string {
 }
 
 /** Create a new QA session */
-export function createSession(cwd: string, ledger: E2eSessionLedger): void {
-  const sessionDir = getSessionDir(cwd, ledger.id);
+export function createSession(paths: PlatformPaths, cwd: string, ledger: E2eSessionLedger): void {
+  const sessionDir = getSessionDir(paths, cwd, ledger.id);
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.writeFileSync(
     path.join(sessionDir, "ledger.json"),
@@ -32,8 +31,8 @@ export function createSession(cwd: string, ledger: E2eSessionLedger): void {
 }
 
 /** Load a QA session ledger */
-export function loadSession(cwd: string, sessionId: string): E2eSessionLedger | null {
-  const filePath = path.join(getSessionDir(cwd, sessionId), "ledger.json");
+export function loadSession(paths: PlatformPaths, cwd: string, sessionId: string): E2eSessionLedger | null {
+  const filePath = path.join(getSessionDir(paths, cwd, sessionId), "ledger.json");
   if (!fs.existsSync(filePath)) return null;
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -43,14 +42,14 @@ export function loadSession(cwd: string, sessionId: string): E2eSessionLedger | 
 }
 
 /** Update a QA session ledger */
-export function updateSession(cwd: string, ledger: E2eSessionLedger): void {
-  const filePath = path.join(getSessionDir(cwd, ledger.id), "ledger.json");
+export function updateSession(paths: PlatformPaths, cwd: string, ledger: E2eSessionLedger): void {
+  const filePath = path.join(getSessionDir(paths, cwd, ledger.id), "ledger.json");
   fs.writeFileSync(filePath, JSON.stringify(ledger, null, 2) + "\n");
 }
 
 /** List all QA sessions, newest first */
-export function listSessions(cwd: string): string[] {
-  const dir = getSessionsDir(cwd);
+export function listSessions(paths: PlatformPaths, cwd: string): string[] {
+  const dir = getSessionsDir(paths, cwd);
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
@@ -60,9 +59,9 @@ export function listSessions(cwd: string): string[] {
 }
 
 /** Find the latest session with incomplete phases */
-export function findActiveSession(cwd: string): E2eSessionLedger | null {
-  for (const sessionId of listSessions(cwd)) {
-    const ledger = loadSession(cwd, sessionId);
+export function findActiveSession(paths: PlatformPaths, cwd: string): E2eSessionLedger | null {
+  for (const sessionId of listSessions(paths, cwd)) {
+    const ledger = loadSession(paths, cwd, sessionId);
     if (!ledger) continue;
     const allCompleted = Object.values(ledger.phases).every(
       (p) => p.status === "completed",
@@ -73,9 +72,9 @@ export function findActiveSession(cwd: string): E2eSessionLedger | null {
 }
 
 /** Find the latest session with failed test results */
-export function findSessionWithFailures(cwd: string): E2eSessionLedger | null {
-  for (const sessionId of listSessions(cwd)) {
-    const ledger = loadSession(cwd, sessionId);
+export function findSessionWithFailures(paths: PlatformPaths, cwd: string): E2eSessionLedger | null {
+  for (const sessionId of listSessions(paths, cwd)) {
+    const ledger = loadSession(paths, cwd, sessionId);
     if (!ledger) continue;
     if (ledger.results.some((r) => r.status === "fail")) return ledger;
   }

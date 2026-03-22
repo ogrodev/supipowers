@@ -1,16 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Plan, PlanTask, TaskComplexity, TaskParallelism } from "../types.js";
+import type { PlatformPaths } from "../platform/types.js";
 
-const PLANS_DIR = [".omp", "supipowers", "plans"];
-
-function getPlansDir(cwd: string): string {
-  return path.join(cwd, ...PLANS_DIR);
+function getPlansDir(paths: PlatformPaths, cwd: string): string {
+  return paths.project(cwd, "plans");
 }
 
 /** List all saved plans */
-export function listPlans(cwd: string): string[] {
-  const dir = getPlansDir(cwd);
+export function listPlans(paths: PlatformPaths, cwd: string): string[] {
+  const dir = getPlansDir(paths, cwd);
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
@@ -20,15 +19,15 @@ export function listPlans(cwd: string): string[] {
 }
 
 /** Read a plan file by name */
-export function readPlanFile(cwd: string, name: string): string | null {
-  const filePath = path.join(getPlansDir(cwd), name);
+export function readPlanFile(paths: PlatformPaths, cwd: string, name: string): string | null {
+  const filePath = path.join(getPlansDir(paths, cwd), name);
   if (!fs.existsSync(filePath)) return null;
   return fs.readFileSync(filePath, "utf-8");
 }
 
 /** Save a plan markdown file */
-export function savePlan(cwd: string, filename: string, content: string): string {
-  const dir = getPlansDir(cwd);
+export function savePlan(paths: PlatformPaths, cwd: string, filename: string, content: string): string {
+  const dir = getPlansDir(paths, cwd);
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, filename);
   fs.writeFileSync(filePath, content);
