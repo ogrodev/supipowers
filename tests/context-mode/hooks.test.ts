@@ -1,4 +1,5 @@
 // tests/context-mode/hooks.test.ts
+import { describe, test, expect, vi, beforeEach } from "vitest";
 import { registerContextModeHooks, _resetCache } from "../../src/context-mode/hooks.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { SupipowersConfig } from "../../src/types.js";
