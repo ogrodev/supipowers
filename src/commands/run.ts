@@ -234,7 +234,7 @@ export function registerRunCommand(platform: Platform): void {
           if (!task) return Promise.resolve(null);
 
           return dispatchAgentWithReview({
-            pi: platform as any,
+            platform,
             ctx,
             task,
             planContext: plan.context,
@@ -271,7 +271,7 @@ export function registerRunCommand(platform: Platform): void {
             for (let retry = 0; retry < config.orchestration.maxFixRetries; retry++) {
               notifyInfo(ctx, `Retrying task ${failed.taskId}`, `attempt ${retry + 1}`);
               const fixResult = await dispatchFixAgent({
-                pi: platform as any,
+                platform,
                 ctx,
                 task,
                 planContext: plan.context,

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import type {
   PlanTask,
   AgentResult,
@@ -21,7 +21,7 @@ import {
 import type { RunProgressState } from "./run-progress.js";
 
 export interface DispatchOptions {
-  pi: ExtensionAPI;
+  platform: Platform;
   ctx: {
     cwd: string;
     ui: { notify(msg: string, type?: "info" | "warning" | "error"): void };
@@ -37,7 +37,7 @@ export interface DispatchOptions {
 export async function dispatchAgent(
   options: DispatchOptions,
 ): Promise<AgentResult> {
-  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable, progress } = options;
+  const { platform, ctx, task, planContext, config, lspAvailable, contextModeAvailable, progress } = options;
   const startTime = Date.now();
 
   const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
@@ -46,7 +46,7 @@ export async function dispatchAgent(
   progress?.setStatus(task.id, "running");
 
   try {
-    const result = await executeSubAgent(pi, prompt, task, config, ctx, progress);
+    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -126,25 +126,17 @@ function formatToolAction(toolName: string, args?: Record<string, unknown>): str
 }
 
 async function executeSubAgent(
-  pi: ExtensionAPI,
+  platform: Platform,
   prompt: string,
   task: PlanTask,
   config: SupipowersConfig,
   ctx?: NotifyCtx,
   progress?: RunProgressState,
 ): Promise<SubAgentResult> {
-  const { createAgentSession } = pi.pi;
-
-  const { session } = await createAgentSession({
+  const session = await platform.createAgentSession({
     cwd: process.cwd(),
-    hasUI: false,
     taskDepth: 1,
     parentTaskPrefix: `task-${task.id}`,
-    // Prevent sub-agent from re-loading supipowers (causes recursive init error)
-    disableExtensionDiscovery: true,
-    skills: [],
-    promptTemplates: [],
-    slashCommands: [],
   });
 
   // Track files changed and emit live progress
@@ -264,7 +256,7 @@ export interface ReviewResult {
 export async function dispatchAgentWithReview(
   options: DispatchOptions & { workDir?: string },
 ): Promise<AgentResult> {
-  const { pi, ctx, task, planContext, config, lspAvailable, contextModeAvailable, workDir } = options;
+  const { platform, ctx, task, planContext, config, lspAvailable, contextModeAvailable, workDir } = options;
   const maxReviewRetries = config.orchestration.maxFixRetries;
 
   // Step 1: Dispatch implementer
@@ -279,7 +271,7 @@ export async function dispatchAgentWithReview(
   options.progress?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
     const specReview = await dispatchSpecReview(
-      pi,
+      platform,
       task,
       implementResult,
       config,
@@ -323,7 +315,7 @@ export async function dispatchAgentWithReview(
   options.progress?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
     const qualityReview = await dispatchQualityReview(
-      pi,
+      platform,
       task,
       implementResult,
       config,
@@ -368,7 +360,7 @@ export async function dispatchAgentWithReview(
 
 /** Dispatch a spec compliance reviewer sub-agent */
 async function dispatchSpecReview(
-  pi: ExtensionAPI,
+  platform: Platform,
   task: PlanTask,
   implementResult: AgentResult,
   config: SupipowersConfig,
@@ -379,7 +371,7 @@ async function dispatchSpecReview(
   });
 
   try {
-    const result = await executeSubAgent(pi, prompt, task, config);
+    const result = await executeSubAgent(platform, prompt, task, config);
     const passed =
       result.status === "done" ||
       result.output.toLowerCase().includes("spec compliant");
@@ -395,7 +387,7 @@ async function dispatchSpecReview(
 
 /** Dispatch a code quality reviewer sub-agent */
 async function dispatchQualityReview(
-  pi: ExtensionAPI,
+  platform: Platform,
   task: PlanTask,
   implementResult: AgentResult,
   config: SupipowersConfig,
@@ -408,7 +400,7 @@ async function dispatchQualityReview(
   });
 
   try {
-    const result = await executeSubAgent(pi, prompt, task, config);
+    const result = await executeSubAgent(platform, prompt, task, config);
     const hasCritical = result.output.toLowerCase().includes("critical");
     return {
       passed: !hasCritical,
@@ -423,7 +415,7 @@ async function dispatchQualityReview(
 export async function dispatchFixAgent(
   options: DispatchOptions & { previousOutput: string; failureReason: string },
 ): Promise<AgentResult> {
-  const { pi, ctx, task, config, lspAvailable, contextModeAvailable, previousOutput, failureReason, progress } =
+  const { platform, ctx, task, config, lspAvailable, contextModeAvailable, previousOutput, failureReason, progress } =
     options;
   const startTime = Date.now();
 
@@ -438,7 +430,7 @@ export async function dispatchFixAgent(
   progress?.setStatus(task.id, "running");
 
   try {
-    const result = await executeSubAgent(pi, prompt, task, config, ctx, progress);
+    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress);
     return {
       taskId: task.id,
       status: result.status,

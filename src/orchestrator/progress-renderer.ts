@@ -35,9 +35,7 @@ type MessageRenderer<T> = (
   theme: Theme,
 ) => Component | undefined;
 
-interface ExtensionAPI {
-  registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void;
-}
+import type { Platform } from "../platform/types.js";
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -168,8 +166,8 @@ class InlineProgressComponent implements Component {
 
 // ── Registration ───────────────────────────────────────────────────
 
-export function registerProgressRenderer(pi: ExtensionAPI): void {
-  pi.registerMessageRenderer<RunProgressDetails>(
+export function registerProgressRenderer(platform: Platform): void {
+  platform.registerMessageRenderer<RunProgressDetails>(
     "supi-run-progress",
     (message, _options, theme) => {
       const { runId } = message.details;
