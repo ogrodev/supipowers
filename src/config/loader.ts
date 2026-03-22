@@ -23,14 +23,14 @@ function readJsonSafe(filePath: string): Record<string, unknown> | null {
 }
 
 /** Deep merge source into target. Source values override target. */
-export function deepMerge<T extends Record<string, unknown>>(
+export function deepMerge<T extends object>(
   target: T,
   source: Record<string, unknown>
 ): T {
-  const result = { ...target };
+  const result = { ...target } as Record<string, unknown>;
   for (const key of Object.keys(source)) {
     const sourceVal = source[key];
-    const targetVal = (result as Record<string, unknown>)[key];
+    const targetVal = result[key];
     if (
       sourceVal !== null &&
       typeof sourceVal === "object" &&
@@ -39,15 +39,15 @@ export function deepMerge<T extends Record<string, unknown>>(
       typeof targetVal === "object" &&
       !Array.isArray(targetVal)
     ) {
-      (result as Record<string, unknown>)[key] = deepMerge(
+      result[key] = deepMerge(
         targetVal as Record<string, unknown>,
         sourceVal as Record<string, unknown>
       );
     } else {
-      (result as Record<string, unknown>)[key] = sourceVal;
+      result[key] = sourceVal;
     }
   }
-  return result;
+  return result as T;
 }
 
 /** Load config with global -> project layering over defaults.
@@ -92,7 +92,7 @@ export function updateConfig(
   updates: Record<string, unknown>
 ): SupipowersConfig {
   const current = loadConfig(paths, cwd);
-  const updated = deepMerge(current, updates);
+  const updated = deepMerge(current, updates) as SupipowersConfig;
   saveConfig(paths, cwd, updated);
   return updated;
 }

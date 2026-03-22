@@ -69,7 +69,7 @@ export function bootstrap(platform: Platform): void {
   });
 
   // Context-mode integration
-  const config = loadConfig(process.cwd(), platform.paths);
+  const config = loadConfig(platform.paths, process.cwd());
   registerContextModeHooks(platform, config);
 
 
