@@ -21,6 +21,10 @@ export function createOmpAdapter(pi: any): Platform {
         });
         return;
       }
+      if (event === "session_before_compact") {
+        pi.on("session.before_compacting", handler);
+        return;
+      }
       if (event === "session_compact") {
         pi.on("session.compacting", handler);
         return;

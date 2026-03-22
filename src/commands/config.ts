@@ -195,7 +195,7 @@ export function handleConfig(platform: Platform, ctx: PlatformContext): void {
       `  Tools available: ${status.toolsAvailable ? "\u2713" : "\u2717"}`,
     ];
     if (!status.mcpConfigured && status.cliInstalled) {
-      lines.push("  \u2192 Run `omp mcp add context-mode` to enable");
+      lines.push(`  \u2192 Run \`${platform.name} mcp add context-mode\` to enable`);
     }
     ctx.ui.notify(lines.join("\n"), "info");
   }).catch(() => {

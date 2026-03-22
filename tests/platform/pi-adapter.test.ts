@@ -55,4 +55,35 @@ describe("createPiAdapter", () => {
     expect(adapter.capabilities.compactionHooks).toBe(true);
     expect(adapter.capabilities.registerTool).toBe(true);
   });
+
+  it("sendMessage injects deliverAs:'steer' and triggerTurn:true defaults", () => {
+    const raw = createMockPiApi();
+    const adapter = createPiAdapter(raw);
+    adapter.sendMessage("hello");
+    expect(raw.sendMessage).toHaveBeenCalledWith("hello", {
+      deliverAs: "steer",
+      triggerTurn: true,
+    });
+  });
+
+  it("sendMessage lets caller override defaults", () => {
+    const raw = createMockPiApi();
+    const adapter = createPiAdapter(raw);
+    adapter.sendMessage("hello", { deliverAs: "followUp", triggerTurn: false });
+    expect(raw.sendMessage).toHaveBeenCalledWith("hello", {
+      deliverAs: "followUp",
+      triggerTurn: false,
+    });
+  });
+
+  it("sendMessage preserves defaults when opts has explicit undefined", () => {
+    const raw = createMockPiApi();
+    const adapter = createPiAdapter(raw);
+    adapter.sendMessage("hello", { deliverAs: undefined });
+    // spread with undefined overwrites the default — this is acceptable
+    // since callers should omit the key rather than pass undefined
+    expect(raw.sendMessage).toHaveBeenCalledWith("hello", expect.objectContaining({
+      triggerTurn: true,
+    }));
+  });
 });

@@ -82,6 +82,7 @@ export interface CommandInfo {
   name: string;
   description?: string;
   source?: string;
+  handler?: (args: string | undefined, ctx: any) => void | Promise<void>;
 }
 
 // ── Context ────────────────────────────────────────────────

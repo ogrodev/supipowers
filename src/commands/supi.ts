@@ -39,8 +39,8 @@ export function handleSupi(platform: Platform, ctx: PlatformContext): void {
     if (choice && choice.startsWith("/supi:")) {
       const cmdName = choice.split(" ")[0].slice(1); // remove leading /
       const cmd = platform.getCommands().find((c) => c.name === cmdName);
-      if (cmd) {
-        await (cmd as any).handler("", ctx as any);
+      if (cmd?.handler) {
+        await cmd.handler("", ctx as any);
       }
     }
   })();
