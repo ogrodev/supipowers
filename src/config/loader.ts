@@ -2,19 +2,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { SupipowersConfig } from "../types.js";
+import type { PlatformPaths } from "../platform/types.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 
-const PROJECT_CONFIG_PATH = [".omp", "supipowers", "config.json"];
-const GLOBAL_CONFIG_DIR = ".omp";
-const GLOBAL_CONFIG_PATH = ["supipowers", "config.json"];
-
-function getProjectConfigPath(cwd: string): string {
-  return path.join(cwd, ...PROJECT_CONFIG_PATH);
+function getProjectConfigPath(paths: PlatformPaths, cwd: string): string {
+  return paths.project(cwd, "config.json");
 }
 
-function getGlobalConfigPath(): string {
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  return path.join(home, GLOBAL_CONFIG_DIR, ...GLOBAL_CONFIG_PATH);
+function getGlobalConfigPath(paths: PlatformPaths): string {
+  return paths.global("config.json");
 }
 
 function readJsonSafe(filePath: string): Record<string, unknown> | null {
@@ -56,9 +52,9 @@ export function deepMerge<T extends Record<string, unknown>>(
 
 /** Load config with global -> project layering over defaults.
  *  Validates and migrates if version is outdated. */
-export function loadConfig(cwd: string): SupipowersConfig {
-  const globalData = readJsonSafe(getGlobalConfigPath());
-  const projectData = readJsonSafe(getProjectConfigPath(cwd));
+export function loadConfig(paths: PlatformPaths, cwd: string): SupipowersConfig {
+  const globalData = readJsonSafe(getGlobalConfigPath(paths));
+  const projectData = readJsonSafe(getProjectConfigPath(paths, cwd));
 
   let config = { ...DEFAULT_CONFIG };
   if (globalData) config = deepMerge(config, globalData);
@@ -68,7 +64,7 @@ export function loadConfig(cwd: string): SupipowersConfig {
   if (config.version !== DEFAULT_CONFIG.version) {
     config = migrateConfig(config);
     // Persist migrated config if project-level exists
-    if (projectData) saveConfig(cwd, config);
+    if (projectData) saveConfig(paths, cwd, config);
   }
 
   return config;
@@ -83,19 +79,20 @@ function migrateConfig(config: SupipowersConfig): SupipowersConfig {
 }
 
 /** Save project-level config */
-export function saveConfig(cwd: string, config: SupipowersConfig): void {
-  const configPath = getProjectConfigPath(cwd);
+export function saveConfig(paths: PlatformPaths, cwd: string, config: SupipowersConfig): void {
+  const configPath = getProjectConfigPath(paths, cwd);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 }
 
 /** Update specific config fields (deep merge into current) */
 export function updateConfig(
+  paths: PlatformPaths,
   cwd: string,
   updates: Record<string, unknown>
 ): SupipowersConfig {
-  const current = loadConfig(cwd);
+  const current = loadConfig(paths, cwd);
   const updated = deepMerge(current, updates);
-  saveConfig(cwd, updated);
+  saveConfig(paths, cwd, updated);
   return updated;
 }

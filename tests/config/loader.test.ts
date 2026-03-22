@@ -5,6 +5,9 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { loadConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
+import { createPaths } from "../../src/platform/types.js";
+
+const paths = createPaths(".omp");
 
 describe("deepMerge", () => {
   test("merges nested objects", () => {
@@ -39,7 +42,7 @@ describe("loadConfig", () => {
   });
 
   test("returns defaults when no config files exist", () => {
-    const config = loadConfig(tmpDir);
+    const config = loadConfig(paths, tmpDir);
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
@@ -50,7 +53,7 @@ describe("loadConfig", () => {
       path.join(configDir, "config.json"),
       JSON.stringify({ orchestration: { maxParallelAgents: 5 } })
     );
-    const config = loadConfig(tmpDir);
+    const config = loadConfig(paths, tmpDir);
     expect(config.orchestration.maxParallelAgents).toBe(5);
     expect(config.orchestration.maxFixRetries).toBe(2); // inherited from default
   });
@@ -68,7 +71,7 @@ describe("saveConfig / updateConfig", () => {
   });
 
   test("saveConfig creates dirs and writes file", () => {
-    saveConfig(tmpDir, DEFAULT_CONFIG);
+    saveConfig(paths, tmpDir, DEFAULT_CONFIG);
     const filePath = path.join(tmpDir, ".omp", "supipowers", "config.json");
     expect(fs.existsSync(filePath)).toBe(true);
     const saved = JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -76,11 +79,11 @@ describe("saveConfig / updateConfig", () => {
   });
 
   test("updateConfig deep-merges and persists", () => {
-    const updated = updateConfig(tmpDir, { orchestration: { maxParallelAgents: 7 } });
+    const updated = updateConfig(paths, tmpDir, { orchestration: { maxParallelAgents: 7 } });
     expect(updated.orchestration.maxParallelAgents).toBe(7);
     expect(updated.orchestration.maxFixRetries).toBe(2);
     // Verify it was persisted
-    const reloaded = loadConfig(tmpDir);
+    const reloaded = loadConfig(paths, tmpDir);
     expect(reloaded.orchestration.maxParallelAgents).toBe(7);
   });
 });
