@@ -2,10 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { VisualServerInfo, VisualEvent } from "./types.js";
+import type { PlatformPaths } from "../platform/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const VISUAL_DIR = [".omp", "supipowers", "visual"];
 
 /** Generate a unique visual session ID */
 export function generateVisualSessionId(): string {
@@ -17,8 +16,8 @@ export function generateVisualSessionId(): string {
 }
 
 /** Create the session directory and return its path */
-export function createSessionDir(cwd: string, sessionId: string): string {
-  const sessionDir = path.join(cwd, ...VISUAL_DIR, sessionId);
+export function createSessionDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  const sessionDir = paths.project(cwd, "visual", sessionId);
   fs.mkdirSync(sessionDir, { recursive: true });
   return sessionDir;
 }

@@ -2,20 +2,19 @@
 import { registerContextModeHooks, _resetCache } from "../../src/context-mode/hooks.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { SupipowersConfig } from "../../src/types.js";
+import { createMockPlatform } from "../../src/platform/test-utils.js";
 
 function createMockPi() {
   const handlers = new Map<string, Function>();
-  return {
+  const platform = createMockPlatform({
     on: vi.fn((event: string, handler: Function) => {
       handlers.set(event, handler);
-    }),
-    getActiveTools: vi.fn(() => [] as string[]),
-    registerCommand: vi.fn(),
-    sendMessage: vi.fn(),
-    exec: vi.fn(),
+    }) as any,
+  });
+  return Object.assign(platform, {
     logger: { warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     _handlers: handlers,
-  } as any;
+  }) as any;
 }
 
 describe("registerContextModeHooks", () => {
@@ -190,7 +189,7 @@ describe("registerContextModeHooks", () => {
     registerContextModeHooks(pi, DEFAULT_CONFIG);
     const events = pi.on.mock.calls.map((c: any[]) => c[0]);
     expect(events).toContain("session_before_compact");
-    expect(events).toContain("session.compacting");
+    expect(events).toContain("session_compact");
   });
 
   test("does not register compaction hooks when disabled", () => {
@@ -202,6 +201,6 @@ describe("registerContextModeHooks", () => {
     registerContextModeHooks(pi, config);
     const events = pi.on.mock.calls.map((c: any[]) => c[0]);
     expect(events).not.toContain("session_before_compact");
-    expect(events).not.toContain("session.compacting");
+    expect(events).not.toContain("session_compact");
   });
 });

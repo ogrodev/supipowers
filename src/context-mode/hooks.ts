@@ -1,5 +1,5 @@
 // src/context-mode/hooks.ts
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Platform } from "../platform/types.js";
 import type { SupipowersConfig } from "../types.js";
 import { compressToolResult } from "./compressor.js";
 import { detectContextMode, type ContextModeStatus } from "./detector.js";
@@ -24,8 +24,8 @@ function loadRoutingSkill(): string | null {
   }
 }
 
-/** Register context-mode hooks on the extension API */
-export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersConfig): void {
+/** Register context-mode hooks on the platform */
+export function registerContextModeHooks(platform: Platform, config: SupipowersConfig): void {
   if (!config.contextMode.enabled) return;
 
   // Phase 2: Event store initialization
@@ -34,12 +34,12 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
 
   if (config.contextMode.eventTracking) {
     try {
-      const dbDir = join(process.cwd(), ".omp", "supipowers", "sessions");
+      const dbDir = platform.paths.project(process.cwd(), "sessions");
       mkdirSync(dbDir, { recursive: true });
       eventStore = new EventStore(join(dbDir, "events.db"));
       eventStore.init();
     } catch (e) {
-      (pi as any).logger?.error?.("context-mode: failed to initialize event store", e);
+      (platform as any).logger?.error?.("context-mode: failed to initialize event store", e);
     }
   }
 
@@ -48,7 +48,7 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
   _sessionIdRef = sessionId;
 
   // Phase 1: Result compression + Phase 2: Event extraction
-  pi.on("tool_result", (event) => {
+  platform.on("tool_result", (event) => {
     // Phase 1: compression
     const compressed = compressToolResult(event, config.contextMode.compressionThreshold);
 
@@ -58,7 +58,7 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
         const events = extractEvents(event, sessionId);
         if (events.length > 0) eventStore.writeEvents(events);
       } catch (e) {
-        (pi as any).logger?.warn?.("context-mode: event extraction failed", e);
+        (platform as any).logger?.warn?.("context-mode: event extraction failed", e);
       }
     }
 
@@ -66,9 +66,9 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
   });
 
   // Phase 1: Tool routing — block native tools and redirect to ctx_* equivalents
-  pi.on("tool_call", (event) => {
+  platform.on("tool_call", (event) => {
     // Always re-detect: MCP tools may load after extension init
-    const status = detectContextMode(pi.getActiveTools());
+    const status = detectContextMode(platform.getActiveTools());
     cachedStatus = status;
 
     return routeToolCall(event.toolName, event.input as any, status, {
@@ -78,7 +78,7 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
   });
 
   // Phase 1: Routing instructions + Phase 2: Prompt event extraction
-  pi.on("before_agent_start", (event) => {
+  platform.on("before_agent_start", (event) => {
     // Phase 2: prompt event extraction (fire-and-forget)
     if (eventStore && config.contextMode.eventTracking) {
       try {
@@ -88,7 +88,7 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
           if (events.length > 0) eventStore.writeEvents(events);
         }
       } catch (e) {
-        (pi as any).logger?.warn?.("context-mode: prompt event extraction failed", e);
+        (platform as any).logger?.warn?.("context-mode: prompt event extraction failed", e);
       }
     }
 
@@ -108,17 +108,17 @@ export function registerContextModeHooks(pi: ExtensionAPI, config: SupipowersCon
   if (config.contextMode.compaction && eventStore) {
     let pendingSnapshot: string | null = null;
 
-    pi.on("session_before_compact", () => {
+    platform.on("session_before_compact", () => {
       try {
         pendingSnapshot = buildResumeSnapshot(eventStore!, sessionId);
       } catch (e) {
-        (pi as any).logger?.warn?.("context-mode: snapshot build failed", e);
+        (platform as any).logger?.warn?.("context-mode: snapshot build failed", e);
         pendingSnapshot = null;
       }
       return undefined; // don't cancel or replace compaction
     });
 
-    pi.on("session.compacting", () => {
+    platform.on("session_compact", () => {
       if (!pendingSnapshot) return undefined;
       const snapshot = pendingSnapshot;
       pendingSnapshot = null;

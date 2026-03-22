@@ -10,9 +10,11 @@ import {
   clearEvents,
   getScriptsDir,
 } from "../../src/visual/companion.js";
+import { createPaths } from "../../src/platform/types.js";
 
 describe("visual companion", () => {
   let tmpDir: string;
+  const paths = createPaths(".test");
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-visual-test-"));
@@ -34,13 +36,13 @@ describe("visual companion", () => {
 
   test("createSessionDir creates the directory structure", () => {
     const sessionId = "visual-20260311-120000-test";
-    const sessionDir = createSessionDir(tmpDir, sessionId);
+    const sessionDir = createSessionDir(paths, tmpDir, sessionId);
     expect(fs.existsSync(sessionDir)).toBe(true);
-    expect(sessionDir).toContain(path.join(".omp", "supipowers", "visual", sessionId));
+    expect(sessionDir).toContain(path.join(".test", "supipowers", "visual", sessionId));
   });
 
   test("writeScreen writes HTML file to session dir", () => {
-    const sessionDir = createSessionDir(tmpDir, "visual-test");
+    const sessionDir = createSessionDir(paths, tmpDir, "visual-test");
     writeScreen(sessionDir, "screen-001.html", "<h1>Hello</h1>");
     const filePath = path.join(sessionDir, "screen-001.html");
     expect(fs.existsSync(filePath)).toBe(true);
@@ -48,12 +50,12 @@ describe("visual companion", () => {
   });
 
   test("readEvents returns empty array when no events file", () => {
-    const sessionDir = createSessionDir(tmpDir, "visual-test");
+    const sessionDir = createSessionDir(paths, tmpDir, "visual-test");
     expect(readEvents(sessionDir)).toEqual([]);
   });
 
   test("readEvents parses newline-delimited JSON", () => {
-    const sessionDir = createSessionDir(tmpDir, "visual-test");
+    const sessionDir = createSessionDir(paths, tmpDir, "visual-test");
     const eventsFile = path.join(sessionDir, ".events");
     fs.writeFileSync(eventsFile, [
       JSON.stringify({ type: "click", choice: "a", text: "Option A", timestamp: 1000 }),
@@ -67,7 +69,7 @@ describe("visual companion", () => {
   });
 
   test("readEvents skips invalid JSON lines", () => {
-    const sessionDir = createSessionDir(tmpDir, "visual-test");
+    const sessionDir = createSessionDir(paths, tmpDir, "visual-test");
     const eventsFile = path.join(sessionDir, ".events");
     fs.writeFileSync(eventsFile, [
       JSON.stringify({ type: "click", choice: "a", timestamp: 1000 }),
@@ -80,7 +82,7 @@ describe("visual companion", () => {
   });
 
   test("clearEvents removes the events file", () => {
-    const sessionDir = createSessionDir(tmpDir, "visual-test");
+    const sessionDir = createSessionDir(paths, tmpDir, "visual-test");
     const eventsFile = path.join(sessionDir, ".events");
     fs.writeFileSync(eventsFile, '{"type":"click"}\n');
     expect(fs.existsSync(eventsFile)).toBe(true);
@@ -90,7 +92,7 @@ describe("visual companion", () => {
   });
 
   test("clearEvents is idempotent when no events file", () => {
-    const sessionDir = createSessionDir(tmpDir, "visual-test");
+    const sessionDir = createSessionDir(paths, tmpDir, "visual-test");
     expect(() => clearEvents(sessionDir)).not.toThrow();
   });
 
