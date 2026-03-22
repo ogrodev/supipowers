@@ -30,7 +30,7 @@ function findSkillPath(skillName: string): string | null {
 export function registerFixPrCommand(platform: Platform): void {
   platform.registerCommand("supi:fix-pr", {
     description: "Fix PR review comments with token-optimized agent orchestration",
-    async handler(args, ctx) {
+    async handler(args: string | undefined, ctx: any) {
       // ── Step 1: Detect PR ──────────────────────────────────────────
       let prNumber: number | null = null;
       let repo: string | null = null;

@@ -96,7 +96,7 @@ export function handleUpdate(platform: Platform, ctx: PlatformContext): void {
 export function registerUpdateCommand(platform: Platform): void {
   platform.registerCommand("supi:update", {
     description: "Update supipowers to the latest version",
-    async handler(_args, ctx) {
+    async handler(_args: string | undefined, ctx: any) {
       handleUpdate(platform, ctx);
     },
   });

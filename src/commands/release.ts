@@ -6,7 +6,7 @@ import { notifyInfo } from "../notifications/renderer.js";
 export function registerReleaseCommand(platform: Platform): void {
   platform.registerCommand("supi:release", {
     description: "Release automation — version bump, notes, publish",
-    async handler(_args, ctx) {
+    async handler(_args: string | undefined, ctx: any) {
       const config = loadConfig(platform.paths, ctx.cwd);
 
       let lastTag: string | null = null;

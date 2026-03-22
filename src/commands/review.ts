@@ -8,7 +8,7 @@ import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
 export function registerReviewCommand(platform: Platform): void {
   platform.registerCommand("supi:review", {
     description: "Run quality gates at chosen depth (quick/thorough/full-regression)",
-    async handler(args, ctx) {
+    async handler(args: string | undefined, ctx: any) {
       const config = loadConfig(platform.paths, ctx.cwd);
 
       let profileOverride: string | undefined;

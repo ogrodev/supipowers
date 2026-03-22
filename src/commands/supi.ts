@@ -49,7 +49,7 @@ export function handleSupi(platform: Platform, ctx: PlatformContext): void {
 export function registerSupiCommand(platform: Platform): void {
   platform.registerCommand("supi", {
     description: "Supipowers overview — show available commands and project status",
-    async handler(_args, ctx) {
+    async handler(_args: string | undefined, ctx: any) {
       // Handled via input event interception — this is a fallback for non-interactive contexts
       handleSupi(platform, ctx);
     },

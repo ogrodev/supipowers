@@ -1,7 +1,6 @@
 import type { Platform } from "../platform/types.js";
 import { loadConfig } from "../config/loader.js";
-import { savePlan } from "../storage/plans.js";
-import { notifySuccess, notifyInfo, notifyError } from "../notifications/renderer.js";
+import { notifyInfo, notifyError } from "../notifications/renderer.js";
 import {
   generateVisualSessionId,
   createSessionDir,
@@ -27,7 +26,7 @@ export function setActiveVisualSessionDir(dir: string | null): void {
 export function registerPlanCommand(platform: Platform): void {
   platform.registerCommand("supi:plan", {
     description: "Start collaborative planning for a feature or task",
-    async handler(args, ctx) {
+    async handler(args: string | undefined, ctx: any) {
       const config = loadConfig(platform.paths, ctx.cwd);
 
       const skillPath = findSkillPath("planning");

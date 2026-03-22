@@ -1,7 +1,7 @@
 import type { Platform } from "../platform/types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
+import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
 import { loadE2eQaConfig, saveE2eQaConfig, DEFAULT_E2E_QA_CONFIG } from "../qa/config.js";
 import { loadE2eMatrix } from "../qa/matrix.js";
 import { createNewE2eSession } from "../qa/session.js";
@@ -119,7 +119,7 @@ async function runSetupWizard(
 export function registerQaCommand(platform: Platform): void {
   platform.registerCommand("supi:qa", {
     description: "Run autonomous E2E product testing pipeline with playwright",
-    async handler(args, ctx) {
+    async handler(args: string | undefined, ctx: any) {
       const scriptsDir = getScriptsDir();
 
       // ── Step 1: Detect app type ─────────────────────────────────────

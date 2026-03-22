@@ -151,7 +151,7 @@ export function handleConfig(platform: Platform, ctx: PlatformContext): void {
         { helpText: "Select a setting to change · Esc to close" },
       );
 
-      if (choice === undefined || choice === "Done") break;
+      if (choice === undefined || choice === null || choice === "Done") break;
 
       const index = options.indexOf(choice);
       const setting = settings[index];
@@ -168,7 +168,7 @@ export function handleConfig(platform: Platform, ctx: PlatformContext): void {
             helpText: setting.helpText,
           },
         );
-        if (value !== undefined) {
+        if (value !== undefined && value !== null) {
           setting.set(ctx.cwd, value);
           const display = value.split(" — ")[0];
           ctx.ui.notify(`${setting.label} → ${display}`, "info");
@@ -206,7 +206,7 @@ export function handleConfig(platform: Platform, ctx: PlatformContext): void {
 export function registerConfigCommand(platform: Platform): void {
   platform.registerCommand("supi:config", {
     description: "View and manage Supipowers configuration",
-    async handler(_args, ctx) {
+    async handler(_args: string | undefined, ctx: any) {
       handleConfig(platform, ctx);
     },
   });

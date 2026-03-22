@@ -11,14 +11,13 @@ import {
   loadAllAgentResults,
 } from "../storage/runs.js";
 import { scheduleBatches } from "../orchestrator/batch-scheduler.js";
-import { dispatchAgent, dispatchAgentWithReview, dispatchFixAgent } from "../orchestrator/dispatcher.js";
+import { dispatchAgentWithReview, dispatchFixAgent } from "../orchestrator/dispatcher.js";
 import { summarizeBatch, buildRunSummary } from "../orchestrator/result-collector.js";
 import { analyzeConflicts } from "../orchestrator/conflict-resolver.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import { detectContextMode } from "../context-mode/detector.js";
 import {
   notifyInfo,
-  notifySuccess,
   notifyWarning,
   notifyError,
   notifySummary,
@@ -66,7 +65,7 @@ export function formatAge(isoDate: string): string {
 export function registerRunCommand(platform: Platform): void {
   platform.registerCommand("supi:run", {
     description: "Execute a plan with sub-agent orchestration",
-    async handler(args, ctx) {
+    async handler(args: string | undefined, ctx: any) {
       const config = loadConfig(platform.paths, ctx.cwd);
       const parsed = parseRunArgs(args);
       const profile = resolveProfile(platform.paths, ctx.cwd, config, parsed.profile);

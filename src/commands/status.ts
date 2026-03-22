@@ -41,7 +41,7 @@ export function handleStatus(platform: Platform, ctx: PlatformContext): void {
 export function registerStatusCommand(platform: Platform): void {
   platform.registerCommand("supi:status", {
     description: "Check on running sub-agents and task progress",
-    async handler(_args, ctx) {
+    async handler(_args: string | undefined, ctx: any) {
       handleStatus(platform, ctx);
     },
   });
