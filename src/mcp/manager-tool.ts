@@ -18,7 +18,7 @@ const ACTIONS_REQUIRING_NAME = new Set([
   "set-activation", "set-taggable", "info",
 ]);
 
-export { type ManagerParams };
+export type { ManagerParams };
 
 interface ManagerContent {
   type: string;
