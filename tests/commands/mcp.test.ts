@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { parseCliArgs } from "../../src/commands/mcp.js";
+import { describe, it, expect, vi } from "vitest";
+import { parseCliArgs, handleMcpCli } from "../../src/commands/mcp.js";
+import { createMockPlatform, createMockContext } from "../../src/platform/test-utils.js";
 
 describe("parseCliArgs", () => {
   it("parses 'add figma https://mcp.figma.com'", () => {
@@ -66,5 +67,66 @@ describe("parseCliArgs", () => {
   it("returns empty subcommand for no args", () => {
     const parsed = parseCliArgs("");
     expect(parsed.subcommand).toBeUndefined();
+  });
+});
+
+describe("handleMcpCli — agentic add flow", () => {
+  it("triggers agentic search when add has name but no url or command", async () => {
+    const platform = createMockPlatform();
+    const ctx = createMockContext();
+
+    await handleMcpCli(platform, ctx, { subcommand: "add", name: "figma" });
+
+    expect(platform.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customType: "supi-mcp-search",
+        display: true,
+      }),
+      expect.objectContaining({
+        deliverAs: "steer",
+        triggerTurn: true,
+      }),
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      'Searching for "figma" MCP server...',
+      "info",
+    );
+  });
+
+  it("does not trigger agentic search when url is provided", async () => {
+    const platform = createMockPlatform();
+    const ctx = createMockContext();
+
+    // This will fail at acquireLock or addServer, but sendMessage should NOT be called
+    try {
+      await handleMcpCli(platform, ctx, {
+        subcommand: "add",
+        name: "figma",
+        url: "https://mcp.figma.com",
+      });
+    } catch {
+      // Expected — downstream deps not mocked
+    }
+
+    expect(platform.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not trigger agentic search when command is provided (stdio)", async () => {
+    const platform = createMockPlatform();
+    const ctx = createMockContext();
+
+    try {
+      await handleMcpCli(platform, ctx, {
+        subcommand: "add",
+        name: "local-db",
+        command: "node",
+        commandArgs: ["./server.js"],
+        transport: "stdio",
+      });
+    } catch {
+      // Expected — downstream deps not mocked
+    }
+
+    expect(platform.sendMessage).not.toHaveBeenCalled();
   });
 });

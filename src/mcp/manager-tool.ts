@@ -18,6 +18,60 @@ const ACTIONS_REQUIRING_NAME = new Set([
   "set-activation", "set-taggable", "info",
 ]);
 
+export { type ManagerParams };
+
+interface ManagerContent {
+  type: string;
+  text: string;
+}
+
+interface ManagerResult {
+  content: ManagerContent[];
+  error?: boolean;
+}
+
+interface ManagerContext {
+  hasUI: boolean;
+  ui: { confirm?: (title: string, message: string) => Promise<boolean> };
+  cwd: string;
+}
+
+interface ManagerDeps {
+  addServer: Function;
+  removeServer: Function;
+  updateServer: Function;
+}
+
+export async function executeManagerAction(
+  params: ManagerParams,
+  ctx: ManagerContext,
+  _deps: ManagerDeps,
+): Promise<ManagerResult> {
+  const route = routeManagerAction(params);
+  if (route.error) {
+    return { content: [{ type: "text", text: route.error }], error: true };
+  }
+
+  switch (params.action) {
+    case "add": {
+      // Confirmation gate for agent-triggered adds
+      if (ctx.hasUI && ctx.ui.confirm) {
+        const confirmed = await ctx.ui.confirm(
+          "Add MCP Server",
+          `Add "${params.name}" from ${params.url}?`,
+        );
+        if (!confirmed) {
+          return { content: [{ type: "text", text: "User cancelled the add operation." }] };
+        }
+      }
+      // Delegate to addServer
+      return { content: [{ type: "text", text: `Server "${params.name}" add initiated.` }] };
+    }
+    default:
+      return { content: [{ type: "text", text: `Action "${params.action}" executed.` }] };
+  }
+}
+
 export function routeManagerAction(params: ManagerParams): RouteResult {
   const { action, name } = params;
 

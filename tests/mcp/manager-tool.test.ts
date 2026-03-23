@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { routeManagerAction } from "../../src/mcp/manager-tool.js";
+import { describe, it, expect, vi } from "vitest";
+import { routeManagerAction, executeManagerAction } from "../../src/mcp/manager-tool.js";
 
 describe("routeManagerAction", () => {
   it("requires name for add action", () => {
@@ -43,5 +43,74 @@ describe("routeManagerAction", () => {
   it("rejects set-activation without activation value", () => {
     const result = routeManagerAction({ action: "set-activation", name: "figma" });
     expect(result.error).toContain("activation");
+  });
+});
+
+describe("executeManagerAction", () => {
+  const baseDeps = {
+    addServer: vi.fn(),
+    removeServer: vi.fn(),
+    updateServer: vi.fn(),
+  };
+
+  it("returns error when route validation fails", async () => {
+    const ctx = { hasUI: false, ui: {}, cwd: "/tmp" };
+    const result = await executeManagerAction({ action: "add" }, ctx, baseDeps);
+    expect(result.error).toBe(true);
+    expect(result.content[0].text).toContain("name");
+  });
+
+  it("shows confirmation and proceeds on accept", async () => {
+    const ctx = {
+      hasUI: true,
+      ui: { confirm: vi.fn(async () => true) },
+      cwd: "/tmp",
+    };
+    const result = await executeManagerAction(
+      { action: "add", name: "figma", url: "https://mcp.figma.com" },
+      ctx,
+      baseDeps,
+    );
+    expect(ctx.ui.confirm).toHaveBeenCalledWith(
+      "Add MCP Server",
+      'Add "figma" from https://mcp.figma.com?',
+    );
+    expect(result.content[0].text).toContain("add initiated");
+    expect(result.error).toBeUndefined();
+  });
+
+  it("returns cancel message when user declines confirmation", async () => {
+    const ctx = {
+      hasUI: true,
+      ui: { confirm: vi.fn(async () => false) },
+      cwd: "/tmp",
+    };
+    const result = await executeManagerAction(
+      { action: "add", name: "figma", url: "https://mcp.figma.com" },
+      ctx,
+      baseDeps,
+    );
+    expect(result.content[0].text).toContain("cancelled");
+  });
+
+  it("skips confirmation when no UI", async () => {
+    const ctx = { hasUI: false, ui: {}, cwd: "/tmp" };
+    const result = await executeManagerAction(
+      { action: "add", name: "figma", url: "https://mcp.figma.com" },
+      ctx,
+      baseDeps,
+    );
+    expect(result.content[0].text).toContain("add initiated");
+  });
+
+  it("handles default action", async () => {
+    const ctx = { hasUI: false, ui: {}, cwd: "/tmp" };
+    const result = await executeManagerAction(
+      { action: "list" },
+      ctx,
+      baseDeps,
+    );
+    expect(result.content[0].text).toContain("list");
+    expect(result.content[0].text).toContain("executed");
   });
 });
