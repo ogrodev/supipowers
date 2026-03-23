@@ -380,20 +380,12 @@ export async function handleMcpCli(
       const target = config.url ?? config.command ?? parsed.name;
       const mcpc = await ensureMcpc(platform, ctx);
       if (!mcpc) return;
-      ctx.ui.notify(`Starting login for "${parsed.name}"... Check your browser.`, "info");
-      const result = await mcpc.login(target);
-      if (result.code !== MCPC_EXIT.SUCCESS && result.code !== MCPC_EXIT.AUTH_ERROR) {
-        const detail = result.output.trim() || `exit code ${result.code}`;
-        ctx.ui.notify(`Login failed: ${detail}`, "error");
-        return;
-      }
-      // mcpc login may output info messages during OAuth — show them
-      if (result.output.trim()) {
-        ctx.ui.notify(result.output.trim(), "info");
-      }
-      if (result.code === MCPC_EXIT.SUCCESS) {
-        ctx.ui.notify(`Logged in to "${parsed.name}"`, "info");
-      }
+      // OAuth login is interactive (opens browser, runs callback server)
+      // Must run in the user's terminal, not via exec
+      ctx.ui.notify(
+        `Login requires an interactive terminal. Run this command:\n\n  ! mcpc ${target} login\n\nThis will open your browser for OAuth authentication.`,
+        "info",
+      );
       break;
     }
 
