@@ -71,6 +71,22 @@ function createMcpc(platform: Platform): McpcClient {
   return new McpcClient((cmd, args, opts) => platform.exec(cmd, args, opts));
 }
 
+/** Ensure mcpc is installed, auto-installing if needed. Returns null on failure. */
+async function ensureMcpc(platform: Platform, ctx: PlatformContext): Promise<McpcClient | null> {
+  const mcpc = createMcpc(platform);
+  const installed = await mcpc.checkInstalled();
+  if (installed.installed) return mcpc;
+
+  ctx.ui.notify("mcpc not found — installing @apify/mcpc...", "info");
+  const ok = await mcpc.autoInstall();
+  if (!ok) {
+    ctx.ui.notify("Failed to install mcpc. Run: npm install -g @apify/mcpc", "error");
+    return null;
+  }
+  ctx.ui.notify("mcpc installed successfully", "info");
+  return mcpc;
+}
+
 function buildServerDescription(tools: McpTool[]): string {
   const descs = tools.slice(0, 3).map((t) => t.description).filter(Boolean);
   return descs.length > 0 ? descs.join("; ") : "MCP server";
@@ -215,12 +231,16 @@ export async function handleMcpCli(
           return;
         }
 
+        // Ensure mcpc is installed
+        const mcpc = await ensureMcpc(platform, ctx);
+        if (!mcpc) return;
+
         // Connect and fetch tools
-        const mcpc = createMcpc(platform);
         const target = parsed.url ?? parsed.command ?? parsed.name;
         const connectResult = await mcpc.connect(target, parsed.name);
         if (connectResult.code !== MCPC_EXIT.SUCCESS) {
-          ctx.ui.notify(`Server added but connection failed: ${connectResult.output}`, "warning");
+          const detail = connectResult.output.trim() || `exit code ${connectResult.code}`;
+          ctx.ui.notify(`Server added but connection failed: ${detail}`, "warning");
           return;
         }
 
@@ -303,7 +323,8 @@ export async function handleMcpCli(
 
     // ── REFRESH ────────────────────────────────────────────
     case "refresh": {
-      const mcpc = createMcpc(platform);
+      const mcpc = await ensureMcpc(platform, ctx);
+      if (!mcpc) return;
       const registry = loadMcpRegistry(paths, cwd);
 
       const names = parsed.name
@@ -360,10 +381,12 @@ export async function handleMcpCli(
         return;
       }
       const target = config.url ?? config.command ?? parsed.name;
-      const mcpc = createMcpc(platform);
+      const mcpc = await ensureMcpc(platform, ctx);
+      if (!mcpc) return;
       const result = await mcpc.login(target);
       if (result.code !== MCPC_EXIT.SUCCESS) {
-        ctx.ui.notify(`Login failed: ${result.output}`, "error");
+        const detail = result.output.trim() || `exit code ${result.code}`;
+        ctx.ui.notify(`Login failed: ${detail}`, "error");
         return;
       }
       ctx.ui.notify(`Logged in to "${parsed.name}"`, "info");
@@ -382,10 +405,12 @@ export async function handleMcpCli(
         return;
       }
       const target = config.url ?? config.command ?? parsed.name;
-      const mcpc = createMcpc(platform);
+      const mcpc = await ensureMcpc(platform, ctx);
+      if (!mcpc) return;
       const result = await mcpc.logout(target);
       if (result.code !== MCPC_EXIT.SUCCESS) {
-        ctx.ui.notify(`Logout failed: ${result.output}`, "error");
+        const detail = result.output.trim() || `exit code ${result.code}`;
+        ctx.ui.notify(`Logout failed: ${detail}`, "error");
         return;
       }
       ctx.ui.notify(`Logged out of "${parsed.name}"`, "info");
