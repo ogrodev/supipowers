@@ -35,6 +35,9 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     llmThreshold: 16384,
     enforceRouting: true,
   },
+  mcp: {
+    closeSessionsOnExit: false,
+  },
 };
 
 export const BUILTIN_PROFILES: Record<string, Profile> = {

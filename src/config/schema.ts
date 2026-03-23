@@ -40,6 +40,9 @@ const ConfigSchema = Type.Object({
     llmSummarization: Type.Boolean(),
     llmThreshold: Type.Number({ minimum: 4096 }),
   }),
+  mcp: Type.Object({
+    closeSessionsOnExit: Type.Boolean(),
+  }),
 });
 
 export function validateConfig(data: unknown): { valid: boolean; errors: string[] } {

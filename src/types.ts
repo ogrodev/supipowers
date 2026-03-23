@@ -121,6 +121,12 @@ export interface ContextModeConfig {
   enforceRouting: boolean;
 }
 
+/** MCP management settings */
+export interface McpManagementConfig {
+  /** Close mcpc sessions on agent shutdown (default: false) */
+  closeSessionsOnExit: boolean;
+}
+
 /** Config shape */
 export interface SupipowersConfig {
   version: string;
@@ -146,6 +152,7 @@ export interface SupipowersConfig {
     pipeline: string | null;
   };
   contextMode: ContextModeConfig;
+  mcp: McpManagementConfig;
 }
 
 /** Profile shape */
