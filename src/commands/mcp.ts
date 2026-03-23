@@ -7,6 +7,7 @@ import { generateTriggers } from "../mcp/triggers.js";
 import { generateReadme, writeReadme, writeToolsCache, generateSkill, writeSkill, updateAgentsMd } from "../mcp/docs.js";
 import { MCPC_EXIT } from "../mcp/types.js";
 import type { McpTool, ServerConfig } from "../mcp/types.js";
+import { lookupMcpServer, pickBestMatch } from "../mcp/registry.js";
 
 export interface ParsedMcpArgs {
   subcommand?: string;
@@ -138,16 +139,57 @@ export async function handleMcpCli(
         return;
       }
 
-      // Agentic flow — no URL or command means we search for the server
+      // No URL/command — look up in registry, then prompt, then agentic fallback
       if (!parsed.url && !parsed.command) {
-        platform.sendMessage({
-          customType: "supi-mcp-search",
-          content: `The user wants to add an MCP server called "${parsed.name}". Search for the official endpoint — check the project's docs, GitHub, or mcp.so registry. Once found, use the mcpc_manager tool to add it with action "add". Include a docsUrl if available.`,
-          display: true,
-        }, { deliverAs: "steer", triggerTurn: true });
+        ctx.ui.notify(`Looking up "${parsed.name}" in MCP registry...`, "info");
 
-        ctx.ui.notify(`Searching for "${parsed.name}" MCP server...`, "info");
-        return;
+        // Tier 1: Official MCP Registry
+        const results = await lookupMcpServer(
+          (cmd, args) => platform.exec(cmd, args),
+          parsed.name,
+        );
+        const match = pickBestMatch(results, parsed.name);
+
+        if (match) {
+          // Found in registry — confirm with user
+          const summary = `${match.title} (${match.url})${match.authRequired ? " [auth required]" : ""}`;
+          ctx.ui.notify(`Found: ${summary}`, "info");
+
+          if (ctx.ui.confirm) {
+            const confirmed = await ctx.ui.confirm("Add MCP Server", `Add ${match.title}?\n${match.url}`);
+            if (!confirmed) {
+              ctx.ui.notify("Cancelled", "info");
+              return;
+            }
+          }
+
+          // Re-enter add flow with the resolved URL
+          parsed.url = match.url;
+          parsed.transport = match.transport;
+          parsed.docsUrl = match.docsUrl;
+          // Fall through to the normal add logic below
+        } else if (ctx.hasUI) {
+          // Tier 2: Not in registry — ask user for URL
+          ctx.ui.notify(`"${parsed.name}" not found in registry`, "warning");
+          const manualUrl = await ctx.ui.input("Server URL (or leave empty to search with agent):", {});
+
+          if (manualUrl && manualUrl.trim()) {
+            parsed.url = manualUrl.trim();
+            // Fall through to normal add logic
+          } else {
+            // Tier 3: Agentic search — last resort
+            platform.sendMessage({
+              customType: "supi-mcp-search",
+              content: `The user wants to add an MCP server called "${parsed.name}" but it wasn't found in the official MCP registry. Search for the official endpoint — check GitHub, project docs, or other sources. Once found, use the mcpc_manager tool to add it with action "add". Include a docsUrl if available.`,
+              display: true,
+            }, { deliverAs: "steer", triggerTurn: true });
+            ctx.ui.notify(`Agent searching for "${parsed.name}"...`, "info");
+            return;
+          }
+        } else {
+          ctx.ui.notify(`"${parsed.name}" not found. Provide URL: /supi:mcp add ${parsed.name} <url>`, "warning");
+          return;
+        }
       }
 
       const lock = acquireLock(paths, cwd);

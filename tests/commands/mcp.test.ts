@@ -70,26 +70,41 @@ describe("parseCliArgs", () => {
   });
 });
 
-describe("handleMcpCli — agentic add flow", () => {
-  it("triggers agentic search when add has name but no url or command", async () => {
+describe("handleMcpCli — add flow (registry + fallback)", () => {
+  it("queries registry first when no URL provided", async () => {
     const platform = createMockPlatform();
     const ctx = createMockContext();
 
     await handleMcpCli(platform, ctx, { subcommand: "add", name: "figma" });
 
-    expect(platform.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customType: "supi-mcp-search",
-        display: true,
-      }),
-      expect.objectContaining({
-        deliverAs: "steer",
-        triggerTurn: true,
-      }),
+    // Should have called exec with curl to registry
+    expect(platform.exec).toHaveBeenCalledWith(
+      "curl",
+      expect.arrayContaining([expect.stringContaining("registry.modelcontextprotocol.io")]),
     );
+    // Should notify about lookup
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      'Searching for "figma" MCP server...',
+      expect.stringContaining("Looking up"),
       "info",
+    );
+  });
+
+  it("falls to agentic search when registry empty and user provides no URL", async () => {
+    const platform = createMockPlatform();
+    // exec returns empty (no registry results), input returns empty string (trigger agentic)
+    const ctx = createMockContext({
+      ui: {
+        select: vi.fn(async () => null),
+        notify: vi.fn(),
+        input: vi.fn(async () => ""),
+      },
+    });
+
+    await handleMcpCli(platform, ctx, { subcommand: "add", name: "custom-mcp" });
+
+    expect(platform.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "supi-mcp-search" }),
+      expect.objectContaining({ triggerTurn: true }),
     );
   });
 
