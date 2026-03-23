@@ -7,6 +7,8 @@ export function createPiAdapter(pi: any): Platform {
     registerCommand: (name, opts) => pi.registerCommand(name, opts),
     getCommands: () => pi.getCommands(),
     getActiveTools: () => pi.getActiveTools(),
+    registerTool: (definition) => pi.registerTool(definition),
+    setActiveTools: (names) => pi.setActiveTools(names),
     exec: (cmd, args, opts) => pi.exec(cmd, args, opts),
     sendMessage: (content, opts) => {
       pi.sendMessage(content, {

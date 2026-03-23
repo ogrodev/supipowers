@@ -121,6 +121,10 @@ export interface Platform {
   // Introspection
   getActiveTools(): string[];
 
+  // Tool registration (Pi-only)
+  registerTool?(definition: any): void;
+  setActiveTools?(names: string[]): void;
+
   // Rendering
   registerMessageRenderer<T>(type: string, renderer: any): void;
 
