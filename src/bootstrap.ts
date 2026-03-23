@@ -140,12 +140,8 @@ export function bootstrap(platform: Platform): void {
       const mcpClient = new McpcClient((cmd, args, opts) => platform.exec(cmd, args, opts));
       const installed = await mcpClient.checkInstalled();
       if (!installed.installed) {
-        const ok = await mcpClient.autoInstall();
-        if (!ok) {
-          ctx.ui.notify("mcpc install failed — MCP features unavailable. Run /supi:update", "error");
-        }
-      }
-      if (installed.installed || await mcpClient.checkInstalled().then(r => r.installed)) {
+        ctx.ui.notify("mcpc not installed — MCP servers won't connect. Run /supi:upgrade to install.", "warning");
+      } else {
         await initializeMcpServers(mcpRegistry, mcpClient);
       }
     }

@@ -71,20 +71,17 @@ function createMcpc(platform: Platform): McpcClient {
   return new McpcClient((cmd, args, opts) => platform.exec(cmd, args, opts));
 }
 
-/** Ensure mcpc is installed, auto-installing if needed. Returns null on failure. */
+/** Check mcpc is installed. Returns null with error message if missing. */
 async function ensureMcpc(platform: Platform, ctx: PlatformContext): Promise<McpcClient | null> {
   const mcpc = createMcpc(platform);
   const installed = await mcpc.checkInstalled();
   if (installed.installed) return mcpc;
 
-  ctx.ui.notify("mcpc not found — installing @apify/mcpc...", "info");
-  const ok = await mcpc.autoInstall();
-  if (!ok) {
-    ctx.ui.notify("Failed to install mcpc. Run: npm install -g @apify/mcpc", "error");
-    return null;
-  }
-  ctx.ui.notify("mcpc installed successfully", "info");
-  return mcpc;
+  ctx.ui.notify(
+    "mcpc is not installed. Run /supi:upgrade to install required tools, or: npm install -g @apify/mcpc",
+    "error",
+  );
+  return null;
 }
 
 function buildServerDescription(tools: McpTool[]): string {
@@ -383,13 +380,20 @@ export async function handleMcpCli(
       const target = config.url ?? config.command ?? parsed.name;
       const mcpc = await ensureMcpc(platform, ctx);
       if (!mcpc) return;
+      ctx.ui.notify(`Starting login for "${parsed.name}"... Check your browser.`, "info");
       const result = await mcpc.login(target);
-      if (result.code !== MCPC_EXIT.SUCCESS) {
+      if (result.code !== MCPC_EXIT.SUCCESS && result.code !== MCPC_EXIT.AUTH_ERROR) {
         const detail = result.output.trim() || `exit code ${result.code}`;
         ctx.ui.notify(`Login failed: ${detail}`, "error");
         return;
       }
-      ctx.ui.notify(`Logged in to "${parsed.name}"`, "info");
+      // mcpc login may output info messages during OAuth — show them
+      if (result.output.trim()) {
+        ctx.ui.notify(result.output.trim(), "info");
+      }
+      if (result.code === MCPC_EXIT.SUCCESS) {
+        ctx.ui.notify(`Logged in to "${parsed.name}"`, "info");
+      }
       break;
     }
 
