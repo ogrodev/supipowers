@@ -138,6 +138,18 @@ export async function handleMcpCli(
         return;
       }
 
+      // Agentic flow — no URL or command means we search for the server
+      if (!parsed.url && !parsed.command) {
+        platform.sendMessage({
+          customType: "supi-mcp-search",
+          content: `The user wants to add an MCP server called "${parsed.name}". Search for the official endpoint — check the project's docs, GitHub, or mcp.so registry. Once found, use the mcpc_manager tool to add it with action "add". Include a docsUrl if available.`,
+          display: true,
+        }, { deliverAs: "steer", triggerTurn: true });
+
+        ctx.ui.notify(`Searching for "${parsed.name}" MCP server...`, "info");
+        return;
+      }
+
       const lock = acquireLock(paths, cwd);
       if (!lock.acquired) {
         ctx.ui.notify("Another MCP operation is in progress", "warning");
@@ -445,13 +457,148 @@ export function handleMcp(platform: Platform, ctx: PlatformContext): void {
   }
 
   void (async () => {
-    // TUI implementation — interactive server list
-    // Follows the pattern from config.ts:
-    // 1. Load registry
-    // 2. Show server list via ctx.ui.select()
-    // 3. On select: show action menu
-    // 4. Execute action, loop
-    ctx.ui.notify("MCP management — use /supi:mcp <subcommand> for CLI mode", "info");
+    while (true) {
+      const registry = loadMcpRegistry(platform.paths, ctx.cwd);
+      const entries = Object.entries(registry.servers);
+
+      // Build server list options
+      const options: string[] = entries.map(([name, config]) => {
+        const icon = config.enabled ? "\u25cf" : "\u25cb";
+        const status = config.enabled ? "connected" : "disconnected";
+        const flags: string[] = [config.activation];
+        if (config.taggable) flags.push("$taggable");
+        return `${icon} ${name} — ${status} (${flags.join(", ")})`;
+      });
+      options.push("[Add server]");
+      options.push("[Refresh all]");
+      options.push("[Done]");
+
+      const choice = await ctx.ui.select(
+        "MCP Servers",
+        options,
+        { helpText: "Select a server to manage · Esc to close" },
+      );
+
+      if (choice === undefined || choice === null || choice === "[Done]") break;
+
+      // ── Add server flow ───────────────────────────────────
+      if (choice === "[Add server]") {
+        const name = await ctx.ui.input("Server name", { placeholder: "e.g. figma" });
+        if (!name) continue;
+
+        const url = await ctx.ui.input("Server URL", { placeholder: "e.g. https://mcp.figma.com" });
+        if (!url) continue;
+
+        const transport = await ctx.ui.select(
+          "Transport",
+          ["http", "stdio"],
+          { helpText: "How to connect to the server" },
+        );
+        if (!transport) continue;
+
+        await handleMcpCli(platform, ctx, {
+          subcommand: "add",
+          name,
+          url: transport === "http" ? url : undefined,
+          command: transport === "stdio" ? url : undefined,
+          transport,
+        });
+        continue;
+      }
+
+      // ── Refresh all ───────────────────────────────────────
+      if (choice === "[Refresh all]") {
+        await handleMcpCli(platform, ctx, { subcommand: "refresh" });
+        continue;
+      }
+
+      // ── Server action menu ────────────────────────────────
+      const serverIndex = options.indexOf(choice);
+      if (serverIndex < 0 || serverIndex >= entries.length) continue;
+
+      const [serverName, serverConfig] = entries[serverIndex];
+
+      while (true) {
+        const serverLabel = serverConfig.url ?? serverConfig.command ?? serverName;
+        const toggleLabel = serverConfig.enabled ? "[Disable]" : "[Enable]";
+        const actionOptions = [
+          toggleLabel,
+          "[Refresh tools]",
+          "[Login]",
+          "[Logout]",
+          "[Edit triggers]",
+          "[View README]",
+          "[Remove]",
+          "[Back]",
+        ];
+
+        const action = await ctx.ui.select(
+          `${serverName} — ${serverLabel}`,
+          actionOptions,
+          { helpText: "Select an action" },
+        );
+
+        if (action === undefined || action === null || action === "[Back]") break;
+
+        switch (action) {
+          case "[Enable]":
+            await handleMcpCli(platform, ctx, { subcommand: "enable", name: serverName });
+            break;
+          case "[Disable]":
+            await handleMcpCli(platform, ctx, { subcommand: "disable", name: serverName });
+            break;
+          case "[Refresh tools]":
+            await handleMcpCli(platform, ctx, { subcommand: "refresh", name: serverName });
+            break;
+          case "[Login]":
+            await handleMcpCli(platform, ctx, { subcommand: "login", name: serverName });
+            break;
+          case "[Logout]":
+            await handleMcpCli(platform, ctx, { subcommand: "logout", name: serverName });
+            break;
+          case "[Edit triggers]": {
+            const currentTriggers = serverConfig.triggers?.join(", ") ?? "";
+            const newTriggers = await ctx.ui.input("Triggers (comma-separated)", {
+              placeholder: currentTriggers,
+            });
+            if (newTriggers !== null && newTriggers !== undefined) {
+              const triggerList = newTriggers
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
+              updateServer(platform.paths, ctx.cwd, serverName, { triggers: triggerList });
+              ctx.ui.notify(`Updated triggers for "${serverName}"`, "info");
+            }
+            break;
+          }
+          case "[View README]": {
+            const readmePath = platform.paths.project(ctx.cwd, "mcpc", serverName, "README.md");
+            try {
+              const content = fs.readFileSync(readmePath, "utf-8");
+              ctx.ui.notify(content, "info");
+            } catch {
+              ctx.ui.notify(`No README found for "${serverName}"`, "warning");
+            }
+            break;
+          }
+          case "[Remove]": {
+            const confirmed = ctx.ui.confirm
+              ? await ctx.ui.confirm("Remove server", `Remove "${serverName}"? This cannot be undone.`)
+              : true;
+            if (confirmed) {
+              await handleMcpCli(platform, ctx, { subcommand: "remove", name: serverName });
+            }
+            break;
+          }
+        }
+
+        // Re-read config after action (it may have changed)
+        const updatedConfig = getServerConfig(platform.paths, ctx.cwd, serverName);
+        if (!updatedConfig) break; // Server was removed
+        // Update local reference for toggle label on next iteration
+        Object.assign(serverConfig, updatedConfig);
+      }
+    }
   })();
 }
 
