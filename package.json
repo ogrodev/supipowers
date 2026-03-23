@@ -44,7 +44,8 @@
     ]
   },
   "dependencies": {
-    "@clack/prompts": "^0.10.0"
+    "@clack/prompts": "^0.10.0",
+    "better-sqlite3": "^12.8.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
@@ -62,7 +63,6 @@
     "@sinclair/typebox": "^0.34.48",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
-    "better-sqlite3": "^12.8.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
   }
