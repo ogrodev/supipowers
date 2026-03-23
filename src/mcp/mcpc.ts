@@ -74,7 +74,8 @@ export class McpcClient {
   }
 
   async login(target: string): Promise<{ code: number; output: string }> {
-    const r = await this.exec("mcpc", [target, "login"]);
+    // OAuth flows can take minutes (user approving in browser)
+    const r = await this.exec("mcpc", [target, "login"], { timeout: 120000 });
     return { code: r.code, output: r.stdout || r.stderr };
   }
 
