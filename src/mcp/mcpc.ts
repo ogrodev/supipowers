@@ -3,6 +3,16 @@ import type { McpTool } from "./types.js";
 
 type ExecFn = (cmd: string, args: string[], opts?: any) => Promise<{ stdout: string; stderr: string; code: number }>;
 
+/** Combine stdout + stderr, deduplicating if identical */
+function combineOutput(r: { stdout: string; stderr: string }): string {
+  const out = r.stdout.trim();
+  const err = r.stderr.trim();
+  if (!out) return err;
+  if (!err) return out;
+  if (out === err) return out;
+  return [out, err].join("\n");
+}
+
 export class McpcClient {
   constructor(private exec: ExecFn) {}
 
@@ -31,17 +41,17 @@ export class McpcClient {
       ? ["-H", authHeader, target, "connect", `@supi-${sessionName}`]
       : [target, "connect", `@supi-${sessionName}`];
     const r = await this.exec("mcpc", args);
-    return { code: r.code, output: r.stdout || r.stderr };
+    return { code: r.code, output: combineOutput(r) };
   }
 
   async close(sessionName: string): Promise<{ code: number; output: string }> {
     const r = await this.exec("mcpc", [`@supi-${sessionName}`, "close"]);
-    return { code: r.code, output: r.stdout || r.stderr };
+    return { code: r.code, output: combineOutput(r) };
   }
 
   async restart(sessionName: string): Promise<{ code: number; output: string }> {
     const r = await this.exec("mcpc", [`@supi-${sessionName}`, "restart"]);
-    return { code: r.code, output: r.stdout || r.stderr };
+    return { code: r.code, output: combineOutput(r) };
   }
 
   async toolsList(sessionName: string): Promise<{ code: number; tools: McpTool[] }> {
@@ -76,12 +86,12 @@ export class McpcClient {
   async login(target: string): Promise<{ code: number; output: string }> {
     // OAuth flows can take minutes (user approving in browser)
     const r = await this.exec("mcpc", [target, "login"], { timeout: 120000 });
-    return { code: r.code, output: r.stdout || r.stderr };
+    return { code: r.code, output: combineOutput(r) };
   }
 
   async logout(target: string): Promise<{ code: number; output: string }> {
     const r = await this.exec("mcpc", [target, "logout"]);
-    return { code: r.code, output: r.stdout || r.stderr };
+    return { code: r.code, output: combineOutput(r) };
   }
 
   async listSessions(): Promise<{ code: number; output: string }> {
