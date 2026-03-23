@@ -18,6 +18,10 @@ import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { registerProgressRenderer } from "./orchestrator/progress-renderer.js";
+import { loadMcpRegistry } from "./mcp/config.js";
+import { McpcClient } from "./mcp/mcpc.js";
+import { parseTags, computeActiveServers } from "./mcp/activation.js";
+import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -29,6 +33,8 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
   "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
 };
+
+let pendingTags: string[] = [];
 
 function getInstalledVersion(platform: Platform): string | null {
   const pkgPath = platform.paths.agent("extensions", "supipowers", "package.json");
@@ -62,6 +68,17 @@ export function bootstrap(platform: Platform): void {
   // message submission, so no chat message appears and no "Working..." indicator
   platform.on("input", (event, ctx) => {
     const text = event.text.trim();
+
+    // Scan for $tags
+    const registry = loadMcpRegistry(platform.paths, ctx.cwd);
+    const registeredNames = new Set(Object.keys(registry.servers));
+    if (registeredNames.size > 0) {
+      const tags = parseTags(event.text, registeredNames);
+      if (tags.length > 0) {
+        pendingTags = tags;
+      }
+    }
+
     if (!text.startsWith("/")) return;
 
     const spaceIndex = text.indexOf(" ");
@@ -78,6 +95,28 @@ export function bootstrap(platform: Platform): void {
   const config = loadConfig(platform.paths, process.cwd());
   registerContextModeHooks(platform, config);
 
+  // MCP per-turn activation
+  platform.on("before_agent_start", async (event, ctx) => {
+    const registry = loadMcpRegistry(platform.paths, ctx.cwd);
+    if (Object.keys(registry.servers).length === 0) {
+      pendingTags = [];
+      return;
+    }
+
+    const message = typeof event.message?.content === "string" ? event.message.content : "";
+    const active = computeActiveServers(registry.servers, message, pendingTags);
+
+    const activeToolNames = active.map((name) => `mcpc_${name}`);
+    activeToolNames.push("mcpc_manager");
+
+    if (platform.setActiveTools) {
+      const currentTools = platform.getActiveTools();
+      const nonMcpTools = currentTools.filter((t: string) => !t.startsWith("mcpc_"));
+      platform.setActiveTools([...nonMcpTools, ...activeToolNames]);
+    }
+
+    pendingTags = [];
+  });
 
   // Session start
   platform.on("session_start", async (_event, ctx) => {
@@ -87,6 +126,24 @@ export function bootstrap(platform: Platform): void {
       const stopScript = join(getScriptsDir(), "stop-server.sh");
       platform.exec("bash", [stopScript, previousVisualDir], { cwd: getScriptsDir() }).catch(() => {});
       setActiveVisualSessionDir(null);
+    }
+
+    // MCP server initialization
+    const mcpRegistry = loadMcpRegistry(platform.paths, ctx.cwd);
+    if (Object.keys(mcpRegistry.servers).length > 0) {
+      const mcpClient = new McpcClient((cmd, args, opts) => platform.exec(cmd, args, opts));
+      const installed = await mcpClient.checkInstalled();
+      if (!installed.installed) {
+        const ok = await mcpClient.autoInstall();
+        if (!ok) {
+          ctx.ui.notify("mcpc install failed — MCP features unavailable. Run /supi:update", "error");
+        }
+      }
+      if (installed.installed || await mcpClient.checkInstalled().then(r => r.installed)) {
+        await initializeMcpServers(mcpRegistry, mcpClient);
+        // Gateway tool registration will happen here in a future task
+        // when we have the full tool registration wiring
+      }
     }
 
     // Check for updates in the background
@@ -107,5 +164,16 @@ export function bootstrap(platform: Platform): void {
       .catch(() => {
         // Network error — silently ignore
       });
+  });
+
+  // MCP session shutdown
+  platform.on("session_shutdown", async (_event, ctx) => {
+    const mcpConfig = loadConfig(platform.paths, ctx.cwd ?? process.cwd());
+    if (!mcpConfig.mcp?.closeSessionsOnExit) return;
+
+    const registry = loadMcpRegistry(platform.paths, ctx.cwd ?? process.cwd());
+    const mcpClient = new McpcClient((cmd, args, opts) => platform.exec(cmd, args, opts));
+    const names = Object.keys(registry.servers).filter((n) => registry.servers[n].enabled);
+    await shutdownMcpServers(names, mcpClient, true);
   });
 }
