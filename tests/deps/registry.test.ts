@@ -1,0 +1,313 @@
+import { describe, it, expect } from "vitest";
+import {
+  DEPENDENCIES,
+  scanAll,
+  scanMissing,
+  installDep,
+  installAll,
+  formatReport,
+  checkBinary,
+  type ExecFn,
+  type DependencyStatus,
+} from "../../src/deps/registry.js";
+
+// ── Mock exec ─────────────────────────────────────────────
+
+function createMockExec(
+  whichResults: Record<string, number> = {},
+  versionOutput = "1.0.0",
+): ExecFn {
+  return async (cmd: string, args: string[]) => {
+    if (cmd === "which") {
+      const binary = args[0];
+      const code = whichResults[binary] ?? 1;
+      return {
+        stdout: code === 0 ? `/usr/bin/${binary}` : "",
+        stderr: code === 0 ? "" : `${binary} not found`,
+        code,
+      };
+    }
+    if (args[0] === "--version") {
+      return { stdout: versionOutput, stderr: "", code: 0 };
+    }
+    // Default: install commands succeed
+    return { stdout: "", stderr: "", code: 0 };
+  };
+}
+
+// ── DEPENDENCIES shape ────────────────────────────────────
+
+describe("DEPENDENCIES", () => {
+  it("is non-empty", () => {
+    expect(DEPENDENCIES.length).toBeGreaterThan(0);
+  });
+
+  it("every entry has all required fields", () => {
+    for (const dep of DEPENDENCIES) {
+      expect(dep).toHaveProperty("name");
+      expect(dep).toHaveProperty("binary");
+      expect(dep).toHaveProperty("required");
+      expect(dep).toHaveProperty("category");
+      expect(dep).toHaveProperty("description");
+      expect(dep).toHaveProperty("checkFn");
+      expect(dep).toHaveProperty("installCmd");
+      expect(dep).toHaveProperty("url");
+      expect(typeof dep.name).toBe("string");
+      expect(typeof dep.binary).toBe("string");
+      expect(typeof dep.required).toBe("boolean");
+      expect(["core", "mcp", "lsp"]).toContain(dep.category);
+      expect(typeof dep.checkFn).toBe("function");
+    }
+  });
+
+  it("contains the expected dependency names", () => {
+    const names = DEPENDENCIES.map((d) => d.name);
+    expect(names).toContain("Git");
+    expect(names).toContain("mcpc");
+    expect(names).toContain("TypeScript LSP");
+  });
+});
+
+// ── checkBinary ───────────────────────────────────────────
+
+describe("checkBinary", () => {
+  it("returns installed: true with version when which succeeds", async () => {
+    const exec = createMockExec({ git: 0 }, "git version 2.43.0");
+    const result = await checkBinary(exec, "git");
+    expect(result.installed).toBe(true);
+    expect(result.version).toBe("git version 2.43.0");
+  });
+
+  it("returns installed: false when which fails", async () => {
+    const exec = createMockExec({ git: 1 });
+    const result = await checkBinary(exec, "git");
+    expect(result.installed).toBe(false);
+    expect(result.version).toBeUndefined();
+  });
+});
+
+// ── scanAll ───────────────────────────────────────────────
+
+describe("scanAll", () => {
+  it("marks deps as installed when which returns code 0", async () => {
+    const allBinaries: Record<string, number> = {};
+    for (const dep of DEPENDENCIES) {
+      allBinaries[dep.binary] = 0;
+    }
+    const exec = createMockExec(allBinaries);
+    const statuses = await scanAll(exec);
+
+    // All binary-checked deps should be installed (bun:sqlite uses its own check)
+    for (const s of statuses) {
+      if (s.binary !== "__bun_sqlite__") {
+        expect(s.installed).toBe(true);
+      }
+    }
+  });
+
+  it("marks deps as not installed when which returns code 1", async () => {
+    // All binaries fail which
+    const exec = createMockExec({});
+    const statuses = await scanAll(exec);
+
+    for (const s of statuses) {
+      if (s.binary !== "__bun_sqlite__") {
+        expect(s.installed).toBe(false);
+      }
+    }
+  });
+
+  it("returns correct number of statuses", async () => {
+    const exec = createMockExec({});
+    const statuses = await scanAll(exec);
+    expect(statuses.length).toBe(DEPENDENCIES.length);
+  });
+
+  it("each status has required fields", async () => {
+    const exec = createMockExec({});
+    const statuses = await scanAll(exec);
+    for (const s of statuses) {
+      expect(s).toHaveProperty("name");
+      expect(s).toHaveProperty("binary");
+      expect(s).toHaveProperty("required");
+      expect(s).toHaveProperty("category");
+      expect(s).toHaveProperty("installed");
+    }
+  });
+});
+
+// ── scanMissing ───────────────────────────────────────────
+
+describe("scanMissing", () => {
+  it("returns only deps that are not installed", async () => {
+    const exec = createMockExec({ git: 0 }); // only git installed
+    const missing = await scanMissing(exec);
+
+    const names = missing.map((m) => m.name);
+    expect(names).not.toContain("Git");
+    // mcpc is not in whichResults so should be missing
+    expect(names).toContain("mcpc");
+  });
+});
+
+// ── installDep ────────────────────────────────────────────
+
+describe("installDep", () => {
+  it("runs install command and returns success", async () => {
+    const exec = createMockExec({});
+    const result = await installDep(exec, "mcpc");
+    expect(result.success).toBe(true);
+    expect(result.name).toBe("mcpc");
+  });
+
+  it("returns error for unknown dependency", async () => {
+    const exec = createMockExec({});
+    const result = await installDep(exec, "nonexistent");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Unknown dependency");
+  });
+
+  it("returns error when dep has no install command", async () => {
+    const exec = createMockExec({});
+    const result = await installDep(exec, "Git");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("No install command");
+  });
+
+  it("returns error when install command fails", async () => {
+    const exec: ExecFn = async () => ({
+      stdout: "",
+      stderr: "permission denied",
+      code: 1,
+    });
+    const result = await installDep(exec, "mcpc");
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("permission denied");
+  });
+});
+
+// ── installAll ────────────────────────────────────────────
+
+describe("installAll", () => {
+  it("skips deps with null installCmd", async () => {
+    const exec = createMockExec({});
+    const deps: DependencyStatus[] = [
+      {
+        name: "Git",
+        binary: "git",
+        required: true,
+        category: "core",
+        description: "VCS",
+        installCmd: null,
+        url: "https://git-scm.com",
+        installed: false,
+      },
+      {
+        name: "mcpc",
+        binary: "mcpc",
+        required: false,
+        category: "mcp",
+        description: "MCP CLI",
+        installCmd: "npm install -g @apify/mcpc",
+        url: "https://github.com/apify/mcpc",
+        installed: false,
+      },
+    ];
+    const results = await installAll(exec, deps);
+    expect(results.length).toBe(1);
+    expect(results[0].name).toBe("mcpc");
+  });
+
+  it("returns empty array when no installable deps", async () => {
+    const exec = createMockExec({});
+    const deps: DependencyStatus[] = [
+      {
+        name: "Git",
+        binary: "git",
+        required: true,
+        category: "core",
+        description: "VCS",
+        installCmd: null,
+        url: "https://git-scm.com",
+        installed: false,
+      },
+    ];
+    const results = await installAll(exec, deps);
+    expect(results.length).toBe(0);
+  });
+});
+
+// ── formatReport ──────────────────────────────────────────
+
+describe("formatReport", () => {
+  it("groups by category and shows status icons", () => {
+    const statuses: DependencyStatus[] = [
+      {
+        name: "Git",
+        binary: "git",
+        required: true,
+        category: "core",
+        description: "VCS",
+        installCmd: null,
+        url: "https://git-scm.com",
+        installed: true,
+        version: "2.43.0",
+      },
+      {
+        name: "mcpc",
+        binary: "mcpc",
+        required: false,
+        category: "mcp",
+        description: "MCP CLI",
+        installCmd: "npm install -g @apify/mcpc",
+        url: "https://github.com/apify/mcpc",
+        installed: false,
+      },
+    ];
+    const report = formatReport(statuses);
+    expect(report).toContain("✓ Git");
+    expect(report).toContain("2.43.0");
+    expect(report).toContain("✗ mcpc");
+    expect(report).toContain("npm install -g @apify/mcpc");
+    expect(report).toContain("Core");
+    expect(report).toContain("MCP");
+  });
+
+  it("shows install results when provided", () => {
+    const statuses: DependencyStatus[] = [
+      {
+        name: "mcpc",
+        binary: "mcpc",
+        required: false,
+        category: "mcp",
+        description: "MCP CLI",
+        installCmd: "npm install -g @apify/mcpc",
+        url: "https://github.com/apify/mcpc",
+        installed: false,
+      },
+    ];
+    const installResults = [{ name: "mcpc", success: true }];
+    const report = formatReport(statuses, installResults);
+    expect(report).toContain("→ installed");
+  });
+
+  it("shows install failure when provided", () => {
+    const statuses: DependencyStatus[] = [
+      {
+        name: "mcpc",
+        binary: "mcpc",
+        required: false,
+        category: "mcp",
+        description: "MCP CLI",
+        installCmd: "npm install -g @apify/mcpc",
+        url: "https://github.com/apify/mcpc",
+        installed: false,
+      },
+    ];
+    const installResults = [
+      { name: "mcpc", success: false, error: "permission denied" },
+    ];
+    const report = formatReport(statuses, installResults);
+    expect(report).toContain("→ failed: permission denied");
+  });
+});
