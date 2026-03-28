@@ -25,7 +25,6 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { scanAll, installDep, formatReport } from "../src/deps/registry.js";
 import type { ExecResult } from "../src/platform/types.js";
-import type { DependencyStatus } from "../src/deps/registry.js";
 
 // ── Helpers ──────────────────────────────────────────────────
 
