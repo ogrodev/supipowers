@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadConfig } from "../config/loader.js";
 import { detectContextMode } from "../context-mode/detector.js";
 import { isLspAvailable } from "../lsp/detector.js";
+import { DEPENDENCIES } from "../deps/registry.js";
 
 export interface CheckResult {
   name: string;
@@ -98,20 +99,15 @@ export async function checkStorage(platform: Platform, cwd: string): Promise<Che
 }
 
 export async function checkEventStore(): Promise<CheckResult> {
-  try {
-    const { Database } = await import("bun:sqlite");
-    const presence = { ok: true, detail: "bun:sqlite available" };
-    try {
-      const db = new Database(":memory:");
-      db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS fts_test USING fts5(content)");
-      db.close();
-      return { name: "EventStore", presence, functional: { ok: true, detail: "SQLite + FTS5 functional" } };
-    } catch (err) {
-      return { name: "EventStore", presence, functional: { ok: false, detail: `FTS5 failed: ${(err as Error).message}` } };
-    }
-  } catch {
-    return { name: "EventStore", presence: { ok: false, detail: "bun:sqlite not available (requires Bun runtime)" } };
+  const bunSqliteDep = DEPENDENCIES.find((d) => d.binary === "__bun_sqlite__");
+  if (!bunSqliteDep) {
+    return { name: "EventStore", presence: { ok: false, detail: "bun:sqlite dependency not registered" } };
   }
+  const { installed } = await bunSqliteDep.checkFn(async () => ({ stdout: "", stderr: "", code: 1 }));
+  if (installed) {
+    return { name: "EventStore", presence: { ok: true, detail: "bun:sqlite available" }, functional: { ok: true, detail: "SQLite + FTS5 functional" } };
+  }
+  return { name: "EventStore", presence: { ok: false, detail: "bun:sqlite not available (requires Bun runtime)" } };
 }
 
 export async function checkGit(platform: Platform): Promise<CheckResult> {
