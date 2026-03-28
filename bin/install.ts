@@ -186,65 +186,139 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
 }
 
 /**
- * Register context-mode MCP server in the given platform's mcp.json.
+ * Install context-mode as a platform extension and register MCP server.
+ *
+ * Per upstream docs (Pi Coding Agent):
+ *   1. git clone → ~/<platformDir>/extensions/context-mode
+ *   2. npm install && npm run build
+ *   3. Register MCP in ~/<platformDir>/settings/mcp.json
+ *
+ * Build requires Node.js 18+ (tsc, esbuild, node -e in build script).
+ * Runtime uses bun to leverage bun:sqlite — context-mode auto-detects
+ * Bun and skips better-sqlite3 entirely.
  */
-function registerContextMode(platformDir: string, extDir: string): void {
-  const ctxSpinner = spinner();
-  ctxSpinner.start(`Checking for context-mode (${platformDir})...`);
+async function installContextMode(platformDir: string): Promise<void> {
+  const extDir = join(homedir(), platformDir, "extensions", "context-mode");
+  const startMjs = join(extDir, "node_modules", "context-mode", "start.mjs");
 
-  // Find context-mode installation (Claude Code plugin cache)
-  const ctxCacheBase = join(
-    homedir(),
-    ".claude",
-    "plugins",
-    "cache",
-    "context-mode",
-    "context-mode",
-  );
-  let ctxInstallPath: string | null = null;
-  if (existsSync(ctxCacheBase)) {
-    const versions = readdirSync(ctxCacheBase, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .sort()
-      .reverse();
-    if (versions.length > 0) {
-      const candidate = join(ctxCacheBase, versions[0], "start.mjs");
-      if (existsSync(candidate)) {
-        ctxInstallPath = join(ctxCacheBase, versions[0]);
-      }
-    }
+  // Check if already installed and built
+  if (existsSync(startMjs)) {
+    // Already installed — just ensure MCP registration is up to date
+    registerContextModeMcp(platformDir, startMjs);
+    return;
   }
 
-  if (ctxInstallPath) {
-    const mcpConfigPath = join(homedir(), platformDir, "agent", "mcp.json");
-    let mcpConfig: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
-    if (existsSync(mcpConfigPath)) {
-      try {
-        mcpConfig = JSON.parse(readFileSync(mcpConfigPath, "utf8"));
-        if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
-      } catch {
-        mcpConfig = { mcpServers: {} };
-      }
-    }
-
-    const startMjs = join(ctxInstallPath, "start.mjs");
-    // Use our wrapper script that captures cwd as CLAUDE_PROJECT_DIR
-    // before context-mode's start.mjs clobbers it with process.chdir(__dirname)
-    const wrapperMjs = join(extDir, "bin", "ctx-mode-wrapper.mjs");
-    mcpConfig.mcpServers["context-mode"] = {
-      command: "node",
-      args: [wrapperMjs, startMjs],
-    };
-
-    mkdirSync(join(homedir(), platformDir, "agent"), { recursive: true });
-    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-    ctxSpinner.stop(`context-mode registered in ~/${platformDir}/agent/mcp.json`);
-  } else {
-    ctxSpinner.stop(
-      `context-mode not found — install it as a Claude Code plugin for context window protection (${platformDir})`,
+  const shouldInstall = await confirm({
+    message: `Install context-mode extension for context window protection? (${platformDir})`,
+  });
+  if (isCancel(shouldInstall) || !shouldInstall) {
+    note(
+      `Skipped. You can install later:\n` +
+        `  git clone https://github.com/mksglu/context-mode.git ~/${platformDir}/extensions/context-mode\n` +
+        `  cd ~/${platformDir}/extensions/context-mode && npm install && npm run build`,
+      `context-mode (${platformDir})`,
     );
+    return;
   }
+
+  // Check Node.js 18+ (required for build: tsc, esbuild, node -e in build script)
+  const nodeCheck = run("node", ["--version"]);
+  if (nodeCheck.error || nodeCheck.status !== 0) {
+    note(
+      "Node.js 18+ is required to build context-mode.\n" +
+        "Install from https://nodejs.org then re-run the installer.",
+      "context-mode requires Node.js",
+    );
+    return;
+  }
+  const nodeVersion = parseInt((nodeCheck.stdout ?? "").replace(/^v/, ""), 10);
+  if (nodeVersion < 18) {
+    note(
+      `Found Node.js v${nodeCheck.stdout?.trim()} but context-mode requires v18+.\n` +
+        "Update Node.js from https://nodejs.org then re-run the installer.",
+      "context-mode requires Node.js 18+",
+    );
+    return;
+  }
+
+  const s = spinner();
+  s.start(`Cloning context-mode to ~/${platformDir}/extensions/context-mode...`);
+
+  // Clone
+  const cloneResult = run("git", [
+    "clone",
+    "https://github.com/mksglu/context-mode.git",
+    extDir,
+  ]);
+  if (cloneResult.status !== 0) {
+    s.stop(`Failed to clone context-mode`);
+    note(
+      cloneResult.stderr?.trim() || "Unknown git clone error",
+      "context-mode install failed",
+    );
+    return;
+  }
+
+  // npm install (builds better-sqlite3 native bindings for Node.js fallback;
+  // at runtime under Bun, bun:sqlite is used instead via auto-detection)
+  s.message("Installing context-mode dependencies...");
+  const npmInstall = run("npm", ["install"], { cwd: extDir });
+  if (npmInstall.status !== 0) {
+    s.stop(`Failed to install context-mode dependencies`);
+    note(
+      npmInstall.stderr?.trim() || "Unknown npm install error",
+      "context-mode install failed",
+    );
+    return;
+  }
+
+  // npm run build (requires tsc + esbuild from devDeps, runs under Node.js)
+  s.message("Building context-mode...");
+  const npmBuild = run("npm", ["run", "build"], { cwd: extDir });
+  if (npmBuild.status !== 0) {
+    s.stop(`Failed to build context-mode`);
+    note(
+      npmBuild.stderr?.trim() || "Unknown build error",
+      "context-mode install failed",
+    );
+    return;
+  }
+
+  s.stop(`context-mode installed to ~/${platformDir}/extensions/context-mode`);
+
+  // Register MCP server
+  registerContextModeMcp(platformDir, startMjs);
+}
+
+/**
+ * Register context-mode MCP entry in the platform's settings/mcp.json.
+ *
+ * Uses "bun" as the command so context-mode auto-detects Bun runtime
+ * and uses bun:sqlite — no better-sqlite3 native bindings needed at runtime.
+ */
+function registerContextModeMcp(platformDir: string, startMjs: string): void {
+  const mcpConfigPath = join(homedir(), platformDir, "settings", "mcp.json");
+  let mcpConfig: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
+  if (existsSync(mcpConfigPath)) {
+    try {
+      mcpConfig = JSON.parse(readFileSync(mcpConfigPath, "utf8"));
+      if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
+    } catch {
+      mcpConfig = { mcpServers: {} };
+    }
+  }
+
+  mcpConfig.mcpServers["context-mode"] = {
+    command: "bun",
+    args: [startMjs],
+  };
+
+  mkdirSync(dirname(mcpConfigPath), { recursive: true });
+  writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+  note(
+    `Registered in ~/${platformDir}/settings/mcp.json`,
+    `context-mode (${platformDir})`,
+  );
 }
 
 // ── Main ─────────────────────────────────────────────────────
@@ -332,10 +406,10 @@ async function main(): Promise<void> {
   const packageRoot = resolve(__dirname, "..");
 
   for (const target of targets) {
-    const extDir = installToPlatform(target.dir, packageRoot);
+    installToPlatform(target.dir, packageRoot);
 
-    // ── Step 3b: Register context-mode MCP server ───────────
-    registerContextMode(target.dir, extDir);
+    // ── Step 3b: Install context-mode extension + register MCP ──
+    await installContextMode(target.dir);
   }
 
   // ── Step 4: Unified dependency check (--skip-deps to skip) ──
@@ -365,21 +439,33 @@ async function main(): Promise<void> {
       );
     }
 
-    // Offer to install missing deps that have an installCmd
+    // Offer to install missing deps — let user choose which ones
     const installable = statuses.filter(
       (s) => !s.installed && s.installCmd !== null,
     );
 
     if (installable.length > 0) {
-      const depList = installable
-        .map((s) => `  • ${s.name} (${s.installCmd})`)
-        .join("\n");
-      const shouldInstall = await confirm({
-        message: `Install ${installable.length} missing tool(s)?\n${depList}`,
+      const categoryLabels: Record<string, string> = {
+        core: "Core",
+        mcp: "MCP",
+        lsp: "Language Server",
+      };
+
+      const selected = await multiselect({
+        message: "Select tools to install (space to toggle, enter to confirm):",
+        options: installable.map((s) => ({
+          value: s.name,
+          label: s.name,
+          hint: `${categoryLabels[s.category] ?? s.category} — ${s.description}`,
+        })),
+        required: false,
       });
 
-      if (!isCancel(shouldInstall) && shouldInstall) {
-        for (const dep of installable) {
+      if (!isCancel(selected) && (selected as string[]).length > 0) {
+        const toInstall = installable.filter((s) =>
+          (selected as string[]).includes(s.name),
+        );
+        for (const dep of toInstall) {
           const s = spinner();
           s.start(`Installing ${dep.name}...`);
           const result = await installDep(exec, dep.name);

@@ -97,9 +97,21 @@ export const DEPENDENCIES: Dependency[] = [
     required: false,
     category: "mcp",
     description: "Context-mode MCP server for context window protection",
-    checkFn: (exec) => checkBinary(exec, "context-mode"),
-    installCmd: "npm install -g context-mode",
-    url: "https://github.com/context-mode/context-mode",
+    checkFn: async (_exec) => {
+      // context-mode is installed as a platform extension, not globally.
+      // Check for start.mjs in the standard extension locations.
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { homedir } = await import("node:os");
+      const home = homedir();
+      for (const dir of [".pi", ".omp"]) {
+        const startMjs = join(home, dir, "extensions", "context-mode", "node_modules", "context-mode", "start.mjs");
+        if (existsSync(startMjs)) return { installed: true, version: "extension" };
+      }
+      return { installed: false };
+    },
+    installCmd: null, // Handled by installer (git clone + npm install + npm run build)
+    url: "https://github.com/mksglu/context-mode",
   },
   {
     name: "TypeScript LSP",

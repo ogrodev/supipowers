@@ -1,6 +1,6 @@
 {
   "name": "supipowers",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Workflow extension for Pi and OMP coding agents.",
   "type": "module",
   "scripts": {
