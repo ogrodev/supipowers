@@ -17,14 +17,7 @@ export interface Dependency {
   url: string;
 }
 
-export interface DependencyStatus {
-  name: string;
-  binary: string;
-  required: boolean;
-  category: "core" | "mcp" | "lsp";
-  description: string;
-  installCmd: string | null;
-  url: string;
+export interface DependencyStatus extends Omit<Dependency, "checkFn"> {
   installed: boolean;
   version?: string;
 }
@@ -188,6 +181,8 @@ export async function installDep(
   if (!dep.installCmd)
     return { name, success: false, error: "No install command available" };
 
+  // Split is safe for current commands (no quoted args). If future commands
+  // need complex args, change installCmd to { cmd: string; args: string[] }.
   const parts = dep.installCmd.split(" ");
   const cmd = parts[0];
   const args = parts.slice(1);
@@ -215,6 +210,7 @@ export async function installAll(
   exec: ExecFn,
   deps: DependencyStatus[],
 ): Promise<InstallResult[]> {
+  // Sequential to avoid package manager conflicts (e.g., concurrent npm installs)
   const results: InstallResult[] = [];
   for (const dep of deps) {
     if (!dep.installCmd) continue;

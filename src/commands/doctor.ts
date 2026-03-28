@@ -99,9 +99,8 @@ export async function checkStorage(platform: Platform, cwd: string): Promise<Che
 
 export async function checkEventStore(): Promise<CheckResult> {
   try {
-    const mod = await import("better-sqlite3");
-    const Database = mod.default;
-    const presence = { ok: true, detail: "better-sqlite3 available" };
+    const { Database } = await import("bun:sqlite");
+    const presence = { ok: true, detail: "bun:sqlite available" };
     try {
       const db = new Database(":memory:");
       db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS fts_test USING fts5(content)");
@@ -111,7 +110,7 @@ export async function checkEventStore(): Promise<CheckResult> {
       return { name: "EventStore", presence, functional: { ok: false, detail: `FTS5 failed: ${(err as Error).message}` } };
     }
   } catch {
-    return { name: "EventStore", presence: { ok: false, detail: "better-sqlite3 not available" } };
+    return { name: "EventStore", presence: { ok: false, detail: "bun:sqlite not available (requires Bun runtime)" } };
   }
 }
 

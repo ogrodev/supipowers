@@ -18,10 +18,14 @@
         "vitest": "^4.0.0",
       },
       "peerDependencies": {
+        "@mariozechner/pi-coding-agent": "*",
         "@oh-my-pi/pi-coding-agent": "*",
-        "@oh-my-pi/pi-tui": "*",
         "@sinclair/typebox": "*",
       },
+      "optionalPeers": [
+        "@mariozechner/pi-coding-agent",
+        "@oh-my-pi/pi-coding-agent",
+      ],
     },
   },
   "packages": {

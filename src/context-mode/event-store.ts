@@ -78,10 +78,9 @@ export class EventStore {
   }
 
   writeEvent(event: Omit<TrackedEvent, "id">): void {
-    this.db.run(
+    this.db.prepare(
       "INSERT INTO session_events (session_id, category, data, priority, source, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-      [event.sessionId, event.category, event.data, event.priority, event.source, event.timestamp],
-    );
+    ).run(event.sessionId, event.category, event.data, event.priority, event.source, event.timestamp);
   }
 
   writeEvents(events: Omit<TrackedEvent, "id">[]): void {
