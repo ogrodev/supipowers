@@ -1,5 +1,5 @@
 import type { Platform, PlatformContext } from "../platform/types.js";
-import type { DependencyStatus } from "../deps/registry.js";
+import type { DependencyStatus, InstallResult } from "../deps/registry.js";
 import { scanAll, installAll, formatReport } from "../deps/registry.js";
 import { readFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -24,10 +24,16 @@ export function buildUpdateOptions(missing: DependencyStatus[]): string[] {
 
 // ── Core update logic (preserved from original) ─────────
 
+interface UpdateSupipowersResult {
+  updated: boolean;
+  fromVersion: string;
+  toVersion: string;
+}
+
 async function updateSupipowers(
   platform: Platform,
   ctx: PlatformContext,
-): Promise<boolean> {
+): Promise<UpdateSupipowersResult | null> {
   const agentDir = platform.paths.agent();
   const extDir = join(agentDir, "extensions", "supipowers");
   const installedPkgPath = join(extDir, "package.json");
@@ -49,13 +55,13 @@ async function updateSupipowers(
   const checkResult = await platform.exec("npm", ["view", "supipowers", "version"], { cwd: tmpdir() });
   if (checkResult.code !== 0) {
     ctx.ui.notify("Failed to check for updates — npm view failed", "error");
-    return false;
+    return null;
   }
   const latestVersion = checkResult.stdout.trim();
 
   if (latestVersion === currentVersion) {
     ctx.ui.notify(`supipowers v${currentVersion} is already up to date`, "info");
-    return true;
+    return { updated: false, fromVersion: currentVersion, toVersion: currentVersion };
   }
 
   ctx.ui.notify(`Updating v${currentVersion} → v${latestVersion}...`, "info");
@@ -71,13 +77,13 @@ async function updateSupipowers(
     );
     if (installResult.code !== 0) {
       ctx.ui.notify("Failed to download latest version", "error");
-      return false;
+      return null;
     }
 
     const downloadedRoot = join(tempDir, "node_modules", "supipowers");
     if (!existsSync(downloadedRoot)) {
       ctx.ui.notify("Downloaded package not found", "error");
-      return false;
+      return null;
     }
 
     // Clean previous installation
@@ -105,7 +111,7 @@ async function updateSupipowers(
     }
 
     ctx.ui.notify(`supipowers updated to v${latestVersion}`, "info");
-    return true;
+    return { updated: true, fromVersion: currentVersion, toVersion: latestVersion };
   } finally {
     // Clean up temp directory
     try {
@@ -134,26 +140,30 @@ export function handleUpdate(platform: Platform, ctx: PlatformContext): void {
     if (!choice || choice === "Cancel") return;
 
     // 4. Update supipowers files
-    const updated = await updateSupipowers(platform, ctx);
-    if (!updated) return;
+    const updateResult = await updateSupipowers(platform, ctx);
+    if (!updateResult) return;
 
     // 5. Based on mode, install tools
+    let installResults: InstallResult[] | undefined;
     if (choice.startsWith("Update supipowers + install missing")) {
       const installable = missing.filter((d) => d.installCmd !== null);
       if (installable.length > 0) {
         ctx.ui.notify(`Installing ${installable.length} missing tool(s)...`, "info");
-        await installAll(exec, installable);
+        installResults = await installAll(exec, installable);
       }
     } else if (choice.startsWith("Update supipowers + reinstall all")) {
       const allInstallable = allStatuses.filter((d) => d.installCmd !== null);
       ctx.ui.notify(`Reinstalling ${allInstallable.length} tool(s)...`, "info");
-      await installAll(exec, allInstallable);
+      installResults = await installAll(exec, allInstallable);
     }
 
     // 6. Re-scan and show report
     const finalStatuses = await scanAll(exec);
-    const report = formatReport(finalStatuses);
-    ctx.ui.notify(`Update complete\n${report}`, "info");
+    const report = formatReport(finalStatuses, installResults);
+    const supiLine = updateResult.updated
+      ? `supipowers: v${updateResult.fromVersion} → v${updateResult.toVersion}`
+      : `supipowers: v${updateResult.fromVersion} (already up to date)`;
+    ctx.ui.notify(`${supiLine}\n${report}`, "info");
   })();
 }
 
