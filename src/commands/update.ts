@@ -164,6 +164,13 @@ export function handleUpdate(platform: Platform, ctx: PlatformContext): void {
       ? `supipowers: v${updateResult.fromVersion} → v${updateResult.toVersion}`
       : `supipowers: v${updateResult.fromVersion} (already up to date)`;
     ctx.ui.notify(`${supiLine}\n${report}`, "info");
+
+    if (updateResult.updated) {
+      ctx.ui.notify(
+        "Please restart your agent session for the update to take effect.",
+        "warning",
+      );
+    }
   })();
 }
 

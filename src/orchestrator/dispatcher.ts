@@ -133,6 +133,13 @@ async function executeSubAgent(
   ctx?: NotifyCtx,
   progress?: RunProgressState,
 ): Promise<SubAgentResult> {
+  if (typeof platform.createAgentSession !== "function") {
+    throw new Error(
+      "Sub-agent dispatch is not available on this platform. " +
+      "If you just updated supipowers, restart your agent session to load the new code.",
+    );
+  }
+
   const session = await platform.createAgentSession({
     cwd: process.cwd(),
     taskDepth: 1,
