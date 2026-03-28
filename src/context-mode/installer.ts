@@ -1,7 +1,9 @@
 // src/context-mode/installer.ts
 import { detectContextMode } from "./detector.js";
+import { DEPENDENCIES, installDep } from "../deps/registry.js";
+import type { ExecResult } from "../platform/types.js";
 
-type ExecFn = (cmd: string, args: string[]) => Promise<{ stdout: string; code: number }>;
+type ExecFn = (cmd: string, args: string[]) => Promise<ExecResult>;
 
 /** Installation status */
 export interface ContextModeInstallStatus {
@@ -17,35 +19,14 @@ export async function checkInstallation(
   activeTools: string[],
 ): Promise<ContextModeInstallStatus> {
   const status = detectContextMode(activeTools);
-
-  // Check CLI
-  let cliInstalled = false;
-  let version: string | null = null;
-
-  try {
-    const whichResult = await exec("which", ["context-mode"]);
-    cliInstalled = whichResult.code === 0;
-  } catch {
-    cliInstalled = false;
-  }
-
-  // Get version
-  if (cliInstalled) {
-    try {
-      const versionResult = await exec("context-mode", ["--version"]);
-      if (versionResult.code === 0) {
-        version = versionResult.stdout.trim() || null;
-      }
-    } catch {
-      version = null;
-    }
-  }
+  const dep = DEPENDENCIES.find((d) => d.binary === "context-mode");
+  const check = dep ? await dep.checkFn(exec) : { installed: false };
 
   return {
-    cliInstalled,
+    cliInstalled: check.installed,
     mcpConfigured: status.available,
     toolsAvailable: status.available,
-    version,
+    version: check.version ?? null,
   };
 }
 
@@ -53,19 +34,5 @@ export async function checkInstallation(
 export async function installContextMode(
   exec: ExecFn,
 ): Promise<{ success: boolean; error?: string }> {
-  try {
-    const result = await exec("npm", ["install", "-g", "context-mode"]);
-    if (result.code !== 0) {
-      return {
-        success: false,
-        error: `npm install failed (exit ${result.code}). Check permissions or try: sudo npm install -g context-mode`,
-      };
-    }
-    return { success: true };
-  } catch (e) {
-    return {
-      success: false,
-      error: `Installation failed: ${e instanceof Error ? e.message : String(e)}`,
-    };
-  }
+  return installDep(exec, "context-mode");
 }
