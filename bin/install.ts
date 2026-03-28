@@ -199,7 +199,7 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
  */
 async function installContextMode(platformDir: string): Promise<void> {
   const extDir = join(homedir(), platformDir, "extensions", "context-mode");
-  const startMjs = join(extDir, "node_modules", "context-mode", "start.mjs");
+  const startMjs = join(extDir, "start.mjs");
 
   // Check if already installed and built
   if (existsSync(startMjs)) {

@@ -98,14 +98,14 @@ export const DEPENDENCIES: Dependency[] = [
     category: "mcp",
     description: "Context-mode MCP server for context window protection",
     checkFn: async (_exec) => {
-      // context-mode is installed as a platform extension, not globally.
-      // Check for start.mjs in the standard extension locations.
+      // context-mode is installed as a platform extension (git clone), not globally.
+      // start.mjs lives at the repo root after cloning.
       const { existsSync } = await import("node:fs");
       const { join } = await import("node:path");
       const { homedir } = await import("node:os");
       const home = homedir();
       for (const dir of [".pi", ".omp"]) {
-        const startMjs = join(home, dir, "extensions", "context-mode", "node_modules", "context-mode", "start.mjs");
+        const startMjs = join(home, dir, "extensions", "context-mode", "start.mjs");
         if (existsSync(startMjs)) return { installed: true, version: "extension" };
       }
       return { installed: false };
