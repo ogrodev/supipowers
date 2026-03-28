@@ -235,11 +235,79 @@ describe("installAll", () => {
     const results = await installAll(exec, deps);
     expect(results.length).toBe(0);
   });
+
+  it("does not include result entries for null installCmd deps", async () => {
+    const exec = createMockExec({});
+    const deps: DependencyStatus[] = [
+      {
+        name: "Git",
+        binary: "git",
+        required: true,
+        category: "core",
+        description: "VCS",
+        installCmd: null,
+        url: "https://git-scm.com",
+        installed: false,
+      },
+      {
+        name: "mcpc",
+        binary: "mcpc",
+        required: false,
+        category: "mcp",
+        description: "MCP CLI",
+        installCmd: "npm install -g @apify/mcpc",
+        url: "https://github.com/apify/mcpc",
+        installed: false,
+      },
+    ];
+    const results = await installAll(exec, deps);
+    // null installCmd entries are silently skipped — no result entry produced
+    const names = results.map((r) => r.name);
+    expect(names).not.toContain("Git");
+    expect(names).toContain("mcpc");
+  });
 });
 
 // ── formatReport ──────────────────────────────────────────
 
 describe("formatReport", () => {
+  it("shows installed dep with version string", () => {
+    const statuses: DependencyStatus[] = [
+      {
+        name: "Git",
+        binary: "git",
+        required: true,
+        category: "core",
+        description: "VCS",
+        installCmd: null,
+        url: "https://git-scm.com",
+        installed: true,
+        version: "git version 2.43.0",
+      },
+    ];
+    const report = formatReport(statuses);
+    expect(report).toContain("✓ Git");
+    expect(report).toContain("git version 2.43.0");
+  });
+
+  it("shows missing dep with manual install URL", () => {
+    const statuses: DependencyStatus[] = [
+      {
+        name: "mcpc",
+        binary: "mcpc",
+        required: false,
+        category: "mcp",
+        description: "MCP CLI",
+        installCmd: "npm install -g @apify/mcpc",
+        url: "https://github.com/apify/mcpc",
+        installed: false,
+      },
+    ];
+    const report = formatReport(statuses);
+    expect(report).toContain("✗ mcpc");
+    expect(report).toContain("npm install -g @apify/mcpc");
+  });
+
   it("groups by category and shows status icons", () => {
     const statuses: DependencyStatus[] = [
       {
