@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Run playwright tests via playwright-cli and produce a compact JSON summary.
+# Run playwright tests and produce a compact JSON summary.
+# Requires @playwright/cli installed globally (npm install -g @playwright/cli@latest).
 # Usage: run-e2e-tests.sh <test_dir> <base_url> [test_filter]
 # Output: Compact JSON summary on stdout
-# Exit: non-zero when any test fails or playwright-cli errors
+# Exit: non-zero when any test fails or playwright errors
 set -euo pipefail
 
 TEST_DIR="$1"
@@ -12,7 +13,15 @@ RESULTS_DIR="${TEST_DIR}/../results"
 
 mkdir -p "$RESULTS_DIR"
 
-# Build playwright-cli command
+# Verify playwright is available (provided by @playwright/cli global install)
+if ! command -v playwright &>/dev/null; then
+  cat <<EOF
+{"total": 0, "passed": 0, "failed": 0, "skipped": 0, "duration": 0, "failures": [], "error": "playwright not found. Install @playwright/cli globally: npm install -g @playwright/cli@latest"}
+EOF
+  exit 1
+fi
+
+# Build playwright command
 PW_ARGS=(
   test
   "$TEST_DIR"
@@ -24,28 +33,30 @@ if [ -n "$TEST_FILTER" ]; then
   PW_ARGS+=(--grep "$TEST_FILTER")
 fi
 
-# Run playwright-cli, capture JSON output
+# Run playwright, capture JSON output and stderr separately
 RAW_OUTPUT="$RESULTS_DIR/raw-results.json"
+PW_STDERR="$RESULTS_DIR/playwright-stderr.log"
 set +e
-BASE_URL="$BASE_URL" playwright-cli "${PW_ARGS[@]}" > "$RAW_OUTPUT" 2>/dev/null
+BASE_URL="$BASE_URL" playwright "${PW_ARGS[@]}" > "$RAW_OUTPUT" 2>"$PW_STDERR"
 PW_EXIT=$?
 set -e
 
 # If no JSON output was produced, emit error summary and exit
 if [ ! -s "$RAW_OUTPUT" ]; then
   cat <<EOF
-{"total": 0, "passed": 0, "failed": 0, "skipped": 0, "duration": 0, "failures": [], "error": "playwright-cli produced no output (exit code: $PW_EXIT)"}
+{"total": 0, "passed": 0, "failed": 0, "skipped": 0, "duration": 0, "failures": [], "error": "playwright produced no output (exit code: $PW_EXIT). See $PW_STDERR for details."}
 EOF
   exit 1
 fi
 
 # Parse the JSON output into compact summary using node.
-# Writes summary to file and prints it to stdout. Prints nothing on failure.
+# Writes summary to file, prints to stdout, exits non-zero if tests failed.
 SUMMARY_OUTPUT="$RESULTS_DIR/summary.json"
+NODE_STDERR="$RESULTS_DIR/node-parse-stderr.log"
 set +e
-node -e "
+RAW_OUTPUT="$RAW_OUTPUT" SUMMARY_OUTPUT="$SUMMARY_OUTPUT" node -e "
 const fs = require('fs');
-const raw = JSON.parse(fs.readFileSync('$RAW_OUTPUT', 'utf-8'));
+const raw = JSON.parse(fs.readFileSync(process.env.RAW_OUTPUT, 'utf-8'));
 
 const suites = raw.suites || [];
 const results = [];
@@ -97,17 +108,20 @@ const summary = {
 };
 
 const json = JSON.stringify(summary);
-fs.writeFileSync('$SUMMARY_OUTPUT', json);
+fs.writeFileSync(process.env.SUMMARY_OUTPUT, json);
 console.log(json);
-" 2>/dev/null
+process.exit(failed > 0 ? 1 : 0);
+" 2>"$NODE_STDERR"
 NODE_EXIT=$?
 set -e
 
-# If parsing failed, emit error and exit
-if [ "$NODE_EXIT" -ne 0 ] || [ ! -s "$SUMMARY_OUTPUT" ]; then
-  echo '{"total": 0, "passed": 0, "failed": 0, "skipped": 0, "duration": 0, "failures": [], "error": "Failed to parse playwright-cli output"}'
+# If parsing failed (not a test-failure exit), emit error and exit
+if [ ! -s "$SUMMARY_OUTPUT" ]; then
+  cat <<EOF
+{"total": 0, "passed": 0, "failed": 0, "skipped": 0, "duration": 0, "failures": [], "error": "Failed to parse playwright output. See $NODE_STDERR for details."}
+EOF
   exit 1
 fi
 
-# Exit non-zero if any tests failed
-node -e "const s=JSON.parse(require('fs').readFileSync('$SUMMARY_OUTPUT','utf-8'));process.exit(s.failed>0?1:0)" 2>/dev/null
+# Propagate the node exit code (0 = all passed, 1 = tests failed)
+exit "$NODE_EXIT"
