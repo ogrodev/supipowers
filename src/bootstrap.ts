@@ -14,6 +14,7 @@ import { registerReleaseCommand } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
 import { registerDoctorCommand, handleDoctor } from "./commands/doctor.js";
 import { registerMcpCommand, handleMcp, handleMcpCli, parseCliArgs } from "./commands/mcp.js";
+import { registerModelCommand, handleModel } from "./commands/model.js";
 import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { loadConfig } from "./config/loader.js";
@@ -34,6 +35,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
   "supi:update": (platform, ctx) => handleUpdate(platform, ctx),
   "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
+  "supi:model": (platform, ctx) => handleModel(platform, ctx),
 };
 
 let pendingTags: string[] = [];
@@ -62,6 +64,7 @@ export function bootstrap(platform: Platform): void {
   registerFixPrCommand(platform);
   registerDoctorCommand(platform);
   registerMcpCommand(platform);
+  registerModelCommand(platform);
 
   // Register custom message renderers
   registerProgressRenderer(platform);
