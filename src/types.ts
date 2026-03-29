@@ -127,6 +127,50 @@ export interface McpManagementConfig {
   closeSessionsOnExit: boolean;
 }
 
+/** Thinking level for model configuration */
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+/** A model assignment for an action or default */
+export interface ModelAssignment {
+  /** Concrete model ID: "claude-opus-4-6" or "provider/model-id" */
+  model: string;
+  /** Thinking level, null means inherit from model default */
+  thinkingLevel: ThinkingLevel | null;
+}
+
+/** Persisted model configuration (model.json schema) */
+export interface ModelConfig {
+  version: string;
+  default: ModelAssignment | null;
+  actions: Record<string, ModelAssignment>;
+}
+
+/** Category of a model action */
+export type ModelActionCategory = "command" | "sub-agent";
+
+/** A registered model action (command or sub-agent role) */
+export interface ModelAction {
+  /** Unique key: "plan", "implementer", etc. */
+  id: string;
+  /** Whether this is a top-level command or a sub-agent role */
+  category: ModelActionCategory;
+  /** For sub-agents, the parent command ID (e.g. "run") */
+  parent?: string;
+  /** Display name for TUI */
+  label: string;
+  /** OMP role hint for tier 3 fallback: "default", "slow", "plan", etc. */
+  harnessRoleHint?: string;
+}
+
+/** Result of model resolution with source tracking */
+export type ModelSource = "action" | "default" | "harness-role" | "main";
+
+export interface ResolvedModel {
+  model: string;
+  thinkingLevel: ThinkingLevel | null;
+  source: ModelSource;
+}
+
 /** Config shape */
 export interface SupipowersConfig {
   version: string;
