@@ -21,6 +21,7 @@ import { loadConfig } from "./config/loader.js";
 import { migrateModelPreference } from "./config/model-config.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { registerProgressRenderer } from "./orchestrator/progress-renderer.js";
+import { activeRuns } from "./orchestrator/run-progress.js";
 import { loadMcpRegistry } from "./mcp/config.js";
 import { McpcClient } from "./mcp/mcpc.js";
 import { parseTags, computeActiveServers } from "./mcp/activation.js";
@@ -68,6 +69,27 @@ export function bootstrap(platform: Platform): void {
 
   // Register custom message renderers
   registerProgressRenderer(platform);
+
+  // Wire ESC key to abort active runs via raw terminal input
+  // The handleInput on InlineProgressComponent is not called by OMP's TUI
+  // (custom message renderers are not the focused component), so we use
+  // onTerminalInput which hooks into the TUI's input listener pipeline.
+  platform.on("session_start", (_event: any, ctx: any) => {
+    if (!ctx?.ui?.onTerminalInput) return;
+    ctx.ui.onTerminalInput((data: string) => {
+      // ESC key: \x1b not followed by [ (which would be an ANSI sequence)
+      if (data !== "\x1b" && data !== "\x1b\x1b") return;
+      // Find any active run and abort it
+      for (const state of activeRuns.values()) {
+        if (!state.aborted) {
+          state.abort();
+          ctx.ui.notify("Run interrupted — press ESC again to abort the agent turn", "warning");
+          return { consume: true };
+        }
+      }
+      return;
+    });
+  });
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
   // message submission, so no chat message appears and no "Working..." indicator

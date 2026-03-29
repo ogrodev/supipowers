@@ -33,10 +33,14 @@ export function createPiAdapter(pi: any): Platform {
     createAgentSession: async (opts: AgentSessionOptions): Promise<AgentSession> => {
       const mod = await import("@mariozechner/pi-coding-agent");
       const createFn = (mod as any).createAgentSession;
+      // Same fix as OMP adapter: model is a string ID, not a Model object.
+      // Use modelPattern for string-based model resolution.
+      const { model, ...restOpts } = opts;
       const { session } = await createFn({
-        cwd: opts.cwd ?? process.cwd(),
+        cwd: restOpts.cwd ?? process.cwd(),
         hasUI: false,
-        ...opts,
+        ...restOpts,
+        ...(model ? { modelPattern: model } : {}),
       });
       return {
         subscribe: (handler: any) => session.subscribe(handler),

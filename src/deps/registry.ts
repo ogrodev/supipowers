@@ -163,6 +163,16 @@ export const DEPENDENCIES: Dependency[] = [
     installCmd: "npm install -g @playwright/cli@latest",
     url: "https://github.com/microsoft/playwright-cli",
   },
+  {
+    name: "Playwright Test",
+    binary: "playwright",
+    required: false,
+    category: "testing",
+    description: "Test runner for E2E tests (run-e2e-tests.sh). Install: npm install @playwright/test@latest && npx playwright install",
+    checkFn: (exec) => checkBinary(exec, "playwright"),
+    installCmd: null, // Compound command (&&) — not compatible with installDep's naive split
+    url: "https://playwright.dev",
+  },
 ];
 
 // ── Scan ──────────────────────────────────────────────────

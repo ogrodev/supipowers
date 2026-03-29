@@ -52,7 +52,8 @@ The installer scans for these and offers to install any that are missing. Everyt
 | [Pyright](https://github.com/microsoft/pyright) | LSP | Python type checking and language features | `pip install pyright` |
 | [rust-analyzer](https://rust-analyzer.github.io) | LSP | Rust language server | `rustup component add rust-analyzer` |
 | [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) | LSP | Go language server | `go install golang.org/x/tools/gopls@latest` |
-| [playwright-cli](https://github.com/microsoft/playwright-cli) | Testing | Browser automation for E2E testing via `/supi:qa --e2e` | `npm install -g @playwright/cli@latest` |
+| [playwright-cli](https://github.com/microsoft/playwright-cli) | Testing | Interactive browser exploration for E2E flow discovery via `/supi:qa --e2e` | `npm install -g @playwright/cli@latest` |
+| [Playwright Test](https://playwright.dev) | Testing | Test runner for E2E test execution via `run-e2e-tests.sh` | `npm install @playwright/test@latest && npx playwright install` |
 
 LSP servers are language-specific. You only need the ones matching the languages in your project. Sub-agents use them to check diagnostics and find references before making changes.
 

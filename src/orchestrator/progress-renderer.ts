@@ -1,6 +1,6 @@
 // src/orchestrator/progress-renderer.ts
 import type { TaskStatus } from "./agent-grid.js";
-import { activeRuns, type TaskProgress } from "./run-progress.js";
+import { activeRuns, type TaskProgress, type RunProgressState } from "./run-progress.js";
 
 // ── ANSI-aware width helpers ─────────────────────────────────────
 
@@ -105,7 +105,7 @@ function formatElapsed(startedAt: number, completedAt?: number): string {
 
 // ── Inline Progress Component ──────────────────────────────────────
 
-class InlineProgressComponent implements Component {
+export class InlineProgressComponent implements Component {
   #runId: string;
   #theme: Theme;
   #spinnerFrame = 0;
@@ -210,6 +210,61 @@ class InlineProgressComponent implements Component {
       parts.push(this.#theme.fg("dim", task.currentActivity));
     }
   }
+}
+
+// ── Widget (string[] for ctx.ui.setWidget) ──────────────────────
+
+const WIDGET_ICONS: Record<TaskStatus, string> = {
+  pending:            "○",
+  running:            "◉",
+  reviewing:          "◎",
+  done:               "✓",
+  done_with_concerns: "⚠",
+  blocked:            "✗",
+};
+
+function widgetTaskMeta(task: TaskProgress): string {
+  const parts: string[] = [];
+  const isActive = task.status === "running" || task.status === "reviewing";
+  const isDone = task.status === "done" || task.status === "done_with_concerns" || task.status === "blocked";
+  if (task.toolCount > 0) parts.push(`${task.toolCount} tools`);
+  if (isDone && task.filesChanged > 0) parts.push(`${task.filesChanged} files`);
+  if (isDone) parts.push(formatElapsed(task.startedAt, task.completedAt));
+  if (isActive && task.currentActivity) parts.push(task.currentActivity);
+  return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
+}
+
+/** Render progress as plain string[] for use with ctx.ui.setWidget. */
+export function renderWidgetLines(state: RunProgressState): string[] {
+  if (state.tasks.size === 0) return [];
+  const tasks = [...state.tasks.values()];
+  const lines: string[] = [];
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    const prefix = i === tasks.length - 1 ? "└" : "├";
+    const icon = WIDGET_ICONS[task.status];
+    let line = `${prefix} ${icon} T${task.taskId} · ${task.name}`;
+    line += widgetTaskMeta(task);
+    if (task.status === "pending" && task.dependsOn.length > 0) {
+      line += ` · depends on ${task.dependsOn.map((d) => `T${d}`).join(", ")}`
+    }
+    lines.push(line);
+  }
+
+  // Summary
+  const s = state.summary;
+  const summaryParts: string[] = [];
+  if (state.batchLabel) summaryParts.push(state.batchLabel);
+  if (s.done > 0) summaryParts.push(`${s.done} done`);
+  if (s.running > 0) summaryParts.push(`${s.running} running`);
+  if (s.pending > 0) summaryParts.push(`${s.pending} pending`);
+  if (s.blocked > 0) summaryParts.push(`${s.blocked} blocked`);
+  if (summaryParts.length > 0) {
+    lines.push(`  ${summaryParts.join(" · ")}`);
+  }
+
+  return lines;
 }
 
 // ── Registration ───────────────────────────────────────────────────

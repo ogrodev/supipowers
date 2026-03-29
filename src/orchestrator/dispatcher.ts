@@ -20,7 +20,7 @@ import {
 } from "../notifications/renderer.js";
 import type { RunProgressState } from "./run-progress.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
-import { resolveModelForAction, createModelBridge, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { resolveAllCandidates, createModelBridge, type ModelPlatformBridge } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
@@ -72,6 +72,36 @@ export interface DispatchOptions {
   parentSessionModel?: string;
 }
 
+/** Check if an error looks like a model/auth configuration issue */
+function isModelAuthError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    msg.includes("No API key") ||
+    msg.includes("API key") ||
+    msg.includes("authentication") ||
+    msg.includes("unauthorized") ||
+    msg.includes("model not found") ||
+    msg.includes("model_not_found") ||
+    msg.includes("invalid_api_key") ||
+    msg.includes("Could not resolve model")
+  );
+}
+
+/** Create a user-friendly error message from a raw error */
+function friendlyErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (msg.includes("No API key") || msg.includes("invalid_api_key")) {
+    return "Model configuration issue — no valid API key found. Run /supi:models to configure, or ensure your agent has a model set up.";
+  }
+  if (msg.includes("model not found") || msg.includes("model_not_found") || msg.includes("Could not resolve model")) {
+    return "Configured model is not available. Run /supi:models to pick a different model, or remove the override to use your agent's default.";
+  }
+  if (msg.includes("Sub-agent dispatch is not available")) {
+    return msg; // This one is already user-friendly
+  }
+  return `Agent error: ${msg}`;
+}
+
 export async function dispatchAgent(
   options: DispatchOptions,
 ): Promise<AgentResult> {
@@ -95,61 +125,98 @@ export async function dispatchAgent(
   // Initialize widget card if available
   progress?.setStatus(task.id, "running");
 
-  try {
-    const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
-    const bridge = createModelBridge(platform);
-    const resolved = resolveModelForAction(
-      options.actionId ?? "implementer",
-      modelRegistry,
-      modelConfig,
-      bridge,
-    );
+  // Build the full fallback chain of model candidates
+  const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+  const bridge = createModelBridge(platform);
+  const candidates = resolveAllCandidates(
+    options.actionId ?? "implementer",
+    modelRegistry,
+    modelConfig,
+    bridge,
+  );
 
-    // Fallback: if resolver returned no model, use the parent session's model
-    const model = resolved.model ?? options.parentSessionModel;
-
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, model, resolved.thinkingLevel, signal);
-
-    const agentResult: AgentResult = {
-      taskId: task.id,
-      status: result.status,
-      output: result.output,
-      concerns: result.concerns,
-      filesChanged: result.filesChanged,
-      duration: Date.now() - startTime,
-    };
-
-    // Update widget with final status
-    switch (agentResult.status) {
-      case "done":
-        progress?.setStatus(task.id, "done");
-        notifySuccess(ctx, `Task ${task.id} completed`, task.name);
-        break;
-      case "done_with_concerns":
-        progress?.setStatus(task.id, "done_with_concerns", agentResult.concerns);
-        notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
-        break;
-      case "blocked":
-        progress?.setStatus(task.id, "blocked", agentResult.output);
-        notifyError(ctx, `Task ${task.id} blocked`, agentResult.output);
-        break;
+  // Add parentSessionModel as final fallback if not already in candidates
+  if (options.parentSessionModel) {
+    const alreadyPresent = candidates.some((c) => c.model === options.parentSessionModel);
+    if (!alreadyPresent) {
+      candidates.push({ model: options.parentSessionModel, thinkingLevel: null, source: "main" });
     }
-
-    return agentResult;
-  } catch (error) {
-    const errorMsg = `Agent error: ${error instanceof Error ? error.message : String(error)}`;
-    progress?.setStatus(task.id, "blocked", errorMsg);
-
-    const agentResult: AgentResult = {
-      taskId: task.id,
-      status: "blocked",
-      output: errorMsg,
-      filesChanged: [],
-      duration: Date.now() - startTime,
-    };
-    notifyError(ctx, `Task ${task.id} failed`, agentResult.output);
-    return agentResult;
   }
+
+  // If no candidates at all, try with no model (let platform use its own default)
+  if (candidates.length === 0) {
+    candidates.push({ model: undefined, thinkingLevel: null, source: "main" });
+  }
+
+  let lastError: unknown = null;
+
+  // Try each candidate model; only retry on model/auth errors
+  for (const candidate of candidates) {
+    try {
+      const result = await executeSubAgent(
+        platform, prompt, task, config, ctx, progress,
+        candidate.model, candidate.thinkingLevel, signal,
+      );
+
+      const agentResult: AgentResult = {
+        taskId: task.id,
+        status: result.status,
+        output: result.output,
+        concerns: result.concerns,
+        filesChanged: result.filesChanged,
+        duration: Date.now() - startTime,
+      };
+
+      // Update widget with final status (no error notification here — callers handle it)
+      switch (agentResult.status) {
+        case "done":
+          progress?.setStatus(task.id, "done");
+          notifySuccess(ctx, `Task ${task.id} completed`, task.name);
+          break;
+        case "done_with_concerns":
+          progress?.setStatus(task.id, "done_with_concerns", agentResult.concerns);
+          notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
+          break;
+        case "blocked":
+          progress?.setStatus(task.id, "blocked", agentResult.output);
+          // Don't notifyError here — the run loop handles retries and cascade
+          break;
+      }
+
+      return agentResult;
+    } catch (error) {
+      lastError = error;
+
+      // If this is NOT a model/auth error, don't try other candidates
+      if (!isModelAuthError(error)) {
+        break;
+      }
+
+      // Model/auth error — try next candidate silently
+      // Only log at info level so we don't alarm the user
+      if (candidates.indexOf(candidate) < candidates.length - 1) {
+        notifyInfo(
+          ctx,
+          `Task ${task.id} model fallback`,
+          `Trying next model candidate...`,
+        );
+      }
+    }
+  }
+
+  // All candidates exhausted or non-model error
+  const errorMsg = friendlyErrorMessage(lastError);
+  progress?.setStatus(task.id, "blocked", errorMsg);
+
+  const agentResult: AgentResult = {
+    taskId: task.id,
+    status: "blocked",
+    output: errorMsg,
+    filesChanged: [],
+    duration: Date.now() - startTime,
+  };
+  // Don't notifyError here — let the run loop handle it after retries
+  return agentResult;
 }
 
 interface SubAgentResult {
@@ -464,7 +531,8 @@ async function dispatchSpecReview(
 
   const modelConfig = loadModelConfig(platform.paths, process.cwd());
   const bridge = createModelBridge(platform);
-  const resolved = resolveModelForAction("spec-reviewer", modelRegistry, modelConfig, bridge);
+  const candidates = resolveAllCandidates("spec-reviewer", modelRegistry, modelConfig, bridge);
+  const resolved = candidates[0] ?? { model: undefined, thinkingLevel: null, source: "main" as const };
 
   try {
     const result = await executeSubAgent(platform, prompt, task, config, undefined, undefined, resolved.model, resolved.thinkingLevel);
@@ -497,7 +565,8 @@ async function dispatchQualityReview(
 
   const modelConfig = loadModelConfig(platform.paths, process.cwd());
   const bridge = createModelBridge(platform);
-  const resolved = resolveModelForAction("quality-reviewer", modelRegistry, modelConfig, bridge);
+  const candidates = resolveAllCandidates("quality-reviewer", modelRegistry, modelConfig, bridge);
+  const resolved = candidates[0] ?? { model: undefined, thinkingLevel: null, source: "main" as const };
 
   try {
     const result = await executeSubAgent(platform, prompt, task, config, undefined, undefined, resolved.model, resolved.thinkingLevel);
@@ -529,35 +598,51 @@ export async function dispatchFixAgent(
 
   progress?.setStatus(task.id, "running");
 
-  try {
-    const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
-    const bridge = createModelBridge(platform);
-    const resolved = resolveModelForAction(
-      options.actionId ?? "fix-agent",
-      modelRegistry,
-      modelConfig,
-      bridge,
-    );
+  // Build fallback chain just like dispatchAgent
+  const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+  const bridge = createModelBridge(platform);
+  const candidates = resolveAllCandidates(
+    options.actionId ?? "fix-agent",
+    modelRegistry,
+    modelConfig,
+    bridge,
+  );
 
-    // Fallback: if resolver returned no model, use the parent session's model
-    const model = resolved.model ?? options.parentSessionModel;
-
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, model, resolved.thinkingLevel);
-    return {
-      taskId: task.id,
-      status: result.status,
-      output: result.output,
-      concerns: result.concerns,
-      filesChanged: result.filesChanged,
-      duration: Date.now() - startTime,
-    };
-  } catch (error) {
-    return {
-      taskId: task.id,
-      status: "blocked",
-      output: `Fix agent error: ${error instanceof Error ? error.message : String(error)}`,
-      filesChanged: [],
-      duration: Date.now() - startTime,
-    };
+  if (options.parentSessionModel) {
+    const alreadyPresent = candidates.some((c) => c.model === options.parentSessionModel);
+    if (!alreadyPresent) {
+      candidates.push({ model: options.parentSessionModel, thinkingLevel: null, source: "main" });
+    }
   }
+
+  if (candidates.length === 0) {
+    candidates.push({ model: undefined, thinkingLevel: null, source: "main" });
+  }
+
+  let lastError: unknown = null;
+
+  for (const candidate of candidates) {
+    try {
+      const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, candidate.model, candidate.thinkingLevel);
+      return {
+        taskId: task.id,
+        status: result.status,
+        output: result.output,
+        concerns: result.concerns,
+        filesChanged: result.filesChanged,
+        duration: Date.now() - startTime,
+      };
+    } catch (error) {
+      lastError = error;
+      if (!isModelAuthError(error)) break;
+    }
+  }
+
+  return {
+    taskId: task.id,
+    status: "blocked",
+    output: friendlyErrorMessage(lastError),
+    filesChanged: [],
+    duration: Date.now() - startTime,
+  };
 }
