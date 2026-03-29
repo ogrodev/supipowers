@@ -19,6 +19,39 @@ import {
   notifyInfo,
 } from "../notifications/renderer.js";
 import type { RunProgressState } from "./run-progress.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+
+modelRegistry.register({
+  id: "implementer",
+  category: "sub-agent",
+  parent: "run",
+  label: "Implementer",
+  harnessRoleHint: "default",
+});
+
+modelRegistry.register({
+  id: "spec-reviewer",
+  category: "sub-agent",
+  parent: "run",
+  label: "Spec Reviewer",
+  harnessRoleHint: "slow",
+});
+
+modelRegistry.register({
+  id: "quality-reviewer",
+  category: "sub-agent",
+  parent: "run",
+  label: "Quality Reviewer",
+  harnessRoleHint: "slow",
+});
+
+modelRegistry.register({
+  id: "fix-agent",
+  category: "sub-agent",
+  parent: "run",
+  label: "Fix Agent",
+  harnessRoleHint: "default",
+});
 
 export interface DispatchOptions {
   platform: Platform;

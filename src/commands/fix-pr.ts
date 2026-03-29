@@ -11,6 +11,14 @@ import {
   getSessionDir,
 } from "../storage/fix-pr-sessions.js";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+
+modelRegistry.register({
+  id: "fix-pr",
+  category: "command",
+  label: "Fix PR",
+  harnessRoleHint: "default",
+});
 
 function getScriptsDir(): string {
   return path.join(path.dirname(new URL(import.meta.url).pathname), "..", "fix-pr", "scripts");

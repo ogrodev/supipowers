@@ -27,6 +27,14 @@ import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import type { AgentResult } from "../types.js";
 import { RunProgressState, activeRuns } from "../orchestrator/run-progress.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+
+modelRegistry.register({
+  id: "run",
+  category: "command",
+  label: "Run",
+  harnessRoleHint: "default",
+});
 
 interface ParsedRunArgs {
   profile?: string;

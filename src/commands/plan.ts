@@ -11,6 +11,14 @@ import { buildVisualInstructions } from "../visual/prompt-instructions.js";
 import { buildPlanningPrompt, buildQuickPlanPrompt } from "../planning/prompt-builder.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { modelRegistry } from "../config/model-registry-instance.js";
+
+modelRegistry.register({
+  id: "plan",
+  category: "command",
+  label: "Plan",
+  harnessRoleHint: "plan",
+});
 
 /** Module-level tracking for cleanup */
 let activeSessionDir: string | null = null;
