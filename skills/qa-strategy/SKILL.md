@@ -1,11 +1,9 @@
 ---
 name: qa-strategy
-description: E2E QA strategy — flow-based product testing with disciplined triage, regression analysis, and autonomous execution
+description: E2E QA strategy — flow-based product testing with disciplined triage, regression detection, and autonomous execution
 ---
 
 # E2E QA Strategy
-
-## Core Principle
 
 Test the product the way a user uses it. Every test simulates a real user flow — navigating, clicking, filling forms, waiting for responses. If a human wouldn't do it, don't test it here.
 
@@ -15,7 +13,7 @@ Test the product the way a user uses it. Every test simulates a real user flow �
 
 **EVERY FAILURE GETS A VERDICT BEFORE THE NEXT TEST RUNS.**
 
-Don't accumulate a pile of failures to analyze later. Triage each failure immediately: is it a real bug, a flaky test, or a stale assertion? Unclassified failures are useless data.
+Don't accumulate failures to analyze later. Triage each failure immediately: real bug, flaky test, or stale assertion? Unclassified failures are useless data.
 
 ## Flow Prioritization
 
@@ -67,9 +65,12 @@ await expect(page.getByText('Loading...')).not.toBeVisible();
 
 // BAD — arbitrary delay, flaky by design
 await page.waitForTimeout(3000);
+
+// BAD — unreliable for SPAs
+await page.waitForLoadState('networkidle');
 ```
 
-`waitForTimeout` is never acceptable. If you can't identify what to wait for, you don't understand the flow well enough to test it.
+`waitForTimeout` is never acceptable. `networkidle` is equally unreliable — SPAs keep sockets open, so it either hangs or resolves before dynamic content loads. Wait for the specific element or response that proves the page is ready.
 
 ### One Flow Per File
 
@@ -114,13 +115,15 @@ For each regression, record:
 
 **Regressions are the highest-priority output of the pipeline.** A session that finds zero regressions in a stable app is successful. A session that misclassifies a regression as a flaky test has failed.
 
-## Common Pitfalls
+## Red Flags — STOP and Investigate
 
-1. **Testing internal state** — don't check stores, localStorage, or cookies. Test what the user sees.
-2. **Shared state between tests** — each test sets up its own state. No execution order dependence.
-3. **Over-testing** — one flow per critical path. Don't test every form permutation.
-4. **Ignoring error states** — test what happens when the API errors, the network is slow, or input is invalid.
-5. **Accumulating failures** — triage each failure before moving on. A pile of unclassified failures is noise.
+- Accumulating failures without triaging each one
+- Retrying a test without understanding why it failed
+- Testing internal state (stores, localStorage, cookies) instead of what the user sees
+- Tests that depend on execution order or shared state
+- Using `waitForTimeout` or `networkidle` instead of explicit conditions
+- Spending the token budget on low-priority flows while critical flows remain untested
+- Classifying a regression as "flaky" without evidence of non-determinism
 
 ## Quality Signals
 
