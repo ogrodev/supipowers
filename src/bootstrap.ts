@@ -17,6 +17,7 @@ import { registerMcpCommand, handleMcp, handleMcpCli, parseCliArgs } from "./com
 import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { loadConfig } from "./config/loader.js";
+import { migrateModelPreference } from "./config/model-config.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { registerProgressRenderer } from "./orchestrator/progress-renderer.js";
 import { loadMcpRegistry } from "./mcp/config.js";
@@ -95,6 +96,9 @@ export function bootstrap(platform: Platform): void {
   // Context-mode integration
   const config = loadConfig(platform.paths, process.cwd());
   registerContextModeHooks(platform, config);
+
+  // Migrate old modelPreference to model.json
+  migrateModelPreference(platform.paths, process.cwd());
 
   // MCP per-turn activation
   platform.on("before_agent_start", async (event, ctx) => {

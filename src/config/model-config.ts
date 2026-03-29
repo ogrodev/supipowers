@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ModelConfig, ModelAssignment } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
+import { loadConfig } from "./loader.js";
 
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   version: "1.0.0",
@@ -113,4 +114,22 @@ export function getAssignmentSource(
   if (globalConfig?.default) return "default-global";
 
   return "main";
+}
+
+export function migrateModelPreference(paths: PlatformPaths, cwd: string): void {
+  const modelPath = getProjectModelPath(paths, cwd);
+  if (fs.existsSync(modelPath)) return; // already has model.json
+
+  const config = loadConfig(paths, cwd);
+  const pref = config.orchestration.modelPreference;
+  if (!pref || pref === "auto") return; // nothing to migrate
+
+  const migrated: ModelConfig = {
+    version: "1.0.0",
+    default: { model: pref, thinkingLevel: null },
+    actions: {},
+  };
+
+  fs.mkdirSync(path.dirname(modelPath), { recursive: true });
+  fs.writeFileSync(modelPath, JSON.stringify(migrated, null, 2) + "\n");
 }

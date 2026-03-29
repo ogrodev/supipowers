@@ -6,8 +6,10 @@ import {
   loadModelConfig,
   saveModelAssignment,
   getAssignmentSource,
+  migrateModelPreference,
   DEFAULT_MODEL_CONFIG,
 } from "../../src/config/model-config.js";
+import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { createPaths } from "../../src/platform/types.js";
 
 const paths = createPaths(".omp");
@@ -139,5 +141,71 @@ describe("getAssignmentSource", () => {
     });
     const source = getAssignmentSource(paths, tmpDir, "review");
     expect(source).toBe("default-project");
+  });
+});
+
+describe("migration from modelPreference", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-model-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("migrates modelPreference to model.json default on first load", () => {
+    const configDir = path.join(tmpDir, ".omp", "supipowers");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        ...DEFAULT_CONFIG,
+        orchestration: { ...DEFAULT_CONFIG.orchestration, modelPreference: "claude-opus-4-6" },
+      }),
+    );
+
+    migrateModelPreference(paths, tmpDir);
+
+    const modelPath = path.join(configDir, "model.json");
+    expect(fs.existsSync(modelPath)).toBe(true);
+    const modelJson = JSON.parse(fs.readFileSync(modelPath, "utf-8"));
+    expect(modelJson.default.model).toBe("claude-opus-4-6");
+  });
+
+  test("does not migrate when modelPreference is 'auto'", () => {
+    const configDir = path.join(tmpDir, ".omp", "supipowers");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify(DEFAULT_CONFIG),
+    );
+
+    migrateModelPreference(paths, tmpDir);
+
+    const modelPath = path.join(configDir, "model.json");
+    expect(fs.existsSync(modelPath)).toBe(false);
+  });
+
+  test("does not migrate when model.json already exists", () => {
+    const configDir = path.join(tmpDir, ".omp", "supipowers");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        ...DEFAULT_CONFIG,
+        orchestration: { ...DEFAULT_CONFIG.orchestration, modelPreference: "claude-opus-4-6" },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(configDir, "model.json"),
+      JSON.stringify({ version: "1.0.0", default: null, actions: {} }),
+    );
+
+    migrateModelPreference(paths, tmpDir);
+
+    const modelJson = JSON.parse(fs.readFileSync(path.join(configDir, "model.json"), "utf-8"));
+    expect(modelJson.default).toBeNull();
   });
 });
