@@ -128,6 +128,11 @@ export interface Platform {
   // Rendering
   registerMessageRenderer<T>(type: string, renderer: any): void;
 
+  // Model access
+  setModel?(model: string): void;
+  getCurrentModel?(): string;
+  getModelForRole?(role: string): string | null;
+
   // Agent Sessions
   createAgentSession(opts: AgentSessionOptions): Promise<AgentSession>;
 

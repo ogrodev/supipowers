@@ -17,6 +17,17 @@ export function createPiAdapter(pi: any): Platform {
       });
     },
     registerMessageRenderer: (type, fn) => pi.registerMessageRenderer(type, fn),
+
+    setModel(_model: string): void {
+      // Pi doesn't support runtime model switching
+    },
+    getCurrentModel(): string {
+      return "unknown";
+    },
+    getModelForRole(_role: string): string | null {
+      return null;
+    },
+
     on: (event, handler) => pi.on(event, handler),
 
     createAgentSession: async (opts: AgentSessionOptions): Promise<AgentSession> => {

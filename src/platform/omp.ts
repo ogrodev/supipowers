@@ -16,6 +16,16 @@ export function createOmpAdapter(pi: any): Platform {
     },
     registerMessageRenderer: (type, fn) => pi.registerMessageRenderer(type, fn),
 
+    setModel(model: string): void {
+      pi.setModel(model);
+    },
+    getCurrentModel(): string {
+      return pi.getCurrentModel?.() ?? "unknown";
+    },
+    getModelForRole(role: string): string | null {
+      return pi.getModelForRole?.(role) ?? null;
+    },
+
     on: (event: string, handler: any) => {
       if (event === "input") {
         pi.on("input", (evt: any, ctx: any) => {
