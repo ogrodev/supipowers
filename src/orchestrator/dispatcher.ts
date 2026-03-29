@@ -20,6 +20,8 @@ import {
 } from "../notifications/renderer.js";
 import type { RunProgressState } from "./run-progress.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
   id: "implementer",
@@ -65,6 +67,18 @@ export interface DispatchOptions {
   lspAvailable: boolean;
   contextModeAvailable: boolean;
   progress?: RunProgressState;
+  actionId?: string;
+}
+
+function createModelBridge(platform: Platform): ModelPlatformBridge {
+  return {
+    getModelForRole(role: string): string | null {
+      return platform.getModelForRole?.(role) ?? null;
+    },
+    getCurrentModel(): string {
+      return platform.getCurrentModel?.() ?? "unknown";
+    },
+  };
 }
 
 export async function dispatchAgent(
@@ -79,7 +93,16 @@ export async function dispatchAgent(
   progress?.setStatus(task.id, "running");
 
   try {
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress);
+    const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+    const bridge = createModelBridge(platform);
+    const resolved = resolveModelForAction(
+      options.actionId ?? "implementer",
+      modelRegistry,
+      modelConfig,
+      bridge,
+    );
+
+    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, resolved.model, resolved.thinkingLevel);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -165,6 +188,8 @@ async function executeSubAgent(
   config: SupipowersConfig,
   ctx?: NotifyCtx,
   progress?: RunProgressState,
+  model?: string,
+  thinkingLevel?: string | null,
 ): Promise<SubAgentResult> {
   if (typeof platform.createAgentSession !== "function") {
     throw new Error(
@@ -177,6 +202,8 @@ async function executeSubAgent(
     cwd: process.cwd(),
     taskDepth: 1,
     parentTaskPrefix: `task-${task.id}`,
+    ...(model ? { model } : {}),
+    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
   });
 
   // Track files changed and emit live progress
@@ -410,8 +437,12 @@ async function dispatchSpecReview(
     implementerReport: implementResult.output,
   });
 
+  const modelConfig = loadModelConfig(platform.paths, process.cwd());
+  const bridge = createModelBridge(platform);
+  const resolved = resolveModelForAction("spec-reviewer", modelRegistry, modelConfig, bridge);
+
   try {
-    const result = await executeSubAgent(platform, prompt, task, config);
+    const result = await executeSubAgent(platform, prompt, task, config, undefined, undefined, resolved.model, resolved.thinkingLevel);
     const passed =
       result.status === "done" ||
       result.output.toLowerCase().includes("spec compliant");
@@ -439,8 +470,12 @@ async function dispatchQualityReview(
     headSha: "HEAD",
   });
 
+  const modelConfig = loadModelConfig(platform.paths, process.cwd());
+  const bridge = createModelBridge(platform);
+  const resolved = resolveModelForAction("quality-reviewer", modelRegistry, modelConfig, bridge);
+
   try {
-    const result = await executeSubAgent(platform, prompt, task, config);
+    const result = await executeSubAgent(platform, prompt, task, config, undefined, undefined, resolved.model, resolved.thinkingLevel);
     const hasCritical = result.output.toLowerCase().includes("critical");
     return {
       passed: !hasCritical,
@@ -470,7 +505,16 @@ export async function dispatchFixAgent(
   progress?.setStatus(task.id, "running");
 
   try {
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress);
+    const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+    const bridge = createModelBridge(platform);
+    const resolved = resolveModelForAction(
+      options.actionId ?? "fix-agent",
+      modelRegistry,
+      modelConfig,
+      bridge,
+    );
+
+    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, resolved.model, resolved.thinkingLevel);
     return {
       taskId: task.id,
       status: result.status,

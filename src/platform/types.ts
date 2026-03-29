@@ -45,6 +45,8 @@ export interface AgentSessionOptions {
   cwd?: string;
   taskDepth?: number;
   parentTaskPrefix?: string;
+  model?: string;
+  thinkingLevel?: string | null;
   [key: string]: unknown;
 }
 
