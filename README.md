@@ -52,6 +52,7 @@ The installer scans for these and offers to install any that are missing. Everyt
 | [Pyright](https://github.com/microsoft/pyright) | LSP | Python type checking and language features | `pip install pyright` |
 | [rust-analyzer](https://rust-analyzer.github.io) | LSP | Rust language server | `rustup component add rust-analyzer` |
 | [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) | LSP | Go language server | `go install golang.org/x/tools/gopls@latest` |
+| [playwright-cli](https://github.com/microsoft/playwright-cli) | Testing | Browser automation for E2E testing via `/supi:qa --e2e` | `npm install -g @playwright/cli@latest` |
 
 LSP servers are language-specific. You only need the ones matching the languages in your project. Sub-agents use them to check diagnostics and find references before making changes.
 
@@ -120,7 +121,7 @@ When no flag is provided, a TUI picker lets you choose the review profile intera
 /supi:qa --e2e        # Playwright / E2E only
 ```
 
-Detects your test framework on first run (vitest, jest, pytest, cargo test, go test) and caches it. When no flag is provided, a TUI picker lets you choose the scope.
+Detects your test framework on first run (vitest, jest, pytest, cargo test, go test) and caches it. E2E mode (`--e2e`) uses `playwright-cli` to run browser tests autonomously. When no flag is provided, a TUI picker lets you choose the scope.
 
 ### Fix PR
 
