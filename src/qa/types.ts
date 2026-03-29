@@ -12,7 +12,6 @@ export interface AppTypeInfo {
 // ── Configuration ──────────────────────────────────────────────────
 
 export interface PlaywrightConfig {
-  browser: "chromium" | "firefox" | "webkit";
   headless: boolean;
   timeout: number;
 }

@@ -28,7 +28,6 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     `- Base URL: \`${appType.baseUrl}\``,
     `- Dev command: \`${appType.devCommand}\``,
     `- Port: ${appType.port}`,
-    `- Browser: ${playwright.browser}`,
     `- Headless: ${playwright.headless}`,
     `- Test timeout: ${playwright.timeout}ms`,
     `- maxRetries: ${execution.maxRetries}`,

@@ -33,11 +33,6 @@ const APP_TYPE_OPTIONS = [
   "generic — Other web app",
 ];
 
-const BROWSER_OPTIONS = [
-  "chromium (recommended)",
-  "firefox",
-  "webkit",
-];
 
 const RETRY_OPTIONS = [
   "1",
@@ -79,16 +74,7 @@ async function runSetupWizard(
   if (portStr === undefined) return null;
   const port = parseInt(portStr, 10) || 3000;
 
-  // 4. Browser
-  const browserChoice = await ctx.ui.select(
-    "Browser for E2E tests",
-    BROWSER_OPTIONS,
-    { helpText: "Playwright browser to use" },
-  );
-  if (!browserChoice) return null;
-  const browser = browserChoice.split(" ")[0] as "chromium" | "firefox" | "webkit";
-
-  // 5. Max retries
+  // 4. Max retries
   const retryChoice = await ctx.ui.select(
     "Max test retries",
     RETRY_OPTIONS,
@@ -105,7 +91,6 @@ async function runSetupWizard(
       baseUrl: `http://localhost:${port}`,
     },
     playwright: {
-      browser,
       headless: true,
       timeout: 30000,
     },
