@@ -44,9 +44,11 @@ export function resolveModelForAction(
     };
   }
 
-  // Tier 4: Main session model
+  // Tier 4: Main session model (may be undefined if harness doesn't report one)
+  const mainModel = platform.getCurrentModel();
+  const validMain = mainModel && mainModel !== "unknown" ? mainModel : undefined;
   return {
-    model: platform.getCurrentModel(),
+    model: validMain,
     thinkingLevel: null,
     source: "main",
   };
@@ -84,13 +86,16 @@ export function resolveAllCandidates(
     candidates.push({ model: roleModel, thinkingLevel: null, source: "harness-role" });
   }
 
-  // Tier 4 (always present)
-  candidates.push({ model: platform.getCurrentModel(), thinkingLevel: null, source: "main" });
+  // Tier 4: Main session model (skip if harness doesn't report a valid one)
+  const mainModel = platform.getCurrentModel();
+  if (mainModel && mainModel !== "unknown") {
+    candidates.push({ model: mainModel, thinkingLevel: null, source: "main" });
+  }
 
   // Deduplicate by model (keep first occurrence = highest priority)
   const seen = new Set<string>();
   return candidates.filter((c) => {
-    if (seen.has(c.model)) return false;
+    if (!c.model || seen.has(c.model)) return false;
     seen.add(c.model);
     return true;
   });

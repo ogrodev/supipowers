@@ -20,5 +20,19 @@
   },
   "release": {
     "pipeline": "npm"
+  },
+  "contextMode": {
+    "enabled": true,
+    "compressionThreshold": 4096,
+    "blockHttpCommands": true,
+    "routingInstructions": true,
+    "eventTracking": true,
+    "compaction": true,
+    "llmSummarization": false,
+    "llmThreshold": 16384,
+    "enforceRouting": true
+  },
+  "mcp": {
+    "closeSessionsOnExit": false
   }
 }

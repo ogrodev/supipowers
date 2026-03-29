@@ -168,7 +168,7 @@ export interface ModelAction {
 export type ModelSource = "action" | "default" | "harness-role" | "main";
 
 export interface ResolvedModel {
-  model: string;
+  model: string | undefined;
   thinkingLevel: ThinkingLevel | null;
   source: ModelSource;
 }

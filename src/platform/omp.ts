@@ -11,7 +11,7 @@ export function createOmpAdapter(pi: any): Platform {
     sendMessage: (content, opts) => {
       pi.sendMessage(content, {
         deliverAs: opts?.deliverAs ?? "steer",
-        triggerTurn: opts?.triggerTurn ?? true,
+        triggerTurn: opts?.triggerTurn ?? false,
       });
     },
     registerMessageRenderer: (type, fn) => pi.registerMessageRenderer(type, fn),

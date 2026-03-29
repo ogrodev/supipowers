@@ -1,6 +1,6 @@
 {
   "name": "supipowers",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Workflow extension for Pi and OMP coding agents.",
   "type": "module",
   "scripts": {
@@ -52,9 +52,15 @@
     "@sinclair/typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@mariozechner/pi-coding-agent": { "optional": true },
-    "@oh-my-pi/pi-coding-agent": { "optional": true },
-    "@oh-my-pi/pi-tui": { "optional": true }
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-tui": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@oh-my-pi/pi-coding-agent": "latest",

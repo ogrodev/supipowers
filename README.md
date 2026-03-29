@@ -30,22 +30,50 @@ The installer detects which agent you're running (Pi or OMP), copies supipowers 
 
 Checks npm for the latest version, downloads and installs it. No prompts, no restart needed.
 
+## Requirements
+
+### Required
+
+| Dependency | What it's for |
+| --- | --- |
+| [Pi](https://github.com/mariozechner/pi-coding-agent) or [OMP](https://github.com/can1357/oh-my-pi) | The coding agent that supipowers extends |
+| [Bun](https://bun.sh) | Runtime (provides bun:sqlite with FTS5 for full-text search) |
+| [Git](https://git-scm.com) | Version control (used by the installer and context-mode setup) |
+
+### Optional
+
+The installer scans for these and offers to install any that are missing. Everything works without them, but each one unlocks additional capabilities.
+
+| Dependency | Category | What it enables | Install command |
+| --- | --- | --- | --- |
+| [mcpc](https://github.com/apify/mcpc) | MCP | MCP server management via `/supi:mcp` | `npm install -g @apify/mcpc` |
+| [context-mode](https://github.com/mksglu/context-mode) | MCP | Context window protection (auto-routes large outputs through sandboxed execution) | Installed as extension via `git clone` + `npm install` |
+| [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) | LSP | TypeScript/JavaScript diagnostics, references, completions | `bun add -g typescript-language-server typescript` |
+| [Pyright](https://github.com/microsoft/pyright) | LSP | Python type checking and language features | `pip install pyright` |
+| [rust-analyzer](https://rust-analyzer.github.io) | LSP | Rust language server | `rustup component add rust-analyzer` |
+| [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) | LSP | Go language server | `go install golang.org/x/tools/gopls@latest` |
+
+LSP servers are language-specific. You only need the ones matching the languages in your project. Sub-agents use them to check diagnostics and find references before making changes.
+
+> [!TIP]
+> Run `/supi:doctor` at any time to check which dependencies are installed and which are missing.
+
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `/supi` | Interactive menu with commands and project status |
-| `/supi:plan` | Collaborative planning with structured task breakdown |
-| `/supi:run` | Execute a plan with parallel sub-agents |
-| `/supi:review` | Quality gates at chosen depth |
-| `/supi:qa` | Run test suite and E2E pipeline |
-| `/supi:release` | Version bump, release notes, publish |
-| `/supi:fix-pr` | Assess and fix PR review comments |
-| `/supi:mcp` | Manage MCP servers (connect, disconnect, list) |
-| `/supi:config` | Interactive settings (TUI) |
-| `/supi:status` | Check running sub-agents and progress |
-| `/supi:doctor` | Diagnose extension health and configuration |
-| `/supi:update` | Update supipowers to latest version |
+| Command         | What it does                                          |
+| --------------- | ----------------------------------------------------- |
+| `/supi`         | Interactive menu with commands and project status     |
+| `/supi:plan`    | Collaborative planning with structured task breakdown |
+| `/supi:run`     | Execute a plan with parallel sub-agents               |
+| `/supi:review`  | Quality gates at chosen depth                         |
+| `/supi:qa`      | Run test suite and E2E pipeline                       |
+| `/supi:release` | Version bump, release notes, publish                  |
+| `/supi:fix-pr`  | Assess and fix PR review comments                     |
+| `/supi:mcp`     | Manage MCP servers (connect, disconnect, list)        |
+| `/supi:config`  | Interactive settings (TUI)                            |
+| `/supi:status`  | Check running sub-agents and progress                 |
+| `/supi:doctor`  | Diagnose extension health and configuration           |
+| `/supi:update`  | Update supipowers to latest version                   |
 
 Commands like `/supi`, `/supi:config`, `/supi:status`, and `/supi:update` open native TUI dialogs. They don't send chat messages or trigger the AI.
 
@@ -145,11 +173,11 @@ Opens an interactive settings screen. Select a setting to change its value: togg
 
 Three built-in profiles control quality gate depth:
 
-| Profile | LSP | AI Review | Code Quality | Tests | E2E |
-| --- | --- | --- | --- | --- | --- |
-| `quick` | yes | quick scan | no | no | no |
-| `thorough` | yes | deep review | yes | no | no |
-| `full-regression` | yes | deep review | yes | yes | yes |
+| Profile           | LSP | AI Review   | Code Quality | Tests | E2E |
+| ----------------- | --- | ----------- | ------------ | ----- | --- |
+| `quick`           | yes | quick scan  | no           | no    | no  |
+| `thorough`        | yes | deep review | yes          | no    | no  |
+| `full-regression` | yes | deep review | yes          | yes   | yes |
 
 Create custom profiles in `.omp/supipowers/profiles/`.
 
@@ -159,18 +187,18 @@ Create custom profiles in `.omp/supipowers/profiles/`.
 {
   "defaultProfile": "thorough",
   "orchestration": {
-    "maxParallelAgents": 3,   // concurrent sub-agents per batch
-    "maxFixRetries": 2,       // retry failed tasks
-    "maxNestingDepth": 2,     // sub-agent nesting limit
-    "modelPreference": "auto"
+    "maxParallelAgents": 3, // concurrent sub-agents per batch
+    "maxFixRetries": 2, // retry failed tasks
+    "maxNestingDepth": 2, // sub-agent nesting limit
+    "modelPreference": "auto",
   },
   "lsp": {
-    "setupGuide": true
+    "setupGuide": true,
   },
   "qa": {
-    "framework": null,  // auto-detected and cached
-    "command": null
-  }
+    "framework": null, // auto-detected and cached
+    "command": null,
+  },
 }
 ```
 
@@ -180,17 +208,17 @@ Config lives in `~/.omp/agent/extensions/supipowers/` (OMP) or `~/.pi/agent/exte
 
 Supipowers ships with prompt skills that commands load at runtime to steer AI sessions:
 
-| Skill | Used by |
-| --- | --- |
-| `planning` | `/supi:plan` |
-| `code-review` | `/supi:review` |
-| `debugging` | Failure retry loop |
-| `qa-strategy` | `/supi:qa` |
-| `fix-pr` | `/supi:fix-pr` |
-| `tdd` | Plan tasks with test-first annotations |
-| `verification` | Pre-completion checks |
-| `receiving-code-review` | Review comment assessment |
-| `context-mode` | Context-mode routing hooks |
+| Skill                   | Used by                                |
+| ----------------------- | -------------------------------------- |
+| `planning`              | `/supi:plan`                           |
+| `code-review`           | `/supi:review`                         |
+| `debugging`             | Failure retry loop                     |
+| `qa-strategy`           | `/supi:qa`                             |
+| `fix-pr`                | `/supi:fix-pr`                         |
+| `tdd`                   | Plan tasks with test-first annotations |
+| `verification`          | Pre-completion checks                  |
+| `receiving-code-review` | Review comment assessment              |
+| `context-mode`          | Context-mode routing hooks             |
 
 Skills are markdown files in `skills/`. They're loaded on demand, not bundled at build time.
 
@@ -258,10 +286,6 @@ The test suite mirrors the `src/` structure under `tests/`. Tests use Vitest wit
 > [!NOTE]
 > Supipowers works with both Pi and OMP. The platform abstraction in `src/platform/` normalizes API differences (event names, tool registration, message delivery) so you can develop against either agent.
 
-## Requirements
-
-- [Pi](https://github.com/mariozechner/pi-coding-agent) or [OMP](https://github.com/can1357/oh-my-pi)
-- [Bun](https://bun.sh) runtime
 
 ## License
 

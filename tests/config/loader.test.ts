@@ -6,6 +6,7 @@ import * as os from "node:os";
 import { loadConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { createPaths } from "../../src/platform/types.js";
+import { AGENT_ROLES } from "../../src/types.js";
 
 const paths = createPaths(".omp");
 
@@ -109,5 +110,27 @@ describe("contextMode config", () => {
     });
     expect(config.contextMode.compressionThreshold).toBe(8192);
     expect(config.contextMode.enabled).toBe(true); // untouched fields preserved
+  });
+});
+
+describe("AgentRole", () => {
+  test("AGENT_ROLES contains all known sub-agent roles", () => {
+    expect(AGENT_ROLES).toContain("implementer");
+    expect(AGENT_ROLES).toContain("spec-reviewer");
+    expect(AGENT_ROLES).toContain("quality-reviewer");
+    expect(AGENT_ROLES).toContain("fix-agent");
+  });
+
+  test("AGENT_ROLES has no duplicates", () => {
+    const unique = new Set(AGENT_ROLES);
+    expect(unique.size).toBe(AGENT_ROLES.length);
+  });
+
+  test("AGENT_ROLES has expected length", () => {
+    expect(AGENT_ROLES.length).toBe(4);
+    for (const role of AGENT_ROLES) {
+      expect(typeof role).toBe("string");
+      expect(role.length).toBeGreaterThan(0);
+    }
   });
 });

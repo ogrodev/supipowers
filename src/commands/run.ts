@@ -220,6 +220,7 @@ export function registerRunCommand(platform: Platform): void {
           display: "custom",
           details: { runId: manifest.id },
         },
+        { deliverAs: "steer", triggerTurn: false },
       );
 
       try {
