@@ -16,11 +16,13 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
   const { appType, sessionDir, scriptsDir, config, discoveredRoutes, previousMatrix, skillContent, dotDirDisplay } = options;
   const { playwright, execution } = config;
 
+  const headedFlag = playwright.headless ? "" : " --headed";
+
   const sections: string[] = [
     "# E2E QA Pipeline — Autonomous Execution",
     "",
     `You are an autonomous E2E QA pipeline for a **${appType.type}** application.`,
-    "Run all phases sequentially without stopping. Use the provided scripts for heavy operations.",
+    "Run all phases sequentially without stopping. Use `playwright-cli` for browser interactions and the provided scripts for test execution.",
     "",
     "## Session Context",
     "",
@@ -51,17 +53,15 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     );
   }
 
-  // Discovered routes
+  // Route hints (not authoritative — playwright-cli exploration is the source of truth)
   sections.push(
-    "## Discovered Routes",
+    "## Route Hints",
     "",
-    "Pre-scanned routes/pages/forms from the codebase (JSONL):",
+    "Pre-scanned routes from the codebase (JSONL). These are **starting hints** — use `playwright-cli` interactive exploration as the authoritative source.",
     "",
     "```jsonl",
     discoveredRoutes,
     "```",
-    "",
-    "Use these as a starting point. You may discover additional flows by reading the codebase.",
     "",
   );
 
@@ -75,21 +75,33 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     );
   }
 
-  // Step 1: Flow Discovery
+  // Step 1: Flow Discovery — interactive exploration via playwright-cli
   sections.push(
     "## Step 1: Flow Discovery",
     "",
-    "Analyze the discovered routes and the codebase to identify user flows:",
+    "Explore the application interactively using `playwright-cli` to build a complete flow catalog:",
     "",
-    "1. Read the route scan output above",
-    "2. Explore the codebase for additional flows not captured by the scan (modals, multi-step wizards, etc.)",
-    "3. Identify forms, auth flows, CRUD operations, navigation patterns",
-    "4. Compare against the previous matrix (if any) to detect:",
-    "   - **New flows**: routes that weren't in the matrix before",
-    "   - **Removed flows**: routes in the matrix that no longer exist",
-    "   - **Changed flows**: routes whose structure or behavior changed",
-    "5. Assign priority: critical (auth, payment), high (core CRUD), medium (secondary features), low (nice-to-have)",
-    `6. Write the flow manifest to \`${sessionDir}/flows.json\``,
+    `1. Launch the browser: \`playwright-cli open${headedFlag} ${appType.baseUrl}\``,
+    "2. Get element references: `playwright-cli snapshot`",
+    `3. Navigate to routes from the hints above: \`playwright-cli goto ${appType.baseUrl}/...\``,
+    "4. Interact with elements: `playwright-cli click <ref>`, `playwright-cli fill <ref> <value>`",
+    "5. Capture key states: `playwright-cli screenshot`",
+    "6. For each page/flow discovered, record:",
+    "   - Entry route and navigation path",
+    "   - Interactive elements (forms, buttons, links)",
+    "   - Expected outcomes and assertions",
+    "",
+    "Supplement with codebase analysis:",
+    "- Explore the code for additional flows not visible from the UI (modals, multi-step wizards, error states)",
+    "- Identify auth flows, CRUD operations, navigation patterns",
+    "",
+    "Compare against the previous matrix (if any) to detect:",
+    "- **New flows**: routes that weren't in the matrix before",
+    "- **Removed flows**: routes in the matrix that no longer exist",
+    "- **Changed flows**: routes whose structure or behavior changed",
+    "",
+    "Assign priority: critical (auth, payment), high (core CRUD), medium (secondary features), low (nice-to-have)",
+    `Write the flow manifest to \`${sessionDir}/flows.json\``,
     "",
   );
 
@@ -104,7 +116,7 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "3. Use playwright best practices:",
     "   - Use `page.getByRole()`, `page.getByText()`, `page.getByTestId()` for locators",
     "   - Use `expect(page).toHaveURL()`, `expect(locator).toBeVisible()` for assertions",
-    "   - Use `page.waitForLoadState('networkidle')` or `page.waitForSelector()` before assertions",
+    "   - Use `page.waitForSelector()` or `expect(locator).toBeVisible()` before assertions — never use `networkidle` (unreliable for SPAs)",
     "   - Set meaningful test descriptions that describe the user journey",
     `4. Import from \`@playwright/test\``,
     `5. Each test should start with \`await page.goto('${appType.baseUrl}/...')\``,
@@ -169,7 +181,7 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "",
     `Update the persistent matrix at \`${dotDirDisplay}/supipowers/e2e-matrix.json\`:`,
     "- Update `lastStatus` and `lastTestedAt` for each tested flow",
-    "- Add new flows with `lastStatus: \"untested\"` and `addedAt` timestamp",
+    '- Add new flows with `lastStatus: "untested"` and `addedAt` timestamp',
     "- Mark removed flows with `removedAt` timestamp (don't delete them)",
     "",
     "Write the final report to the session ledger:",
@@ -199,11 +211,23 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "## Token Guidance",
     "",
     "To minimize token usage:",
-    "- Always use `run-e2e-tests.sh` — never run playwright directly",
+    "- Always use `run-e2e-tests.sh` — never run playwright directly for test execution",
+    "- Use `playwright-cli snapshot` instead of `playwright-cli screenshot` when you only need element structure",
     "- Only read the `failures` array from test results, skip passed tests",
     "- Don't cat full test files when analyzing failures — read only the failing line range",
     "- Write tests incrementally by flow group, run after each group to catch issues early",
     "- Don't dump raw playwright output — the script produces a compact JSON summary",
+    "",
+  );
+
+  // Troubleshooting
+  sections.push(
+    "## Troubleshooting",
+    "",
+    "If `playwright-cli open` fails or the browser does not launch:",
+    "1. Verify installation: `playwright-cli --version`",
+    "2. If not installed: `npm install -g @playwright/cli@latest`",
+    "3. If installed but failing: check that browser binaries are available (the CLI manages them internally)",
     "",
   );
 
