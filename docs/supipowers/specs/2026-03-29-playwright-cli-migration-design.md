@@ -119,7 +119,7 @@ playwright: {
 ### 4. Command (`src/commands/qa.ts`)
 
 **Setup wizard changes:**
-- Remove the browser picker step (Step 4 in the current wizard). Three fewer TUI interactions.
+- Remove the browser picker step (Step 4 in the current wizard). One fewer TUI interaction.
 - Step count goes from 5 to 4: app type → dev command → port → max retries.
 
 **Playwright check (Step 2) changes:**
@@ -156,6 +156,9 @@ References to `run-e2e-tests.sh` update to reflect the rewritten script. Script 
 - Phase advancement logic
 - Result collection format
 
+**What must be removed:**
+- The `- Browser: ${playwright.browser}` line in Session Context (the `browser` field no longer exists on `PlaywrightConfig`)
+
 ### 6. Deps Registry (`src/deps/registry.ts`)
 
 Add new dependency entry:
@@ -173,7 +176,10 @@ Add new dependency entry:
 }
 ```
 
-The `"testing"` category is new alongside existing `"core"`, `"mcp"`, `"lsp"`.
+The `"testing"` category is new alongside existing `"core"`, `"mcp"`, `"lsp"`. This requires:
+- Widening the `Dependency.category` type union to include `"testing"`
+- Adding `"testing"` to the `categoryLabels` map in `formatReport`
+- Adding `"testing"` to the category iteration loop in `formatReport` so the new entry appears in status output
 
 ### 7. Skill (`skills/qa-strategy/SKILL.md`)
 
@@ -231,3 +237,4 @@ No integration/E2E tests for the CLI itself (requires a running browser). Tests 
 | Modify | `tests/qa/config.test.ts` |
 | Modify | `tests/qa/types.test.ts` |
 | Modify | `tests/qa/prompt-builder.test.ts` |
+| Modify | `tests/deps/registry.test.ts` |
