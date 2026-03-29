@@ -12,6 +12,8 @@ import {
 } from "../storage/fix-pr-sessions.js";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
   id: "fix-pr",
@@ -173,6 +175,17 @@ export function registerFixPrCommand(platform: Platform): void {
         iteration: ledger.iteration,
         skillContent,
       });
+
+      // Resolve model for this action
+      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge: ModelPlatformBridge = {
+        getModelForRole: (role: string) => platform.getModelForRole?.(role) ?? null,
+        getCurrentModel: () => platform.getCurrentModel?.() ?? "unknown",
+      };
+      const resolved = resolveModelForAction("fix-pr", modelRegistry, modelConfig, bridge);
+      if (resolved.source !== "main" && platform.setModel) {
+        platform.setModel(resolved.model);
+      }
 
       platform.sendMessage(
         {

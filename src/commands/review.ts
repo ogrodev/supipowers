@@ -5,6 +5,8 @@ import { buildReviewPrompt } from "../quality/gate-runner.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
   id: "review",
@@ -93,6 +95,17 @@ export function registerReviewCommand(platform: Platform): void {
       });
 
       notifyInfo(ctx, `Review started`, `profile: ${profile.name}`);
+
+      // Resolve model for this action
+      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge: ModelPlatformBridge = {
+        getModelForRole: (role: string) => platform.getModelForRole?.(role) ?? null,
+        getCurrentModel: () => platform.getCurrentModel?.() ?? "unknown",
+      };
+      const resolved = resolveModelForAction("review", modelRegistry, modelConfig, bridge);
+      if (resolved.source !== "main" && platform.setModel) {
+        platform.setModel(resolved.model);
+      }
 
       platform.sendMessage(
         {

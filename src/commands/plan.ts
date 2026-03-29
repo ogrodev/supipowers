@@ -12,6 +12,8 @@ import { buildPlanningPrompt, buildQuickPlanPrompt } from "../planning/prompt-bu
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
   id: "plan",
@@ -128,6 +130,17 @@ export function registerPlanCommand(platform: Platform): void {
       // Append visual companion instructions if active
       if (visualUrl && visualSessionDir) {
         prompt += "\n\n" + buildVisualInstructions(visualUrl, visualSessionDir);
+      }
+
+      // Resolve model for this action
+      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge: ModelPlatformBridge = {
+        getModelForRole: (role: string) => platform.getModelForRole?.(role) ?? null,
+        getCurrentModel: () => platform.getCurrentModel?.() ?? "unknown",
+      };
+      const resolved = resolveModelForAction("plan", modelRegistry, modelConfig, bridge);
+      if (resolved.source !== "main" && platform.setModel) {
+        platform.setModel(resolved.model);
       }
 
       platform.sendMessage(
