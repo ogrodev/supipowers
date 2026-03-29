@@ -1,7 +1,7 @@
 import type { Platform } from "../platform/types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
+import { notifyInfo } from "../notifications/renderer.js";
 import { loadE2eQaConfig, saveE2eQaConfig, DEFAULT_E2E_QA_CONFIG } from "../qa/config.js";
 import { loadE2eMatrix } from "../qa/matrix.js";
 import { createNewE2eSession } from "../qa/session.js";
@@ -141,21 +141,7 @@ export function registerQaCommand(platform: Platform): void {
         }
       } catch { /* proceed without detection */ }
 
-      // ── Step 2: Ensure playwright ────────────────────────────────────
-      try {
-        const pwResult = await platform.exec("bash", [
-          path.join(scriptsDir, "ensure-playwright.sh"),
-          ctx.cwd,
-        ], { cwd: ctx.cwd });
-
-        if (pwResult.code !== 0) {
-          notifyWarning(ctx, "Playwright setup issue", "Could not verify playwright installation. The agent will handle it.");
-        }
-      } catch {
-        notifyWarning(ctx, "Playwright check skipped", "Will be handled during execution");
-      }
-
-      // ── Step 3: Load or create config ────────────────────────────────
+      // ── Step 2: Load or create config ────────────────────────────────
       let config = loadE2eQaConfig(platform.paths, ctx.cwd);
 
       if (!config && ctx.hasUI) {
@@ -178,7 +164,7 @@ export function registerQaCommand(platform: Platform): void {
         };
       }
 
-      // ── Step 4: Check for unresolved regressions ─────────────────────
+      // ── Step 3: Check for unresolved regressions ─────────────────────
       const activeSession = findActiveSession(platform.paths, ctx.cwd);
       if (activeSession && activeSession.regressions.length > 0 && ctx.hasUI) {
         const unresolvedRegressions = activeSession.regressions.filter((r: E2eRegression) => !r.resolution);
@@ -201,7 +187,7 @@ export function registerQaCommand(platform: Platform): void {
         }
       }
 
-      // ── Step 5: Route discovery ──────────────────────────────────────
+      // ── Step 4: Route discovery ──────────────────────────────────────
       let discoveredRoutes = "";
       try {
         const routeResult = await platform.exec("bash", [
@@ -219,15 +205,15 @@ export function registerQaCommand(platform: Platform): void {
         discoveredRoutes = '{"path": "/", "file": "unknown", "type": "page", "hasForm": false}';
       }
 
-      // ── Step 6: Load previous matrix ─────────────────────────────────
+      // ── Step 5: Load previous matrix ─────────────────────────────────
       const previousMatrix = loadE2eMatrix(platform.paths, ctx.cwd);
       const matrixJson = previousMatrix ? JSON.stringify(previousMatrix, null, 2) : null;
 
-      // ── Step 7: Create session ───────────────────────────────────────
+      // ── Step 6: Create session ───────────────────────────────────────
       const ledger = createNewE2eSession(platform.paths, ctx.cwd, config);
       const sessionDir = getSessionDir(platform.paths, ctx.cwd, ledger.id);
 
-      // ── Step 8: Load skill ───────────────────────────────────────────
+      // ── Step 7: Load skill ───────────────────────────────────────────
       let skillContent = "";
       const skillPath = findSkillPath("qa-strategy");
       if (skillPath) {
@@ -236,7 +222,7 @@ export function registerQaCommand(platform: Platform): void {
         } catch { /* proceed without */ }
       }
 
-      // ── Step 9: Build and send prompt ────────────────────────────────
+      // ── Step 8: Build and send prompt ────────────────────────────────
       const routeCount = discoveredRoutes.split("\n").filter(Boolean).length;
 
       const prompt = buildE2eOrchestratorPrompt({

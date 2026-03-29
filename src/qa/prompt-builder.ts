@@ -189,7 +189,6 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "",
     `- detect-app-type.sh: \`${scriptsDir}/detect-app-type.sh\``,
     `- discover-routes.sh: \`${scriptsDir}/discover-routes.sh\``,
-    `- ensure-playwright.sh: \`${scriptsDir}/ensure-playwright.sh\``,
     `- start-dev-server.sh: \`${scriptsDir}/start-dev-server.sh\``,
     `- run-e2e-tests.sh: \`${scriptsDir}/run-e2e-tests.sh\``,
     `- stop-dev-server.sh: \`${scriptsDir}/stop-dev-server.sh\``,
