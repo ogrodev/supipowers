@@ -98,11 +98,12 @@ function parseTasksFromMarkdown(content: string): PlanTask[] {
 
     const name = headerLine.replace(/\[.*?\]/g, "").trim();
     const parallelism = parseParallelism(headerLine);
+    const model = parseModel(headerLine);
     const files = parseFiles(body);
     const criteria = parseCriteria(body);
     const complexity = parseComplexity(body);
 
-    tasks.push({ id, name, description: name, files, criteria, complexity, parallelism });
+    tasks.push({ id, name, description: name, files, criteria, complexity, parallelism, ...(model ? { model } : {}) });
   }
   return tasks;
 }
@@ -115,6 +116,11 @@ function parseParallelism(header: string): TaskParallelism {
     return { type: "sequential", dependsOn: deps };
   }
   return { type: "sequential", dependsOn: [] };
+}
+
+function parseModel(header: string): string | undefined {
+  const match = header.match(/\[model:\s*([^\]]+)\]/);
+  return match?.[1]?.trim();
 }
 
 function parseFiles(body: string): string[] {

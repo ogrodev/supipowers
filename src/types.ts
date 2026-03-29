@@ -20,6 +20,8 @@ export interface PlanTask {
   criteria: string;
   complexity: TaskComplexity;
   parallelism: TaskParallelism;
+  /** Optional model override from [model: ...] annotation */
+  model?: string;
 }
 
 /** A plan document (parsed from markdown) */
