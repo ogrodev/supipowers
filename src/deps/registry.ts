@@ -250,15 +250,16 @@ export function formatReport(
   const lines: string[] = [];
   const installMap = new Map(installResults?.map((r) => [r.name, r]));
 
-  const categories: Array<"core" | "mcp" | "lsp" | "testing"> = ["core", "mcp", "lsp", "testing"];
-  const categoryLabels: Record<string, string> = {
+  // Report renders categories in insertion order of this object.
+  // Object.keys preserves insertion order for string keys in all major engines (V8/JSC/SM).
+  const categoryLabels: Record<Dependency["category"], string> = {
     core: "Core",
     mcp: "MCP",
     lsp: "Language Servers",
     testing: "Testing",
   };
 
-  for (const cat of categories) {
+  for (const cat of Object.keys(categoryLabels) as Dependency["category"][]) {
     const group = statuses.filter((s) => s.category === cat);
     if (group.length === 0) continue;
 

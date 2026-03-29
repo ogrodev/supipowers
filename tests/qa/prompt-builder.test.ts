@@ -89,7 +89,7 @@ describe("E2E orchestrator prompt builder", () => {
 
   test("includes config values in context", () => {
     const prompt = buildE2eOrchestratorPrompt(makeOptions());
-    expect(prompt).toContain("Headless");
+    expect(prompt).toContain("30000");
     expect(prompt).toContain("maxRetries");
   });
 

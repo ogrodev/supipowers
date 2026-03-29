@@ -33,7 +33,6 @@ const APP_TYPE_OPTIONS = [
   "generic — Other web app",
 ];
 
-
 const RETRY_OPTIONS = [
   "1",
   "2 (recommended)",
