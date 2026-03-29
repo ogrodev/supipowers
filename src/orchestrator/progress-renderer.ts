@@ -170,6 +170,16 @@ class InlineProgressComponent implements Component {
     // No cache to bust — we render fresh each time
   }
 
+  handleInput(data: string): void {
+    // ESC key (\x1b not followed by [ which would be an ANSI sequence)
+    if (data === "\x1b" || data === "\x1b\x1b") {
+      const state = activeRuns.get(this.#runId);
+      if (state && !state.aborted) {
+        state.abort();
+      }
+    }
+  }
+
   // ── Private ────────────────────────────────────────────────────
 
   #appendTaskMeta(task: TaskProgress, parts: string[], sep: string): void {

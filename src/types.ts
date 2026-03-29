@@ -55,7 +55,7 @@ export interface RunBatch {
 }
 
 /** Overall run status */
-export type RunStatus = "running" | "completed" | "paused" | "failed" | "cancelled";
+export type RunStatus = "running" | "completed" | "paused" | "failed" | "cancelled" | "interrupted";
 
 /** Run manifest stored on disk */
 export interface RunManifest {

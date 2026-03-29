@@ -227,6 +227,12 @@ export function registerRunCommand(platform: Platform): void {
       for (const batch of manifest.batches) {
         if (batch.status === "completed") continue;
 
+        // Check for user interrupt (ESC) before starting each batch
+        if (progress.aborted) {
+          notifyWarning(ctx, "Run interrupted", "Stopping before next batch");
+          break;
+        }
+
         batch.status = "running";
         updateRun(platform.paths, ctx.cwd, manifest);
 
@@ -251,11 +257,28 @@ export function registerRunCommand(platform: Platform): void {
             lspAvailable: lsp,
             contextModeAvailable: ctxMode,
             progress,
+            signal: progress.signal,
           });
         });
 
-        const results = await Promise.all(agentPromises);
-        for (const result of results) {
+        // Race agent dispatch against abort signal
+        const abortPromise = new Promise<"aborted">((resolve) => {
+          if (progress.aborted) { resolve("aborted"); return; }
+          progress.signal.addEventListener("abort", () => resolve("aborted"), { once: true });
+        });
+        const raceResult = await Promise.race([
+          Promise.all(agentPromises).then((r) => ({ type: "results" as const, results: r })),
+          abortPromise.then(() => ({ type: "aborted" as const })),
+        ]);
+
+        if (raceResult.type === "aborted") {
+          notifyWarning(ctx, "Run interrupted by user", "Saving progress...");
+          batch.status = "pending"; // revert so it can be resumed
+          updateRun(platform.paths, ctx.cwd, manifest);
+          break;
+        }
+
+        for (const result of raceResult.results) {
           if (result) {
             batchResults.push(result);
             saveAgentResult(platform.paths, ctx.cwd, manifest.id, result);
@@ -271,6 +294,9 @@ export function registerRunCommand(platform: Platform): void {
           );
         }
 
+        // Skip fix retries if interrupted
+        if (progress.aborted) break;
+
         const failedResults = batchResults.filter((r) => r.status === "blocked");
         for (const failed of failedResults) {
           if (config.orchestration.maxFixRetries > 0) {
@@ -278,6 +304,7 @@ export function registerRunCommand(platform: Platform): void {
             if (!task) continue;
 
             for (let retry = 0; retry < config.orchestration.maxFixRetries; retry++) {
+              if (progress.aborted) break;
               notifyInfo(ctx, `Retrying task ${failed.taskId}`, `attempt ${retry + 1}`);
               const fixResult = await dispatchFixAgent({
                 platform,
@@ -315,19 +342,31 @@ export function registerRunCommand(platform: Platform): void {
       const allResults = loadAllAgentResults(platform.paths, ctx.cwd, manifest.id);
       const runSummary = buildRunSummary(allResults);
 
-      manifest.status = runSummary.blocked > 0 ? "failed" : "completed";
-      manifest.completedAt = new Date().toISOString();
-      updateRun(platform.paths, ctx.cwd, manifest);
+      if (progress.aborted) {
+        manifest.status = "interrupted";
+        manifest.completedAt = new Date().toISOString();
+        updateRun(platform.paths, ctx.cwd, manifest);
+        const durationSec = Math.round(runSummary.totalDuration / 1000);
+        notifySummary(
+          ctx,
+          "Run interrupted",
+          `${runSummary.done + runSummary.doneWithConcerns}/${runSummary.totalTasks} tasks completed ` +
+          `before interruption | ${durationSec}s — resume with /supi:run`
+        );
+      } else {
+        manifest.status = runSummary.blocked > 0 ? "failed" : "completed";
+        manifest.completedAt = new Date().toISOString();
+        updateRun(platform.paths, ctx.cwd, manifest);
 
-
-      const durationSec = Math.round(runSummary.totalDuration / 1000);
-      notifySummary(
-        ctx,
-        "Run complete",
-        `${runSummary.done + runSummary.doneWithConcerns}/${runSummary.totalTasks} tasks done ` +
-        `(${runSummary.done} clean, ${runSummary.doneWithConcerns} with concerns, ` +
-        `${runSummary.blocked} blocked) | ${runSummary.totalFilesChanged} files | ${durationSec}s`
-      );
+        const durationSec = Math.round(runSummary.totalDuration / 1000);
+        notifySummary(
+          ctx,
+          "Run complete",
+          `${runSummary.done + runSummary.doneWithConcerns}/${runSummary.totalTasks} tasks done ` +
+          `(${runSummary.done} clean, ${runSummary.doneWithConcerns} with concerns, ` +
+          `${runSummary.blocked} blocked) | ${runSummary.totalFilesChanged} files | ${durationSec}s`
+        );
+      }
 
       // Offer branch finish options if we created a worktree branch
       if (branchName && manifest.status === "completed") {

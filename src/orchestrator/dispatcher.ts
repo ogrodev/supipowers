@@ -68,15 +68,28 @@ export interface DispatchOptions {
   contextModeAvailable: boolean;
   progress?: RunProgressState;
   actionId?: string;
+  signal?: AbortSignal;
 }
 
 export async function dispatchAgent(
   options: DispatchOptions,
 ): Promise<AgentResult> {
-  const { platform, ctx, task, planContext, config, lspAvailable, contextModeAvailable, progress } = options;
+  const { platform, ctx, task, planContext, config, lspAvailable, contextModeAvailable, progress, signal } = options;
   const startTime = Date.now();
 
   const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
+
+  // Check abort before starting
+  if (signal?.aborted) {
+    progress?.setStatus(task.id, "blocked", "Interrupted by user");
+    return {
+      taskId: task.id,
+      status: "blocked" as AgentStatus,
+      output: "Interrupted by user",
+      filesChanged: [],
+      duration: 0,
+    };
+  }
 
   // Initialize widget card if available
   progress?.setStatus(task.id, "running");
@@ -91,7 +104,7 @@ export async function dispatchAgent(
       bridge,
     );
 
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, resolved.model, resolved.thinkingLevel);
+    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, resolved.model, resolved.thinkingLevel, signal);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -179,6 +192,7 @@ async function executeSubAgent(
   progress?: RunProgressState,
   model?: string,
   thinkingLevel?: string | null,
+  signal?: AbortSignal,
 ): Promise<SubAgentResult> {
   if (typeof platform.createAgentSession !== "function") {
     throw new Error(
@@ -237,6 +251,15 @@ async function executeSubAgent(
     }
   });
 
+  // Wire abort signal to dispose the session
+  let abortHandler: (() => void) | undefined;
+  if (signal && !signal.aborted) {
+    abortHandler = () => {
+      session.dispose().catch(() => {}); // best-effort cleanup
+    };
+    signal.addEventListener("abort", abortHandler, { once: true });
+  }
+
   try {
     await session.prompt(prompt, { expandPromptTemplates: false });
 
@@ -259,8 +282,11 @@ async function executeSubAgent(
       filesChanged: [...filesChanged],
     };
   } finally {
+    if (abortHandler && signal) {
+      signal.removeEventListener("abort", abortHandler);
+    }
     unsubscribe();
-    await session.dispose();
+    await session.dispose().catch(() => {}); // may already be disposed by abort
   }
 }
 
@@ -323,6 +349,9 @@ export async function dispatchAgentWithReview(
     return implementResult;
   }
 
+  // Check abort before reviews
+  if (options.signal?.aborted) return implementResult;
+
   // Step 2: Spec compliance review
   options.progress?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
@@ -366,6 +395,9 @@ export async function dispatchAgentWithReview(
       return fixResult;
     }
   }
+
+  // Check abort before quality review
+  if (options.signal?.aborted) return implementResult;
 
   // Step 3: Code quality review
   options.progress?.setStatus(task.id, "reviewing");

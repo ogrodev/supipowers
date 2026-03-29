@@ -20,6 +20,11 @@ export class RunProgressState {
   readonly tasks = new Map<number, TaskProgress>();
   batchLabel = "";
 
+  // Abort support — wired to ESC in the progress renderer
+  readonly #controller = new AbortController();
+  get signal(): AbortSignal { return this.#controller.signal; }
+  get aborted(): boolean { return this.#controller.signal.aborted; }
+  abort(): void { this.#controller.abort(); }
   addTask(taskId: number, name: string, dependsOn: number[] = []): void {
     this.tasks.set(taskId, {
       taskId,
