@@ -6,7 +6,7 @@ import {
   getAssignmentSource,
   type AssignmentSource,
 } from "../config/model-config.js";
-import { resolveModelForAction, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { resolveModelForAction, createModelBridge, type ModelPlatformBridge } from "../config/model-resolver.js";
 import type { ModelAction, ModelAssignment, ThinkingLevel } from "../types.js";
 
 const THINKING_LEVELS: Array<{ label: string; value: ThinkingLevel | null }> = [
@@ -28,13 +28,6 @@ function formatSource(source: AssignmentSource): string {
     case "harness": return "(harness)";
     case "main": return "(main)";
   }
-}
-
-function createBridge(platform: Platform): ModelPlatformBridge {
-  return {
-    getModelForRole: (role: string) => platform.getModelForRole?.(role) ?? null,
-    getCurrentModel: () => platform.getCurrentModel?.() ?? "unknown",
-  };
 }
 
 function buildDashboard(
@@ -87,7 +80,7 @@ export function handleModel(platform: Platform, ctx: any): void {
 }
 
 async function runModelTUI(platform: Platform, ctx: any): Promise<void> {
-  const bridge = createBridge(platform);
+  const bridge = createModelBridge(platform);
 
   while (true) {
     const actions = modelRegistry.list();

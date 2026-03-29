@@ -1,5 +1,6 @@
 import type { ModelConfig, ResolvedModel } from "../types.js";
 import type { ModelActionRegistry } from "./model-registry.js";
+import type { Platform } from "../platform/types.js";
 
 export interface ModelPlatformBridge {
   getModelForRole(role: string): string | null;
@@ -93,4 +94,15 @@ export function resolveAllCandidates(
     seen.add(c.model);
     return true;
   });
+}
+
+export function createModelBridge(platform: Platform): ModelPlatformBridge {
+  return {
+    getModelForRole(role: string): string | null {
+      return platform.getModelForRole?.(role) ?? null;
+    },
+    getCurrentModel(): string {
+      return platform.getCurrentModel?.() ?? "unknown";
+    },
+  };
 }

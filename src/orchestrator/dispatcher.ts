@@ -20,7 +20,7 @@ import {
 } from "../notifications/renderer.js";
 import type { RunProgressState } from "./run-progress.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
-import { resolveModelForAction, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { resolveModelForAction, createModelBridge, type ModelPlatformBridge } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
@@ -68,17 +68,6 @@ export interface DispatchOptions {
   contextModeAvailable: boolean;
   progress?: RunProgressState;
   actionId?: string;
-}
-
-function createModelBridge(platform: Platform): ModelPlatformBridge {
-  return {
-    getModelForRole(role: string): string | null {
-      return platform.getModelForRole?.(role) ?? null;
-    },
-    getCurrentModel(): string {
-      return platform.getCurrentModel?.() ?? "unknown";
-    },
-  };
 }
 
 export async function dispatchAgent(

@@ -12,7 +12,7 @@ import { buildPlanningPrompt, buildQuickPlanPrompt } from "../planning/prompt-bu
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { modelRegistry } from "../config/model-registry-instance.js";
-import { resolveModelForAction, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
@@ -134,10 +134,7 @@ export function registerPlanCommand(platform: Platform): void {
 
       // Resolve model for this action
       const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
-      const bridge: ModelPlatformBridge = {
-        getModelForRole: (role: string) => platform.getModelForRole?.(role) ?? null,
-        getCurrentModel: () => platform.getCurrentModel?.() ?? "unknown",
-      };
+      const bridge = createModelBridge(platform);
       const resolved = resolveModelForAction("plan", modelRegistry, modelConfig, bridge);
       if (resolved.source !== "main" && platform.setModel) {
         platform.setModel(resolved.model);
