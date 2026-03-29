@@ -193,6 +193,10 @@ export function registerRunCommand(platform: Platform): void {
       const lsp = isLspAvailable(platform.getActiveTools());
       const ctxMode = detectContextMode(platform.getActiveTools()).available;
 
+      // Capture the parent session's model as ultimate fallback for sub-agents
+      const rawModel = ctx.model?.id ?? platform.getCurrentModel?.();
+      const parentSessionModel = rawModel && rawModel !== "unknown" ? rawModel : undefined;
+
       // Create shared progress state and send inline progress message
       const progress = new RunProgressState();
       for (const task of plan.tasks) {
@@ -258,6 +262,7 @@ export function registerRunCommand(platform: Platform): void {
             contextModeAvailable: ctxMode,
             progress,
             signal: progress.signal,
+            parentSessionModel,
           });
         });
 
@@ -317,6 +322,7 @@ export function registerRunCommand(platform: Platform): void {
                 progress,
                 previousOutput: failed.output,
                 failureReason: failed.output,
+                parentSessionModel,
               });
               saveAgentResult(platform.paths, ctx.cwd, manifest.id, fixResult);
               if (fixResult.status !== "blocked") break;

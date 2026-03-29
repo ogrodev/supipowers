@@ -69,6 +69,7 @@ export interface DispatchOptions {
   progress?: RunProgressState;
   actionId?: string;
   signal?: AbortSignal;
+  parentSessionModel?: string;
 }
 
 export async function dispatchAgent(
@@ -104,7 +105,10 @@ export async function dispatchAgent(
       bridge,
     );
 
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, resolved.model, resolved.thinkingLevel, signal);
+    // Fallback: if resolver returned no model, use the parent session's model
+    const model = resolved.model ?? options.parentSessionModel;
+
+    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, model, resolved.thinkingLevel, signal);
 
     const agentResult: AgentResult = {
       taskId: task.id,
@@ -535,7 +539,10 @@ export async function dispatchFixAgent(
       bridge,
     );
 
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, resolved.model, resolved.thinkingLevel);
+    // Fallback: if resolver returned no model, use the parent session's model
+    const model = resolved.model ?? options.parentSessionModel;
+
+    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, model, resolved.thinkingLevel);
     return {
       taskId: task.id,
       status: result.status,
