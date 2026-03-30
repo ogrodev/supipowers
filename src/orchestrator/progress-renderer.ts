@@ -1,6 +1,49 @@
 // src/orchestrator/progress-renderer.ts
 import type { TaskStatus } from "./agent-grid.js";
-import { activeRuns, type TaskProgress } from "./run-progress.js";
+import { activeRuns, type TaskProgress, type RunProgressState } from "./run-progress.js";
+
+// ── ANSI-aware width helpers ─────────────────────────────────────
+
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+/** Visible character count (ignoring ANSI escape sequences). */
+function visibleWidth(s: string): number {
+  return s.replace(ANSI_RE, "").length;
+}
+
+/** Truncate a string with ANSI codes so its visible width ≤ max, appending '…' if cut. */
+function truncateToWidth(s: string, max: number): string {
+  if (max <= 0) return "";
+  if (visibleWidth(s) <= max) return s;
+
+  let vis = 0;
+  let i = 0;
+  const ellipsis = "…";
+  const target = max - 1; // reserve 1 char for ellipsis
+
+  while (i < s.length && vis < target) {
+    // Skip ANSI sequences without counting them
+    if (s[i] === "\x1b" && s[i + 1] === "[") {
+      const end = s.indexOf("m", i);
+      if (end !== -1) { i = end + 1; continue; }
+    }
+    vis++;
+    i++;
+  }
+
+  // Grab any trailing ANSI reset sequences so colors don't leak
+  let tail = "";
+  let j = i;
+  while (j < s.length && s[j] === "\x1b") {
+    const end = s.indexOf("m", j);
+    if (end === -1) break;
+    tail += s.slice(j, end + 1);
+    j = end + 1;
+  }
+
+  return s.slice(0, i) + tail + ellipsis;
+}
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -62,7 +105,7 @@ function formatElapsed(startedAt: number, completedAt?: number): string {
 
 // ── Inline Progress Component ──────────────────────────────────────
 
-class InlineProgressComponent implements Component {
+export class InlineProgressComponent implements Component {
   #runId: string;
   #theme: Theme;
   #spinnerFrame = 0;
@@ -72,7 +115,7 @@ class InlineProgressComponent implements Component {
     this.#theme = theme;
   }
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
     // Advance spinner on every render call (called each repaint)
     this.#spinnerFrame = (this.#spinnerFrame + 1) % SPINNER_FRAMES.length;
 
@@ -102,7 +145,7 @@ class InlineProgressComponent implements Component {
         parts.push(this.#theme.fg("dim", `Depends on ${depLabels}`));
       }
 
-      lines.push(parts.join(""));
+      lines.push(width > 0 ? truncateToWidth(parts.join(""), width) : parts.join(""));
     });
 
     // Summary line
@@ -116,7 +159,8 @@ class InlineProgressComponent implements Component {
 
     if (summaryParts.length > 0) {
       const indent = `  `; // align under tree
-      lines.push(`${indent}${summaryParts.join(` ${sep} `)}`);
+      const summaryLine = `${indent}${summaryParts.join(` ${sep} `)}`;
+      lines.push(width > 0 ? truncateToWidth(summaryLine, width) : summaryLine);
     }
 
     return lines;
@@ -124,6 +168,16 @@ class InlineProgressComponent implements Component {
 
   invalidate(): void {
     // No cache to bust — we render fresh each time
+  }
+
+  handleInput(data: string): void {
+    // ESC key (\x1b not followed by [ which would be an ANSI sequence)
+    if (data === "\x1b" || data === "\x1b\x1b") {
+      const state = activeRuns.get(this.#runId);
+      if (state && !state.aborted) {
+        state.abort();
+      }
+    }
   }
 
   // ── Private ────────────────────────────────────────────────────
@@ -156,6 +210,61 @@ class InlineProgressComponent implements Component {
       parts.push(this.#theme.fg("dim", task.currentActivity));
     }
   }
+}
+
+// ── Widget (string[] for ctx.ui.setWidget) ──────────────────────
+
+const WIDGET_ICONS: Record<TaskStatus, string> = {
+  pending:            "○",
+  running:            "◉",
+  reviewing:          "◎",
+  done:               "✓",
+  done_with_concerns: "⚠",
+  blocked:            "✗",
+};
+
+function widgetTaskMeta(task: TaskProgress): string {
+  const parts: string[] = [];
+  const isActive = task.status === "running" || task.status === "reviewing";
+  const isDone = task.status === "done" || task.status === "done_with_concerns" || task.status === "blocked";
+  if (task.toolCount > 0) parts.push(`${task.toolCount} tools`);
+  if (isDone && task.filesChanged > 0) parts.push(`${task.filesChanged} files`);
+  if (isDone) parts.push(formatElapsed(task.startedAt, task.completedAt));
+  if (isActive && task.currentActivity) parts.push(task.currentActivity);
+  return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
+}
+
+/** Render progress as plain string[] for use with ctx.ui.setWidget. */
+export function renderWidgetLines(state: RunProgressState): string[] {
+  if (state.tasks.size === 0) return [];
+  const tasks = [...state.tasks.values()];
+  const lines: string[] = [];
+
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    const prefix = i === tasks.length - 1 ? "└" : "├";
+    const icon = WIDGET_ICONS[task.status];
+    let line = `${prefix} ${icon} T${task.taskId} · ${task.name}`;
+    line += widgetTaskMeta(task);
+    if (task.status === "pending" && task.dependsOn.length > 0) {
+      line += ` · depends on ${task.dependsOn.map((d) => `T${d}`).join(", ")}`
+    }
+    lines.push(line);
+  }
+
+  // Summary
+  const s = state.summary;
+  const summaryParts: string[] = [];
+  if (state.batchLabel) summaryParts.push(state.batchLabel);
+  if (s.done > 0) summaryParts.push(`${s.done} done`);
+  if (s.running > 0) summaryParts.push(`${s.running} running`);
+  if (s.pending > 0) summaryParts.push(`${s.pending} pending`);
+  if (s.blocked > 0) summaryParts.push(`${s.blocked} blocked`);
+  if (summaryParts.length > 0) {
+    lines.push(`  ${summaryParts.join(" · ")}`);
+  }
+
+  return lines;
 }
 
 // ── Registration ───────────────────────────────────────────────────

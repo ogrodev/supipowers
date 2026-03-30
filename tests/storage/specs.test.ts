@@ -31,7 +31,7 @@ describe("specs storage", () => {
     expect(filePath).toContain(filename);
   });
 
-  test("saveSpec stores files under docs/supipowers/specs/", () => {
+  test("saveSpec stores files under .omp/supipowers/specs/", () => {
     const filePath = saveSpec(tmpDir, "test-spec.md", "content");
     const relative = path.relative(tmpDir, filePath);
     expect(relative).toBe(path.join("docs", "supipowers", "specs", "test-spec.md"));

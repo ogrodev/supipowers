@@ -1,114 +1,137 @@
 ---
 name: qa-strategy
-description: E2E product testing strategy using Playwright — flow-based, autonomous, close to human interaction
+description: E2E QA strategy — flow-based product testing with disciplined triage, regression detection, and autonomous execution
 ---
 
-# E2E Product Testing Strategy
-
-## Core Principle
+# E2E QA Strategy
 
 Test the product the way a user uses it. Every test simulates a real user flow — navigating, clicking, filling forms, waiting for responses. If a human wouldn't do it, don't test it here.
 
-**This is NOT for unit or integration tests.** This pipeline tests complete user journeys through the running application.
+**This is NOT unit or integration testing.** This pipeline tests complete user journeys through the running application.
+
+## Iron Law
+
+**EVERY FAILURE GETS A VERDICT BEFORE THE NEXT TEST RUNS.**
+
+Don't accumulate failures to analyze later. Triage each failure immediately: real bug, flaky test, or stale assertion? Unclassified failures are useless data.
+
+## Flow Prioritization
+
+| Priority | What Breaks | Examples |
+|----------|-------------|----------|
+| **Critical** | Revenue or access | Login, checkout, payment, signup |
+| **High** | Core product value | Create/edit main entities, dashboard, search |
+| **Medium** | Secondary features | Settings, profile, notifications |
+| **Low** | Polish | Theme toggle, tooltips, animations |
+
+Test critical and high flows first. Skip low flows when hitting the token budget. A session that thoroughly tests 5 critical flows beats one that superficially touches 20.
 
 ## Flow Discovery
 
 Before writing tests, understand what the product does:
 
-1. **Scan routes and pages** — every URL a user can visit is a potential flow entry point
-2. **Identify forms** — login, signup, search, create, edit — these are high-value interaction points
-3. **Map navigation** — how does a user get from page A to page B? What's the happy path?
-4. **Find auth boundaries** — what's public vs protected? Test both sides
-5. **Check CRUD operations** — can you create, read, update, delete the core entities?
+1. **Scan routes and pages** — every URL is a potential flow entry point
+2. **Identify forms** — login, signup, search, create, edit — high-value interaction points
+3. **Map navigation** — how does a user get from A to B? What's the happy path?
+4. **Find auth boundaries** — public vs protected; test both sides
+5. **Check CRUD operations** — create, read, update, delete for core entities
 
-## Flow Prioritization
+Compare against the previous matrix (if any) to detect new, removed, and changed flows.
 
-| Priority | Description | Examples |
-|----------|-------------|---------|
-| **Critical** | Revenue or access blocking | Login, checkout, payment |
-| **High** | Core product value | Create/edit main entities, dashboard |
-| **Medium** | Secondary features | Settings, profile, search |
-| **Low** | Nice-to-have | Theme toggle, tooltips |
+## Playwright Discipline
 
-Test critical and high flows first. Skip low flows if hitting the token budget.
-
-## Playwright Best Practices
-
-### Locators (prefer resilient selectors)
+### Locators — Resilient Only
 
 ```typescript
-// GOOD — role-based, resilient to styling changes
+// GOOD — survives refactoring
 page.getByRole('button', { name: 'Submit' })
 page.getByLabel('Email')
 page.getByText('Welcome back')
 page.getByTestId('user-avatar')
 
-// BAD — fragile, breaks on refactoring
+// BAD — breaks on any styling change
 page.locator('.btn-primary')
 page.locator('#submit-btn')
 page.locator('div > form > button:nth-child(2)')
 ```
 
-### Assertions
+### Waiting — Explicit Conditions Only
 
 ```typescript
-// Wait for navigation
-await expect(page).toHaveURL('/dashboard');
-
-// Wait for element visibility
-await expect(page.getByText('Success')).toBeVisible();
-
-// Wait for element to disappear (loading states)
-await expect(page.getByText('Loading...')).not.toBeVisible();
-```
-
-### Waiting
-
-```typescript
-// GOOD — wait for specific condition
+// GOOD — waits for something specific
 await page.waitForResponse(resp => resp.url().includes('/api/users'));
-await page.waitForLoadState('networkidle');
+await expect(page.getByText('Success')).toBeVisible();
+await expect(page.getByText('Loading...')).not.toBeVisible();
 
-// BAD — arbitrary delays
+// BAD — arbitrary delay, flaky by design
 await page.waitForTimeout(3000);
+
+// BAD — unreliable for SPAs
+await page.waitForLoadState('networkidle');
 ```
 
-### Test Structure
+`waitForTimeout` is never acceptable. `networkidle` is equally unreliable — SPAs keep sockets open, so it either hangs or resolves before dynamic content loads. Wait for the specific element or response that proves the page is ready.
 
-One flow per file. Each test in the flow tests a step or variant:
+### One Flow Per File
 
 ```typescript
 test.describe('Checkout flow', () => {
-  test('adds item to cart', async ({ page }) => { ... });
-  test('fills shipping info', async ({ page }) => { ... });
-  test('completes payment', async ({ page }) => { ... });
-  test('shows confirmation', async ({ page }) => { ... });
+  test('adds item to cart', async ({ page }) => { /* ... */ });
+  test('fills shipping info', async ({ page }) => { /* ... */ });
+  test('completes payment', async ({ page }) => { /* ... */ });
+  test('shows confirmation', async ({ page }) => { /* ... */ });
 });
 ```
 
-## What Makes a Good E2E Test
+Each test is independent — no shared state, no execution order dependency.
 
-| Quality | Good | Bad |
-|---------|------|-----|
-| **User-centric** | Tests what a user would do | Tests implementation details |
-| **Independent** | Each test can run alone | Tests depend on previous test state |
-| **Resilient** | Uses role/label selectors | Uses CSS classes or DOM structure |
-| **Fast-failing** | Fails clearly on the broken step | Fails on a timeout with no context |
-| **Readable** | Test name describes the user action | Test name is a technical description |
+## Failure Triage
 
-## Common Pitfalls
+When a test fails, classify it immediately:
 
-1. **Testing internal state** — don't check Redux store, localStorage, or cookies directly. Test what the user sees.
-2. **Flaky waits** — use `waitForResponse` or `waitForSelector`, never `waitForTimeout`.
-3. **Shared state** — each test should set up its own state. Don't rely on test execution order.
-4. **Over-testing** — one flow per critical path. Don't test every permutation of a form.
-5. **Ignoring error states** — test what happens when the API returns an error, the network is slow, or the user enters invalid data.
+| Verdict | Meaning | Action |
+|---------|---------|--------|
+| **Bug** | App behavior is wrong | Record regression. Do not fix the test. |
+| **Stale assertion** | App changed intentionally | Update the test to match new behavior. |
+| **Flaky** | Non-deterministic failure | Fix the locator or wait condition. Re-run. |
+| **Test error** | Test code is wrong | Fix and re-run. Does not count as a retry. |
+
+### Triage Process
+
+1. **Read the error.** What element wasn't found? What URL didn't match? What assertion failed?
+2. **Check if the app changed.** Did a route move? Did a button get renamed? Is there a new loading state?
+3. **Distinguish bug from change.** Intentional app change → update test. Unintentional breakage → regression.
+4. **Don't retry blindly.** If you can't explain why a test failed, investigating beats retrying.
 
 ## Regression Analysis
 
-When a previously-passing test fails:
+A regression is a flow that **was passing** and now **fails**.
 
-1. **Read the error** — what element wasn't found? What URL didn't match?
-2. **Check if the app changed** — did a route move? Did a button get renamed?
-3. **Distinguish bug from change** — if the app intentionally changed, the test needs updating. If not, it's a regression.
-4. **Record the finding** — update the flow matrix with the new status and reasoning.
+For each regression, record:
+- Which flow broke
+- What the previous status was
+- What the current error is
+- Whether it's a real bug or an intentional change
+
+**Regressions are the highest-priority output of the pipeline.** A session that finds zero regressions in a stable app is successful. A session that misclassifies a regression as a flaky test has failed.
+
+## Red Flags — STOP and Investigate
+
+- Accumulating failures without triaging each one
+- Retrying a test without understanding why it failed
+- Testing internal state (stores, localStorage, cookies) instead of what the user sees
+- Tests that depend on execution order or shared state
+- Using `waitForTimeout` or `networkidle` instead of explicit conditions
+- Spending the token budget on low-priority flows while critical flows remain untested
+- Classifying a regression as "flaky" without evidence of non-determinism
+- Ignoring error states — test what happens when the API errors, the network is slow, or input is invalid
+
+## Quality Signals
+
+| Good Session | Bad Session |
+|-------------|-------------|
+| Every failure has a verdict | Failures accumulated without triage |
+| Critical flows tested first | Random flow ordering |
+| Regressions clearly identified | "Some tests failed" |
+| Tests are independent and resilient | Tests depend on execution order |
+| Token budget spent on high-value flows | Budget wasted on low-priority flows |

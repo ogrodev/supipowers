@@ -27,6 +27,13 @@ function createMockExec(
         code,
       };
     }
+    // Handle npx <binary> --version (playwright uses this pattern)
+    if (cmd === "npx" && args.length >= 2 && args[1] === "--version") {
+      const binary = args[0];
+      const code = whichResults[binary] ?? 1;
+      if (code !== 0) return { stdout: "", stderr: `${binary} not found`, code };
+      return { stdout: versionOutput, stderr: "", code: 0 };
+    }
     if (args[0] === "--version") {
       return { stdout: versionOutput, stderr: "", code: 0 };
     }
@@ -55,7 +62,7 @@ describe("DEPENDENCIES", () => {
       expect(typeof dep.name).toBe("string");
       expect(typeof dep.binary).toBe("string");
       expect(typeof dep.required).toBe("boolean");
-      expect(["core", "mcp", "lsp"]).toContain(dep.category);
+      expect(["core", "mcp", "lsp", "testing"]).toContain(dep.category);
       expect(typeof dep.checkFn).toBe("function");
     }
   });
@@ -65,6 +72,30 @@ describe("DEPENDENCIES", () => {
     expect(names).toContain("Git");
     expect(names).toContain("mcpc");
     expect(names).toContain("TypeScript LSP");
+    expect(names).toContain("playwright-cli");
+    expect(names).toContain("Playwright Test");
+  });
+
+  it("playwright-cli entry has correct shape", () => {
+    const pw = DEPENDENCIES.find((d) => d.name === "playwright-cli");
+    expect(pw).toBeDefined();
+    expect(pw!.binary).toBe("playwright-cli");
+    expect(pw!.required).toBe(false);
+    expect(pw!.category).toBe("testing");
+    expect(pw!.description).toBe("Browser automation CLI for E2E testing");
+    expect(pw!.installCmd).toBe("npm install -g @playwright/cli@latest");
+    expect(pw!.url).toBe("https://github.com/microsoft/playwright-cli");
+  });
+
+  it("Playwright Test entry has correct shape", () => {
+    const pw = DEPENDENCIES.find((d) => d.name === "Playwright Test");
+    expect(pw).toBeDefined();
+    expect(pw!.binary).toBe("playwright");
+    expect(pw!.required).toBe(false);
+    expect(pw!.category).toBe("testing");
+    expect(pw!.description).toContain("Test runner for E2E tests");
+    expect(pw!.installCmd).toBeNull();
+    expect(pw!.url).toBe("https://playwright.dev");
   });
 });
 
@@ -377,5 +408,25 @@ describe("formatReport", () => {
     ];
     const report = formatReport(statuses, installResults);
     expect(report).toContain("→ failed: permission denied");
+  });
+
+  it("renders testing category", () => {
+    const statuses: DependencyStatus[] = [
+      {
+        name: "playwright-cli",
+        binary: "playwright-cli",
+        required: false,
+        category: "testing",
+        description: "Browser automation CLI for E2E testing",
+        installCmd: "npm install -g @playwright/cli@latest",
+        url: "https://github.com/microsoft/playwright-cli",
+        installed: true,
+        version: "1.50.0",
+      },
+    ];
+    const report = formatReport(statuses);
+    expect(report).toContain("Testing");
+    expect(report).toContain("✓ playwright-cli");
+    expect(report).toContain("1.50.0");
   });
 });

@@ -20,7 +20,6 @@ describe("E2E QA config", () => {
 
   test("DEFAULT_E2E_QA_CONFIG has sensible defaults", () => {
     expect(DEFAULT_E2E_QA_CONFIG.app.type).toBe("generic");
-    expect(DEFAULT_E2E_QA_CONFIG.playwright.browser).toBe("chromium");
     expect(DEFAULT_E2E_QA_CONFIG.playwright.headless).toBe(true);
     expect(DEFAULT_E2E_QA_CONFIG.playwright.timeout).toBe(30000);
     expect(DEFAULT_E2E_QA_CONFIG.execution.maxRetries).toBe(2);

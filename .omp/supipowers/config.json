@@ -5,7 +5,8 @@
     "maxParallelAgents": 3,
     "maxFixRetries": 2,
     "maxNestingDepth": 2,
-    "modelPreference": "auto"
+    "modelPreference": "auto",
+    "taskTimeout": 600000
   },
   "lsp": {
     "setupGuide": true
@@ -19,6 +20,24 @@
     "e2e": false
   },
   "release": {
+    "channels": [
+      "github",
+      "npm"
+    ],
     "pipeline": "npm"
+  },
+  "contextMode": {
+    "enabled": true,
+    "compressionThreshold": 4096,
+    "blockHttpCommands": true,
+    "routingInstructions": true,
+    "eventTracking": true,
+    "compaction": true,
+    "llmSummarization": false,
+    "llmThreshold": 16384,
+    "enforceRouting": true
+  },
+  "mcp": {
+    "closeSessionsOnExit": false
   }
 }

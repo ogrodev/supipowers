@@ -18,6 +18,7 @@ Follow these phases in order. Do not skip or combine them.
 ### Phase 1: Explore Project Context
 
 Before asking questions, understand the current state:
+
 - Check files, docs, recent commits
 - Understand existing architecture and patterns
 - If the request covers multiple independent subsystems, flag it immediately and help decompose into sub-projects
@@ -38,6 +39,7 @@ Before asking questions, understand the current state:
 ### Phase 4: Present Design
 
 Once aligned on approach:
+
 - Scale each section to its complexity (a few sentences if straightforward, up to 200-300 words if nuanced)
 - Cover: architecture, components, data flow, error handling, testing
 - Ask after each section whether it looks right so far
@@ -47,13 +49,15 @@ Once aligned on approach:
 ### Phase 5: Write Design Doc
 
 Once the user approves the design:
-- Save to `docs/supipowers/specs/YYYY-MM-DD-<topic>-design.md`
+
+- Save to `.omp/supipowers/specs/YYYY-MM-DD-<topic>-design.md`
 - Use clear, concise writing
 - Commit the design document to git
 
 ### Phase 6: Spec Review Loop
 
 After writing the design doc:
+
 1. Dispatch a spec-document-reviewer sub-agent to verify completeness
 2. If **Issues Found**: fix the issues, re-dispatch the reviewer
 3. Repeat until **Approved** (max 5 iterations, then surface to human)
@@ -69,6 +73,7 @@ Wait for their response. Only proceed once approved.
 ### Phase 8: Create Implementation Plan
 
 Break into bite-sized tasks (2-5 minutes each). Each task must have:
+
 - Name with parallelism: `[parallel-safe]` or `[sequential: depends on N]`
 - **files**: Exact paths the agent will touch
 - **criteria**: Acceptance criteria (testable)

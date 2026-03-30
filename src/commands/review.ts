@@ -4,6 +4,16 @@ import { listProfiles, resolveProfile } from "../config/profiles.js";
 import { buildReviewPrompt } from "../quality/gate-runner.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
+
+modelRegistry.register({
+  id: "review",
+  category: "command",
+  label: "Review",
+  harnessRoleHint: "slow",
+});
 
 export function registerReviewCommand(platform: Platform): void {
   platform.registerCommand("supi:review", {
@@ -85,6 +95,14 @@ export function registerReviewCommand(platform: Platform): void {
       });
 
       notifyInfo(ctx, `Review started`, `profile: ${profile.name}`);
+
+      // Resolve model for this action
+      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("review", modelRegistry, modelConfig, bridge);
+      if (resolved.source !== "main" && platform.setModel) {
+        platform.setModel(resolved.model);
+      }
 
       platform.sendMessage(
         {

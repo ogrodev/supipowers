@@ -18,8 +18,20 @@ export interface TaskProgress {
 /** Shared state store for a single run — written by dispatcher, read by renderer */
 export class RunProgressState {
   readonly tasks = new Map<number, TaskProgress>();
-  batchLabel = "";
+  #batchLabel = "";
+  onChange?: () => void;
 
+  get batchLabel(): string { return this.#batchLabel; }
+  set batchLabel(value: string) {
+    this.#batchLabel = value;
+    this.onChange?.();
+  }
+
+  // Abort support — wired to ESC in the progress renderer
+  readonly #controller = new AbortController();
+  get signal(): AbortSignal { return this.#controller.signal; }
+  get aborted(): boolean { return this.#controller.signal.aborted; }
+  abort(): void { this.#controller.abort(); }
   addTask(taskId: number, name: string, dependsOn: number[] = []): void {
     this.tasks.set(taskId, {
       taskId,
@@ -31,6 +43,7 @@ export class RunProgressState {
       startedAt: Date.now(),
       dependsOn,
     });
+    this.onChange?.();
   }
 
   setStatus(taskId: number, status: TaskStatus, reason?: string): void {
@@ -42,24 +55,28 @@ export class RunProgressState {
     if (status === "done" || status === "done_with_concerns" || status === "blocked") {
       task.completedAt = Date.now();
     }
+    this.onChange?.();
   }
 
   setActivity(taskId: number, activity: string): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
     task.currentActivity = activity;
+    this.onChange?.();
   }
 
   incrementTools(taskId: number): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
     task.toolCount++;
+    this.onChange?.();
   }
 
   incrementFiles(taskId: number): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
     task.filesChanged++;
+    this.onChange?.();
   }
 
   get summary() {

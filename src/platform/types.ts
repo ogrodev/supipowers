@@ -45,6 +45,8 @@ export interface AgentSessionOptions {
   cwd?: string;
   taskDepth?: number;
   parentTaskPrefix?: string;
+  model?: string;
+  thinkingLevel?: string | null;
   [key: string]: unknown;
 }
 
@@ -100,6 +102,12 @@ export interface PlatformUI {
   confirm?(title: string, message: string): Promise<boolean>;
   setWidget?(name: string, content: any): void;
   setStatus?(key: string, text: string | undefined): void;
+  /** Show a custom TUI component with keyboard focus. Returns the value passed to done(). */
+  custom?<T>(
+    factory: (tui: any, theme: any, keybindings: any, done: (result: T) => void) =>
+      (any & { dispose?(): void }) | Promise<any & { dispose?(): void }>,
+    options?: { overlay?: boolean },
+  ): Promise<T>;
 }
 
 // ── Platform ───────────────────────────────────────────────
@@ -127,6 +135,11 @@ export interface Platform {
 
   // Rendering
   registerMessageRenderer<T>(type: string, renderer: any): void;
+
+  // Model access
+  setModel?(model: string): void;
+  getCurrentModel?(): string;
+  getModelForRole?(role: string): string | null;
 
   // Agent Sessions
   createAgentSession(opts: AgentSessionOptions): Promise<AgentSession>;

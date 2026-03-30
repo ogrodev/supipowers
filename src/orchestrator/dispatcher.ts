@@ -19,6 +19,41 @@ import {
   notifyInfo,
 } from "../notifications/renderer.js";
 import type { RunProgressState } from "./run-progress.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveAllCandidates, createModelBridge, type ModelPlatformBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
+
+modelRegistry.register({
+  id: "implementer",
+  category: "sub-agent",
+  parent: "run",
+  label: "Implementer",
+  harnessRoleHint: "default",
+});
+
+modelRegistry.register({
+  id: "spec-reviewer",
+  category: "sub-agent",
+  parent: "run",
+  label: "Spec Reviewer",
+  harnessRoleHint: "slow",
+});
+
+modelRegistry.register({
+  id: "quality-reviewer",
+  category: "sub-agent",
+  parent: "run",
+  label: "Quality Reviewer",
+  harnessRoleHint: "slow",
+});
+
+modelRegistry.register({
+  id: "fix-agent",
+  category: "sub-agent",
+  parent: "run",
+  label: "Fix Agent",
+  harnessRoleHint: "default",
+});
 
 export interface DispatchOptions {
   platform: Platform;
@@ -32,62 +67,161 @@ export interface DispatchOptions {
   lspAvailable: boolean;
   contextModeAvailable: boolean;
   progress?: RunProgressState;
+  actionId?: string;
+  signal?: AbortSignal;
+  parentSessionModel?: string;
+}
+
+/** Check if an error looks like a model/auth configuration issue */
+function isModelAuthError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    msg.includes("No API key") ||
+    msg.includes("API key") ||
+    msg.includes("authentication") ||
+    msg.includes("unauthorized") ||
+    msg.includes("model not found") ||
+    msg.includes("model_not_found") ||
+    msg.includes("invalid_api_key") ||
+    msg.includes("Could not resolve model")
+  );
+}
+
+/** Create a user-friendly error message from a raw error */
+function friendlyErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (msg.includes("No API key") || msg.includes("invalid_api_key")) {
+    return "Model configuration issue — no valid API key found. Run /supi:models to configure, or ensure your agent has a model set up.";
+  }
+  if (msg.includes("model not found") || msg.includes("model_not_found") || msg.includes("Could not resolve model")) {
+    return "Configured model is not available. Run /supi:models to pick a different model, or remove the override to use your agent's default.";
+  }
+  if (msg.includes("Sub-agent dispatch is not available")) {
+    return msg; // This one is already user-friendly
+  }
+  return `Agent error: ${msg}`;
 }
 
 export async function dispatchAgent(
   options: DispatchOptions,
 ): Promise<AgentResult> {
-  const { platform, ctx, task, planContext, config, lspAvailable, contextModeAvailable, progress } = options;
+  const { platform, ctx, task, planContext, config, lspAvailable, contextModeAvailable, progress, signal } = options;
   const startTime = Date.now();
 
   const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
 
+  // Check abort/timeout before starting
+  if (signal?.aborted) {
+    const reason = signal.reason;
+    const isTimeout = reason instanceof DOMException && reason.name === "TimeoutError";
+    const msg = isTimeout
+      ? `Task timed out after ${config.orchestration.taskTimeout / 1000}s`
+      : "Interrupted by user";
+    progress?.setStatus(task.id, "blocked", msg);
+    return {
+      taskId: task.id,
+      status: "blocked" as AgentStatus,
+      output: msg,
+      filesChanged: [],
+      duration: 0,
+    };
+  }
+
   // Initialize widget card if available
   progress?.setStatus(task.id, "running");
 
-  try {
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress);
+  // Build the full fallback chain of model candidates
+  const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+  const bridge = createModelBridge(platform);
+  const candidates = resolveAllCandidates(
+    options.actionId ?? "implementer",
+    modelRegistry,
+    modelConfig,
+    bridge,
+  );
 
-    const agentResult: AgentResult = {
-      taskId: task.id,
-      status: result.status,
-      output: result.output,
-      concerns: result.concerns,
-      filesChanged: result.filesChanged,
-      duration: Date.now() - startTime,
-    };
-
-    // Update widget with final status
-    switch (agentResult.status) {
-      case "done":
-        progress?.setStatus(task.id, "done");
-        notifySuccess(ctx, `Task ${task.id} completed`, task.name);
-        break;
-      case "done_with_concerns":
-        progress?.setStatus(task.id, "done_with_concerns", agentResult.concerns);
-        notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
-        break;
-      case "blocked":
-        progress?.setStatus(task.id, "blocked", agentResult.output);
-        notifyError(ctx, `Task ${task.id} blocked`, agentResult.output);
-        break;
+  // Add parentSessionModel as final fallback if not already in candidates
+  if (options.parentSessionModel) {
+    const alreadyPresent = candidates.some((c) => c.model === options.parentSessionModel);
+    if (!alreadyPresent) {
+      candidates.push({ model: options.parentSessionModel, thinkingLevel: null, source: "main" });
     }
-
-    return agentResult;
-  } catch (error) {
-    const errorMsg = `Agent error: ${error instanceof Error ? error.message : String(error)}`;
-    progress?.setStatus(task.id, "blocked", errorMsg);
-
-    const agentResult: AgentResult = {
-      taskId: task.id,
-      status: "blocked",
-      output: errorMsg,
-      filesChanged: [],
-      duration: Date.now() - startTime,
-    };
-    notifyError(ctx, `Task ${task.id} failed`, agentResult.output);
-    return agentResult;
   }
+
+  // If no candidates at all, try with no model (let platform use its own default)
+  if (candidates.length === 0) {
+    candidates.push({ model: undefined, thinkingLevel: null, source: "main" });
+  }
+
+  let lastError: unknown = null;
+
+  // Try each candidate model; only retry on model/auth errors
+  for (const candidate of candidates) {
+    try {
+      const result = await executeSubAgent(
+        platform, prompt, task, config, ctx, progress,
+        candidate.model, candidate.thinkingLevel, signal,
+      );
+
+      const agentResult: AgentResult = {
+        taskId: task.id,
+        status: result.status,
+        output: result.output,
+        concerns: result.concerns,
+        filesChanged: result.filesChanged,
+        duration: Date.now() - startTime,
+      };
+
+      // Update widget with final status (no error notification here — callers handle it)
+      switch (agentResult.status) {
+        case "done":
+          progress?.setStatus(task.id, "done");
+          notifySuccess(ctx, `Task ${task.id} completed`, task.name);
+          break;
+        case "done_with_concerns":
+          progress?.setStatus(task.id, "done_with_concerns", agentResult.concerns);
+          notifyWarning(ctx, `Task ${task.id} done with concerns`, agentResult.concerns);
+          break;
+        case "blocked":
+          progress?.setStatus(task.id, "blocked", agentResult.output);
+          // Don't notifyError here — the run loop handles retries and cascade
+          break;
+      }
+
+      return agentResult;
+    } catch (error) {
+      lastError = error;
+
+      // If this is NOT a model/auth error, don't try other candidates
+      if (!isModelAuthError(error)) {
+        break;
+      }
+
+      // Model/auth error — try next candidate silently
+      // Only log at info level so we don't alarm the user
+      if (candidates.indexOf(candidate) < candidates.length - 1) {
+        notifyInfo(
+          ctx,
+          `Task ${task.id} model fallback`,
+          `Trying next model candidate...`,
+        );
+      }
+    }
+  }
+
+  // All candidates exhausted or non-model error
+  const errorMsg = friendlyErrorMessage(lastError);
+  progress?.setStatus(task.id, "blocked", errorMsg);
+
+  const agentResult: AgentResult = {
+    taskId: task.id,
+    status: "blocked",
+    output: errorMsg,
+    filesChanged: [],
+    duration: Date.now() - startTime,
+  };
+  // Don't notifyError here — let the run loop handle it after retries
+  return agentResult;
 }
 
 interface SubAgentResult {
@@ -132,6 +266,9 @@ async function executeSubAgent(
   config: SupipowersConfig,
   ctx?: NotifyCtx,
   progress?: RunProgressState,
+  model?: string,
+  thinkingLevel?: string | null,
+  signal?: AbortSignal,
 ): Promise<SubAgentResult> {
   if (typeof platform.createAgentSession !== "function") {
     throw new Error(
@@ -140,10 +277,23 @@ async function executeSubAgent(
     );
   }
 
+  // Pre-flight abort/timeout check
+  if (signal?.aborted) {
+    const reason = signal.reason;
+    const isTimeout = reason instanceof DOMException && reason.name === "TimeoutError";
+    const msg = isTimeout
+      ? `Task timed out after ${config.orchestration.taskTimeout / 1000}s`
+      : "Interrupted by user";
+    progress?.setStatus(task.id, "blocked", msg);
+    return { status: "blocked", output: msg, filesChanged: [] };
+  }
+
   const session = await platform.createAgentSession({
     cwd: process.cwd(),
     taskDepth: 1,
     parentTaskPrefix: `task-${task.id}`,
+    ...(model ? { model } : {}),
+    ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
   });
 
   // Track files changed and emit live progress
@@ -188,6 +338,15 @@ async function executeSubAgent(
     }
   });
 
+  // Wire abort signal to dispose the session
+  let abortHandler: (() => void) | undefined;
+  if (signal && !signal.aborted) {
+    abortHandler = () => {
+      session.dispose().catch(() => {}); // best-effort cleanup
+    };
+    signal.addEventListener("abort", abortHandler, { once: true });
+  }
+
   try {
     await session.prompt(prompt, { expandPromptTemplates: false });
 
@@ -210,8 +369,11 @@ async function executeSubAgent(
       filesChanged: [...filesChanged],
     };
   } finally {
+    if (abortHandler && signal) {
+      signal.removeEventListener("abort", abortHandler);
+    }
     unsubscribe();
-    await session.dispose();
+    await session.dispose().catch(() => {}); // may already be disposed by abort
   }
 }
 
@@ -274,6 +436,9 @@ export async function dispatchAgentWithReview(
     return implementResult;
   }
 
+  // Check abort before reviews
+  if (options.signal?.aborted) return implementResult;
+
   // Step 2: Spec compliance review
   options.progress?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
@@ -290,13 +455,14 @@ export async function dispatchAgentWithReview(
     }
 
     if (attempt === maxReviewRetries) {
-      notifyWarning(
-        ctx,
-        `Task ${task.id} spec review failed after ${maxReviewRetries + 1} attempts`,
-        specReview.issues,
-      );
+      const exhaustionMsg = `Task ${task.id} spec review failed after ${maxReviewRetries + 1} attempts — continuing as done_with_concerns`;
+      notifyWarning(ctx, exhaustionMsg, specReview.issues);
       implementResult.status = "done_with_concerns";
-      implementResult.concerns = `Spec compliance issues: ${specReview.issues}`;
+      implementResult.concerns = [
+        `⚠ Spec review exhausted (${maxReviewRetries + 1} attempts):`,
+        specReview.issues,
+        `Re-run with higher maxFixRetries or fix manually.`,
+      ].join("\n");
       return implementResult;
     }
 
@@ -318,6 +484,9 @@ export async function dispatchAgentWithReview(
     }
   }
 
+  // Check abort before quality review
+  if (options.signal?.aborted) return implementResult;
+
   // Step 3: Code quality review
   options.progress?.setStatus(task.id, "reviewing");
   for (let attempt = 0; attempt <= maxReviewRetries; attempt++) {
@@ -334,13 +503,14 @@ export async function dispatchAgentWithReview(
     }
 
     if (attempt === maxReviewRetries) {
-      notifyWarning(
-        ctx,
-        `Task ${task.id} quality review failed after ${maxReviewRetries + 1} attempts`,
-        qualityReview.issues,
-      );
+      const exhaustionMsg = `Task ${task.id} quality review failed after ${maxReviewRetries + 1} attempts — continuing as done_with_concerns`;
+      notifyWarning(ctx, exhaustionMsg, qualityReview.issues);
       implementResult.status = "done_with_concerns";
-      implementResult.concerns = `Code quality issues: ${qualityReview.issues}`;
+      implementResult.concerns = [
+        `⚠ Quality review exhausted (${maxReviewRetries + 1} attempts):`,
+        qualityReview.issues,
+        `Re-run with higher maxFixRetries or fix manually.`,
+      ].join("\n");
       return implementResult;
     }
 
@@ -377,8 +547,13 @@ async function dispatchSpecReview(
     implementerReport: implementResult.output,
   });
 
+  const modelConfig = loadModelConfig(platform.paths, process.cwd());
+  const bridge = createModelBridge(platform);
+  const candidates = resolveAllCandidates("spec-reviewer", modelRegistry, modelConfig, bridge);
+  const resolved = candidates[0] ?? { model: undefined, thinkingLevel: null, source: "main" as const };
+
   try {
-    const result = await executeSubAgent(platform, prompt, task, config);
+    const result = await executeSubAgent(platform, prompt, task, config, undefined, undefined, resolved.model, resolved.thinkingLevel);
     const passed =
       result.status === "done" ||
       result.output.toLowerCase().includes("spec compliant");
@@ -406,8 +581,13 @@ async function dispatchQualityReview(
     headSha: "HEAD",
   });
 
+  const modelConfig = loadModelConfig(platform.paths, process.cwd());
+  const bridge = createModelBridge(platform);
+  const candidates = resolveAllCandidates("quality-reviewer", modelRegistry, modelConfig, bridge);
+  const resolved = candidates[0] ?? { model: undefined, thinkingLevel: null, source: "main" as const };
+
   try {
-    const result = await executeSubAgent(platform, prompt, task, config);
+    const result = await executeSubAgent(platform, prompt, task, config, undefined, undefined, resolved.model, resolved.thinkingLevel);
     const hasCritical = result.output.toLowerCase().includes("critical");
     return {
       passed: !hasCritical,
@@ -436,23 +616,51 @@ export async function dispatchFixAgent(
 
   progress?.setStatus(task.id, "running");
 
-  try {
-    const result = await executeSubAgent(platform, prompt, task, config, ctx, progress);
-    return {
-      taskId: task.id,
-      status: result.status,
-      output: result.output,
-      concerns: result.concerns,
-      filesChanged: result.filesChanged,
-      duration: Date.now() - startTime,
-    };
-  } catch (error) {
-    return {
-      taskId: task.id,
-      status: "blocked",
-      output: `Fix agent error: ${error instanceof Error ? error.message : String(error)}`,
-      filesChanged: [],
-      duration: Date.now() - startTime,
-    };
+  // Build fallback chain just like dispatchAgent
+  const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+  const bridge = createModelBridge(platform);
+  const candidates = resolveAllCandidates(
+    options.actionId ?? "fix-agent",
+    modelRegistry,
+    modelConfig,
+    bridge,
+  );
+
+  if (options.parentSessionModel) {
+    const alreadyPresent = candidates.some((c) => c.model === options.parentSessionModel);
+    if (!alreadyPresent) {
+      candidates.push({ model: options.parentSessionModel, thinkingLevel: null, source: "main" });
+    }
   }
+
+  if (candidates.length === 0) {
+    candidates.push({ model: undefined, thinkingLevel: null, source: "main" });
+  }
+
+  let lastError: unknown = null;
+
+  for (const candidate of candidates) {
+    try {
+      const result = await executeSubAgent(platform, prompt, task, config, ctx, progress, candidate.model, candidate.thinkingLevel);
+      return {
+        taskId: task.id,
+        status: result.status,
+        output: result.output,
+        concerns: result.concerns,
+        filesChanged: result.filesChanged,
+        duration: Date.now() - startTime,
+      };
+    } catch (error) {
+      lastError = error;
+      if (!isModelAuthError(error)) break;
+    }
+  }
+
+  return {
+    taskId: task.id,
+    status: "blocked",
+    output: friendlyErrorMessage(lastError),
+    filesChanged: [],
+    duration: Date.now() - startTime,
+  };
 }

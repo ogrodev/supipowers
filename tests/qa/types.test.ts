@@ -32,20 +32,19 @@ describe("E2E QA types", () => {
     expect(info.port).toBe(3000);
   });
 
-  test("PlaywrightConfig holds browser preferences", () => {
+  test("PlaywrightConfig holds test runner preferences", () => {
     const config: PlaywrightConfig = {
-      browser: "chromium",
       headless: true,
       timeout: 30000,
     };
-    expect(config.browser).toBe("chromium");
     expect(config.headless).toBe(true);
+    expect(config.timeout).toBe(30000);
   });
 
   test("E2eQaConfig composes app, playwright, and execution config", () => {
     const config: E2eQaConfig = {
       app: { type: "vite", devCommand: "npm run dev", port: 5173, baseUrl: "http://localhost:5173" },
-      playwright: { browser: "chromium", headless: true, timeout: 30000 },
+      playwright: { headless: true, timeout: 30000 },
       execution: { maxRetries: 2, maxFlows: 20 },
     };
     expect(config.app.type).toBe("vite");
@@ -157,7 +156,7 @@ describe("E2E QA types", () => {
       regressions: [],
       config: {
         app: { type: "nextjs-app", devCommand: "npm run dev", port: 3000, baseUrl: "http://localhost:3000" },
-        playwright: { browser: "chromium", headless: true, timeout: 30000 },
+        playwright: { headless: true, timeout: 30000 },
         execution: { maxRetries: 2, maxFlows: 20 },
       },
     };

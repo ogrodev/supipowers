@@ -11,6 +11,16 @@ import {
   getSessionDir,
 } from "../storage/fix-pr-sessions.js";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
+
+modelRegistry.register({
+  id: "fix-pr",
+  category: "command",
+  label: "Fix PR",
+  harnessRoleHint: "default",
+});
 
 function getScriptsDir(): string {
   return path.join(path.dirname(new URL(import.meta.url).pathname), "..", "fix-pr", "scripts");
@@ -165,6 +175,14 @@ export function registerFixPrCommand(platform: Platform): void {
         iteration: ledger.iteration,
         skillContent,
       });
+
+      // Resolve model for this action
+      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("fix-pr", modelRegistry, modelConfig, bridge);
+      if (resolved.source !== "main" && platform.setModel) {
+        platform.setModel(resolved.model);
+      }
 
       platform.sendMessage(
         {

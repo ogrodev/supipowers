@@ -46,7 +46,7 @@ describe("planning prompt builder", () => {
 
     test("includes spec document writing phase", () => {
       const prompt = buildPlanningPrompt({ dotDirDisplay: ".omp" });
-      expect(prompt).toContain("docs/supipowers/specs/");
+      expect(prompt).toContain(".omp/supipowers/specs/");
       expect(prompt).toContain("design doc");
     });
 

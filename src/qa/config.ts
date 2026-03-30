@@ -17,7 +17,6 @@ export const DEFAULT_E2E_QA_CONFIG: E2eQaConfig = {
     baseUrl: "http://localhost:3000",
   },
   playwright: {
-    browser: "chromium",
     headless: true,
     timeout: 30000,
   },

@@ -14,11 +14,14 @@ import { registerReleaseCommand } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
 import { registerDoctorCommand, handleDoctor } from "./commands/doctor.js";
 import { registerMcpCommand, handleMcp, handleMcpCli, parseCliArgs } from "./commands/mcp.js";
+import { registerModelCommand, handleModel } from "./commands/model.js";
 import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { loadConfig } from "./config/loader.js";
+import { migrateModelPreference } from "./config/model-config.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { registerProgressRenderer } from "./orchestrator/progress-renderer.js";
+import { activeRuns } from "./orchestrator/run-progress.js";
 import { loadMcpRegistry } from "./mcp/config.js";
 import { McpcClient } from "./mcp/mcpc.js";
 import { parseTags, computeActiveServers } from "./mcp/activation.js";
@@ -33,6 +36,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
   "supi:update": (platform, ctx) => handleUpdate(platform, ctx),
   "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
+  "supi:model": (platform, ctx) => handleModel(platform, ctx),
 };
 
 let pendingTags: string[] = [];
@@ -61,9 +65,31 @@ export function bootstrap(platform: Platform): void {
   registerFixPrCommand(platform);
   registerDoctorCommand(platform);
   registerMcpCommand(platform);
+  registerModelCommand(platform);
 
   // Register custom message renderers
   registerProgressRenderer(platform);
+
+  // Wire ESC key to abort active runs via raw terminal input
+  // The handleInput on InlineProgressComponent is not called by OMP's TUI
+  // (custom message renderers are not the focused component), so we use
+  // onTerminalInput which hooks into the TUI's input listener pipeline.
+  platform.on("session_start", (_event: any, ctx: any) => {
+    if (!ctx?.ui?.onTerminalInput) return;
+    ctx.ui.onTerminalInput((data: string) => {
+      // ESC key: \x1b not followed by [ (which would be an ANSI sequence)
+      if (data !== "\x1b" && data !== "\x1b\x1b") return;
+      // Find any active run and abort it
+      for (const state of activeRuns.values()) {
+        if (!state.aborted) {
+          state.abort();
+          ctx.ui.notify("Run interrupted — press ESC again to abort the agent turn", "warning");
+          return { consume: true };
+        }
+      }
+      return;
+    });
+  });
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
   // message submission, so no chat message appears and no "Working..." indicator
@@ -95,6 +121,9 @@ export function bootstrap(platform: Platform): void {
   // Context-mode integration
   const config = loadConfig(platform.paths, process.cwd());
   registerContextModeHooks(platform, config);
+
+  // Migrate old modelPreference to model.json
+  migrateModelPreference(platform.paths, process.cwd());
 
   // MCP per-turn activation
   platform.on("before_agent_start", async (event, ctx) => {

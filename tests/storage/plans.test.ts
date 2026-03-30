@@ -269,4 +269,73 @@ Some content.
     expect(plan.tasks).toHaveLength(1);
     expect(plan.tasks[0].name).toBe("Real task");
   });
+
+  test("parses [model: ...] annotation from task header", () => {
+    const plan = parsePlan(
+      `---
+name: test
+tags: []
+---
+
+## Context
+Test.
+
+### Task 1: Implement auth [parallel-safe] [model: claude-opus-4-6]
+- **files**: src/auth.ts
+- **criteria**: Auth works
+- **complexity**: medium
+`,
+      "model-annotation.md",
+    );
+    expect(plan.tasks[0].model).toBe("claude-opus-4-6");
+    expect(plan.tasks[0].name).toBe("Implement auth");
+    expect(plan.tasks[0].parallelism).toEqual({ type: "parallel-safe" });
+  });
+
+  test("model annotation is undefined when not present", () => {
+    const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
+    expect(plan.tasks[0].model).toBeUndefined();
+    expect(plan.tasks[1].model).toBeUndefined();
+  });
+
+  test("parses model annotation with provider/model format", () => {
+    const plan = parsePlan(
+      `---
+name: test
+tags: []
+---
+
+## Context
+Test.
+
+### 1. Complex task [model: anthropic/claude-opus-4-6] [sequential: depends on 0]
+- **files**: src/complex.ts
+`,
+      "provider-model.md",
+    );
+    expect(plan.tasks[0].model).toBe("anthropic/claude-opus-4-6");
+    expect(plan.tasks[0].name).toBe("Complex task");
+    expect(plan.tasks[0].parallelism).toEqual({ type: "sequential", dependsOn: [0] });
+  });
+
+  test("parses model annotation as only annotation", () => {
+    const plan = parsePlan(
+      `---
+name: test
+tags: []
+---
+
+## Context
+Test.
+
+### Task 1: Simple task [model: gpt-4o]
+- **files**: src/simple.ts
+`,
+      "model-only.md",
+    );
+    expect(plan.tasks[0].model).toBe("gpt-4o");
+    expect(plan.tasks[0].name).toBe("Simple task");
+    // No parallelism annotation → default sequential
+    expect(plan.tasks[0].parallelism).toEqual({ type: "sequential", dependsOn: [] });
+  });
 });

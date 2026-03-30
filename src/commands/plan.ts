@@ -11,6 +11,16 @@ import { buildVisualInstructions } from "../visual/prompt-instructions.js";
 import { buildPlanningPrompt, buildQuickPlanPrompt } from "../planning/prompt-builder.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
+
+modelRegistry.register({
+  id: "plan",
+  category: "command",
+  label: "Plan",
+  harnessRoleHint: "plan",
+});
 
 /** Module-level tracking for cleanup */
 let activeSessionDir: string | null = null;
@@ -120,6 +130,14 @@ export function registerPlanCommand(platform: Platform): void {
       // Append visual companion instructions if active
       if (visualUrl && visualSessionDir) {
         prompt += "\n\n" + buildVisualInstructions(visualUrl, visualSessionDir);
+      }
+
+      // Resolve model for this action
+      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("plan", modelRegistry, modelConfig, bridge);
+      if (resolved.source !== "main" && platform.setModel) {
+        platform.setModel(resolved.model);
       }
 
       platform.sendMessage(

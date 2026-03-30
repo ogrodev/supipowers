@@ -10,7 +10,7 @@ export interface Dependency {
   name: string;
   binary: string;
   required: boolean;
-  category: "core" | "mcp" | "lsp";
+  category: "core" | "mcp" | "lsp" | "testing";
   description: string;
   checkFn: (exec: ExecFn) => Promise<{ installed: boolean; version?: string }>;
   installCmd: string | null;
@@ -153,6 +153,26 @@ export const DEPENDENCIES: Dependency[] = [
     installCmd: "go install golang.org/x/tools/gopls@latest",
     url: "https://pkg.go.dev/golang.org/x/tools/gopls",
   },
+  {
+    name: "playwright-cli",
+    binary: "playwright-cli",
+    required: false,
+    category: "testing",
+    description: "Browser automation CLI for E2E testing",
+    checkFn: (exec) => checkBinary(exec, "playwright-cli"),
+    installCmd: "npm install -g @playwright/cli@latest",
+    url: "https://github.com/microsoft/playwright-cli",
+  },
+  {
+    name: "Playwright Test",
+    binary: "playwright",
+    required: false,
+    category: "testing",
+    description: "Test runner for E2E tests (run-e2e-tests.sh)",
+    checkFn: (exec) => checkBinary(exec, "playwright"),
+    installCmd: null, // Compound command (&&) — not compatible with installDep's naive split
+    url: "https://playwright.dev",
+  },
 ];
 
 // ── Scan ──────────────────────────────────────────────────
@@ -240,14 +260,16 @@ export function formatReport(
   const lines: string[] = [];
   const installMap = new Map(installResults?.map((r) => [r.name, r]));
 
-  const categories: Array<"core" | "mcp" | "lsp"> = ["core", "mcp", "lsp"];
-  const categoryLabels: Record<string, string> = {
+  // Report renders categories in insertion order of this object.
+  // Object.keys preserves insertion order for string keys in all major engines (V8/JSC/SM).
+  const categoryLabels: Record<Dependency["category"], string> = {
     core: "Core",
     mcp: "MCP",
     lsp: "Language Servers",
+    testing: "Testing",
   };
 
-  for (const cat of categories) {
+  for (const cat of Object.keys(categoryLabels) as Dependency["category"][]) {
     const group = statuses.filter((s) => s.category === cat);
     if (group.length === 0) continue;
 

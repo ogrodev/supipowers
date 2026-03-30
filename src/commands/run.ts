@@ -27,6 +27,15 @@ import { buildBranchFinishPrompt } from "../git/branch-finish.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import type { AgentResult } from "../types.js";
 import { RunProgressState, activeRuns } from "../orchestrator/run-progress.js";
+import { InlineProgressComponent } from "../orchestrator/progress-renderer.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+
+modelRegistry.register({
+  id: "run",
+  category: "command",
+  label: "Run",
+  harnessRoleHint: "default",
+});
 
 interface ParsedRunArgs {
   profile?: string;
@@ -185,6 +194,10 @@ export function registerRunCommand(platform: Platform): void {
       const lsp = isLspAvailable(platform.getActiveTools());
       const ctxMode = detectContextMode(platform.getActiveTools()).available;
 
+      // Capture the parent session's model as ultimate fallback for sub-agents
+      const rawModel = ctx.model?.id ?? platform.getCurrentModel?.();
+      const parentSessionModel = rawModel && rawModel !== "unknown" ? rawModel : undefined;
+
       // Create shared progress state and send inline progress message
       const progress = new RunProgressState();
       for (const task of plan.tasks) {
@@ -204,19 +217,95 @@ export function registerRunCommand(platform: Platform): void {
       }
       activeRuns.set(manifest.id, progress);
 
-      // Send inline progress message — the registered renderer will display it
-      platform.sendMessage(
-        {
-          customType: "supi-run-progress",
-          content: [{ type: "text", text: "Running tasks..." }],
-          display: "custom",
-          details: { runId: manifest.id },
-        },
-      );
+      // Set up widget above input for live progress (colored, animated)
+      const WIDGET_KEY = "supi-run-progress";
+      const setProgressWidget = () => {
+        ctx.ui?.setWidget?.(WIDGET_KEY, (_tui: any, theme: any) =>
+          new InlineProgressComponent(manifest.id, theme),
+        );
+      };
+      const clearWidget = () => ctx.ui?.setWidget?.(WIDGET_KEY, undefined);
+      progress.onChange = setProgressWidget;
+      progress.signal.addEventListener("abort", clearWidget);
+      setProgressWidget();
 
       try {
+      // Track tasks that failed across batches to cascade-block dependents
+      const failedTaskIds = new Set<number>();
+
       for (const batch of manifest.batches) {
         if (batch.status === "completed") continue;
+
+        // Check for user interrupt (ESC) before starting each batch
+        if (progress.aborted) {
+          notifyWarning(ctx, "Run interrupted", "Stopping before next batch");
+          break;
+        }
+
+        // Cascade-block: skip tasks whose dependencies failed in earlier batches
+        const executableTaskIds: number[] = [];
+        const cascadeBlocked: number[] = [];
+        for (const taskId of batch.taskIds) {
+          const task = plan.tasks.find((t) => t.id === taskId);
+          if (!task) continue;
+          if (
+            task.parallelism.type === "sequential" &&
+            task.parallelism.dependsOn.some((dep) => failedTaskIds.has(dep))
+          ) {
+            cascadeBlocked.push(taskId);
+          } else {
+            executableTaskIds.push(taskId);
+          }
+        }
+
+        // Mark cascade-blocked tasks and save their results
+        for (const taskId of cascadeBlocked) {
+          const task = plan.tasks.find((t) => t.id === taskId);
+          const blockedResult: AgentResult = {
+            taskId,
+            status: "blocked",
+            output: "Skipped: dependency task failed in a previous batch",
+            filesChanged: [],
+            duration: 0,
+          };
+          failedTaskIds.add(taskId);
+          progress.setStatus(taskId, "blocked", blockedResult.output);
+          saveAgentResult(platform.paths, ctx.cwd, manifest.id, blockedResult);
+          notifyWarning(ctx, `Task ${taskId} skipped`, `Dependency failed — ${task?.name ?? "unknown"}`);
+        }
+
+        // If all tasks in this batch were cascade-blocked, mark batch failed and continue
+        if (executableTaskIds.length === 0) {
+          batch.status = "failed";
+          updateRun(platform.paths, ctx.cwd, manifest);
+          notifyWarning(
+            ctx,
+            `Batch ${batch.index + 1} skipped`,
+            `All ${cascadeBlocked.length} tasks blocked by earlier failures`
+          );
+          continue;
+        }
+
+        // Filter out already-completed tasks (for resume of partially-done batches)
+        const existingResults = loadAllAgentResults(platform.paths, ctx.cwd, manifest.id);
+        const completedTaskIds = new Set(
+          existingResults
+            .filter(r => r.status === "done" || r.status === "done_with_concerns")
+            .map(r => r.taskId)
+        );
+        const tasksToDispatch = executableTaskIds.filter(id => !completedTaskIds.has(id));
+        const skippedResumeCount = executableTaskIds.length - tasksToDispatch.length;
+        if (skippedResumeCount > 0) {
+          notifyInfo(ctx, `Skipping ${skippedResumeCount} already-completed tasks`);
+        }
+
+        // If all tasks already completed on resume, mark batch done and continue
+        if (tasksToDispatch.length === 0 && executableTaskIds.length > 0) {
+          batch.status = "completed";
+          updateRun(platform.paths, ctx.cwd, manifest);
+          notifyInfo(ctx, `Batch ${batch.index + 1} already completed on previous run`);
+          continue;
+        }
 
         batch.status = "running";
         updateRun(platform.paths, ctx.cwd, manifest);
@@ -224,12 +313,20 @@ export function registerRunCommand(platform: Platform): void {
         notifyInfo(
           ctx,
           `Batch ${batch.index + 1}/${manifest.batches.length}`,
-          `${batch.taskIds.length} tasks`
+          `${tasksToDispatch.length} tasks${cascadeBlocked.length > 0 ? ` (${cascadeBlocked.length} cascade-blocked)` : ""}${skippedResumeCount > 0 ? ` (${skippedResumeCount} already done)` : ""}`
         );
         progress.batchLabel = `Batch ${batch.index + 1}/${manifest.batches.length}`;
 
+        // Compose per-task timeout signal with user interrupt signal
+        const taskSignal = config.orchestration.taskTimeout > 0
+          ? AbortSignal.any([
+              progress.signal,
+              AbortSignal.timeout(config.orchestration.taskTimeout),
+            ])
+          : progress.signal;
+
         const batchResults: AgentResult[] = [];
-        const agentPromises = batch.taskIds.map((taskId) => {
+        const agentPromises = tasksToDispatch.map((taskId) => {
           const task = plan.tasks.find((t) => t.id === taskId);
           if (!task) return Promise.resolve(null);
 
@@ -242,11 +339,40 @@ export function registerRunCommand(platform: Platform): void {
             lspAvailable: lsp,
             contextModeAvailable: ctxMode,
             progress,
+            signal: taskSignal,
+            parentSessionModel,
+          }).catch((error: unknown): AgentResult => {
+            const msg = error instanceof Error ? error.message : String(error);
+            progress.setStatus(taskId, "blocked", `Unexpected error: ${msg}`);
+            notifyError(ctx, `Task ${taskId} crashed`, msg);
+            return {
+              taskId,
+              status: "blocked",
+              output: `Unexpected dispatch error: ${msg}`,
+              filesChanged: [],
+              duration: 0,
+            };
           });
         });
 
-        const results = await Promise.all(agentPromises);
-        for (const result of results) {
+        // Race agent dispatch against abort signal
+        const abortPromise = new Promise<"aborted">((resolve) => {
+          if (progress.aborted) { resolve("aborted"); return; }
+          progress.signal.addEventListener("abort", () => resolve("aborted"), { once: true });
+        });
+        const raceResult = await Promise.race([
+          Promise.all(agentPromises).then((r) => ({ type: "results" as const, results: r })),
+          abortPromise.then(() => ({ type: "aborted" as const })),
+        ]);
+
+        if (raceResult.type === "aborted") {
+          notifyWarning(ctx, "Run interrupted by user", "Saving progress...");
+          batch.status = "pending"; // revert so it can be resumed
+          updateRun(platform.paths, ctx.cwd, manifest);
+          break;
+        }
+
+        for (const result of raceResult.results) {
           if (result) {
             batchResults.push(result);
             saveAgentResult(platform.paths, ctx.cwd, manifest.id, result);
@@ -260,7 +386,20 @@ export function registerRunCommand(platform: Platform): void {
             "File conflicts detected",
             conflicts.conflictingFiles.join(", ")
           );
+          if (conflicts.mergePrompt) {
+            platform.sendMessage(
+              {
+                customType: "supi-conflict-resolution",
+                content: [{ type: "text", text: conflicts.mergePrompt }],
+                display: "none",
+              },
+              { deliverAs: "steer", triggerTurn: true },
+            );
+          }
         }
+
+        // Skip fix retries if interrupted
+        if (progress.aborted) break;
 
         const failedResults = batchResults.filter((r) => r.status === "blocked");
         for (const failed of failedResults) {
@@ -268,7 +407,10 @@ export function registerRunCommand(platform: Platform): void {
             const task = plan.tasks.find((t) => t.id === failed.taskId);
             if (!task) continue;
 
+            let fixed = false;
+            let latestResult: AgentResult = failed;
             for (let retry = 0; retry < config.orchestration.maxFixRetries; retry++) {
+              if (progress.aborted) break;
               notifyInfo(ctx, `Retrying task ${failed.taskId}`, `attempt ${retry + 1}`);
               const fixResult = await dispatchFixAgent({
                 platform,
@@ -279,12 +421,24 @@ export function registerRunCommand(platform: Platform): void {
                 lspAvailable: lsp,
                 contextModeAvailable: ctxMode,
                 progress,
-                previousOutput: failed.output,
-                failureReason: failed.output,
+                previousOutput: latestResult.output,
+                failureReason: latestResult.output,
+                parentSessionModel,
               });
               saveAgentResult(platform.paths, ctx.cwd, manifest.id, fixResult);
-              if (fixResult.status !== "blocked") break;
+              latestResult = fixResult;
+              if (fixResult.status !== "blocked") {
+                fixed = true;
+                break;
+              }
             }
+            // If still blocked after all retries, add to failed set for cascade
+            if (!fixed) {
+              failedTaskIds.add(failed.taskId);
+            }
+          } else {
+            // No retries configured, mark as failed for cascade
+            failedTaskIds.add(failed.taskId);
           }
         }
 
@@ -306,19 +460,31 @@ export function registerRunCommand(platform: Platform): void {
       const allResults = loadAllAgentResults(platform.paths, ctx.cwd, manifest.id);
       const runSummary = buildRunSummary(allResults);
 
-      manifest.status = runSummary.blocked > 0 ? "failed" : "completed";
-      manifest.completedAt = new Date().toISOString();
-      updateRun(platform.paths, ctx.cwd, manifest);
+      if (progress.aborted) {
+        manifest.status = "interrupted";
+        manifest.completedAt = new Date().toISOString();
+        updateRun(platform.paths, ctx.cwd, manifest);
+        const durationSec = Math.round(runSummary.totalDuration / 1000);
+        notifySummary(
+          ctx,
+          "Run interrupted",
+          `${runSummary.done + runSummary.doneWithConcerns}/${runSummary.totalTasks} tasks completed ` +
+          `before interruption | ${durationSec}s — resume with /supi:run`
+        );
+      } else {
+        manifest.status = runSummary.blocked > 0 ? "failed" : "completed";
+        manifest.completedAt = new Date().toISOString();
+        updateRun(platform.paths, ctx.cwd, manifest);
 
-
-      const durationSec = Math.round(runSummary.totalDuration / 1000);
-      notifySummary(
-        ctx,
-        "Run complete",
-        `${runSummary.done + runSummary.doneWithConcerns}/${runSummary.totalTasks} tasks done ` +
-        `(${runSummary.done} clean, ${runSummary.doneWithConcerns} with concerns, ` +
-        `${runSummary.blocked} blocked) | ${runSummary.totalFilesChanged} files | ${durationSec}s`
-      );
+        const durationSec = Math.round(runSummary.totalDuration / 1000);
+        notifySummary(
+          ctx,
+          "Run complete",
+          `${runSummary.done + runSummary.doneWithConcerns}/${runSummary.totalTasks} tasks done ` +
+          `(${runSummary.done} clean, ${runSummary.doneWithConcerns} with concerns, ` +
+          `${runSummary.blocked} blocked) | ${runSummary.totalFilesChanged} files | ${durationSec}s`
+        );
+      }
 
       // Offer branch finish options if we created a worktree branch
       if (branchName && manifest.status === "completed") {
@@ -338,6 +504,7 @@ export function registerRunCommand(platform: Platform): void {
       }
       } finally {
         activeRuns.delete(manifest.id);
+        ctx.ui?.setWidget?.(WIDGET_KEY, undefined);
       }
     },
   });

@@ -118,7 +118,7 @@ export function listRuns(paths: PlatformPaths, cwd: string): string[] {
 export function findActiveRun(paths: PlatformPaths, cwd: string): RunManifest | null {
   for (const runId of listRuns(paths, cwd)) {
     const manifest = loadRun(paths, cwd, runId);
-    if (manifest && (manifest.status === "running" || manifest.status === "paused")) {
+    if (manifest && (manifest.status === "running" || manifest.status === "paused" || manifest.status === "interrupted")) {
       return manifest;
     }
   }
