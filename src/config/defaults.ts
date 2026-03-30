@@ -23,7 +23,7 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     e2e: false,
   },
   release: {
-    pipeline: null,
+    channels: [],
   },
   contextMode: {
     enabled: true,

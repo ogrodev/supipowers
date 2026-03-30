@@ -101,6 +101,37 @@ export interface ReviewReport {
   passed: boolean;
 }
 
+// ── Release types ──────────────────────────────────────────
+
+/** Semantic version bump type */
+export type BumpType = "major" | "minor" | "patch";
+
+/** Release channel target */
+export type ReleaseChannel = "github" | "npm";
+
+/** A single parsed commit entry */
+export interface CommitEntry {
+  hash: string;
+  message: string;
+  scope?: string;
+}
+
+/** Commits categorized by conventional-commit type */
+export interface CategorizedCommits {
+  features: CommitEntry[];
+  fixes: CommitEntry[];
+  breaking: CommitEntry[];
+  other: CommitEntry[];
+}
+
+/** Result of a release execution */
+export interface ReleaseResult {
+  version: string;
+  channels: { channel: ReleaseChannel; success: boolean; error?: string }[];
+  tagCreated: boolean;
+  pushed: boolean;
+}
+
 /** Context-mode integration settings */
 export interface ContextModeConfig {
   /** Master toggle for all context-mode integration (default: true) */
@@ -196,7 +227,7 @@ export interface SupipowersConfig {
     e2e: boolean;
   };
   release: {
-    pipeline: string | null;
+    channels: ReleaseChannel[];
   };
   contextMode: ContextModeConfig;
   mcp: McpManagementConfig;

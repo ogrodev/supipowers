@@ -102,6 +102,12 @@ export interface PlatformUI {
   confirm?(title: string, message: string): Promise<boolean>;
   setWidget?(name: string, content: any): void;
   setStatus?(key: string, text: string | undefined): void;
+  /** Show a custom TUI component with keyboard focus. Returns the value passed to done(). */
+  custom?<T>(
+    factory: (tui: any, theme: any, keybindings: any, done: (result: T) => void) =>
+      (any & { dispose?(): void }) | Promise<any & { dispose?(): void }>,
+    options?: { overlay?: boolean },
+  ): Promise<T>;
 }
 
 // ── Platform ───────────────────────────────────────────────

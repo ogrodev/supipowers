@@ -15,11 +15,11 @@ const FRAMEWORK_OPTIONS = [
   { value: "npm-test", label: "npm-test — npm test", command: "npm test" },
 ];
 
-const PIPELINE_OPTIONS = [
-  { value: "", label: "not set — choose on first /supi:release run" },
-  { value: "npm", label: "npm — npm publish to registry" },
-  { value: "github", label: "github — GitHub Release with gh CLI" },
-  { value: "manual", label: "manual — I'll handle publishing myself" },
+const CHANNEL_OPTIONS = [
+  { value: [] as string[], label: "not set — auto-detect on first /supi:release run" },
+  { value: ["github", "npm"], label: "both — GitHub Release + npm publish" },
+  { value: ["github"], label: "github — GitHub Release with gh CLI" },
+  { value: ["npm"], label: "npm — npm publish to registry" },
 ];
 
 interface SettingDef {
@@ -72,15 +72,6 @@ function buildSettings(platform: Platform, cwd: string): SettingDef[] {
       set: (d, v) => updateConfig(paths, d, { orchestration: { maxNestingDepth: Number(v) } }),
     },
     {
-      label: "Model preference",
-      key: "orchestration.modelPreference",
-      helpText: "Which model sub-agents use for code generation",
-      type: "select",
-      options: ["auto", "fast", "balanced", "quality"],
-      get: (c) => c.orchestration.modelPreference,
-      set: (d, v) => updateConfig(paths, d, { orchestration: { modelPreference: v } }),
-    },
-    {
       label: "LSP setup guide",
       key: "lsp.setupGuide",
       helpText: "Show LSP setup tips when no language server is active",
@@ -112,16 +103,16 @@ function buildSettings(platform: Platform, cwd: string): SettingDef[] {
       },
     },
     {
-      label: "Release pipeline",
-      key: "release.pipeline",
-      helpText: "How /supi:release publishes your project",
+      label: "Release channels",
+      key: "release.channels",
+      helpText: "Where /supi:release publishes your project",
       type: "select",
-      options: PIPELINE_OPTIONS.map((p) => p.label),
-      get: (c) => c.release.pipeline ?? "not set",
+      options: CHANNEL_OPTIONS.map((p) => p.label),
+      get: (c) => c.release.channels.length > 0 ? c.release.channels.join(", ") : "not set",
       set: (d, v) => {
-        const chosen = PIPELINE_OPTIONS.find((p) => p.label === v);
+        const chosen = CHANNEL_OPTIONS.find((p) => p.label === v);
         if (chosen) {
-          updateConfig(paths, d, { release: { pipeline: chosen.value || null } });
+          updateConfig(paths, d, { release: { channels: chosen.value } });
         }
       },
     },

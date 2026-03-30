@@ -1,7 +1,7 @@
 // src/config/loader.ts
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { SupipowersConfig } from "../types.js";
+import type { SupipowersConfig, ReleaseChannel } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 
@@ -72,9 +72,18 @@ export function loadConfig(paths: PlatformPaths, cwd: string): SupipowersConfig 
 
 /** Migrate config from older versions to current */
 function migrateConfig(config: SupipowersConfig): SupipowersConfig {
-  // Currently v1.0.0 is the only version — future migrations go here
-  // Each migration handles one version bump:
-  // if (config.version === "0.x.x") { ... config.version = "1.0.0"; }
+  const raw = config as Record<string, any>;
+
+  // Migrate release.pipeline (string | null) → release.channels (ReleaseChannel[])
+  if (raw.release && "pipeline" in raw.release) {
+    const pipeline = raw.release.pipeline as string | null;
+    let channels: ReleaseChannel[] = [];
+    if (pipeline === "npm") channels = ["npm"];
+    else if (pipeline === "github") channels = ["github"];
+    // "manual" and null both map to empty array
+    raw.release = { channels };
+  }
+
   return { ...config, version: DEFAULT_CONFIG.version };
 }
 
