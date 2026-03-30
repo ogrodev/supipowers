@@ -53,7 +53,7 @@ The installer scans for these and offers to install any that are missing. Everyt
 | [rust-analyzer](https://rust-analyzer.github.io) | LSP | Rust language server | `rustup component add rust-analyzer` |
 | [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) | LSP | Go language server | `go install golang.org/x/tools/gopls@latest` |
 | [playwright-cli](https://github.com/microsoft/playwright-cli) | Testing | Interactive browser exploration for E2E flow discovery via `/supi:qa --e2e` | `npm install -g @playwright/cli@latest` |
-| [Playwright Test](https://playwright.dev) | Testing | Test runner for E2E test execution via `run-e2e-tests.sh` | `npm install @playwright/test@latest && npx playwright install` |
+| [Playwright Test](https://playwright.dev) | Testing | Test runner for E2E test execution via `run-e2e-tests.sh` | `npm install -g @playwright/cli@latest` |
 
 LSP servers are language-specific. You only need the ones matching the languages in your project. Sub-agents use them to check diagnostics and find references before making changes.
 
@@ -68,7 +68,7 @@ LSP servers are language-specific. You only need the ones matching the languages
 | `/supi:plan`    | Collaborative planning with structured task breakdown |
 | `/supi:run`     | Execute a plan with parallel sub-agents               |
 | `/supi:review`  | Quality gates at chosen depth                         |
-| `/supi:qa`      | Run test suite and E2E pipeline                       |
+| `/supi:qa`      | E2E testing pipeline with playwright-cli               |
 | `/supi:release` | Version bump, release notes, publish                  |
 | `/supi:fix-pr`  | Assess and fix PR review comments                     |
 | `/supi:mcp`     | Manage MCP servers (connect, disconnect, list)        |
