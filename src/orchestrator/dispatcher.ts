@@ -110,13 +110,18 @@ export async function dispatchAgent(
 
   const prompt = buildTaskPrompt(task, planContext, config, lspAvailable, contextModeAvailable);
 
-  // Check abort before starting
+  // Check abort/timeout before starting
   if (signal?.aborted) {
-    progress?.setStatus(task.id, "blocked", "Interrupted by user");
+    const reason = signal.reason;
+    const isTimeout = reason instanceof DOMException && reason.name === "TimeoutError";
+    const msg = isTimeout
+      ? `Task timed out after ${config.orchestration.taskTimeout / 1000}s`
+      : "Interrupted by user";
+    progress?.setStatus(task.id, "blocked", msg);
     return {
       taskId: task.id,
       status: "blocked" as AgentStatus,
-      output: "Interrupted by user",
+      output: msg,
       filesChanged: [],
       duration: 0,
     };
@@ -270,6 +275,17 @@ async function executeSubAgent(
       "Sub-agent dispatch is not available on this platform. " +
       "If you just updated supipowers, restart your agent session to load the new code.",
     );
+  }
+
+  // Pre-flight abort/timeout check
+  if (signal?.aborted) {
+    const reason = signal.reason;
+    const isTimeout = reason instanceof DOMException && reason.name === "TimeoutError";
+    const msg = isTimeout
+      ? `Task timed out after ${config.orchestration.taskTimeout / 1000}s`
+      : "Interrupted by user";
+    progress?.setStatus(task.id, "blocked", msg);
+    return { status: "blocked", output: msg, filesChanged: [] };
   }
 
   const session = await platform.createAgentSession({
@@ -439,13 +455,14 @@ export async function dispatchAgentWithReview(
     }
 
     if (attempt === maxReviewRetries) {
-      notifyWarning(
-        ctx,
-        `Task ${task.id} spec review failed after ${maxReviewRetries + 1} attempts`,
-        specReview.issues,
-      );
+      const exhaustionMsg = `Task ${task.id} spec review failed after ${maxReviewRetries + 1} attempts — continuing as done_with_concerns`;
+      notifyWarning(ctx, exhaustionMsg, specReview.issues);
       implementResult.status = "done_with_concerns";
-      implementResult.concerns = `Spec compliance issues: ${specReview.issues}`;
+      implementResult.concerns = [
+        `⚠ Spec review exhausted (${maxReviewRetries + 1} attempts):`,
+        specReview.issues,
+        `Re-run with higher maxFixRetries or fix manually.`,
+      ].join("\n");
       return implementResult;
     }
 
@@ -486,13 +503,14 @@ export async function dispatchAgentWithReview(
     }
 
     if (attempt === maxReviewRetries) {
-      notifyWarning(
-        ctx,
-        `Task ${task.id} quality review failed after ${maxReviewRetries + 1} attempts`,
-        qualityReview.issues,
-      );
+      const exhaustionMsg = `Task ${task.id} quality review failed after ${maxReviewRetries + 1} attempts — continuing as done_with_concerns`;
+      notifyWarning(ctx, exhaustionMsg, qualityReview.issues);
       implementResult.status = "done_with_concerns";
-      implementResult.concerns = `Code quality issues: ${qualityReview.issues}`;
+      implementResult.concerns = [
+        `⚠ Quality review exhausted (${maxReviewRetries + 1} attempts):`,
+        qualityReview.issues,
+        `Re-run with higher maxFixRetries or fix manually.`,
+      ].join("\n");
       return implementResult;
     }
 

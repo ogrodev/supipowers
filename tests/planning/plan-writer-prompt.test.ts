@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import { buildPlanWriterPrompt } from "../../src/planning/plan-writer-prompt.js";
 
 describe("plan writer prompt", () => {
-  const specPath = "docs/supipowers/specs/2026-03-12-auth-design.md";
+  const specPath = ".omp/supipowers/specs/2026-03-12-auth-design.md";
   const dotDirDisplay = ".omp";
 
   describe("structure", () => {

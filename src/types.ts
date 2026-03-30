@@ -182,6 +182,7 @@ export interface SupipowersConfig {
     maxFixRetries: number;
     maxNestingDepth: number;
     modelPreference: string;
+    taskTimeout: number; // milliseconds, 0 = no timeout
   };
   lsp: {
     setupGuide: boolean;

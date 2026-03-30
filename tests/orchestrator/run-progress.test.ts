@@ -150,6 +150,63 @@ describe("RunProgressState", () => {
       expect(s.pending).toBe(0);
     });
   });
+  describe("onChange callback", () => {
+    test("fires on addTask", () => {
+      const calls: number[] = [];
+      state.onChange = () => calls.push(1);
+      state.addTask(1, "task-1");
+      expect(calls).toHaveLength(1);
+    });
+
+    test("fires on setStatus", () => {
+      state.addTask(1, "task-1");
+      const calls: number[] = [];
+      state.onChange = () => calls.push(1);
+      state.setStatus(1, "running");
+      expect(calls).toHaveLength(1);
+    });
+
+    test("fires on setActivity", () => {
+      state.addTask(1, "task-1");
+      const calls: number[] = [];
+      state.onChange = () => calls.push(1);
+      state.setActivity(1, "compiling");
+      expect(calls).toHaveLength(1);
+    });
+
+    test("fires on incrementTools", () => {
+      state.addTask(1, "task-1");
+      const calls: number[] = [];
+      state.onChange = () => calls.push(1);
+      state.incrementTools(1);
+      expect(calls).toHaveLength(1);
+    });
+
+    test("fires on incrementFiles", () => {
+      state.addTask(1, "task-1");
+      const calls: number[] = [];
+      state.onChange = () => calls.push(1);
+      state.incrementFiles(1);
+      expect(calls).toHaveLength(1);
+    });
+
+    test("fires on batchLabel change", () => {
+      const calls: number[] = [];
+      state.onChange = () => calls.push(1);
+      state.batchLabel = "Batch 1/3";
+      expect(calls).toHaveLength(1);
+    });
+
+    test("does not fire when onChange is not set", () => {
+      // Should not throw
+      state.addTask(1, "task-1");
+      state.setStatus(1, "running");
+      state.setActivity(1, "compiling");
+      state.incrementTools(1);
+      state.incrementFiles(1);
+      state.batchLabel = "Batch 1/3";
+    });
+  });
 });
 
 describe("activeRuns store", () => {
@@ -172,5 +229,44 @@ describe("activeRuns store", () => {
     expect(activeRuns.has("run-99")).toBe(true);
     activeRuns.delete("run-99");
     expect(activeRuns.has("run-99")).toBe(false);
+  });
+
+  describe("abort", () => {
+    test("abort() sets aborted flag and fires signal", () => {
+      const state = new RunProgressState();
+      expect(state.aborted).toBe(false);
+      expect(state.signal.aborted).toBe(false);
+
+      let signalFired = false;
+      state.signal.addEventListener("abort", () => { signalFired = true; });
+
+      state.abort();
+
+      expect(state.aborted).toBe(true);
+      expect(state.signal.aborted).toBe(true);
+      expect(signalFired).toBe(true);
+    });
+
+    test("calling abort() twice does not throw", () => {
+      const state = new RunProgressState();
+      state.abort();
+      expect(() => state.abort()).not.toThrow();
+      expect(state.aborted).toBe(true);
+    });
+
+    test("activeRuns lookup enables ESC handler to find running state", () => {
+      const state = new RunProgressState();
+      activeRuns.set("esc-test", state);
+
+      // Simulate what the ESC handler does
+      for (const s of activeRuns.values()) {
+        if (!s.aborted) {
+          s.abort();
+        }
+      }
+
+      expect(state.aborted).toBe(true);
+      activeRuns.delete("esc-test");
+    });
   });
 });

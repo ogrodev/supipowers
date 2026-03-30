@@ -124,6 +124,7 @@ For each regression, record:
 - Using `waitForTimeout` or `networkidle` instead of explicit conditions
 - Spending the token budget on low-priority flows while critical flows remain untested
 - Classifying a regression as "flaky" without evidence of non-determinism
+- Ignoring error states — test what happens when the API errors, the network is slow, or input is invalid
 
 ## Quality Signals
 

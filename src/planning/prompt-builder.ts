@@ -16,7 +16,7 @@ export interface PlanningPromptOptions {
  * 2. Ask clarifying questions (one at a time)
  * 3. Propose 2-3 approaches with trade-offs
  * 4. Present design section by section
- * 5. Write design doc to docs/supipowers/specs/
+ * 5. Write design doc to .omp/supipowers/specs/
  * 6. Spec review loop (dispatch reviewer sub-agent)
  * 7. User review gate
  * 8. Handoff to implementation plan
@@ -79,7 +79,7 @@ export function buildPlanningPrompt(options: PlanningPromptOptions): string {
     "## Phase 5: Write Design Doc",
     "",
     "Once the user approves the design:",
-    "- Write the validated design doc to `docs/supipowers/specs/YYYY-MM-DD-<topic>-design.md`",
+    "- Write the validated design doc to `.omp/supipowers/specs/YYYY-MM-DD-<topic>-design.md`",
     "- Use clear, concise writing",
     "- Commit the design document to git",
     "",

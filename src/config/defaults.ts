@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     maxFixRetries: 2,
     maxNestingDepth: 2,
     modelPreference: "auto",
+    taskTimeout: 600_000, // 10 minutes
   },
   lsp: {
     setupGuide: true,

@@ -168,7 +168,7 @@ export const DEPENDENCIES: Dependency[] = [
     binary: "playwright",
     required: false,
     category: "testing",
-    description: "Test runner for E2E tests (run-e2e-tests.sh). Install: npm install @playwright/test@latest && npx playwright install",
+    description: "Test runner for E2E tests (run-e2e-tests.sh)",
     checkFn: (exec) => checkBinary(exec, "playwright"),
     installCmd: null, // Compound command (&&) — not compatible with installDep's naive split
     url: "https://playwright.dev",

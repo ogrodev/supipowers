@@ -95,7 +95,7 @@ supipowers/
 | `src/types.ts`                                             | Canonical types: `PlanTask`, `Plan`, `AgentResult`, `RunBatch`, `RunManifest`, `SupipowersConfig`, `Profile`, etc. — add types here only |
 | `src/config/defaults.ts`                                   | `DEFAULT_CONFIG` and `BUILTIN_PROFILES` (quick / thorough / full-regression)                                                             |
 | `src/orchestrator/dispatcher.ts`                           | `executeSubAgent` stub — the integration point for OMP sub-agent API                                                                     |
-| `docs/supipowers/specs/2026-03-10-supipowers-v2-design.md` | Authoritative v2 design spec; read before any architectural change                                                                       |
+| `.omp/supipowers/specs/2026-03-10-supipowers-v2-design.md` | Authoritative v2 design spec; read before any architectural change                                                                       |
 | `package.json`                                             | `omp.extensions` field registers `./src/index.ts` with the OMP runtime                                                                   |
 | `tsconfig.json` / `tsconfig.build.json`                    | Base config (includes tests) vs. build config (excludes tests)                                                                           |
 

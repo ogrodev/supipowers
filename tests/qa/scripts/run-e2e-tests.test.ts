@@ -6,36 +6,40 @@ import { execSync } from "node:child_process";
 
 const SCRIPT_PATH = path.resolve(__dirname, "../../../src/qa/scripts/run-e2e-tests.sh");
 
-/** Create a fake `playwright` binary that writes JSON to stdout and exits with the given code */
+/**
+ * Create a fake `playwright-cli` binary that writes JSON to stdout and exits with the given code.
+ * The '\'' idiom (end quote, escaped quote, start quote) embeds literal single quotes
+ * inside a single-quoted bash string, keeping $() and backticks inert.
+ */
 function writeFakePlaywright(binDir: string, jsonOutput: string, exitCode = 0): void {
   const script = `#!/usr/bin/env bash
 echo '${jsonOutput.replace(/'/g, "'\\''")}'
 exit ${exitCode}
 `;
-  const binPath = path.join(binDir, "playwright");
+  const binPath = path.join(binDir, "playwright-cli");
   fs.writeFileSync(binPath, script, { mode: 0o755 });
 }
 
-/** Create a fake `playwright` that writes nothing to stdout */
+/** Create a fake `playwright-cli` that writes nothing to stdout */
 function writeSilentPlaywright(binDir: string, exitCode = 1): void {
   const script = `#!/usr/bin/env bash
 exit ${exitCode}
 `;
-  const binPath = path.join(binDir, "playwright");
+  const binPath = path.join(binDir, "playwright-cli");
   fs.writeFileSync(binPath, script, { mode: 0o755 });
 }
 
-/** Run the script with a custom PATH that includes the fake playwright */
+/** Run the script with a custom PATH that includes the fake playwright-cli */
 function runScript(
   binDir: string,
   testDir: string,
   baseUrl: string,
-  testFilter?: string,
+  opts?: { testFilter?: string; env?: NodeJS.ProcessEnv; cwd?: string },
 ): { stdout: string; exitCode: number } {
   const args = [testDir, baseUrl];
-  if (testFilter) args.push(testFilter);
+  if (opts?.testFilter) args.push(opts.testFilter);
 
-  const env = {
+  const env = opts?.env ?? {
     ...process.env,
     PATH: `${binDir}:${process.env.PATH}`,
   };
@@ -45,6 +49,7 @@ function runScript(
       env,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      cwd: opts?.cwd,
     });
     return { stdout: stdout.trim(), exitCode: 0 };
   } catch (err: any) {
@@ -69,25 +74,18 @@ describe("run-e2e-tests.sh", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test("exits with error JSON when playwright is not on PATH", () => {
-    // Use empty PATH so playwright is not found (keep /usr/bin for bash builtins)
+  test("exits with error JSON when playwright is not installed", () => {
+    // PATH excludes playwright, cwd has no node_modules — both detection paths fail.
+    // node is intentionally unreachable on this PATH; the script exits before the node parser.
     const env = {
       ...process.env,
       PATH: "/usr/bin:/bin",
     };
 
-    let stdout = "";
-    let exitCode = 0;
-    try {
-      stdout = execSync(`bash "${SCRIPT_PATH}" "${testDir}" "http://localhost:3000"`, {
-        env,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-    } catch (err: any) {
-      stdout = (err.stdout || "").trim();
-      exitCode = err.status ?? 1;
-    }
+    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000", {
+      env,
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(1);
     const result = JSON.parse(stdout);
@@ -176,7 +174,7 @@ describe("run-e2e-tests.sh", () => {
 
     const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
 
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
     const result = JSON.parse(stdout);
     expect(result.total).toBe(1);
     expect(result.passed).toBe(0);
@@ -211,7 +209,7 @@ describe("run-e2e-tests.sh", () => {
 
     const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
 
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
     const result = JSON.parse(stdout);
     expect(result.failed).toBe(1);
     expect(result.failures).toHaveLength(1);
@@ -262,7 +260,7 @@ describe("run-e2e-tests.sh", () => {
 
     const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
 
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
     const result = JSON.parse(stdout);
     expect(result.total).toBe(3);
     expect(result.passed).toBe(1);
@@ -338,5 +336,51 @@ describe("run-e2e-tests.sh", () => {
     expect(result.passed).toBe(1);
     // The test name includes parent suite titles
     expect(result.failures).toEqual([]);
+  });
+
+  test("passes test_filter as --grep to playwright", () => {
+    // Fake playwright that records its arguments to a file and emits minimal valid output
+    const argsFile = path.join(tmpDir, "pw-args.txt");
+    const minimalOutput = JSON.stringify({
+      suites: [
+        {
+          title: "Filtered",
+          specs: [
+            {
+              title: "matching test",
+              file: "filtered.spec.ts",
+              tests: [{ results: [{ status: "passed", duration: 100 }] }],
+            },
+          ],
+          suites: [],
+        },
+      ],
+    });
+    const script = `#!/usr/bin/env bash
+echo "$@" > "${argsFile}"
+echo '${minimalOutput.replace(/'/g, "'\\''")}'
+exit 0
+`;
+    const binPath = path.join(binDir, "playwright-cli");
+    fs.writeFileSync(binPath, script, { mode: 0o755 });
+
+    const { exitCode } = runScript(binDir, testDir, "http://localhost:3000", { testFilter: "login flow" });
+
+    expect(exitCode).toBe(0);
+    const capturedArgs = fs.readFileSync(argsFile, "utf-8").trim();
+    expect(capturedArgs).toContain("--grep");
+    expect(capturedArgs).toContain("login flow");
+  });
+
+  test("emits parse error JSON when playwright outputs malformed data", () => {
+    // Playwright crashes and writes non-JSON garbage to stdout
+    writeFakePlaywright(binDir, "not valid json at all", 1);
+
+    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+
+    expect(exitCode).toBe(1);
+    const result = JSON.parse(stdout);
+    expect(result.error).toContain("Failed to parse playwright output");
+    expect(result.total).toBe(0);
   });
 });

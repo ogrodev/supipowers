@@ -286,18 +286,47 @@ export function registerRunCommand(platform: Platform): void {
           continue;
         }
 
+        // Filter out already-completed tasks (for resume of partially-done batches)
+        const existingResults = loadAllAgentResults(platform.paths, ctx.cwd, manifest.id);
+        const completedTaskIds = new Set(
+          existingResults
+            .filter(r => r.status === "done" || r.status === "done_with_concerns")
+            .map(r => r.taskId)
+        );
+        const tasksToDispatch = executableTaskIds.filter(id => !completedTaskIds.has(id));
+        const skippedResumeCount = executableTaskIds.length - tasksToDispatch.length;
+        if (skippedResumeCount > 0) {
+          notifyInfo(ctx, `Skipping ${skippedResumeCount} already-completed tasks`);
+        }
+
+        // If all tasks already completed on resume, mark batch done and continue
+        if (tasksToDispatch.length === 0 && executableTaskIds.length > 0) {
+          batch.status = "completed";
+          updateRun(platform.paths, ctx.cwd, manifest);
+          notifyInfo(ctx, `Batch ${batch.index + 1} already completed on previous run`);
+          continue;
+        }
+
         batch.status = "running";
         updateRun(platform.paths, ctx.cwd, manifest);
 
         notifyInfo(
           ctx,
           `Batch ${batch.index + 1}/${manifest.batches.length}`,
-          `${executableTaskIds.length} tasks${cascadeBlocked.length > 0 ? ` (${cascadeBlocked.length} skipped)` : ""}`
+          `${tasksToDispatch.length} tasks${cascadeBlocked.length > 0 ? ` (${cascadeBlocked.length} cascade-blocked)` : ""}${skippedResumeCount > 0 ? ` (${skippedResumeCount} already done)` : ""}`
         );
         progress.batchLabel = `Batch ${batch.index + 1}/${manifest.batches.length}`;
 
+        // Compose per-task timeout signal with user interrupt signal
+        const taskSignal = config.orchestration.taskTimeout > 0
+          ? AbortSignal.any([
+              progress.signal,
+              AbortSignal.timeout(config.orchestration.taskTimeout),
+            ])
+          : progress.signal;
+
         const batchResults: AgentResult[] = [];
-        const agentPromises = executableTaskIds.map((taskId) => {
+        const agentPromises = tasksToDispatch.map((taskId) => {
           const task = plan.tasks.find((t) => t.id === taskId);
           if (!task) return Promise.resolve(null);
 
@@ -310,8 +339,19 @@ export function registerRunCommand(platform: Platform): void {
             lspAvailable: lsp,
             contextModeAvailable: ctxMode,
             progress,
-            signal: progress.signal,
+            signal: taskSignal,
             parentSessionModel,
+          }).catch((error: unknown): AgentResult => {
+            const msg = error instanceof Error ? error.message : String(error);
+            progress.setStatus(taskId, "blocked", `Unexpected error: ${msg}`);
+            notifyError(ctx, `Task ${taskId} crashed`, msg);
+            return {
+              taskId,
+              status: "blocked",
+              output: `Unexpected dispatch error: ${msg}`,
+              filesChanged: [],
+              duration: 0,
+            };
           });
         });
 
@@ -346,6 +386,16 @@ export function registerRunCommand(platform: Platform): void {
             "File conflicts detected",
             conflicts.conflictingFiles.join(", ")
           );
+          if (conflicts.mergePrompt) {
+            platform.sendMessage(
+              {
+                customType: "supi-conflict-resolution",
+                content: [{ type: "text", text: conflicts.mergePrompt }],
+                display: "none",
+              },
+              { deliverAs: "steer", triggerTurn: true },
+            );
+          }
         }
 
         // Skip fix retries if interrupted
@@ -358,6 +408,7 @@ export function registerRunCommand(platform: Platform): void {
             if (!task) continue;
 
             let fixed = false;
+            let latestResult: AgentResult = failed;
             for (let retry = 0; retry < config.orchestration.maxFixRetries; retry++) {
               if (progress.aborted) break;
               notifyInfo(ctx, `Retrying task ${failed.taskId}`, `attempt ${retry + 1}`);
@@ -370,11 +421,12 @@ export function registerRunCommand(platform: Platform): void {
                 lspAvailable: lsp,
                 contextModeAvailable: ctxMode,
                 progress,
-                previousOutput: failed.output,
-                failureReason: failed.output,
+                previousOutput: latestResult.output,
+                failureReason: latestResult.output,
                 parentSessionModel,
               });
               saveAgentResult(platform.paths, ctx.cwd, manifest.id, fixResult);
+              latestResult = fixResult;
               if (fixResult.status !== "blocked") {
                 fixed = true;
                 break;

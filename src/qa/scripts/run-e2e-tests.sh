@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run playwright tests and produce a compact JSON summary.
-# Requires @playwright/cli installed globally (npm install -g @playwright/cli@latest).
+# Requires playwright-cli installed globally (npm install -g @playwright/cli@latest).
 # Usage: run-e2e-tests.sh <test_dir> <base_url> [test_filter]
 # Output: Compact JSON summary on stdout
-# Exit: non-zero when any test fails or playwright errors
+# Exit: 0 = all tests passed, 2 = test failures, 1 = script/playwright error
 set -euo pipefail
 
 TEST_DIR="$1"
@@ -13,15 +13,19 @@ RESULTS_DIR="${TEST_DIR}/../results"
 
 mkdir -p "$RESULTS_DIR"
 
-# Verify playwright is available (provided by @playwright/cli global install)
-if ! command -v playwright &>/dev/null; then
+# Resolve playwright-cli binary
+if command -v playwright-cli &>/dev/null; then
+  PW_BIN="$(command -v playwright-cli)"
+elif [ -x "./node_modules/.bin/playwright-cli" ]; then
+  PW_BIN="./node_modules/.bin/playwright-cli"
+else
   cat <<EOF
-{"total": 0, "passed": 0, "failed": 0, "skipped": 0, "duration": 0, "failures": [], "error": "playwright not found. Install @playwright/cli globally: npm install -g @playwright/cli@latest"}
+{"total": 0, "passed": 0, "failed": 0, "skipped": 0, "duration": 0, "failures": [], "error": "playwright not found. Install with: npm install -g @playwright/cli@latest"}
 EOF
   exit 1
 fi
 
-# Build playwright command
+# Build playwright-cli command
 PW_ARGS=(
   test
   "$TEST_DIR"
@@ -37,7 +41,7 @@ fi
 RAW_OUTPUT="$RESULTS_DIR/raw-results.json"
 PW_STDERR="$RESULTS_DIR/playwright-stderr.log"
 set +e
-BASE_URL="$BASE_URL" playwright "${PW_ARGS[@]}" > "$RAW_OUTPUT" 2>"$PW_STDERR"
+BASE_URL="$BASE_URL" "$PW_BIN" "${PW_ARGS[@]}" > "$RAW_OUTPUT" 2>"$PW_STDERR"
 PW_EXIT=$?
 set -e
 
@@ -110,7 +114,7 @@ const summary = {
 const json = JSON.stringify(summary);
 fs.writeFileSync(process.env.SUMMARY_OUTPUT, json);
 console.log(json);
-process.exit(failed > 0 ? 1 : 0);
+process.exit(failed > 0 ? 2 : 0);
 " 2>"$NODE_STDERR"
 NODE_EXIT=$?
 set -e
@@ -123,5 +127,5 @@ EOF
   exit 1
 fi
 
-# Propagate the node exit code (0 = all passed, 1 = tests failed)
+# Propagate the node exit code (0 = all passed, 2 = test failures)
 exit "$NODE_EXIT"

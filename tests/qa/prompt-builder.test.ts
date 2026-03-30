@@ -57,6 +57,11 @@ describe("E2E orchestrator prompt builder", () => {
     expect(prompt).toContain("playwright-cli goto");
   });
 
+  test("discovery phase instructs agent to use playwright-cli fill", () => {
+    const prompt = buildE2eOrchestratorPrompt(makeOptions());
+    expect(prompt).toContain("playwright-cli fill");
+  });
+
   test("discovery phase instructs agent to use playwright-cli screenshot", () => {
     const prompt = buildE2eOrchestratorPrompt(makeOptions());
     expect(prompt).toContain("playwright-cli screenshot");
@@ -125,7 +130,8 @@ describe("E2E orchestrator prompt builder", () => {
   test("includes playwright test writing instructions with .spec.ts files", () => {
     const prompt = buildE2eOrchestratorPrompt(makeOptions());
     expect(prompt).toContain(".spec.ts");
-    expect(prompt).toContain("@playwright/test");
+    expect(prompt).toContain("playwright/test");
+    expect(prompt).not.toContain("@playwright/test");
   });
 
   // ── Execution phase ─────────────────────────────────────────────
@@ -170,6 +176,13 @@ describe("E2E orchestrator prompt builder", () => {
     expect(prompt).toContain("never run playwright directly");
   });
 
+  test("token guidance recommends snapshot over screenshot for structure", () => {
+    const prompt = buildE2eOrchestratorPrompt(makeOptions());
+    expect(prompt).toContain("playwright-cli snapshot");
+    expect(prompt).toContain("instead of");
+    expect(prompt).toContain("playwright-cli screenshot");
+  });
+
   // ── Regression analysis ─────────────────────────────────────────
 
   test("includes regression detection instructions", () => {
@@ -191,5 +204,20 @@ describe("E2E orchestrator prompt builder", () => {
   test("includes headless config in session context", () => {
     const prompt = buildE2eOrchestratorPrompt(makeOptions());
     expect(prompt).toContain("Headless");
+  });
+
+  test("playwright-cli open includes --headed when headless is false", () => {
+    const config = {
+      ...DEFAULT_E2E_QA_CONFIG,
+      playwright: { ...DEFAULT_E2E_QA_CONFIG.playwright, headless: false },
+    };
+    const prompt = buildE2eOrchestratorPrompt(makeOptions({ config }));
+    expect(prompt).toContain("playwright-cli open --headed http://localhost:3000");
+  });
+
+  test("playwright-cli open omits --headed when headless is true", () => {
+    const prompt = buildE2eOrchestratorPrompt(makeOptions());
+    expect(prompt).toContain("playwright-cli open http://localhost:3000");
+    expect(prompt).not.toContain("--headed");
   });
 });
