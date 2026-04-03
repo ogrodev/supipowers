@@ -100,7 +100,7 @@ Runtime preference: **Bun** (`bun.lock` is present; OMP installs via `bun`).
 bun install
 
 # Run all tests (one-shot)
-bun test           # or: npm test  (calls vitest run)
+bun test           # runs bun's built-in test runner
 
 # Watch mode
 bun run test:watch  # or: npm run test:watch
@@ -125,7 +125,7 @@ bunx supipowers
 | Package manager   | **Bun** (`bun install`, `bun run`)                                     |
 | Language          | TypeScript 5.9+, ESNext target, ESM (`"type": "module"`)               |
 | Module resolution | `bundler` in tsconfig (both bun and bundlers resolve correctly)        |
-| Test runner       | **Vitest** v4 with `globals: true`                                     |
+| Test runner       | **bun:test** (Bun's built-in test runner)                               |
 | Build             | Plain **tsc** (`tsc -p tsconfig.build.json`)                           |
 | Linter/formatter  | **None configured** — no ESLint, Biome, or Prettier                    |
 | CI                | **None** — quality checks are fully manual                             |
@@ -180,7 +180,7 @@ Use `platform.sendMessage({ deliverAs: 'steer' })` to steer the active AI sessio
 
 ### Framework
 
-**Vitest** v4, configured in `vitest.config.ts`. Test globals (`describe`, `test`, `expect`, `vi`) are available without imports.
+**bun:test** — Bun's built-in test runner. Test globals (`describe`, `test`, `expect`, `beforeEach`, `afterEach`) are available without imports. Files that use `mock()` must import it explicitly: `import { mock } from "bun:test"` — and when doing so, must also import all other test functions used in that file.
 
 ### Test structure
 
@@ -211,15 +211,17 @@ afterEach(() => {
 });
 ```
 
-**Inline platform mock (no `vi.mock` calls at module level):**
+**Inline platform mock (import `mock` from `bun:test`):**
 
 ```typescript
+import { describe, expect, mock, test } from "bun:test";
+
 const mockPlatform = {
-  registerCommand: vi.fn(),
-  on: vi.fn(),
-  sendMessage: vi.fn(),
-  getActiveTools: vi.fn(() => []),
-  exec: vi.fn(),
+  registerCommand: mock(),
+  on: mock(),
+  sendMessage: mock(),
+  getActiveTools: mock(() => []),
+  exec: mock(),
 } as any;
 ```
 

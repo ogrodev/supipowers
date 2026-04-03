@@ -283,7 +283,7 @@ bun run test:watch    # watch mode
 bun run build         # emit to dist/
 ```
 
-The test suite mirrors the `src/` structure under `tests/`. Tests use Vitest with global imports and inline mocks (no module-level `vi.mock` calls). Filesystem tests use temp directories created in `beforeEach`.
+The test suite mirrors the `src/` structure under `tests/`. Tests use Bun's built-in test runner (`bun:test`) with inline mocks via `mock()`. Filesystem tests use temp directories created in `beforeEach`.
 
 > [!NOTE]
 > Supipowers works with both Pi and OMP. The platform abstraction in `src/platform/` normalizes API differences (event names, tool registration, message delivery) so you can develop against either agent.
