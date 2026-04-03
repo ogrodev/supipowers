@@ -1,5 +1,13 @@
 import { describe, test, expect } from "vitest";
-import { estimateTokens, formatSize, parseSystemPrompt, buildBreakdown } from "../../src/context/analyzer.js";
+import {
+  estimateTokens,
+  formatSize,
+  parseSystemPrompt,
+  buildBreakdown,
+  buildBreakdownItems,
+  formatSectionReport,
+  formatToolsReport,
+} from "../../src/context/analyzer.js";
 import type { PromptSection } from "../../src/context/analyzer.js";
 
 describe("estimateTokens", () => {
@@ -216,5 +224,119 @@ describe("buildBreakdown", () => {
     const lines = buildBreakdown(usage, [], ["read"], true);
     const joined = lines.join("\n");
     expect(joined).toContain("No system prompt captured");
+  });
+});
+
+describe("buildBreakdownItems", () => {
+  const sections: PromptSection[] = [
+    { label: "Skills (3)", bytes: 8704, content: "a".repeat(8704) },
+    { label: "Memory", bytes: 2048, content: "b".repeat(2048) },
+  ];
+
+  test("returns items with section references for drillable lines", () => {
+    const items = buildBreakdownItems(null, sections, ["read", "write"]);
+    const skillsItem = items.find(i => i.line.includes("Skills (3)"));
+    expect(skillsItem).toBeDefined();
+    expect(skillsItem!.section).toBe(sections[0]);
+
+    const memoryItem = items.find(i => i.line.includes("Memory"));
+    expect(memoryItem).toBeDefined();
+    expect(memoryItem!.section).toBe(sections[1]);
+  });
+
+  test("tools item has toolNames array", () => {
+    const items = buildBreakdownItems(null, sections, ["read", "write"]);
+    const toolsItem = items.find(i => i.line.includes("Tools:"));
+    expect(toolsItem).toBeDefined();
+    expect(toolsItem!.toolNames).toEqual(["read", "write"]);
+  });
+
+  test("non-drillable lines have no section or toolNames", () => {
+    const items = buildBreakdownItems(null, sections, []);
+    const header = items[0];
+    expect(header.section).toBeUndefined();
+    expect(header.toolNames).toBeUndefined();
+
+    const separator = items[1];
+    expect(separator.section).toBeUndefined();
+  });
+
+  test("single base section is drillable", () => {
+    const base: PromptSection[] = [
+      { label: "Base system prompt", bytes: 100, content: "x".repeat(100) },
+    ];
+    const items = buildBreakdownItems(null, base, []);
+    const sysItem = items.find(i => i.line.includes("System Prompt"));
+    expect(sysItem).toBeDefined();
+    expect(sysItem!.section).toBe(base[0]);
+  });
+
+  test("produces same display lines as buildBreakdown", () => {
+    const usage = { tokens: 50000, contextWindow: 200000, percent: 25 };
+    const items = buildBreakdownItems(usage, sections, ["read"]);
+    const fromItems = items.map(i => i.line);
+    const fromLegacy = buildBreakdown(usage, sections, ["read"]);
+    expect(fromItems).toEqual(fromLegacy);
+  });
+
+  test("tools item has no toolNames when no tools active", () => {
+    const items = buildBreakdownItems(null, [], []);
+    const toolsItem = items.find(i => i.line.includes("Tools:"));
+    expect(toolsItem).toBeDefined();
+    expect(toolsItem!.toolNames).toBeUndefined();
+  });
+
+  test("parent System Prompt line is drillable with all content", () => {
+    const items = buildBreakdownItems(null, sections, []);
+    // The first "System Prompt" line (parent, not a sub-item) should have a synthetic section
+    const parentItem = items.find(i => i.line.includes("System Prompt") && !i.line.includes("\u251c") && !i.line.includes("\u2514"));
+    expect(parentItem).toBeDefined();
+    expect(parentItem!.section).toBeDefined();
+    expect(parentItem!.section!.content).toContain("a".repeat(100)); // from Skills section
+    expect(parentItem!.section!.content).toContain("b".repeat(100)); // from Memory section
+  });
+});
+
+describe("formatSectionReport", () => {
+  test("generates markdown report with label, size, and content", () => {
+    const section: PromptSection = {
+      label: "Skills (3)",
+      bytes: 8704,
+      content: "<skills>all the skills here</skills>",
+    };
+    const report = formatSectionReport(section);
+    expect(report).toContain("# Context Breakdown: Skills (3)");
+    expect(report).toContain("8.5KB");
+    expect(report).toContain("tokens");
+    expect(report).toContain("---");
+    expect(report).toContain("<skills>all the skills here</skills>");
+  });
+
+  test("includes full untruncated content", () => {
+    const longContent = "x".repeat(50000);
+    const section: PromptSection = {
+      label: "Big section",
+      bytes: 50000,
+      content: longContent,
+    };
+    const report = formatSectionReport(section);
+    expect(report).toContain(longContent);
+  });
+});
+
+describe("formatToolsReport", () => {
+  test("generates markdown report listing tools", () => {
+    const report = formatToolsReport(["read", "write", "bash"]);
+    expect(report).toContain("# Context Breakdown: Active Tools");
+    expect(report).toContain("3 tools active");
+    expect(report).toContain("- read");
+    expect(report).toContain("- write");
+    expect(report).toContain("- bash");
+  });
+
+  test("handles single tool", () => {
+    const report = formatToolsReport(["read"]);
+    expect(report).toContain("1 tools active");
+    expect(report).toContain("- read");
   });
 });

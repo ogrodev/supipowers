@@ -52,6 +52,13 @@ export interface ContextUsage {
   percent: number | null;
 }
 
+
+/** A breakdown line with optional drillable data */
+export interface BreakdownItem {
+  line: string;
+  section?: PromptSection;
+  toolNames?: string[];
+}
 /** Format a token count as human-readable (e.g., 50000 → "50K") */
 function formatTokens(tokens: number): string {
   if (tokens >= 1000) return `${Math.round(tokens / 1000)}K`;
@@ -65,7 +72,17 @@ export function buildBreakdown(
   activeTools: string[],
   noSystemPrompt = false,
 ): string[] {
-  const lines: string[] = [];
+  return buildBreakdownItems(usage, sections, activeTools, noSystemPrompt).map(i => i.line);
+}
+
+/** Build breakdown items with drillable section data */
+export function buildBreakdownItems(
+  usage: ContextUsage | null,
+  sections: PromptSection[],
+  activeTools: string[],
+  noSystemPrompt = false,
+): BreakdownItem[] {
+  const items: BreakdownItem[] = [];
 
   // Header — format: "Context Breakdown (~50K / 200K tokens, 25%)"
   const headerParts: string[] = [];
@@ -80,8 +97,8 @@ export function buildBreakdown(
   const header = headerParts.length > 0
     ? `Context Breakdown (${headerParts.join(", ")})`
     : "Context Breakdown";
-  lines.push(header);
-  lines.push("\u2500".repeat(44));
+  items.push({ line: header });
+  items.push({ line: "\u2500".repeat(44) });
 
   // System prompt sections
   if (sections.length > 0) {
@@ -90,32 +107,45 @@ export function buildBreakdown(
 
     const onlyBase = sections.length === 1 && sections[0].label === "Base system prompt";
     if (onlyBase) {
-      lines.push(`  System Prompt  ${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`);
+      items.push({
+        line: `  System Prompt  ${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`,
+        section: sections[0],
+      });
     } else {
-      lines.push(`  System Prompt  ${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`);
+      const allContent = sections.map(s => s.content).join("\n\n");
+      items.push({
+        line: `  System Prompt  ${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`,
+        section: { label: "System Prompt (all sections)", bytes: totalBytes, content: allContent },
+      });
       for (let i = 0; i < sections.length; i++) {
         const s = sections[i];
         const isLast = i === sections.length - 1;
         const prefix = isLast ? "\u2514" : "\u251c";
         const tok = estimateTokens(s.content);
-        lines.push(`    ${prefix} ${s.label}  ${formatSize(s.bytes)}  ~${formatTokens(tok)} tok`);
+        items.push({
+          line: `    ${prefix} ${s.label}  ${formatSize(s.bytes)}  ~${formatTokens(tok)} tok`,
+          section: s,
+        });
       }
     }
   }
 
   // Empty prompt fallback
   if (noSystemPrompt && sections.length === 0) {
-    lines.push("  No system prompt captured");
+    items.push({ line: "  No system prompt captured" });
   }
 
   // Tools
-  lines.push(`  Tools: ${activeTools.length} active`);
+  items.push({
+    line: `  Tools: ${activeTools.length} active`,
+    toolNames: activeTools.length > 0 ? activeTools : undefined,
+  });
 
   // Footer
-  lines.push("\u2500".repeat(34));
-  lines.push("  Close");
+  items.push({ line: "\u2500".repeat(34) });
+  items.push({ line: "  Close" });
 
-  return lines;
+  return items;
 }
 
 // ── Internal helpers ──────────────────────────────────────
@@ -253,4 +283,34 @@ function collectUnconsumed(text: string, consumed: Set<number>): string {
     if (!consumed.has(i)) result += text[i];
   }
   return result;
+}
+
+
+/** Format a section into a markdown report string */
+export function formatSectionReport(section: PromptSection): string {
+  const tok = estimateTokens(section.content);
+  return [
+    `# Context Breakdown: ${section.label}`,
+    "",
+    `> ${formatSize(section.bytes)} | ~${formatTokens(tok)} tokens`,
+    "",
+    "---",
+    "",
+    section.content,
+    "",
+  ].join("\n");
+}
+
+/** Format tools list into a markdown report string */
+export function formatToolsReport(toolNames: string[]): string {
+  return [
+    "# Context Breakdown: Active Tools",
+    "",
+    `> ${toolNames.length} tools active`,
+    "",
+    "---",
+    "",
+    ...toolNames.map(t => `- ${t}`),
+    "",
+  ].join("\n");
 }
