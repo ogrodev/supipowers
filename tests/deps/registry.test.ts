@@ -142,7 +142,8 @@ describe("scanAll", () => {
     const statuses = await scanAll(exec);
 
     for (const s of statuses) {
-      if (s.binary !== "__bun_sqlite__") {
+      // __bun_sqlite__ uses built-in check; context-mode uses filesystem detection (not exec)
+      if (s.binary !== "__bun_sqlite__" && s.binary !== "context-mode") {
         expect(s.installed).toBe(false);
       }
     }

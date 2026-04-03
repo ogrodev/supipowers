@@ -104,10 +104,8 @@ export const DEPENDENCIES: Dependency[] = [
       const { join } = await import("node:path");
       const { homedir } = await import("node:os");
       const home = homedir();
-      for (const dir of [".pi", ".omp"]) {
-        const startMjs = join(home, dir, "extensions", "context-mode", "start.mjs");
-        if (existsSync(startMjs)) return { installed: true, version: "extension" };
-      }
+      const startMjs = join(home, ".omp", "extensions", "context-mode", "start.mjs");
+      if (existsSync(startMjs)) return { installed: true, version: "extension" };
       return { installed: false };
     },
     installCmd: null, // Handled by installer (git clone + npm install + npm run build)
