@@ -21,6 +21,7 @@ function createMockExec(responses: Record<string, { stdout: string; stderr?: str
 }
 
 function createMockCtx(overrides: Record<string, any> = {}) {
+  const { ui: uiOverrides, ...rest } = overrides;
   return {
     cwd: "/repo",
     hasUI: true,
@@ -28,9 +29,11 @@ function createMockCtx(overrides: Record<string, any> = {}) {
       select: vi.fn(),
       notify: vi.fn(),
       input: vi.fn(),
-      ...overrides.ui,
+      setStatus: vi.fn(),
+      setWidget: vi.fn(),
+      ...uiOverrides,
     },
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -638,5 +641,78 @@ describe("analyzeAndCommit", () => {
     await analyzeAndCommit(platform, ctx, { userContext: "fixing the auth bug" });
 
     expect(capturedPrompt).toContain("fixing the auth bug");
+  });
+
+  test("shows progress widget and cleans up on completion", async () => {
+    const plan: CommitPlan = { commits: [{ type: "fix", scope: null, summary: "fix bug", details: [], files: ["a.ts"] }] };
+    const exec = createMockExec({
+      "git status": { stdout: " M a.ts", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "a.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 1 file\n", code: 0 },
+      "git diff --cached": { stdout: "small diff", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git reset HEAD": { stdout: "", code: 0 },
+      "git add a.ts": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mockAgentSession(plan),
+    });
+    const setWidget = vi.fn();
+    const setStatus = vi.fn();
+    const ctx = createMockCtx({
+      ui: {
+        select: vi.fn().mockResolvedValue("commit — fix: fix bug"),
+        notify: vi.fn(),
+        input: vi.fn(),
+        setWidget,
+        setStatus,
+      },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+    expect(result).not.toBeNull();
+    expect(result!.committed).toBe(1);
+
+    // Widget was shown during the flow (called multiple times for progress)
+    expect(setWidget).toHaveBeenCalled();
+    const widgetCalls = setWidget.mock.calls;
+
+    // Last widget call clears it (dispose)
+    const lastCall = widgetCalls[widgetCalls.length - 1];
+    expect(lastCall[0]).toBe("supi-commit");
+    expect(lastCall[1]).toBeUndefined();
+
+    // Status was shown during the flow (animated spinner)
+    expect(setStatus).toHaveBeenCalled();
+    const statusCalls = setStatus.mock.calls;
+
+    // Last status call clears it (dispose)
+    const lastStatusCall = statusCalls[statusCalls.length - 1];
+    expect(lastStatusCall[0]).toBe("supi-commit");
+    expect(lastStatusCall[1]).toBeUndefined();
+  });
+
+  test("cleans up progress widget on early exit (clean tree)", async () => {
+    const exec = createMockExec({
+      "git status": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({ exec });
+    const setWidget = vi.fn();
+    const setStatus = vi.fn();
+    const ctx = createMockCtx({
+      ui: { setWidget, setStatus, notify: vi.fn() },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+    expect(result).toBeNull();
+
+    // Widget was set and then cleaned up
+    expect(setWidget).toHaveBeenCalled();
+    const lastCall = setWidget.mock.calls[setWidget.mock.calls.length - 1];
+    expect(lastCall[0]).toBe("supi-commit");
+    expect(lastCall[1]).toBeUndefined();
   });
 });
