@@ -13,6 +13,8 @@ function makeCommits(overrides: Partial<CategorizedCommits> = {}): CategorizedCo
     features: [],
     fixes: [],
     breaking: [],
+    improvements: [],
+    maintenance: [],
     other: [],
     ...overrides,
   };

@@ -1,6 +1,7 @@
 // src/release/changelog.ts — Conventional commit parsing and changelog generation
 
 import type { CategorizedCommits, CommitEntry } from "../types.js";
+import { IMPROVEMENT_TYPES, MAINTENANCE_TYPES, type ConventionalCommitType } from "./commit-types.js";
 
 // Matches: feat(scope)!: message  or  feat!: message  or  feat(scope): message  or  feat: message
 // Capture groups: (1) type, (2) scope|undefined, (3) breaking bang|undefined, (4) message
@@ -36,11 +37,14 @@ function parseLine(line: string): { hash: string; raw: string } | null {
  * AND `features` — the breaking array is the source of truth for what changed
  * the contract; the features array ensures it still shows up in release notes.
  */
+
 export function parseConventionalCommits(gitLog: string): CategorizedCommits {
   const result: CategorizedCommits = {
     features: [],
     fixes: [],
     breaking: [],
+    improvements: [],
+    maintenance: [],
     other: [],
   };
 
@@ -63,27 +67,25 @@ export function parseConventionalCommits(gitLog: string): CategorizedCommits {
     }
 
     const [, type, scope, bang, message] = match;
-    const entry: CommitEntry = { hash, message, ...(scope ? { scope } : {}) };
+    const entry: CommitEntry = { hash, message, type, ...(scope ? { scope } : {}) };
     const isBreaking = bang === "!";
 
+    // Route to the correct bucket based on conventional commit type
+    let bucket: CommitEntry[];
     if (type === "feat") {
-      if (isBreaking) {
-        result.breaking.push({ ...entry });
-        result.features.push(entry);
-      } else {
-        result.features.push(entry);
-      }
+      bucket = result.features;
     } else if (type === "fix") {
-      if (isBreaking) {
-        result.breaking.push({ ...entry });
-        result.fixes.push(entry);
-      } else {
-        result.fixes.push(entry);
-      }
+      bucket = result.fixes;
+    } else if (IMPROVEMENT_TYPES.has(type as ConventionalCommitType)) {
+      bucket = result.improvements;
+    } else if (MAINTENANCE_TYPES.has(type as ConventionalCommitType)) {
+      bucket = result.maintenance;
     } else {
-      // Any other conventional type (chore, docs, refactor, etc.) → other
-      result.other.push(entry);
+      bucket = result.other;
     }
+
+    if (isBreaking) result.breaking.push({ ...entry });
+    bucket.push(entry);
   }
 
   return result;
@@ -113,10 +115,12 @@ export function buildChangelogMarkdown(
   lines.push("");
 
   const sections: [string, CommitEntry[]][] = [
-    ["### 🚨 Breaking Changes", commits.breaking],
-    ["### ✨ Features", commits.features],
-    ["### 🐛 Fixes", commits.fixes],
-    ["### 📦 Other", commits.other],
+    ["### \u{1F6A8} Breaking Changes", commits.breaking],
+    ["### \u{2728} Features", commits.features],
+    ["### \u{1F41B} Fixes", commits.fixes],
+    ["### \u{1F527} Improvements", commits.improvements],
+    ["### \u{1F3D7}\uFE0F Maintenance", commits.maintenance],
+    ["### \u{1F4E6} Other", commits.other],
   ];
 
   let firstSection = true;
@@ -142,13 +146,19 @@ export function buildChangelogMarkdown(
 export function summarizeChanges(commits: CategorizedCommits): string {
   const parts: string[] = [];
 
-  const { features, fixes, breaking } = commits;
+  const { features, fixes, breaking, improvements, maintenance } = commits;
 
   if (features.length > 0) {
     parts.push(`${features.length} feature${features.length === 1 ? "" : "s"}`);
   }
   if (fixes.length > 0) {
     parts.push(`${fixes.length} fix${fixes.length === 1 ? "" : "es"}`);
+  }
+  if (improvements.length > 0) {
+    parts.push(`${improvements.length} improvement${improvements.length === 1 ? "" : "s"}`);
+  }
+  if (maintenance.length > 0) {
+    parts.push(`${maintenance.length} maintenance`);
   }
   if (breaking.length > 0) {
     parts.push(

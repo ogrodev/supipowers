@@ -46,7 +46,7 @@ export function buildPolishPrompt(opts: BuildPolishPromptOpts): string {
     "   - Group closely related changes together under the same bullet.",
     "   - Remove noise (chores, reformats, typo fixes) unless they fix a user-visible bug.",
     "   - Do **not** change version numbers.",
-    "   - Do **not** skip or reorder the section headings (Features, Fixes, Breaking Changes).",
+    "   - Do **not** skip or reorder the section headings (Breaking Changes, Features, Fixes, Improvements, Maintenance, Other).",
     "   - Do **not** invent changes that are not in the raw changelog.",
     "",
     "2. **Present** the polished changelog to the user in a readable format.",
