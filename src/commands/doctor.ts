@@ -323,8 +323,7 @@ export function registerDoctorCommand(platform: Platform): void {
   });
 }
 
-const CAPABILITY_LABELS: Record<keyof PlatformCapabilities, string> = {
-  agentSessions: "Sub-agent orchestration (/supi:run)",
+const CAPABILITY_LABELS: Partial<Record<keyof PlatformCapabilities, string>> = {
   compactionHooks: "Context compression",
   customWidgets: "Progress widgets",
   registerTool: "Custom tool registration",

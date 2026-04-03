@@ -7,6 +7,8 @@ import { getCurrentVersion, suggestBump, bumpVersion } from "../release/version.
 import { executeRelease } from "../release/executor.js";
 import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
+import { analyzeAndCommit } from "../git/commit.js";
+import { getWorkingTreeStatus } from "../git/status.js";
 
 const BUMP_OPTIONS = [
   "patch — bug fixes only",
@@ -21,6 +23,49 @@ export function registerReleaseCommand(platform: Platform): void {
       const isPolish = args?.includes("--polish") ?? false;
       const isDryRun = args?.includes("--dry-run") ?? false;
       const config = loadConfig(platform.paths, ctx.cwd);
+
+      // 0. Check for uncommitted changes
+      let didStash = false;
+      const treeStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
+      if (treeStatus.dirty) {
+        const filePreview = treeStatus.files.slice(0, 8).join(", ");
+        const extra = treeStatus.files.length > 8 ? ` (+${treeStatus.files.length - 8} more)` : "";
+
+        const action = await ctx.ui.select(
+          `Uncommitted changes detected (${treeStatus.files.length} files)`,
+          [
+            "commit — commit changes with AI-generated message",
+            "stash \u2014 stash changes and continue",
+            "abort \u2014 cancel release",
+          ],
+          { helpText: `Files: ${filePreview}${extra}` },
+        );
+
+        if (!action || action.startsWith("abort")) return;
+
+        if (action.startsWith("commit")) {
+          const commitResult = await analyzeAndCommit(platform, ctx);
+          if (!commitResult) {
+            notifyError(ctx, "Commit failed or cancelled", "Aborting release.");
+            return;
+          }
+          // Verify tree is now clean
+          const afterStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
+          if (afterStatus.dirty) {
+            notifyError(ctx, "Still uncommitted changes", "Not all changes were committed. Aborting release.");
+            return;
+          }
+          notifyInfo(ctx, "Changes committed", "Proceeding with release");
+        } else if (action.startsWith("stash")) {
+          const stashResult = await platform.exec("git", ["stash", "push", "-m", "supi:release auto-stash"], { cwd: ctx.cwd });
+          if (stashResult.code !== 0) {
+            notifyError(ctx, "git stash failed", stashResult.stderr || "Non-zero exit");
+            return;
+          }
+          didStash = true;
+          notifyInfo(ctx, "Changes stashed", "Will pop stash after release");
+        }
+      }
 
       // 1. Ensure channels are configured (or detect + ask)
       let channels = config.release.channels;
@@ -125,7 +170,7 @@ export function registerReleaseCommand(platform: Platform): void {
 
         // Report result
         const channelSummary = result.channels
-          .map((c) => `${c.channel}: ${c.success ? "✓" : `✗ ${c.error ?? "failed"}`}`)
+          .map((c) => `${c.channel}: ${c.success ? "\u2713" : `\u2717 ${c.error ?? "failed"}`}`)
           .join(", ");
 
         if (result.pushed || isDryRun) {
@@ -133,13 +178,13 @@ export function registerReleaseCommand(platform: Platform): void {
           notifySuccess(
             ctx,
             `${prefix}Released v${nextVersion}`,
-            `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"} | ${channelSummary}`,
+            `Tag: ${result.tagCreated ? "\u2713" : "\u2717"} | Push: ${result.pushed ? "\u2713" : "\u2717"} | ${channelSummary}`,
           );
         } else {
           notifyError(
             ctx,
             `Release v${nextVersion} failed`,
-            `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"}`,
+            `Tag: ${result.tagCreated ? "\u2713" : "\u2717"} | Push: ${result.pushed ? "\u2713" : "\u2717"}`,
           );
         }
       } catch (err) {
@@ -148,6 +193,13 @@ export function registerReleaseCommand(platform: Platform): void {
           "Release failed",
           err instanceof Error ? err.message : String(err),
         );
+      } finally {
+        if (didStash) {
+          const popResult = await platform.exec("git", ["stash", "pop"], { cwd: ctx.cwd });
+          if (popResult.code !== 0) {
+            notifyError(ctx, "Stash pop failed", "Run 'git stash pop' manually to recover your changes");
+          }
+        }
       }
     },
   });

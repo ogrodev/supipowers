@@ -276,7 +276,7 @@ describe("platform capabilities", () => {
     const caps = { agentSessions: true, compactionHooks: true, customWidgets: false, registerTool: true };
     const mcpAvailable = true;
     const results = checkCapabilities(caps, mcpAvailable);
-    expect(results).toHaveLength(5);
+    expect(results).toHaveLength(4);
 
     const widgets = results.find((r) => r.name === "customWidgets");
     expect(widgets!.presence.ok).toBe(false);
