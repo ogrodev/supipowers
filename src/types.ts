@@ -91,6 +91,8 @@ export interface ReleaseResult {
   channels: { channel: ReleaseChannel; success: boolean; error?: string }[];
   tagCreated: boolean;
   pushed: boolean;
+  /** Human-readable error when the release fails before channel publishing */
+  error?: string;
 }
 
 /** Context-mode integration settings */
