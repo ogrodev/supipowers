@@ -7,7 +7,6 @@ import { registerConfigCommand, handleConfig } from "./commands/config.js";
 import { registerStatusCommand, handleStatus } from "./commands/status.js";
 import { registerPlanCommand, getActiveVisualSessionDir, setActiveVisualSessionDir } from "./commands/plan.js";
 import { getScriptsDir } from "./visual/companion.js";
-import { registerRunCommand } from "./commands/run.js";
 import { registerReviewCommand } from "./commands/review.js";
 import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand } from "./commands/release.js";
@@ -17,15 +16,14 @@ import { registerMcpCommand, handleMcp, handleMcpCli, parseCliArgs } from "./com
 import { registerModelCommand, handleModel } from "./commands/model.js";
 import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
+import { registerContextCommand, handleContext } from "./commands/context.js";
 import { loadConfig } from "./config/loader.js";
-import { migrateModelPreference } from "./config/model-config.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
-import { registerProgressRenderer } from "./orchestrator/progress-renderer.js";
-import { activeRuns } from "./orchestrator/run-progress.js";
 import { loadMcpRegistry } from "./mcp/config.js";
 import { McpcClient } from "./mcp/mcpc.js";
 import { parseTags, computeActiveServers } from "./mcp/activation.js";
 import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
+import { registerPlanApprovalHook } from "./planning/approval-flow.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -37,6 +35,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
   "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
   "supi:model": (platform, ctx) => handleModel(platform, ctx),
+  "supi:context": (platform, ctx) => handleContext(platform, ctx),
 };
 
 let pendingTags: string[] = [];
@@ -57,7 +56,6 @@ export function bootstrap(platform: Platform): void {
   registerConfigCommand(platform);
   registerStatusCommand(platform);
   registerPlanCommand(platform);
-  registerRunCommand(platform);
   registerReviewCommand(platform);
   registerQaCommand(platform);
   registerReleaseCommand(platform);
@@ -66,30 +64,12 @@ export function bootstrap(platform: Platform): void {
   registerDoctorCommand(platform);
   registerMcpCommand(platform);
   registerModelCommand(platform);
+  registerContextCommand(platform);
 
-  // Register custom message renderers
-  registerProgressRenderer(platform);
 
-  // Wire ESC key to abort active runs via raw terminal input
-  // The handleInput on InlineProgressComponent is not called by OMP's TUI
-  // (custom message renderers are not the focused component), so we use
-  // onTerminalInput which hooks into the TUI's input listener pipeline.
-  platform.on("session_start", (_event: any, ctx: any) => {
-    if (!ctx?.ui?.onTerminalInput) return;
-    ctx.ui.onTerminalInput((data: string) => {
-      // ESC key: \x1b not followed by [ (which would be an ANSI sequence)
-      if (data !== "\x1b" && data !== "\x1b\x1b") return;
-      // Find any active run and abort it
-      for (const state of activeRuns.values()) {
-        if (!state.aborted) {
-          state.abort();
-          ctx.ui.notify("Run interrupted — press ESC again to abort the agent turn", "warning");
-          return { consume: true };
-        }
-      }
-      return;
-    });
-  });
+  // Register plan approval flow (agent_end hook for plan approval UI)
+  registerPlanApprovalHook(platform);
+
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
   // message submission, so no chat message appears and no "Working..." indicator
@@ -122,8 +102,6 @@ export function bootstrap(platform: Platform): void {
   const config = loadConfig(platform.paths, process.cwd());
   registerContextModeHooks(platform, config);
 
-  // Migrate old modelPreference to model.json
-  migrateModelPreference(platform.paths, process.cwd());
 
   // MCP per-turn activation
   platform.on("before_agent_start", async (event, ctx) => {
