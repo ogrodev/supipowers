@@ -52,12 +52,15 @@ The command uses OMP's `ExtensionCommandContext` APIs (available in slash comman
 
 ```
 User types /supi:context
-  → input event handler intercepts (returns { handled: true })
-  → handleContext(platform, ctx) called
+  → bootstrap.ts input handler matches TUI_COMMANDS["supi:context"]
+  → calls handleContext(platform, ctx)
+  → returns { action: "handled" } to prevent message submission
+  → inside handleContext:
+    → guard: if (!ctx.hasUI) → return silently (no-op in headless mode)
     → ctx.getContextUsage()        → { tokens, contextWindow, percent } (any field may be null)
     → ctx.getSystemPrompt()        → raw system prompt string
     → parseSystemPrompt(text)      → array of { label, content, bytes }
-    → pi.getActiveTools()          → active tool name list
+    → platform.getActiveTools()    → active tool name list
     → buildBreakdown(usage, sections, tools)  → formatted display lines
     → ctx.ui.select("Context Breakdown", lines)  → TUI display
 ```
@@ -147,18 +150,30 @@ Context Breakdown (~78K / 200K tokens, 39%)
 
 ### Command Registration
 
+In `src/commands/context.ts`, export the registration function:
+
 ```typescript
-platform.registerCommand("supi:context", {
-  description: "Show context window breakdown — what's consuming tokens",
-  async handler(_args, ctx) {
-    handleContext(platform, ctx);
-  },
-});
+export function registerContextCommand(platform: Platform): void {
+  platform.registerCommand("supi:context", {
+    description: "Show context window breakdown — what's consuming tokens",
+    async handler(_args, ctx) {
+      handleContext(platform, ctx);
+    },
+  });
+}
 ```
 
-### Input Interception (TUI-only)
+### Bootstrap Integration (`src/bootstrap.ts`)
 
-Add `"supi:context"` to the `TUI_COMMANDS` map in `bootstrap.ts` so it's intercepted at the input level and never triggers a "Working..." spinner.
+1. Import `registerContextCommand` and `handleContext` from `src/commands/context.ts`
+2. Call `registerContextCommand(platform)` alongside the other command registrations
+3. Add `"supi:context": (platform, ctx) => handleContext(platform, ctx)` to the `TUI_COMMANDS` map
+
+This follows the exact pattern used by existing commands like `supi:config`, `supi:status`, etc.
+
+### Non-Interactive Fallback
+
+If `ctx.hasUI` is false (headless/SDK mode), the command returns silently — no error, no output. This matches the convention of other TUI-only commands in the codebase.
 
 ## Error Handling
 
