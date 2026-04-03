@@ -22,13 +22,13 @@ describe("extension entry point", () => {
 
     expect(registeredCommands).toContain("supi");
     expect(registeredCommands).toContain("supi:plan");
-    expect(registeredCommands).toContain("supi:run");
     expect(registeredCommands).toContain("supi:review");
     expect(registeredCommands).toContain("supi:qa");
     expect(registeredCommands).toContain("supi:release");
     expect(registeredCommands).toContain("supi:config");
     expect(registeredCommands).toContain("supi:status");
     expect(registeredCommands).toContain("supi:update");
+    expect(registeredCommands).toContain("supi:context");
   });
 
   test("registers context-mode hooks when enabled", () => {
