@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Plan, PlanTask, TaskComplexity, TaskParallelism } from "../types.js";
+import type { Plan, PlanTask, TaskComplexity } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
 
 function getPlansDir(paths: PlatformPaths, cwd: string): string {
@@ -97,26 +97,16 @@ function parseTasksFromMarkdown(content: string): PlanTask[] {
     const body = stripped.slice(startIdx, endIdx);
 
     const name = headerLine.replace(/\[.*?\]/g, "").trim();
-    const parallelism = parseParallelism(headerLine);
     const model = parseModel(headerLine);
     const files = parseFiles(body);
     const criteria = parseCriteria(body);
     const complexity = parseComplexity(body);
 
-    tasks.push({ id, name, description: name, files, criteria, complexity, parallelism, ...(model ? { model } : {}) });
+    tasks.push({ id, name, description: name, files, criteria, complexity, ...(model ? { model } : {}) });
   }
   return tasks;
 }
 
-function parseParallelism(header: string): TaskParallelism {
-  if (header.includes("[parallel-safe]")) return { type: "parallel-safe" };
-  const seqMatch = header.match(/\[sequential: depends on (\d[\d, ]*)\]/);
-  if (seqMatch) {
-    const deps = seqMatch[1].split(",").map((s) => parseInt(s.trim(), 10));
-    return { type: "sequential", dependsOn: deps };
-  }
-  return { type: "sequential", dependsOn: [] };
-}
 
 function parseModel(header: string): string | undefined {
   const match = header.match(/\[model:\s*([^\]]+)\]/);

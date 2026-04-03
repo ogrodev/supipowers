@@ -43,16 +43,6 @@ describe("parsePlan", () => {
     expect(plan.tasks).toHaveLength(2);
   });
 
-  test("parses parallel-safe annotation", () => {
-    const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
-    expect(plan.tasks[0].parallelism).toEqual({ type: "parallel-safe" });
-  });
-
-  test("parses sequential annotation with dependencies", () => {
-    const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
-    expect(plan.tasks[1].parallelism).toEqual({ type: "sequential", dependsOn: [1] });
-  });
-
   test("parses files list", () => {
     const plan = parsePlan(SAMPLE_PLAN, "test-plan.md");
     expect(plan.tasks[0].files).toEqual(["src/middleware/auth.ts", "src/middleware/index.ts"]);
@@ -95,10 +85,8 @@ Some context.
     expect(plan.tasks).toHaveLength(2);
     expect(plan.tasks[0].id).toBe(1);
     expect(plan.tasks[0].name).toBe("Add new types");
-    expect(plan.tasks[0].parallelism).toEqual({ type: "parallel-safe" });
     expect(plan.tasks[0].files).toEqual(["src/types.ts"]);
     expect(plan.tasks[1].id).toBe(2);
-    expect(plan.tasks[1].parallelism).toEqual({ type: "sequential", dependsOn: [1] });
   });
 
   test("ignores task headers inside fenced code blocks", () => {
@@ -289,7 +277,6 @@ Test.
     );
     expect(plan.tasks[0].model).toBe("claude-opus-4-6");
     expect(plan.tasks[0].name).toBe("Implement auth");
-    expect(plan.tasks[0].parallelism).toEqual({ type: "parallel-safe" });
   });
 
   test("model annotation is undefined when not present", () => {
@@ -315,7 +302,6 @@ Test.
     );
     expect(plan.tasks[0].model).toBe("anthropic/claude-opus-4-6");
     expect(plan.tasks[0].name).toBe("Complex task");
-    expect(plan.tasks[0].parallelism).toEqual({ type: "sequential", dependsOn: [0] });
   });
 
   test("parses model annotation as only annotation", () => {
@@ -335,7 +321,5 @@ Test.
     );
     expect(plan.tasks[0].model).toBe("gpt-4o");
     expect(plan.tasks[0].name).toBe("Simple task");
-    // No parallelism annotation → default sequential
-    expect(plan.tasks[0].parallelism).toEqual({ type: "sequential", dependsOn: [] });
   });
 });
