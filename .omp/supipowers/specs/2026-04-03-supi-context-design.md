@@ -69,26 +69,26 @@ User types /supi:context
 
 The system prompt is assembled by OMP from multiple sources with recognizable structural patterns. The parser identifies sections by matching these patterns:
 
-| Pattern | Label |
-|---|---|
-| `<file path="...AGENTS.md">...</file>` | AGENTS.md |
-| `<file path="...">` (other files) | Project files |
-| `<skills>...</skills>` or `<skill name="...">` | Skills |
-| `# Memory Guidance` or `memory://` block | Memory |
-| `# context-mode — MANDATORY routing rules` | Routing rules |
-| `## MCP Server Instructions` | MCP instructions |
-| `<instructions>...</instructions>` | Extension instructions |
-| `<project>...</project>` | Project context |
-| Everything not matched | Base system prompt |
+| Pattern | Label | Aggregation |
+|---|---|---|
+| `<file path="...AGENTS.md">...</file>` | AGENTS.md | Single entry |
+| `<file path="...">` (other files) | File: `<basename>` | One entry per `<file>` tag, labeled by basename |
+| `<skills>...</skills>` | Skills (N) | Single aggregated entry; N = count of `<skill>` tags inside |
+| `# Memory Guidance` or `memory://` block | Memory | Single entry |
+| `# context-mode — MANDATORY routing rules` | Routing rules | Single entry (captures all routing blocks — may appear multiple times, all merged) |
+| `## MCP Server Instructions` | MCP instructions | Single entry |
+| `<instructions>...</instructions>` | Extension instructions | Single entry |
+| `<project>...</project>` | Project context | Single entry |
+| Everything not matched | Base system prompt | Single entry — all unmatched fragments concatenated |
 
 ### Parsing Strategy
 
-1. Walk the system prompt string sequentially
-2. Match section boundaries using the patterns above
-3. For XML-like sections (`<file>`, `<skills>`, `<instructions>`, `<project>`), find the matching closing tag
-4. For heading-based sections (`# Memory Guidance`, `## MCP Server Instructions`), capture until the next top-level heading or end of string
-5. Track byte offsets for each section
-6. Remaining unmatched text is labeled "Base system prompt"
+1. Walk the system prompt string sequentially, tracking a cursor position
+2. For XML-like sections (`<file>`, `<skills>`, `<instructions>`, `<project>`): find matching closing tag, extract content between open and close tags (inclusive of tags)
+3. For heading-based sections (`# Memory Guidance`, `## MCP Server Instructions`, `# context-mode`): capture from the heading to the next top-level heading (`#` or `##`) or end of string
+4. All text between recognized sections (preamble, connective text, postamble) is concatenated into a single "Base system prompt" entry
+5. If a `<skills>` wrapper is found, count inner `<skill name="...">` tags to produce the "Skills (N)" label. If no wrapper but individual `<skill>` tags exist, count and aggregate them the same way
+6. Duplicate routing rule blocks (the same header appearing multiple times) are merged into one entry with combined byte size
 
 ### Section Output
 
@@ -107,7 +107,7 @@ All sizes are displayed in two units:
 - **KB** — `bytes / 1024`, rounded to nearest integer (or 1 decimal for < 10KB)
 - **Estimated tokens** — `Math.ceil(chars / 4)` with `~` prefix to indicate approximation
 
-The `ctx.getContextUsage()` return value provides authoritative totals. The per-section breakdown comes from parsing. If the parsed section sizes don't sum to the system prompt total (due to parser gaps), the remainder is attributed to "Other".
+The `ctx.getContextUsage()` return value provides authoritative token totals from OMP. The per-section breakdown is computed from the raw system prompt text. The sum of parsed section bytes should equal the system prompt's total byte length — no remainder is expected since all unmatched text goes into "Base system prompt".
 
 ## TUI Display
 
@@ -122,8 +122,7 @@ Context Breakdown (~78K / 200K tokens, 39%)
     ├ Skills (3)           42KB  ~10K tok
     ├ Memory               8KB   ~2K tok
     ├ Routing rules        86KB  ~21K tok
-    ├ MCP instructions    124KB  ~31K tok
-    └ Other                10KB   ~2K tok
+    └ MCP instructions    124KB  ~31K tok
   Tools: 47 active
   ──────────────────────────────────
   Close
