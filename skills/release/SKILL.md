@@ -22,10 +22,13 @@ If multiple commits touch the same feature or area, consolidate them into a sing
 
 ### Preserve section structure
 
-Maintain the three sections in this order:
+Maintain the six sections in this order:
 1. **Breaking Changes** — anything that requires user action on upgrade
 2. **Features** — new capabilities
 3. **Fixes** — bugs resolved
+4. **Improvements** — refactors, performance gains, reverts
+5. **Maintenance** — chores, CI, build, tests, docs, style
+6. **Other** — non-conventional commits
 
 If a section has no entries, omit it entirely.
 
@@ -39,7 +42,7 @@ Every entry must retain its original commit hash(es) for traceability. Format: `
 - Do not invent features or fixes not represented in the provided commits
 - Do not skip the confirmation step before executing commands
 - Do not modify the release commands provided — execute them exactly as given
-- Do not reorder sections (Breaking > Features > Fixes)
+- Do not reorder sections (Breaking > Features > Fixes > Improvements > Maintenance > Other)
 
 ## Confirmation Flow
 

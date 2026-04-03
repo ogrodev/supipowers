@@ -74,7 +74,7 @@ Wait for their response. Only proceed once approved.
 
 Break into bite-sized tasks (2-5 minutes each). Each task must have:
 
-- Name with parallelism: `[parallel-safe]` or `[sequential: depends on N]`
+- Name
 - **files**: Exact paths the agent will touch
 - **criteria**: Acceptance criteria (testable)
 - **complexity**: `small` | `medium` | `large`
@@ -97,7 +97,7 @@ tags: [<relevant>, <tags>]
 
 ## Tasks
 
-### 1. <Task name> [parallel-safe]
+### 1. <Task name>
 - **files**: src/path/to/file.ts
 - **criteria**: <what success looks like>
 - **complexity**: small
@@ -112,8 +112,6 @@ tags: [<relevant>, <tags>]
 ## Principles
 
 - Each task should be completable in 2-5 minutes
-- Tasks that touch different files are parallel-safe
-- Tasks that depend on others' output are sequential
 - Include test files in the files list
 - Prefer small, focused tasks over large ones
 - DRY, YAGNI, TDD, frequent commits
