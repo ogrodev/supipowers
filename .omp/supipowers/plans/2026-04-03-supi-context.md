@@ -321,6 +321,20 @@ function extractHeadingSections(
   }
 }
 
+  // Spec: also recognize bare memory:// blocks without a heading
+  if (!sections.some((s) => s.label === "Memory")) {
+    const memoryMatch = text.match(/memory:\/\/\S+/);
+    if (memoryMatch && !consumed.has(memoryMatch.index!)) {
+      // Capture from memory:// line to next heading or end
+      const rest = text.slice(memoryMatch.index!);
+      const nextHeading = rest.search(/\n#{1,2}\s/);
+      const end = nextHeading === -1 ? text.length : memoryMatch.index! + nextHeading;
+      const content = text.slice(memoryMatch.index!, end);
+      sections.push({ label: "Memory", bytes: byteLength(content), content });
+      markConsumed(consumed, memoryMatch.index!, end);
+    }
+  }
+
 function markConsumed(consumed: Set<number>, start: number, end: number): void {
   for (let i = start; i < end; i++) consumed.add(i);
 }
@@ -487,6 +501,19 @@ describe("buildBreakdown", () => {
     expect(joined).toContain("Tools: 2 active");
   });
 
+  test("shows single System Prompt line without sub-breakdown for base-only", () => {
+    const usage = { tokens: 5000, contextWindow: 200000, percent: 3 };
+    const baseSections: PromptSection[] = [
+      { label: "Base system prompt", bytes: 4096, content: "x".repeat(4096) },
+    ];
+    const lines = buildBreakdown(usage, baseSections, ["read"]);
+    const joined = lines.join("\n");
+    expect(joined).toContain("System Prompt");
+    expect(joined).not.toContain("├");
+    expect(joined).not.toContain("└");
+    expect(joined).not.toContain("Base system prompt");
+  });
+
   test("handles null token fields in usage", () => {
     const usage = { tokens: null, contextWindow: 200000, percent: null };
     const lines = buildBreakdown(usage as any, sampleSections, []);
@@ -556,14 +583,21 @@ export function buildBreakdown(
   if (sections.length > 0) {
     const totalBytes = sections.reduce((sum, s) => sum + s.bytes, 0);
     const totalTok = estimateTokens(sections.reduce((acc, s) => acc + s.content, ""));
-    lines.push(`  System Prompt${pad(`${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`, 30)}`);
 
-    for (let i = 0; i < sections.length; i++) {
-      const s = sections[i];
-      const isLast = i === sections.length - 1;
-      const prefix = isLast ? "└" : "├";
-      const tok = estimateTokens(s.content);
-      lines.push(`    ${prefix} ${s.label}${pad(`${formatSize(s.bytes)}  ~${formatTokens(tok)} tok`, 28 - s.label.length)}`);
+    // Spec: if only "Base system prompt" exists (no recognized sections),
+    // show a single "System Prompt" line with no sub-breakdown
+    const onlyBase = sections.length === 1 && sections[0].label === "Base system prompt";
+    if (onlyBase) {
+      lines.push(`  System Prompt${pad(`${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`, 30)}`);
+    } else {
+      lines.push(`  System Prompt${pad(`${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`, 30)}`);
+      for (let i = 0; i < sections.length; i++) {
+        const s = sections[i];
+        const isLast = i === sections.length - 1;
+        const prefix = isLast ? "└" : "├";
+        const tok = estimateTokens(s.content);
+        lines.push(`    ${prefix} ${s.label}${pad(`${formatSize(s.bytes)}  ~${formatTokens(tok)} tok`, 28 - s.label.length)}`);
+      }
     }
   }
 
@@ -780,7 +814,7 @@ Expected: No errors
 
 - [ ] **Step 3: Run full test suite**
 
-Run: `bun test`
+Run: `bun run test` (runs `vitest run` via package.json script)
 Expected: All tests pass
 
 - [ ] **Step 4: Commit**
