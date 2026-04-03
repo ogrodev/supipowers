@@ -1,33 +1,30 @@
 import type { Platform, PlatformContext } from "../platform/types.js";
 import { loadConfig } from "../config/loader.js";
-import { findActiveRun } from "../storage/runs.js";
 import { loadLatestReport } from "../storage/reports.js";
 import { listPlans } from "../storage/plans.js";
 
 export function handleSupi(platform: Platform, ctx: PlatformContext): void {
   void (async () => {
     const config = loadConfig(platform.paths, ctx.cwd);
-    const activeRun = findActiveRun(platform.paths, ctx.cwd);
     const latestReport = loadLatestReport(platform.paths, ctx.cwd);
     const plans = listPlans(platform.paths, ctx.cwd);
 
     const commands = [
       "/supi:plan     — Start collaborative planning",
-      "/supi:run      — Execute a plan with sub-agents",
       "/supi:review   — Run quality gates",
       "/supi:qa       — E2E product testing with Playwright",
       "/supi:fix-pr   — Fix PR review comments",
       "/supi:release  — Release automation",
       "/supi:config   — Manage configuration",
-      "/supi:status   — Check running tasks",
+      "/supi:status   — Show project status",
       "/supi:doctor   — Run health checks",
       "/supi:update   — Update to latest version",
+      "/supi:context  — Show context breakdown",
     ];
 
     const status = [
       `Profile: ${config.defaultProfile}`,
       `Plans: ${plans.length}`,
-      `Active run: ${activeRun ? activeRun.id : "none"}`,
       `Last review: ${latestReport ? `${latestReport.timestamp.slice(0, 10)} (${latestReport.passed ? "passed" : "failed"})` : "none"}`,
     ];
 
