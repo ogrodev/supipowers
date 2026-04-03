@@ -303,6 +303,7 @@ function extractHeadingSections(
     let merged = "";
     let match;
     while ((match = globalPattern.exec(text)) !== null) {
+      if (consumed.has(match.index)) continue; // skip if inside an XML section
       // Capture from heading to next heading of same or higher level, or end
       const headingLevel = text[match.index] === "#" && text[match.index + 1] === "#" ? 2 : 1;
       const rest = text.slice(match.index + match[0].length);
@@ -395,12 +396,11 @@ test("merges duplicate routing rule blocks", () => {
 test("section bytes sum to total prompt bytes", () => {
   const prompt = `Preamble text\n<file path="/AGENTS.md">\nagent content\n</file>\n<skills>\n<skill name="a">skill a</skill>\n</skills>\n# Memory Guidance\nmemory stuff\n# Next\nTrailing`;
   const sections = parseSystemPrompt(prompt);
-  // All text should be accounted for (no gaps beyond whitespace in joins)
+  // Spec requires: parsed section bytes must equal total prompt bytes exactly
+  // (all unmatched text goes into Base system prompt)
   const totalSectionBytes = sections.reduce((sum, s) => sum + s.bytes, 0);
   const promptBytes = new TextEncoder().encode(prompt).length;
-  // Allow small difference from whitespace between sections
-  expect(totalSectionBytes).toBeLessThanOrEqual(promptBytes);
-  expect(totalSectionBytes).toBeGreaterThan(promptBytes * 0.9);
+  expect(totalSectionBytes).toBe(promptBytes);
 });
 
 test("handles bare <skill> tags without <skills> wrapper", () => {
@@ -494,6 +494,13 @@ describe("buildBreakdown", () => {
     expect(joined).toContain("200K");
     expect(joined).not.toContain("null");
   });
+
+  test("shows 'No system prompt captured' when prompt was empty", () => {
+    const usage = { tokens: 10000, contextWindow: 200000, percent: 5 };
+    const lines = buildBreakdown(usage, [], ["read"], true);
+    const joined = lines.join("\n");
+    expect(joined).toContain("No system prompt captured");
+  });
 });
 ```
 
@@ -525,6 +532,7 @@ export function buildBreakdown(
   usage: ContextUsage | null,
   sections: PromptSection[],
   activeTools: string[],
+  noSystemPrompt = false,
 ): string[] {
   const lines: string[] = [];
 
@@ -557,6 +565,11 @@ export function buildBreakdown(
       const tok = estimateTokens(s.content);
       lines.push(`    ${prefix} ${s.label}${pad(`${formatSize(s.bytes)}  ~${formatTokens(tok)} tok`, 28 - s.label.length)}`);
     }
+  }
+
+  // Empty prompt fallback
+  if (noSystemPrompt && sections.length === 0) {
+    lines.push("  No system prompt captured");
   }
 
   // Tools
@@ -636,10 +649,10 @@ export function handleContext(platform: Platform, ctx: PlatformContext): void {
       return;
     }
 
-    // Parse and build display
-    const sections = parseSystemPrompt(systemPrompt);
+    // Parse system prompt (may be empty)
+    const sections = systemPrompt ? parseSystemPrompt(systemPrompt) : [];
     const activeTools = platform.getActiveTools();
-    const lines = buildBreakdown(usage, sections, activeTools);
+    const lines = buildBreakdown(usage, sections, activeTools, !systemPrompt);
 
     await ctx.ui.select("Context Breakdown", lines, {
       helpText: "Esc to close",
