@@ -47,6 +47,20 @@ export interface ServerState {
   catalog?: ToolCatalog;
 }
 
+/** A server discovered from the OMP host MCP config (not yet in supipowers registry) */
+export interface HostMcpServer {
+  name: string;
+  scope: "user" | "project" | "claude-code";
+  transport: "http" | "stdio" | "sse";
+  url?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  hasAuth?: boolean;
+}
+
 /** mcpc exit codes per documentation */
 export const MCPC_EXIT = {
   SUCCESS: 0,

@@ -1,8 +1,9 @@
 // src/mcp/config.ts
 import * as fs from "node:fs";
+import { homedir } from "node:os";
 import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
-import type { McpRegistry, ServerConfig } from "./types.js";
+import type { McpRegistry, ServerConfig, HostMcpServer } from "./types.js";
 import { createEmptyRegistry, isValidServerName } from "./types.js";
 
 function getMcpConfigPath(paths: PlatformPaths, cwd: string): string {
@@ -141,4 +142,81 @@ export function acquireLock(paths: PlatformPaths, cwd: string): { acquired: bool
       try { fs.unlinkSync(lockPath); } catch { /* already cleaned */ }
     },
   };
+}
+
+
+// ── Host Config Discovery ─────────────────────────────────────
+
+interface HostMcpRaw {
+  mcpServers?: Record<string, {
+    type?: "stdio" | "http" | "sse";
+    command?: string;
+    args?: string[];
+    url?: string;
+    headers?: Record<string, string>;
+    env?: Record<string, string>;
+    enabled?: boolean;
+    auth?: unknown;
+    oauth?: unknown;
+  }>;
+}
+
+/**
+ * Discover MCP servers from host config files:
+ *   - User-level OMP: paths.agent("mcp.json") → ~/.omp/agent/mcp.json
+ *   - Project-level OMP: <cwd>/<dotDir>/mcp.json → <cwd>/.omp/mcp.json
+ *   - Claude Code:          ~/.claude.json
+ *
+ * All use the same { mcpServers: Record<string, ...> } shape.
+ */
+export function discoverHostMcpServers(
+  paths: PlatformPaths,
+  cwd: string,
+): HostMcpServer[] {
+  const dot = paths.dotDir;
+
+  // OMP agent-level (user) config: ~/.omp/agent/mcp.json
+  const userPath = paths.agent("mcp.json");
+  // OMP project-level config: <cwd>/.omp/mcp.json
+  const projectPath = path.join(cwd, dot, "mcp.json");
+  // Claude Code user config: ~/.claude.json
+  const claudeCodePath = path.join(homedir(), ".claude.json");
+
+  const sources: Array<{ scope: HostMcpServer["scope"]; filePath: string }> = [
+    { scope: "user", filePath: userPath },
+    { scope: "project", filePath: projectPath },
+    { scope: "claude-code", filePath: claudeCodePath },
+  ];
+
+  const discovered: HostMcpServer[] = [];
+
+  for (const { scope, filePath } of sources) {
+    const data = readJsonSafe(filePath) as HostMcpRaw | null;
+    if (!data?.mcpServers) continue;
+
+    for (const [name, raw] of Object.entries(data.mcpServers)) {
+      // Skip explicitly disabled servers
+      if (raw.enabled === false) continue;
+
+      const effectiveType = raw.type ?? "stdio";
+      let transport: HostMcpServer["transport"] = "stdio";
+      if (effectiveType === "http") transport = "http";
+      else if (effectiveType === "sse") transport = "sse";
+
+      discovered.push({
+        name,
+        scope,
+        transport,
+        url: raw.url,
+        command: raw.command,
+        args: raw.args,
+        env: raw.env,
+        headers: raw.headers,
+        enabled: raw.enabled,
+        hasAuth: raw.auth !== undefined || raw.oauth !== undefined,
+      });
+    }
+  }
+
+  return discovered;
 }

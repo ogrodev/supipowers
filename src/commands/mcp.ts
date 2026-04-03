@@ -1,12 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Platform, PlatformContext } from "../platform/types.js";
-import { loadMcpRegistry, addServer, removeServer, updateServer, getServerConfig, acquireLock } from "../mcp/config.js";
+import { loadMcpRegistry, addServer, removeServer, updateServer, getServerConfig, acquireLock, discoverHostMcpServers } from "../mcp/config.js";
 import { McpcClient } from "../mcp/mcpc.js";
 import { generateTriggers } from "../mcp/triggers.js";
 import { generateReadme, writeReadme, writeToolsCache, generateSkill, writeSkill, updateAgentsMd } from "../mcp/docs.js";
 import { MCPC_EXIT } from "../mcp/types.js";
-import type { McpTool, ServerConfig } from "../mcp/types.js";
+import type { McpTool, ServerConfig, HostMcpServer } from "../mcp/types.js";
 import { lookupMcpServer, pickBestMatch } from "../mcp/registry.js";
 
 export interface ParsedMcpArgs {
@@ -507,13 +507,124 @@ export async function handleMcpCli(
       break;
     }
 
+    // ── MIGRATE ──────────────────────────────────────────
+    case "migrate": {
+      await handleMcpMigrate(platform, ctx);
+      break;
+    }
+
     default:
       ctx.ui.notify(
-        `Unknown subcommand "${parsed.subcommand}". Available: add, remove, enable, disable, refresh, login, logout, activation, tag, list, info`,
+        `Unknown subcommand "${parsed.subcommand}". Available: add, remove, enable, disable, refresh, login, logout, activation, tag, list, info, migrate`,
         "warning",
       );
   }
 }
+
+// ── Migrate Handler ───────────────────────────────────────────
+
+/**
+ * Discover MCP servers from the host config that are not yet in supi's
+ * managed registry, present a checkbox multi-select UI, and migrate selected
+ * servers via the existing "add" flow.
+ */
+export async function handleMcpMigrate(
+  platform: Platform,
+  ctx: PlatformContext,
+): Promise<void> {
+  // 1. Discover host servers
+  const hostServers = discoverHostMcpServers(platform.paths, ctx.cwd);
+
+  // 2. Load supi registry to find already-managed names
+  const registry = loadMcpRegistry(platform.paths, ctx.cwd);
+  const managedNames = new Set(Object.keys(registry.servers));
+
+  // 3. Filter to servers not yet managed
+  const candidates: HostMcpServer[] = hostServers.filter((s) => !managedNames.has(s.name));
+
+  if (candidates.length === 0) {
+    ctx.ui.notify("All host MCP servers are already in the supipowers registry.", "info");
+    return;
+  }
+
+  // 4. Checkbox-toggle multi-select UI
+  const selected = new Set<number>();
+
+  while (true) {
+    const checkboxOptions = candidates.map((s, i) => {
+      const tick = selected.has(i) ? "✓" : "✗";
+      // Treat sse as http for display
+      const t = s.transport === "sse" ? "http" : s.transport;
+      const auth = s.hasAuth ? " 🔒" : "";
+      return `${tick} ${s.name} — ${t} (${s.scope})${auth}`;
+    });
+
+    const selectedCount = selected.size;
+    const doneLabel = `[Done — migrate ${selectedCount} selected]`;
+
+    checkboxOptions.push("[Select All]");
+    checkboxOptions.push(doneLabel);
+    checkboxOptions.push("[Cancel]");
+
+    const pick = await ctx.ui.select(
+      "Migrate MCP servers from host config",
+      checkboxOptions,
+      { helpText: "Select servers to migrate · Esc to cancel" },
+    );
+
+    if (pick === undefined || pick === null || pick === "[Cancel]") return;
+
+    if (pick === "[Select All]") {
+      if (selected.size === candidates.length) {
+        // All selected — deselect all
+        selected.clear();
+      } else {
+        candidates.forEach((_, i) => selected.add(i));
+      }
+      continue;
+    }
+
+    if (pick === doneLabel) break;
+
+    // Toggle the clicked candidate
+    const idx = checkboxOptions.indexOf(pick);
+    if (idx >= 0 && idx < candidates.length) {
+      if (selected.has(idx)) {
+        selected.delete(idx);
+      } else {
+        selected.add(idx);
+      }
+    }
+  }
+
+  if (selected.size === 0) {
+    ctx.ui.notify("No servers selected. Migration cancelled.", "info");
+    return;
+  }
+
+  // 5. Migrate selected servers via the existing add flow
+  const toMigrate = [...selected].map((i) => candidates[i]);
+  let migratedCount = 0;
+
+  for (const server of toMigrate) {
+    // Map host transport to supi's transport (sse → http, treat as HTTP URL-based)
+    const transport: "http" | "stdio" = server.transport === "stdio" ? "stdio" : "http";
+
+    await handleMcpCli(platform, ctx, {
+      subcommand: "add",
+      name: server.name,
+      url: transport === "http" ? server.url : undefined,
+      command: transport === "stdio" ? server.command : undefined,
+      commandArgs: server.args,
+      transport,
+    });
+
+    migratedCount++;
+  }
+
+  ctx.ui.notify(`Migration complete. Processed ${migratedCount} server(s).`, "info");
+}
+
 
 export function handleMcp(platform: Platform, ctx: PlatformContext): void {
   if (!ctx.hasUI) {
@@ -536,6 +647,7 @@ export function handleMcp(platform: Platform, ctx: PlatformContext): void {
       });
       options.push("[Add server]");
       options.push("[Refresh all]");
+      options.push("[Migrate from host]");
       options.push("[Done]");
 
       const choice = await ctx.ui.select(
@@ -572,6 +684,12 @@ export function handleMcp(platform: Platform, ctx: PlatformContext): void {
       }
 
       // ── Refresh all ───────────────────────────────────────
+      // ── Migrate from host flow ───────────────────────────
+      if (choice === "[Migrate from host]") {
+        await handleMcpMigrate(platform, ctx);
+        continue;
+      }
+
       if (choice === "[Refresh all]") {
         await handleMcpCli(platform, ctx, { subcommand: "refresh" });
         continue;

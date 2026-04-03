@@ -119,7 +119,7 @@ function buildManagedSection(servers: Record<string, { description: string }>): 
   lines.push("The following MCP servers are available via `$tag` or the `mcpc_<name>` tool:");
   lines.push("");
   for (const [name, { description }] of entries) {
-    lines.push(`- **$${name}** — ${description}. Details: .pi/supipowers/mcpc/${name}/README.md`);
+    lines.push(`- **$${name}** — ${description}. Details: .omp/supipowers/mcpc/${name}/README.md`);
   }
   lines.push("");
   lines.push("Use `/supi:mcp` to manage servers. Invoke the `supi:mcpc` skill for usage patterns.");
