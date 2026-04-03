@@ -9,7 +9,7 @@ import { registerPlanCommand, getActiveVisualSessionDir, setActiveVisualSessionD
 import { getScriptsDir } from "./visual/companion.js";
 import { registerReviewCommand } from "./commands/review.js";
 import { registerQaCommand } from "./commands/qa.js";
-import { registerReleaseCommand } from "./commands/release.js";
+import { registerReleaseCommand, handleRelease } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
 import { registerDoctorCommand, handleDoctor } from "./commands/doctor.js";
 import { registerMcpCommand, handleMcp, handleMcpCli, parseCliArgs } from "./commands/mcp.js";
@@ -38,6 +38,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:model": (platform, ctx) => handleModel(platform, ctx),
   "supi:context": (platform, ctx) => handleContext(platform, ctx),
   "supi:commit": (platform, ctx, args) => handleCommit(platform, ctx, args),
+  "supi:release": (platform, ctx, args) => handleRelease(platform, ctx, args),
 };
 
 let pendingTags: string[] = [];

@@ -172,6 +172,7 @@ interface HostMcpRaw {
 export function discoverHostMcpServers(
   paths: PlatformPaths,
   cwd: string,
+  homeDir: string = homedir(),
 ): HostMcpServer[] {
   const dot = paths.dotDir;
 
@@ -180,7 +181,7 @@ export function discoverHostMcpServers(
   // OMP project-level config: <cwd>/.omp/mcp.json
   const projectPath = path.join(cwd, dot, "mcp.json");
   // Claude Code user config: ~/.claude.json
-  const claudeCodePath = path.join(homedir(), ".claude.json");
+  const claudeCodePath = path.join(homeDir, ".claude.json");
 
   const sources: Array<{ scope: HostMcpServer["scope"]; filePath: string }> = [
     { scope: "user", filePath: userPath },
