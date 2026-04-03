@@ -19,6 +19,8 @@ export interface ExecuteReleaseOptions {
   changelog: string;
   channels: ReleaseChannel[];
   dryRun: boolean;
+  /** Skip the package.json version write (version was already set locally). */
+  skipBump?: boolean;
   /** Optional callback for step-by-step progress reporting. */
   onProgress?: ReleaseProgressFn;
 }
@@ -34,7 +36,7 @@ export interface ExecuteReleaseOptions {
  *   happen (all flags true) so callers can preview without side-effects.
  */
 export async function executeRelease(opts: ExecuteReleaseOptions): Promise<ReleaseResult> {
-  const { exec, cwd, version, changelog, channels, dryRun, onProgress } = opts;
+  const { exec, cwd, version, changelog, channels, dryRun, skipBump, onProgress } = opts;
   const progress = onProgress ?? (() => {});
 
   if (dryRun) {
@@ -72,10 +74,14 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
   }
 
   // ── 2. Bump version in package.json ──────────────────────────────────────
-  progress("version-bump", "active", `Bumping to ${version}`);
-  pkg["version"] = version;
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf-8");
-  progress("version-bump", "done");
+  if (skipBump) {
+    progress("version-bump", "done", "Already set");
+  } else {
+    progress("version-bump", "active", `Bumping to ${version}`);
+    pkg["version"] = version;
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf-8");
+    progress("version-bump", "done");
+  }
 
   // ── 3–6. Git operations ──────────────────────────────────────────────────
 

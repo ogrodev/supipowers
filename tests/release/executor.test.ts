@@ -242,4 +242,66 @@ describe("executeRelease", () => {
       expect(updated.version).toBe("5.0.0");
     });
   });
+
+  describe("skipBump option", () => {
+    test("does not overwrite package.json version when skipBump is true", async () => {
+      // package.json starts at 1.0.0 — we're "releasing" 1.0.0 without bumping
+      const mockExec = okExec();
+
+      await executeRelease({
+        exec: mockExec,
+        cwd: tmpDir,
+        version: "1.0.0",
+        changelog: "",
+        channels: [],
+        dryRun: false,
+        skipBump: true,
+      });
+
+      const updated = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8")) as {
+        version: string;
+      };
+      // Should remain 1.0.0, NOT be overwritten
+      expect(updated.version).toBe("1.0.0");
+    });
+
+    test("still runs git operations when skipBump is true", async () => {
+      const mockExec = okExec();
+
+      const result = await executeRelease({
+        exec: mockExec,
+        cwd: tmpDir,
+        version: "1.0.0",
+        changelog: "notes",
+        channels: [],
+        dryRun: false,
+        skipBump: true,
+      });
+
+      expect(result.tagCreated).toBe(true);
+      expect(result.pushed).toBe(true);
+      // 4 git calls (add, commit, tag, push), no build, no channels
+      expect(mockExec).toHaveBeenCalledTimes(4);
+    });
+
+    test("overwrites package.json version when skipBump is false", async () => {
+      const mockExec = okExec();
+
+      await executeRelease({
+        exec: mockExec,
+        cwd: tmpDir,
+        version: "5.0.0",
+        changelog: "",
+        channels: [],
+        dryRun: false,
+        skipBump: false,
+      });
+
+      const updated = JSON.parse(fs.readFileSync(path.join(tmpDir, "package.json"), "utf-8")) as {
+        version: string;
+      };
+      expect(updated.version).toBe("5.0.0");
+    });
+  });
 });
+
