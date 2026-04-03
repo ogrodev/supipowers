@@ -46,6 +46,136 @@ const DIFF_TRUNCATED_LINES = 200;
 
 // ── Main entry point ───────────────────────────────────────
 
+// ── Commit progress tracker ────────────────────────────────
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const STATUS_KEY = "supi-commit";
+const WIDGET_KEY = "supi-commit";
+
+/** A named step in the commit workflow. */
+interface Step {
+  label: string;
+  status: "pending" | "active" | "done" | "skipped";
+  detail?: string;
+}
+
+/**
+ * Rich progress tracker for the commit flow.
+ *
+ * Uses `setWidget` for a persistent multi-line panel showing all steps,
+ * and `setStatus` for the current operation detail in the footer.
+ */
+function createProgress(ctx: any) {
+  const steps: Step[] = [
+    { label: "Check working tree", status: "pending" },
+    { label: "Stage changes", status: "pending" },
+    { label: "Read diff", status: "pending" },
+    { label: "Scan conventions", status: "pending" },
+    { label: "AI analysis", status: "pending" },
+    { label: "Review plan", status: "pending" },
+    { label: "Execute commits", status: "pending" },
+  ];
+
+  let frame = 0;
+  let statusDetail = "";
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  function icon(step: Step): string {
+    switch (step.status) {
+      case "done":    return "✓";
+      case "active":  return SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
+      case "skipped": return "–";
+      default:        return "○";
+    }
+  }
+
+  function renderWidget(): string[] {
+    const lines: string[] = ["┌─ supi:commit ─────────────────────┐"];
+    for (const step of steps) {
+      const mark = icon(step);
+      const detail = step.detail ? ` (${step.detail})` : "";
+      lines.push(`│ ${mark} ${step.label}${detail}`);
+    }
+    lines.push("└───────────────────────────────────┘");
+    return lines;
+  }
+
+  function refresh() {
+    frame++;
+    ctx.ui.setWidget?.(WIDGET_KEY, renderWidget());
+    if (statusDetail) {
+      ctx.ui.setStatus?.(STATUS_KEY, `${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]} ${statusDetail}`);
+    }
+  }
+
+  function startTimer() {
+    if (!timer) {
+      timer = setInterval(refresh, 80);
+    }
+  }
+
+  function stopTimer() {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  }
+
+  return {
+    /**
+     * Mark a step as active (in progress) with an optional status-bar detail.
+     * `stepIndex` is 0-based into the steps array.
+     */
+    activate(stepIndex: number, detail?: string) {
+      const step = steps[stepIndex];
+      if (step) {
+        step.status = "active";
+        step.detail = detail;
+      }
+      statusDetail = detail ?? step?.label ?? "";
+      startTimer();
+      refresh();
+    },
+
+    /** Update the status-bar detail text without changing the step. */
+    detail(text: string) {
+      statusDetail = text;
+      // Also update the current active step's detail
+      const active = steps.find((s) => s.status === "active");
+      if (active) active.detail = text;
+    },
+
+    /** Mark a step as completed. */
+    complete(stepIndex: number, detail?: string) {
+      const step = steps[stepIndex];
+      if (step) {
+        step.status = "done";
+        if (detail !== undefined) step.detail = detail;
+      }
+      refresh();
+    },
+
+    /** Mark a step as skipped. */
+    skip(stepIndex: number, detail?: string) {
+      const step = steps[stepIndex];
+      if (step) {
+        step.status = "skipped";
+        if (detail !== undefined) step.detail = detail;
+      }
+      refresh();
+    },
+
+    /** Tear down: stop animation, clear status bar and widget. */
+    dispose() {
+      stopTimer();
+      ctx.ui.setStatus?.(STATUS_KEY, undefined);
+      ctx.ui.setWidget?.(WIDGET_KEY, undefined);
+    },
+  };
+}
+
+// ── Main entry point ───────────────────────────────────────
+
 /**
  * Analyze working-tree changes and commit them with AI-generated messages.
  *
@@ -58,74 +188,111 @@ export async function analyzeAndCommit(
 ): Promise<CommitResult | null> {
   const exec = platform.exec.bind(platform);
   const cwd: string = ctx.cwd;
+  const progress = createProgress(ctx);
 
-  // 1. Check dirty
-  const status = await getWorkingTreeStatus(exec, cwd);
-  if (!status.dirty) {
-    notifyInfo(ctx, "Nothing to commit", "Working tree is clean");
-    return null;
+  try {
+    // 1. Check dirty
+    progress.activate(0);
+    const status = await getWorkingTreeStatus(exec, cwd);
+    if (!status.dirty) {
+      progress.complete(0, "clean");
+      progress.dispose();
+      notifyInfo(ctx, "Nothing to commit", "Working tree is clean");
+      return null;
+    }
+    progress.complete(0, `${status.files.length} file(s)`);
+
+    // 2. Stage everything (match OMP behavior: include untracked)
+    progress.activate(1, `${status.files.length} file(s)`);
+    const addResult = await exec("git", ["add", "-A"], { cwd });
+    if (addResult.code !== 0) {
+      progress.dispose();
+      notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
+      return null;
+    }
+    progress.complete(1, `${status.files.length} file(s)`);
+
+    // 3. Gather diff information
+    progress.activate(2);
+    const [diffResult, statResult, filesResult] = await Promise.all([
+      exec("git", ["diff", "--cached"], { cwd }),
+      exec("git", ["diff", "--cached", "--stat"], { cwd }),
+      exec("git", ["diff", "--cached", "--name-only"], { cwd }),
+    ]);
+
+    const fileList = filesResult.stdout.trim().split("\n").filter(Boolean);
+    if (fileList.length === 0) {
+      progress.complete(2, "empty");
+      progress.dispose();
+      notifyInfo(ctx, "Nothing to commit", "No changes after staging");
+      await exec("git", ["reset", "HEAD"], { cwd });
+      return null;
+    }
+    progress.complete(2, `${fileList.length} file(s)`);
+
+    // 4. Discover conventions
+    progress.activate(3);
+    const conventions = await discoverCommitConventions(exec, cwd);
+    progress.complete(3, conventions.guidelines ? "found" : "none");
+
+    // 5. Build prompt & try AI analysis
+    const prompt = buildAnalysisPrompt({
+      diff: diffResult.stdout,
+      stat: statResult.stdout,
+      fileList,
+      conventions: conventions.guidelines,
+      userContext: options.userContext,
+    });
+
+    let plan: CommitPlan | null = null;
+
+    if (platform.capabilities.agentSessions) {
+      progress.activate(4, `${fileList.length} file(s)`);
+      plan = await tryAgentPlan(platform, cwd, prompt);
+      if (plan) {
+        progress.complete(4, `${plan.commits.length} commit(s)`);
+      } else {
+        progress.skip(4, "unavailable");
+      }
+    } else {
+      progress.skip(4, "no agent sessions");
+    }
+
+    if (!plan) {
+      // Skip remaining tracked steps for the manual path
+      progress.skip(5, "manual");
+      progress.skip(6, "manual");
+      progress.dispose();
+      return manualFallback(platform, ctx, cwd, fileList);
+    }
+
+    // 6. Present plan for approval
+    progress.activate(5);
+    const planDisplay = formatPlanForDisplay(plan);
+    notifyInfo(ctx, "Commit plan ready", "\n" + planDisplay);
+    const commitLabel = plan.commits.length === 1
+      ? `commit \u2014 ${formatCommitHeader(plan.commits[0])}`
+      : `commit \u2014 apply ${plan.commits.length} commits`;
+    const action = await ctx.ui.select("Proceed?", [
+      commitLabel,
+      "abort \u2014 cancel",
+    ]);
+
+    if (!action || action.startsWith("abort")) {
+      progress.complete(5, "aborted");
+      progress.dispose();
+      notifyInfo(ctx, "Commit cancelled", "No changes were committed");
+      return null;
+    }
+    progress.complete(5, "approved");
+
+    // 7. Execute commits
+    progress.activate(6, `0/${plan.commits.length}`);
+    return executeCommitPlan(platform, ctx, cwd, plan, progress);
+  } finally {
+    // Always clean up, even on unexpected errors
+    progress.dispose();
   }
-
-  // 2. Stage everything (match OMP behavior: include untracked)
-  const addResult = await exec("git", ["add", "-A"], { cwd });
-  if (addResult.code !== 0) {
-    notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
-    return null;
-  }
-
-  // 3. Gather diff information
-  const [diffResult, statResult, filesResult] = await Promise.all([
-    exec("git", ["diff", "--cached"], { cwd }),
-    exec("git", ["diff", "--cached", "--stat"], { cwd }),
-    exec("git", ["diff", "--cached", "--name-only"], { cwd }),
-  ]);
-
-  const fileList = filesResult.stdout.trim().split("\n").filter(Boolean);
-  if (fileList.length === 0) {
-    // Nothing staged after add — e.g. only .gitignore changes
-    notifyInfo(ctx, "Nothing to commit", "No changes after staging");
-    await exec("git", ["reset", "HEAD"], { cwd });
-    return null;
-  }
-
-  // 4. Discover conventions
-  const conventions = await discoverCommitConventions(exec, cwd);
-
-  // 5. Build prompt
-  const prompt = buildAnalysisPrompt({
-    diff: diffResult.stdout,
-    stat: statResult.stdout,
-    fileList,
-    conventions: conventions.guidelines,
-    userContext: options.userContext,
-  });
-
-  // 6. Try agent session; fall back to manual input
-  let plan: CommitPlan | null = null;
-
-  if (platform.capabilities.agentSessions) {
-    plan = await tryAgentPlan(platform, cwd, prompt);
-  }
-
-  if (!plan) {
-    return manualFallback(platform, ctx, cwd, fileList);
-  }
-
-  // 7. Present plan for approval
-  const summary = formatPlanSummary(plan);
-  const action = await ctx.ui.select("Commit plan", [
-    `commit — ${summary}`,
-    "abort — cancel",
-  ]);
-
-  if (!action || action.startsWith("abort")) {
-    notifyInfo(ctx, "Commit cancelled", "No changes were committed");
-    // Leave everything staged — user can re-run or handle manually
-    return null;
-  }
-
-  // 8. Execute commits
-  return executeCommitPlan(platform, ctx, cwd, plan);
 }
 
 // ── Agent interaction ──────────────────────────────────────
@@ -137,7 +304,7 @@ async function tryAgentPlan(
 ): Promise<CommitPlan | null> {
   let session: Awaited<ReturnType<Platform["createAgentSession"]>> | null = null;
   try {
-    session = await platform.createAgentSession({ cwd });
+    session = await platform.createAgentSession({ cwd, hasUI: false });
 
     const agentDone = new Promise<void>((resolve) => {
       session!.subscribe((event: any) => {
@@ -233,25 +400,29 @@ async function executeCommitPlan(
   ctx: any,
   cwd: string,
   plan: CommitPlan,
+  progress: ReturnType<typeof createProgress>,
 ): Promise<CommitResult | null> {
   const exec = platform.exec.bind(platform);
   const committedMessages: string[] = [];
 
-  for (const group of plan.commits) {
+  for (let i = 0; i < plan.commits.length; i++) {
+    const group = plan.commits[i];
+    const header = formatCommitMessage(group).split("\n")[0];
+    progress.detail(`${i + 1}/${plan.commits.length}: ${header}`);
+
     // Reset staging area
     await exec("git", ["reset", "HEAD"], { cwd });
 
     // Stage only this group's files
     const addResult = await exec("git", ["add", ...group.files], { cwd });
     if (addResult.code !== 0) {
-      notifyError(
-        ctx,
-        "Staging failed",
-        `Could not stage files for: ${group.summary}`,
-      );
-      // Re-stage everything so user isn't left in a weird state
-      await exec("git", ["add", "-A"], { cwd });
-      return null;
+      progress.dispose();
+      const failedFiles = group.files.join(", ");
+      const reason = addResult.stderr?.trim() || "git add returned non-zero";
+      return reportPartialFailure(ctx, exec, cwd, committedMessages, {
+        step: `Commit ${i + 1}/${plan.commits.length}`,
+        error: `Could not stage files (${failedFiles}): ${reason}`,
+      });
     }
 
     // Build commit message
@@ -259,13 +430,11 @@ async function executeCommitPlan(
 
     const validation = validateCommitMessage(message);
     if (!validation.valid) {
-      notifyError(
-        ctx,
-        "Invalid commit message from AI",
-        `${validation.error}\nMessage: ${message}`,
-      );
-      await exec("git", ["add", "-A"], { cwd });
-      return null;
+      progress.dispose();
+      return reportPartialFailure(ctx, exec, cwd, committedMessages, {
+        step: `Commit ${i + 1}/${plan.commits.length}`,
+        error: `Invalid commit message: ${validation.error}\nMessage: ${message}`,
+      });
     }
 
     const commitResult = await exec(
@@ -275,18 +444,19 @@ async function executeCommitPlan(
     );
 
     if (commitResult.code !== 0) {
-      notifyError(
-        ctx,
-        "git commit failed",
-        commitResult.stderr || "Non-zero exit",
-      );
-      await exec("git", ["add", "-A"], { cwd });
-      return null;
+      progress.dispose();
+      const reason = commitResult.stderr?.trim() || "git commit returned non-zero";
+      return reportPartialFailure(ctx, exec, cwd, committedMessages, {
+        step: `Commit ${i + 1}/${plan.commits.length}`,
+        error: `git commit failed: ${reason}`,
+      });
     }
 
     committedMessages.push(message);
   }
 
+  progress.complete(6, `${committedMessages.length} done`);
+  progress.dispose();
   notifySuccess(
     ctx,
     `${committedMessages.length} commit(s) created`,
@@ -294,6 +464,42 @@ async function executeCommitPlan(
   );
 
   return { committed: committedMessages.length, messages: committedMessages };
+}
+
+/**
+ * Report a mid-plan failure with context on what succeeded and what failed.
+ * Re-stages remaining files so the user isn't left with a half-reset index.
+ */
+async function reportPartialFailure(
+  ctx: any,
+  exec: Platform["exec"],
+  cwd: string,
+  committedMessages: string[],
+  failure: { step: string; error: string },
+): Promise<CommitResult | null> {
+  // Re-stage everything so the user isn't stuck with a partial index
+  await exec("git", ["add", "-A"], { cwd });
+
+  const lines: string[] = [];
+  lines.push(`Failed at ${failure.step}: ${failure.error}`);
+
+  if (committedMessages.length > 0) {
+    lines.push("");
+    lines.push(`${committedMessages.length} commit(s) succeeded before the failure:`);
+    for (const msg of committedMessages) {
+      lines.push(`  ✓ ${msg.split("\n")[0]}`);
+    }
+    lines.push("");
+    lines.push("Remaining changes are staged — run /supi:commit again to continue.");
+  }
+
+  notifyError(ctx, "Commit failed", lines.join("\n"));
+
+  // Return partial result if any commits succeeded, null otherwise
+  if (committedMessages.length > 0) {
+    return { committed: committedMessages.length, messages: committedMessages };
+  }
+  return null;
 }
 
 // ── Prompt construction ────────────────────────────────────
@@ -436,11 +642,18 @@ function formatCommitMessage(group: CommitGroup): string {
   return `${header}\n\n${body}`;
 }
 
-function formatPlanSummary(plan: CommitPlan): string {
-  if (plan.commits.length === 1) {
-    const c = plan.commits[0];
-    const header = c.scope ? `${c.type}(${c.scope}): ${c.summary}` : `${c.type}: ${c.summary}`;
-    return header;
-  }
-  return `${plan.commits.length} commits: ${plan.commits.map((c) => c.type + ": " + c.summary).join(" | ")}`;
+function formatCommitHeader(c: CommitGroup): string {
+  return c.scope ? `${c.type}(${c.scope}): ${c.summary}` : `${c.type}: ${c.summary}`;
+}
+
+function formatPlanForDisplay(plan: CommitPlan): string {
+  return plan.commits
+    .map((c, i) => {
+      const header = formatCommitHeader(c);
+      const files = c.files.length <= 4
+        ? c.files.join(", ")
+        : c.files.slice(0, 3).join(", ") + ` (+${c.files.length - 3} more)`;
+      return `${i + 1}. ${header}\n   ${files}`;
+    })
+    .join("\n");
 }
