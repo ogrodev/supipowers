@@ -3,7 +3,7 @@ import type { ReleaseChannel, BumpType } from "../types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
 import { parseConventionalCommits, buildChangelogMarkdown, summarizeChanges } from "../release/changelog.js";
-import { getCurrentVersion, suggestBump, bumpVersion } from "../release/version.js";
+import { getCurrentVersion, suggestBump, bumpVersion, isVersionReleased } from "../release/version.js";
 import { executeRelease, type ReleaseProgressFn } from "../release/executor.js";
 import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
@@ -251,10 +251,15 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
       }
       progress.complete(1, channels.join(", "));
 
-      // 2. Get last tag + current version
+      // 2. Get last tag + current version + check if bump is needed
       progress.activate(2, "Parsing git history");
       const lastTag = await getLastTag(platform, ctx.cwd);
       const currentVersion = getCurrentVersion(ctx.cwd);
+      const alreadyReleased = await isVersionReleased(
+        platform.exec.bind(platform),
+        ctx.cwd,
+        currentVersion,
+      );
 
       // 3. Parse commits since last tag
       const sinceArg = lastTag ? `${lastTag}..HEAD` : "HEAD~50..HEAD";
@@ -275,22 +280,35 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
       const commitCount = commits.features.length + commits.fixes.length + commits.breaking.length + commits.improvements.length + commits.maintenance.length + commits.other.length;
       progress.complete(2, `${commitCount} commits since ${lastTag ?? "start"}`);
 
-      // 4. Suggest bump → UI select to confirm/override
-      progress.activate(3, "Awaiting version selection");
-      const suggested = suggestBump(commits);
-      const bumpChoice = await ctx.ui.select(
-        `Version bump (${summary})`,
-        BUMP_OPTIONS,
-        { helpText: `Suggested: ${suggested}` },
-      );
-      if (!bumpChoice) {
-        progress.dispose();
-        return;
-      }
+      // 4. Version resolution — skip bump when local version is unreleased
+      let nextVersion: string;
+      let skipBump: boolean;
 
-      const bump = bumpChoice.split(" \u2014 ")[0] as BumpType;
-      const nextVersion = bumpVersion(currentVersion, bump);
-      progress.complete(3, `${currentVersion} → ${nextVersion} (${bump})`);
+      if (!alreadyReleased && currentVersion !== "0.0.0") {
+        // Local version hasn't been tagged yet — use it as-is
+        nextVersion = currentVersion;
+        skipBump = true;
+        progress.skip(3, `v${currentVersion} (already set, not yet released)`);
+        notifyInfo(ctx, `Using v${currentVersion}`, "Version not yet released — skipping bump");
+      } else {
+        // Version already released — ask for bump
+        progress.activate(3, "Awaiting version selection");
+        const suggested = suggestBump(commits);
+        const bumpChoice = await ctx.ui.select(
+          `Version bump (${summary})`,
+          BUMP_OPTIONS,
+          { helpText: `Current: ${currentVersion} (released) | Suggested: ${suggested}` },
+        );
+        if (!bumpChoice) {
+          progress.dispose();
+          return;
+        }
+
+        const bump = bumpChoice.split(" \u2014 ")[0] as BumpType;
+        nextVersion = bumpVersion(currentVersion, bump);
+        skipBump = false;
+        progress.complete(3, `${currentVersion} → ${nextVersion} (${bump})`);
+      }
 
       // 5. Build changelog
       progress.activate(4, "Generating changelog");
@@ -355,6 +373,7 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
           changelog,
           channels,
           dryRun: isDryRun,
+          skipBump,
           onProgress: progress.executorProgress(),
         });
 
