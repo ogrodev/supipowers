@@ -5,7 +5,7 @@ import { createPaths } from "./types.js";
 
 export function createMockPlatform(overrides?: Partial<Platform>): Platform {
   return {
-    name: "pi",
+    name: "omp",
     registerCommand: vi.fn(),
     getCommands: vi.fn(() => []),
     getActiveTools: vi.fn(() => []),
@@ -19,7 +19,7 @@ export function createMockPlatform(overrides?: Partial<Platform>): Platform {
       state: { messages: [] },
       dispose: vi.fn(async () => {}),
     })),
-    paths: createPaths(".pi"),
+    paths: createPaths(".omp"),
     capabilities: {
       agentSessions: true,
       compactionHooks: true,

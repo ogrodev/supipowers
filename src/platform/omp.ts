@@ -1,34 +1,34 @@
 import type { Platform, AgentSession, AgentSessionOptions } from "./types.js";
 import { createPaths } from "./types.js";
 
-export function createOmpAdapter(pi: any): Platform {
+export function createOmpAdapter(api: any): Platform {
   return {
     name: "omp",
-    registerCommand: (name, opts) => pi.registerCommand(name, opts),
-    getCommands: () => pi.getCommands(),
-    getActiveTools: () => pi.getActiveTools(),
-    exec: (cmd, args, opts) => pi.exec(cmd, args, opts),
+    registerCommand: (name, opts) => api.registerCommand(name, opts),
+    getCommands: () => api.getCommands(),
+    getActiveTools: () => api.getActiveTools(),
+    exec: (cmd, args, opts) => api.exec(cmd, args, opts),
     sendMessage: (content, opts) => {
-      pi.sendMessage(content, {
+      api.sendMessage(content, {
         deliverAs: opts?.deliverAs ?? "steer",
         triggerTurn: opts?.triggerTurn ?? false,
       });
     },
-    registerMessageRenderer: (type, fn) => pi.registerMessageRenderer(type, fn),
+    registerMessageRenderer: (type, fn) => api.registerMessageRenderer(type, fn),
 
     setModel(model: string): void {
-      pi.setModel(model);
+      api.setModel(model);
     },
     getCurrentModel(): string {
-      return pi.getCurrentModel?.() ?? "unknown";
+      return api.getCurrentModel?.() ?? "unknown";
     },
     getModelForRole(role: string): string | null {
-      return pi.getModelForRole?.(role) ?? null;
+      return api.getModelForRole?.(role) ?? null;
     },
 
     on: (event: string, handler: any) => {
       if (event === "input") {
-        pi.on("input", (evt: any, ctx: any) => {
+        api.on("input", (evt: any, ctx: any) => {
           const result = handler(evt, ctx);
           if (result?.action === "handled") return { handled: true };
           if (result?.action === "transform") return { handled: true, text: result.text };
@@ -37,18 +37,18 @@ export function createOmpAdapter(pi: any): Platform {
         return;
       }
       if (event === "session_before_compact") {
-        pi.on("session.before_compacting", handler);
+        api.on("session.before_compacting", handler);
         return;
       }
       if (event === "session_compact") {
-        pi.on("session.compacting", handler);
+        api.on("session.compacting", handler);
         return;
       }
-      pi.on(event, handler);
+      api.on(event, handler);
     },
 
     createAgentSession: async (opts: AgentSessionOptions): Promise<AgentSession> => {
-      const { createAgentSession } = pi.pi;
+      const { createAgentSession } = api.pi;
       // OMP's createAgentSession expects model?: Model (full object), not a string.
       // Our AgentSessionOptions uses model?: string (model ID). If we spread a string
       // into the `model` field, OMP thinks an explicit model was provided, skips all

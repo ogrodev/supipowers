@@ -7,17 +7,17 @@ describe("detectPlatform", () => {
     expect(detectPlatform(rawApi)).toBe("omp");
   });
 
-  it("returns 'pi' when rawApi lacks pi.createAgentSession", () => {
+  it("throws when rawApi lacks pi.createAgentSession", () => {
     const rawApi = { registerCommand: () => {}, getActiveTools: () => [] };
-    expect(detectPlatform(rawApi)).toBe("pi");
+    expect(() => detectPlatform(rawApi)).toThrow("Unrecognized API shape");
   });
 
-  it("returns 'pi' when rawApi.pi exists but has no createAgentSession", () => {
+  it("throws when rawApi.pi exists but has no createAgentSession", () => {
     const rawApi = { pi: { somethingElse: true }, registerCommand: () => {} };
-    expect(detectPlatform(rawApi)).toBe("pi");
+    expect(() => detectPlatform(rawApi)).toThrow("Unrecognized API shape");
   });
 
-  it("returns 'pi' for empty object", () => {
-    expect(detectPlatform({})).toBe("pi");
+  it("throws for empty object", () => {
+    expect(() => detectPlatform({})).toThrow("Unrecognized API shape");
   });
 });

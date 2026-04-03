@@ -5,15 +5,15 @@ import { homedir } from "node:os";
 // ── Path Resolution ────────────────────────────────────────
 
 export interface PlatformPaths {
-  /** The dot-directory name: ".pi" or ".omp" */
+  /** The dot-directory name: ".omp" */
   dotDir: string;
   /** For user-visible messages and LLM prompts */
   dotDirDisplay: string;
-  /** Resolve project-local: paths.project(cwd, "plans") → "<cwd>/.pi/supipowers/plans" */
+  /** Resolve project-local: paths.project(cwd, "plans") → "<cwd>/.omp/supipowers/plans" */
   project(cwd: string, ...segments: string[]): string;
-  /** Resolve global: paths.global("config.json") → "~/.pi/supipowers/config.json" */
+  /** Resolve global: paths.global("config.json") → "~/.omp/supipowers/config.json" */
   global(...segments: string[]): string;
-  /** Resolve agent-level: paths.agent("extensions") → "~/.pi/agent/extensions" */
+  /** Resolve agent-level: paths.agent("extensions") → "~/.omp/agent/extensions" */
   agent(...segments: string[]): string;
 }
 
@@ -113,7 +113,7 @@ export interface PlatformUI {
 // ── Platform ───────────────────────────────────────────────
 
 export interface Platform {
-  name: "pi" | "omp";
+  name: "omp";
 
   // Commands
   registerCommand(name: string, opts: any): void;
@@ -129,7 +129,7 @@ export interface Platform {
   // Introspection
   getActiveTools(): string[];
 
-  // Tool registration (Pi-only)
+  // Tool registration
   registerTool?(definition: any): void;
   setActiveTools?(names: string[]): void;
 
