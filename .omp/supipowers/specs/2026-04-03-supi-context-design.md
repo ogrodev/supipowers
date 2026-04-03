@@ -25,15 +25,19 @@ The command uses OMP's `ExtensionCommandContext` APIs (available in slash comman
 |---|---|---|
 | `ctx.getContextUsage()` | ExtensionCommandContext | Overall token usage: `{ tokens, contextWindow, percent }` — values may be `null` after compaction |
 | `ctx.getSystemPrompt()` | ExtensionCommandContext | Raw system prompt text (the full assembled prompt) |
-| `pi.getActiveTools()` | ExtensionAPI | List of currently active tool names |
-| `pi.getAllTools()` | ExtensionAPI | List of all registered tool names |
+| `pi.getActiveTools()` | ExtensionAPI (wrapped by platform) | List of currently active tool names |
 
-**What we can measure directly vs. what we derive:**
+**What we can measure directly:**
 
-- **System prompt**: Full text from `ctx.getSystemPrompt()` — exact byte sizes per parsed section
-- **Tool count**: Names only from `pi.getActiveTools()` / `pi.getAllTools()` — we show counts, **not** per-tool schema byte sizes (tool definition JSON is not exposed by the API)
-- **Conversation + tools byte total**: Derived as `totalContextBytes - systemPromptBytes` when `ctx.getContextUsage()` provides totals. This is an aggregate — we cannot split tools vs. conversation individually.
-- **Message count**: Not available from these APIs — omitted from display unless `getContextUsage()` includes it
+- **System prompt**: Full text from `ctx.getSystemPrompt()` — exact byte sizes per parsed section, and estimated tokens via chars/4 heuristic
+- **Active tool count**: Tool names from `pi.getActiveTools()` — we show the count of active tools, **not** per-tool schema byte sizes (tool definition JSON is not exposed by the API)
+- **Overall token usage**: From `ctx.getContextUsage()` — tokens used, context window size, and percentage. These are authoritative totals from the OMP runtime
+
+**What we cannot measure:**
+
+- Per-tool definition byte sizes (schema JSON not exposed)
+- Conversation history byte size or message count (not available from command context)
+- Total registered tool count (`pi.getAllTools()` exists on OMP's ExtensionAPI but is not wrapped by our platform adapter — we only show active tools)
 
 ### File Structure
 
@@ -53,7 +57,6 @@ User types /supi:context
     → ctx.getSystemPrompt()        → raw system prompt string
     → parseSystemPrompt(text)      → array of { label, content, bytes }
     → pi.getActiveTools()          → active tool name list
-    → pi.getAllTools()              → all tool name list
     → buildBreakdown(usage, sections, tools)  → formatted display lines
     → ctx.ui.select("Context Breakdown", lines)  → TUI display
 ```
@@ -117,7 +120,7 @@ Context Breakdown (~78K / 200K tokens, 39%)
     ├ Routing rules        86KB  ~21K tok
     ├ MCP instructions    124KB  ~31K tok
     └ Other                10KB   ~2K tok
-  Tools: 47 active / 52 total
+  Tools: 47 active
   ──────────────────────────────────
   Close
 ```
