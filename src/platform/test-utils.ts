@@ -1,23 +1,23 @@
 // src/platform/test-utils.ts
-import { vi } from "vitest";
+import { mock } from "bun:test";
 import type { Platform, PlatformContext } from "./types.js";
 import { createPaths } from "./types.js";
 
 export function createMockPlatform(overrides?: Partial<Platform>): Platform {
   return {
     name: "omp",
-    registerCommand: vi.fn(),
-    getCommands: vi.fn(() => []),
-    getActiveTools: vi.fn(() => []),
-    exec: vi.fn(async () => ({ stdout: "", stderr: "", code: 0 })),
-    sendMessage: vi.fn(),
-    registerMessageRenderer: vi.fn(),
-    on: vi.fn(),
-    createAgentSession: vi.fn(async () => ({
-      subscribe: vi.fn(() => () => {}),
-      prompt: vi.fn(async () => {}),
+    registerCommand: mock(),
+    getCommands: mock(() => []),
+    getActiveTools: mock(() => []),
+    exec: mock(async () => ({ stdout: "", stderr: "", code: 0 })),
+    sendMessage: mock(),
+    registerMessageRenderer: mock(),
+    on: mock(),
+    createAgentSession: mock(async () => ({
+      subscribe: mock(() => () => {}),
+      prompt: mock(async () => {}),
       state: { messages: [] },
-      dispose: vi.fn(async () => {}),
+      dispose: mock(async () => {}),
     })),
     paths: createPaths(".omp"),
     capabilities: {
@@ -35,9 +35,9 @@ export function createMockContext(overrides?: Partial<PlatformContext>): Platfor
     cwd: "/tmp/test",
     hasUI: true,
     ui: {
-      select: vi.fn(async () => null),
-      notify: vi.fn(),
-      input: vi.fn(async () => null),
+      select: mock(async () => null),
+      notify: mock(),
+      input: mock(async () => null),
     },
     ...overrides,
   };
