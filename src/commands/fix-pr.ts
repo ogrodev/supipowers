@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadFixPrConfig, saveFixPrConfig, DEFAULT_FIX_PR_CONFIG } from "../fix-pr/config.js";
 import { buildFixPrOrchestratorPrompt } from "../fix-pr/prompt-builder.js";
-import type { FixPrConfig, ReviewerType, CommentReplyPolicy } from "../fix-pr/types.js";
+import type { FixPrConfig, CommentReplyPolicy } from "../fix-pr/types.js";
 import {
   generateFixPrSessionId,
   createFixPrSession,
@@ -14,6 +14,7 @@ import { notifyInfo, notifyError, notifyWarning } from "../notifications/rendere
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
+import { detectBotReviewers } from "../fix-pr/bot-detector.js";
 
 modelRegistry.register({
   id: "fix-pr",
@@ -155,6 +156,18 @@ export function registerFixPrCommand(platform: Platform): void {
 
       const commentCount = comments.split("\n").length;
 
+      // Auto-detect bot reviewers from comment data
+      const detectedBots = detectBotReviewers(comments);
+      if (detectedBots.length > 0) {
+        config = {
+          ...config,
+          reviewer: {
+            type: detectedBots[0].type,
+            triggerMethod: detectedBots[0].triggerMethod,
+          },
+        };
+      }
+
       // ── Step 5: Load skill ─────────────────────────────────────────
       let skillContent = "";
       const skillPath = findSkillPath("fix-pr");
@@ -180,7 +193,7 @@ export function registerFixPrCommand(platform: Platform): void {
       const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
       const bridge = createModelBridge(platform);
       const resolved = resolveModelForAction("fix-pr", modelRegistry, modelConfig, bridge);
-      if (resolved.source !== "main" && platform.setModel) {
+      if (resolved.source !== "main" && platform.setModel && resolved.model) {
         platform.setModel(resolved.model);
       }
 
@@ -200,18 +213,6 @@ export function registerFixPrCommand(platform: Platform): void {
 
 // ── Setup Wizard ───────────────────────────────────────────────────────
 
-const REVIEWER_OPTIONS = [
-  "CodeRabbit",
-  "GitHub Copilot",
-  "Gemini Code Review",
-  "None",
-];
-
-const REVIEWER_DEFAULTS: Record<string, string> = {
-  "CodeRabbit": "/review",
-  "GitHub Copilot": "@copilot review",
-  "Gemini Code Review": "/gemini review",
-};
 
 const POLICY_OPTIONS = [
   "Answer all comments",
@@ -239,33 +240,6 @@ const MODEL_TIER_OPTIONS = [
 ];
 
 async function runSetupWizard(ctx: any): Promise<FixPrConfig | null> {
-  // 1. Automated reviewer
-  const reviewerChoice = await ctx.ui.select(
-    "Automated PR reviewer",
-    REVIEWER_OPTIONS,
-    { helpText: "Select your automated reviewer, if any" },
-  );
-  if (!reviewerChoice) return null;
-
-  let reviewerType: ReviewerType = "none";
-  let triggerMethod: string | null = null;
-
-  if (reviewerChoice !== "None") {
-    reviewerType = reviewerChoice.toLowerCase().replace(/ /g, "").replace("github", "") as ReviewerType;
-    // Normalize to our type names
-    if (reviewerChoice === "CodeRabbit") reviewerType = "coderabbit";
-    else if (reviewerChoice === "GitHub Copilot") reviewerType = "copilot";
-    else if (reviewerChoice === "Gemini Code Review") reviewerType = "gemini";
-
-    const defaultTrigger = REVIEWER_DEFAULTS[reviewerChoice] || "";
-    triggerMethod = await ctx.ui.input(
-      "How to trigger re-review?",
-      defaultTrigger,
-      { helpText: `Default for ${reviewerChoice}: ${defaultTrigger}` },
-    );
-    if (triggerMethod === undefined) return null;
-    if (!triggerMethod) triggerMethod = defaultTrigger;
-  }
 
   // 2. Comment reply policy
   const policyChoice = await ctx.ui.select(
@@ -319,7 +293,7 @@ async function runSetupWizard(ctx: any): Promise<FixPrConfig | null> {
   if (!fixerTier) return null;
 
   const config: FixPrConfig = {
-    reviewer: { type: reviewerType, triggerMethod },
+    reviewer: { type: "none", triggerMethod: null },
     commentPolicy,
     loop: { delaySeconds, maxIterations },
     models: {

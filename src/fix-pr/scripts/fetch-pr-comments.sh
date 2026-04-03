@@ -12,12 +12,12 @@ mkdir -p "$(dirname "$OUTPUT")"
 
 # Fetch inline review comments (code-level)
 gh api --paginate "repos/${REPO}/pulls/${PR}/comments" \
-  --jq '.[] | {id, path, line: .line, body, user: .user.login, createdAt: .created_at, updatedAt: .updated_at, inReplyToId: .in_reply_to_id, diffHunk: .diff_hunk, state: "COMMENTED"}' \
+  --jq '.[] | {id, path, line: .line, body, user: .user.login, userType: .user.type, createdAt: .created_at, updatedAt: .updated_at, inReplyToId: .in_reply_to_id, diffHunk: .diff_hunk, state: "COMMENTED"}' \
   > "$OUTPUT" 2>/dev/null || true
 
 # Fetch review-level comments (top-level reviews with body text)
 gh api --paginate "repos/${REPO}/pulls/${PR}/reviews" \
-  --jq '.[] | select(.body != null and .body != "") | {id, path: null, line: null, body, user: .user.login, createdAt: .submitted_at, updatedAt: .submitted_at, inReplyToId: null, diffHunk: null, state}' \
+  --jq '.[] | select(.body != null and .body != "") | {id, path: null, line: null, body, user: .user.login, userType: .user.type, createdAt: .submitted_at, updatedAt: .submitted_at, inReplyToId: null, diffHunk: null, state}' \
   >> "$OUTPUT" 2>/dev/null || true
 
 # Output summary to stderr for caller

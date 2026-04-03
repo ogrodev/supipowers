@@ -41,6 +41,7 @@ export interface PrComment {
   inReplyToId: number | null;
   diffHunk: string | null;
   state: string;
+  userType: string;
 }
 
 /** Assessment verdict for a single comment */
