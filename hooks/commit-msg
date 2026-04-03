@@ -1,0 +1,10 @@
+#!/bin/sh
+# Conventional commit message validation hook.
+# Installed by `bun install` via the prepare script.
+
+# Use bun if available, fall back to npx tsx
+if command -v bun >/dev/null 2>&1; then
+  bun run src/git/commit-msg-hook.ts "$1"
+else
+  npx --yes tsx src/git/commit-msg-hook.ts "$1"
+fi
