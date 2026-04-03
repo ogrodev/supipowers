@@ -16,10 +16,32 @@ const BUMP_OPTIONS = [
   "major — breaking changes",
 ];
 
+/**
+ * Register the command for autocomplete and /help listing.
+ * Actual execution goes through handleRelease via the TUI dispatch.
+ */
 export function registerReleaseCommand(platform: Platform): void {
   platform.registerCommand("supi:release", {
     description: "Release automation — version bump, changelog, publish",
-    async handler(args: string | undefined, ctx: any) {
+    async handler() {
+      // No-op: execution is handled by the TUI input interceptor.
+      // This registration exists only for autocomplete and /help.
+    },
+  });
+}
+
+/**
+ * TUI-only handler — called from the input event dispatcher in bootstrap.ts.
+ * Runs the full release flow without triggering the outer LLM session.
+ */
+export function handleRelease(platform: Platform, ctx: any, args?: string): void {
+  if (!ctx.hasUI) {
+    ctx.ui.notify("Release requires interactive mode", "warning");
+    return;
+  }
+
+  void (async () => {
+    try {
       const isPolish = args?.includes("--polish") ?? false;
       const isDryRun = args?.includes("--dry-run") ?? false;
       const config = loadConfig(platform.paths, ctx.cwd);
@@ -201,8 +223,10 @@ export function registerReleaseCommand(platform: Platform): void {
           }
         }
       }
-    },
-  });
+    } catch (err) {
+      notifyError(ctx, "Release error", err instanceof Error ? err.message : String(err));
+    }
+  })();
 }
 
 async function getLastTag(platform: Platform, cwd: string): Promise<string | null> {
