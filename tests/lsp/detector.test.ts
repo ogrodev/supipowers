@@ -1,5 +1,5 @@
 // tests/lsp/detector.test.ts
-import { describe, test, expect } from "vitest";
+
 import { isLspAvailable } from "../../src/lsp/detector.js";
 import { LSP_SERVERS, formatSetupGuide } from "../../src/lsp/setup-guide.js";
 import { buildLspDiagnosticsPrompt } from "../../src/lsp/bridge.js";

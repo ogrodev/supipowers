@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 function mockExec(stdout = "", code = 0) {
-  return vi.fn().mockResolvedValue({ stdout, code });
+  return mock().mockResolvedValue({ stdout, code });
 }
 
 function writeFile(relativePath: string, content: string) {

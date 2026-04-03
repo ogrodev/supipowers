@@ -1,5 +1,6 @@
 // tests/context-mode/hooks.test.ts
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+
 import { registerContextModeHooks, _resetCache } from "../../src/context-mode/hooks.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { SupipowersConfig } from "../../src/types.js";
@@ -8,12 +9,12 @@ import { createMockPlatform } from "../../src/platform/test-utils.js";
 function createMockPlatformWithHandlers() {
   const handlers = new Map<string, Function>();
   const platform = createMockPlatform({
-    on: vi.fn((event: string, handler: Function) => {
+    on: mock((event: string, handler: Function) => {
       handlers.set(event, handler);
     }) as any,
   });
   return Object.assign(platform, {
-    logger: { warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    logger: { warn: mock(), error: mock(), debug: mock() },
     _handlers: handlers,
   }) as any;
 }

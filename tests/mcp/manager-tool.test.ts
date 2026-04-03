@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, mock, test } from "bun:test";
 import { routeManagerAction, executeManagerAction } from "../../src/mcp/manager-tool.js";
 
 describe("routeManagerAction", () => {
@@ -48,9 +48,9 @@ describe("routeManagerAction", () => {
 
 describe("executeManagerAction", () => {
   const baseDeps = {
-    addServer: vi.fn(),
-    removeServer: vi.fn(),
-    updateServer: vi.fn(),
+    addServer: mock(),
+    removeServer: mock(),
+    updateServer: mock(),
   };
 
   it("returns error when route validation fails", async () => {
@@ -63,7 +63,7 @@ describe("executeManagerAction", () => {
   it("shows confirmation and proceeds on accept", async () => {
     const ctx = {
       hasUI: true,
-      ui: { confirm: vi.fn(async () => true) },
+      ui: { confirm: mock(async () => true) },
       cwd: "/tmp",
     };
     const result = await executeManagerAction(
@@ -82,7 +82,7 @@ describe("executeManagerAction", () => {
   it("returns cancel message when user declines confirmation", async () => {
     const ctx = {
       hasUI: true,
-      ui: { confirm: vi.fn(async () => false) },
+      ui: { confirm: mock(async () => false) },
       cwd: "/tmp",
     };
     const result = await executeManagerAction(

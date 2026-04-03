@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from "vitest";
+import { describe, expect, mock, test } from "bun:test";
 import { formatNotification, sendNotification } from "../../src/notifications/renderer.js";
 
 describe("formatNotification", () => {
@@ -21,14 +21,14 @@ describe("formatNotification", () => {
 
 describe("sendNotification", () => {
   test("calls ctx.ui.notify with correct type", () => {
-    const notify = vi.fn();
+    const notify = mock();
     const ctx = { ui: { notify } };
     sendNotification(ctx, { level: "error", title: "Oops" });
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("Oops"), "error");
   });
 
   test("maps success level to info type", () => {
-    const notify = vi.fn();
+    const notify = mock();
     const ctx = { ui: { notify } };
     sendNotification(ctx, { level: "success", title: "Done" });
     expect(notify).toHaveBeenCalledWith(expect.any(String), "info");

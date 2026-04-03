@@ -1,23 +1,23 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, mock, test } from "bun:test";
 import { createOmpAdapter } from "../../src/platform/omp.js";
 
 function createMockOmpApi() {
   return {
-    pi: { createAgentSession: vi.fn(async () => ({
+    pi: { createAgentSession: mock(async () => ({
       session: {
-        subscribe: vi.fn(() => () => {}),
-        prompt: vi.fn(async () => {}),
+        subscribe: mock(() => () => {}),
+        prompt: mock(async () => {}),
         state: { messages: [] },
-        dispose: vi.fn(async () => {}),
+        dispose: mock(async () => {}),
       },
     })) },
-    registerCommand: vi.fn(),
-    getCommands: vi.fn(() => []),
-    getActiveTools: vi.fn(() => []),
-    exec: vi.fn(async () => ({ stdout: "", stderr: "", code: 0 })),
-    sendMessage: vi.fn(),
-    registerMessageRenderer: vi.fn(),
-    on: vi.fn(),
+    registerCommand: mock(),
+    getCommands: mock(() => []),
+    getActiveTools: mock(() => []),
+    exec: mock(async () => ({ stdout: "", stderr: "", code: 0 })),
+    sendMessage: mock(),
+    registerMessageRenderer: mock(),
+    on: mock(),
   };
 }
 
@@ -46,7 +46,7 @@ describe("createOmpAdapter", () => {
   it("maps session_compact to session.compacting on OMP", () => {
     const raw = createMockOmpApi();
     const adapter = createOmpAdapter(raw);
-    const handler = vi.fn();
+    const handler = mock();
     adapter.on("session_compact", handler);
     expect(raw.on).toHaveBeenCalledWith("session.compacting", handler);
   });
@@ -54,7 +54,7 @@ describe("createOmpAdapter", () => {
   it("passes non-translated events through", () => {
     const raw = createMockOmpApi();
     const adapter = createOmpAdapter(raw);
-    const handler = vi.fn();
+    const handler = mock();
     adapter.on("tool_call", handler);
     expect(raw.on).toHaveBeenCalledWith("tool_call", handler);
   });

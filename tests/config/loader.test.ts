@@ -1,5 +1,5 @@
 // tests/config/loader.test.ts
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -26,7 +26,7 @@ describe("deepMerge", () => {
   test("handles null values in source", () => {
     const target = { a: { b: 1 } };
     const source = { a: null };
-    expect(deepMerge(target, source as any)).toEqual({ a: null });
+    expect(deepMerge(target, source as any)).toEqual({ a: null } as any);
   });
 });
 

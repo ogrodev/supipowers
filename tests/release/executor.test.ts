@@ -1,4 +1,5 @@
 // tests/release/executor.test.ts
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,20 +9,20 @@ import { executeRelease } from "../../src/release/executor.js";
 
 /** Returns a mock exec that always resolves with code 0 */
 function okExec() {
-  return vi.fn().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+  return mock().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
 }
 
 /** Returns a mock exec where call at index `failAt` resolves with code 1 */
 function failAt(callIndex: number, stderr = "error") {
-  const mock = vi.fn();
-  mock.mockImplementation((..._args: unknown[]) => {
-    const n = mock.mock.calls.length - 1; // 0-based after call was recorded
+  const fn = mock();
+  fn.mockImplementation((..._args: unknown[]) => {
+    const n = fn.mock.calls.length - 1; // 0-based after call was recorded
     if (n === callIndex) {
       return Promise.resolve({ stdout: "", stderr, code: 1 });
     }
     return Promise.resolve({ stdout: "", stderr: "", code: 0 });
   });
-  return mock;
+  return fn;
 }
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -114,7 +115,7 @@ describe("executeRelease", () => {
         path.join(tmpDir, "package.json"),
         JSON.stringify({ name: "test", version: "1.0.0", scripts: { build: "tsc" } }, null, 2) + "\n",
       );
-      const mockExec = vi.fn().mockResolvedValue({ stdout: "", stderr: "tsc error", code: 1 });
+      const mockExec = mock().mockResolvedValue({ stdout: "", stderr: "tsc error", code: 1 });
 
       await expect(
         executeRelease({
@@ -192,7 +193,7 @@ describe("executeRelease", () => {
 
   describe("channel failure non-fatal", () => {
     test("github fails but npm succeeds — both recorded, git flags true", async () => {
-      const mockExec = vi.fn();
+      const mockExec = mock();
       mockExec.mockImplementation((cmd: string, args: string[]) => {
         // Fail the gh release create call only
         if (cmd === "gh") {

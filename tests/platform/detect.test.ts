@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+
 import { detectPlatform } from "../../src/platform/detect.js";
 
 describe("detectPlatform", () => {

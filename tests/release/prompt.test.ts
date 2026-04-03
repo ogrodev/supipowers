@@ -1,11 +1,12 @@
 import { buildPolishPrompt } from "../../src/release/prompt.js";
+import type { ReleaseChannel } from "../../src/types.js";
 
 describe("buildPolishPrompt", () => {
   const base = {
     changelog: "## 1.2.0\n\n### Features\n- feat: add thing\n\n### Fixes\n- fix: correct bug",
     version: "1.2.0",
     currentVersion: "1.1.0",
-    channels: ["github", "npm"] as const,
+    channels: ["github", "npm"] as ReleaseChannel[],
     commands: ["git tag v1.2.0", "git push --tags", "npm publish"],
   };
 

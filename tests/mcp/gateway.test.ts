@@ -1,5 +1,5 @@
 // tests/mcp/gateway.test.ts
-import { describe, it, expect } from "vitest";
+
 import { buildGatewayToolDef, buildPromptSnippet, buildPromptGuidelines, executeGatewayCall } from "../../src/mcp/gateway.js";
 import type { ServerConfig, McpTool } from "../../src/mcp/types.js";
 

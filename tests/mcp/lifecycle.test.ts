@@ -1,5 +1,5 @@
 // tests/mcp/lifecycle.test.ts
-import { describe, it, expect, vi } from "vitest";
+
 import { initializeMcpServers, shutdownMcpServers } from "../../src/mcp/lifecycle.js";
 import type { McpRegistry, ServerConfig, McpTool } from "../../src/mcp/types.js";
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+
 import { lookupMcpServer, pickBestMatch } from "../../src/mcp/registry.js";
 import type { RegistryServer } from "../../src/mcp/registry.js";
 

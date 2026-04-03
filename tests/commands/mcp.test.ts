@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, mock } from "bun:test";
 import { parseCliArgs, handleMcpCli } from "../../src/commands/mcp.js";
 import { createMockPlatform, createMockContext } from "../../src/platform/test-utils.js";
 
@@ -94,9 +94,9 @@ describe("handleMcpCli — add flow (registry + fallback)", () => {
     // exec returns empty (no registry results), input returns empty string (trigger agentic)
     const ctx = createMockContext({
       ui: {
-        select: vi.fn(async () => null),
-        notify: vi.fn(),
-        input: vi.fn(async () => ""),
+        select: mock(async () => null),
+        notify: mock(),
+        input: mock(async () => ""),
       },
     });
 

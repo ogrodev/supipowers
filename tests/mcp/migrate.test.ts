@@ -1,12 +1,28 @@
 // tests/mcp/migrate.test.ts
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { discoverHostMcpServers, loadMcpRegistry } from "../../src/mcp/config.js";
-import { createPaths } from "../../src/platform/types.js";
+import type { PlatformPaths } from "../../src/platform/types.js";
 
-const paths = createPaths(".pi");
+/**
+ * Build a PlatformPaths whose agent()/global() resolve under the given homeDir
+ * instead of the real os.homedir(). This avoids the ESM limitation where
+ * vi.spyOn(os, "homedir") cannot redefine a named export.
+ */
+function createTestPaths(homeDir: string, dotDir = ".pi"): PlatformPaths {
+  return {
+    dotDir,
+    dotDirDisplay: dotDir,
+    project: (cwd: string, ...segments: string[]) =>
+      path.join(cwd, dotDir, "supipowers", ...segments),
+    global: (...segments: string[]) =>
+      path.join(homeDir, dotDir, "supipowers", ...segments),
+    agent: (...segments: string[]) =>
+      path.join(homeDir, dotDir, "agent", ...segments),
+  };
+}
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -26,20 +42,22 @@ function writeSuipowersRegistry(dir: string, dotDir: string, servers: Record<str
 
 describe("discoverHostMcpServers", () => {
   let tmpDir: string;
+  /** A homeDir that doesn't exist, so no user/claude-code configs leak in. */
+  let noHome: string;
+  let paths: PlatformPaths;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-migrate-test-"));
-    // Mock homedir so real ~/.claude.json doesn't leak into tests
-    vi.spyOn(os, "homedir").mockReturnValue(path.join(tmpDir, "__no_home__"));
+    noHome = path.join(tmpDir, "__no_home__");
+    paths = createTestPaths(noHome);
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    vi.restoreAllMocks();
   });
 
   it("returns empty array when no host config files exist", () => {
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const result = discoverHostMcpServers(paths, tmpDir, noHome);
     expect(result).toEqual([]);
   });
 
@@ -48,7 +66,7 @@ describe("discoverHostMcpServers", () => {
       figma: { type: "http", url: "https://mcp.figma.com" },
     });
 
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const result = discoverHostMcpServers(paths, tmpDir, noHome);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       name: "figma",
@@ -63,7 +81,7 @@ describe("discoverHostMcpServers", () => {
       "my-tool": { command: "my-tool", args: ["--flag"] },
     });
 
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const result = discoverHostMcpServers(paths, tmpDir, noHome);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       name: "my-tool",
@@ -79,7 +97,7 @@ describe("discoverHostMcpServers", () => {
       tool: { command: "mytool" },
     });
 
-    const [server] = discoverHostMcpServers(paths, tmpDir);
+    const [server] = discoverHostMcpServers(paths, tmpDir, noHome);
     expect(server.transport).toBe("stdio");
   });
 
@@ -88,7 +106,7 @@ describe("discoverHostMcpServers", () => {
       legacy: { type: "sse", url: "https://example.com/sse" },
     });
 
-    const [server] = discoverHostMcpServers(paths, tmpDir);
+    const [server] = discoverHostMcpServers(paths, tmpDir, noHome);
     expect(server.transport).toBe("sse");
     expect(server.url).toBe("https://example.com/sse");
   });
@@ -99,7 +117,7 @@ describe("discoverHostMcpServers", () => {
       disabled: { type: "http", url: "https://disabled.com", enabled: false },
     });
 
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const result = discoverHostMcpServers(paths, tmpDir, noHome);
     expect(result.map((s) => s.name)).toEqual(["active"]);
   });
 
@@ -110,7 +128,7 @@ describe("discoverHostMcpServers", () => {
       noAuth: { type: "http", url: "https://open.com" },
     });
 
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const result = discoverHostMcpServers(paths, tmpDir, noHome);
     const byName = Object.fromEntries(result.map((s) => [s.name, s]));
 
     expect(byName["withAuth"]?.hasAuth).toBe(true);
@@ -118,7 +136,7 @@ describe("discoverHostMcpServers", () => {
     expect(byName["noAuth"]?.hasAuth).toBe(false);
   });
 
-  it("discovers user-level servers via homedir mock", () => {
+  it("discovers user-level servers via homeDir injection", () => {
     // Create a fake homedir with agent-level host config (~/.pi/agent/mcp.json)
     const fakeHome = path.join(tmpDir, "fakehome");
     fs.mkdirSync(path.join(fakeHome, ".pi", "agent"), { recursive: true });
@@ -131,9 +149,8 @@ describe("discoverHostMcpServers", () => {
       }),
     );
 
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
-
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const homePaths = createTestPaths(fakeHome);
+    const result = discoverHostMcpServers(homePaths, tmpDir, fakeHome);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       name: "github",
@@ -158,14 +175,13 @@ describe("discoverHostMcpServers", () => {
       JSON.stringify({ mcpServers: { pencil: { type: "stdio", command: "/path/to/pencil" } } }),
     );
 
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
-
     // Project-level config
     writeHostConfig(tmpDir, ".pi", {
       figma: { type: "http", url: "https://mcp.figma.com" },
     });
 
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const homePaths = createTestPaths(fakeHome);
+    const result = discoverHostMcpServers(homePaths, tmpDir, fakeHome);
     const names = result.map((s) => s.name).sort();
     expect(names).toEqual(["figma", "github", "pencil"]);
     expect(result.find((s) => s.name === "github")?.scope).toBe("user");
@@ -184,9 +200,9 @@ describe("discoverHostMcpServers", () => {
         },
       }),
     );
-    vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    const result = discoverHostMcpServers(paths, tmpDir);
+    const homePaths = createTestPaths(fakeHome);
+    const result = discoverHostMcpServers(homePaths, tmpDir, fakeHome);
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
       name: "pencil",
@@ -202,15 +218,17 @@ describe("discoverHostMcpServers", () => {
 
 describe("diff against supi registry", () => {
   let tmpDir: string;
+  let noHome: string;
+  let paths: PlatformPaths;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-migrate-diff-"));
-    vi.spyOn(os, "homedir").mockReturnValue(path.join(tmpDir, "__no_home__"));
+    noHome = path.join(tmpDir, "__no_home__");
+    paths = createTestPaths(noHome);
   });
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    vi.restoreAllMocks();
   });
 
   it("excludes servers already present in supipowers registry", () => {
@@ -228,7 +246,7 @@ describe("diff against supi registry", () => {
     const registry = loadMcpRegistry(paths, tmpDir);
     const managedNames = new Set(Object.keys(registry.servers));
 
-    const allHost = discoverHostMcpServers(paths, tmpDir);
+    const allHost = discoverHostMcpServers(paths, tmpDir, noHome);
     const candidates = allHost.filter((s) => !managedNames.has(s.name));
 
     const names = candidates.map((s) => s.name).sort();
@@ -245,7 +263,7 @@ describe("diff against supi registry", () => {
     const registry = loadMcpRegistry(paths, tmpDir);
     const managedNames = new Set(Object.keys(registry.servers));
 
-    const allHost = discoverHostMcpServers(paths, tmpDir);
+    const allHost = discoverHostMcpServers(paths, tmpDir, noHome);
     const candidates = allHost.filter((s) => !managedNames.has(s.name));
 
     expect(candidates).toHaveLength(2);

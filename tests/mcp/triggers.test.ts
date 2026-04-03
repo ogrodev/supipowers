@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+
 import { generateTriggers } from "../../src/mcp/triggers.js";
 import type { McpTool } from "../../src/mcp/types.js";
 

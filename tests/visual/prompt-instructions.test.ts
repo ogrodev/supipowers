@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+
 import { buildVisualInstructions } from "../../src/visual/prompt-instructions.js";
 
 describe("visual prompt instructions", () => {

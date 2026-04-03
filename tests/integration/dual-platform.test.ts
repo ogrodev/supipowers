@@ -1,22 +1,22 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, mock, test } from "bun:test";
 import supipowers from "../../src/index.js";
 
 function createOmpShapedApi() {
   return {
-    registerCommand: vi.fn(),
-    getCommands: vi.fn(() => []),
-    getActiveTools: vi.fn(() => []),
-    exec: vi.fn(async () => ({ stdout: "", stderr: "", code: 0 })),
-    sendMessage: vi.fn(),
-    registerMessageRenderer: vi.fn(),
-    on: vi.fn(),
+    registerCommand: mock(),
+    getCommands: mock(() => []),
+    getActiveTools: mock(() => []),
+    exec: mock(async () => ({ stdout: "", stderr: "", code: 0 })),
+    sendMessage: mock(),
+    registerMessageRenderer: mock(),
+    on: mock(),
     pi: {
-      createAgentSession: vi.fn(async () => ({
+      createAgentSession: mock(async () => ({
         session: {
-          subscribe: vi.fn(() => () => {}),
-          prompt: vi.fn(async () => {}),
+          subscribe: mock(() => () => {}),
+          prompt: mock(async () => {}),
           state: { messages: [] },
-          dispose: vi.fn(async () => {}),
+          dispose: mock(async () => {}),
         },
       })),
     },

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+
 import { loadFixPrConfig, saveFixPrConfig, DEFAULT_FIX_PR_CONFIG } from "../../src/fix-pr/config.js";
 import * as fs from "node:fs";
 import * as path from "node:path";

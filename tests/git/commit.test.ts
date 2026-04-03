@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, expect, it, mock, test } from "bun:test";
 import {
   analyzeAndCommit,
   parseCommitPlan,
@@ -10,7 +10,7 @@ import type { CommitPlan } from "../../src/git/commit.js";
 
 function createMockExec(responses: Record<string, { stdout: string; stderr?: string; code: number }> = {}) {
   const defaultResponse = { stdout: "", stderr: "", code: 0 };
-  return vi.fn(async (cmd: string, args: string[]) => {
+  return mock(async (cmd: string, args: string[]) => {
     const key = `${cmd} ${args.join(" ")}`;
     // Match by prefix for dynamic args
     for (const [pattern, response] of Object.entries(responses)) {
@@ -26,11 +26,11 @@ function createMockCtx(overrides: Record<string, any> = {}) {
     cwd: "/repo",
     hasUI: true,
     ui: {
-      select: vi.fn(),
-      notify: vi.fn(),
-      input: vi.fn(),
-      setStatus: vi.fn(),
-      setWidget: vi.fn(),
+      select: mock(),
+      notify: mock(),
+      input: mock(),
+      setStatus: mock(),
+      setWidget: mock(),
       ...uiOverrides,
     },
     ...rest,
@@ -42,7 +42,7 @@ function createMockPlatform(overrides: Record<string, any> = {}) {
   return {
     name: "omp" as const,
     exec,
-    createAgentSession: overrides.createAgentSession ?? vi.fn(),
+    createAgentSession: overrides.createAgentSession ?? mock(),
     capabilities: {
       agentSessions: overrides.agentSessions ?? true,
       compactionHooks: false,
@@ -57,12 +57,12 @@ function createMockPlatform(overrides: Record<string, any> = {}) {
       global: (...s: string[]) => ["/home/.omp/supipowers", ...s].join("/"),
       agent: (...s: string[]) => ["/home/.omp/agent", ...s].join("/"),
     },
-    registerCommand: vi.fn(),
-    getCommands: vi.fn(() => []),
-    on: vi.fn(),
-    sendMessage: vi.fn(),
-    getActiveTools: vi.fn(() => []),
-    registerMessageRenderer: vi.fn(),
+    registerCommand: mock(),
+    getCommands: mock(() => []),
+    on: mock(),
+    sendMessage: mock(),
+    getActiveTools: mock(() => []),
+    registerMessageRenderer: mock(),
     ...overrides,
   } as any;
 }
@@ -72,20 +72,20 @@ function createMockPlatform(overrides: Record<string, any> = {}) {
  */
 function mockAgentSession(responseJson: CommitPlan) {
   const jsonText = "```json\n" + JSON.stringify(responseJson, null, 2) + "\n```";
-  return vi.fn().mockResolvedValue({
-    subscribe: vi.fn((handler: any) => {
+  return mock().mockResolvedValue({
+    subscribe: mock((handler: any) => {
       // Fire agent_end on next tick
       setTimeout(() => handler({ type: "agent_end" }), 0);
       return () => {};
     }),
-    prompt: vi.fn().mockResolvedValue(undefined),
+    prompt: mock().mockResolvedValue(undefined),
     state: {
       messages: [
         { role: "user", content: "..." },
         { role: "assistant", content: jsonText },
       ],
     },
-    dispose: vi.fn().mockResolvedValue(undefined),
+    dispose: mock().mockResolvedValue(undefined),
   });
 }
 
@@ -311,9 +311,9 @@ describe("analyzeAndCommit", () => {
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn().mockResolvedValue("commit — feat(auth): add login endpoint"),
-        notify: vi.fn(),
-        input: vi.fn(),
+        select: mock().mockResolvedValue("commit — feat(auth): add login endpoint"),
+        notify: mock(),
+        input: mock(),
       },
     });
 
@@ -350,9 +350,9 @@ describe("analyzeAndCommit", () => {
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn().mockResolvedValue("commit — 2 commits"),
-        notify: vi.fn(),
-        input: vi.fn(),
+        select: mock().mockResolvedValue("commit — 2 commits"),
+        notify: mock(),
+        input: mock(),
       },
     });
 
@@ -382,13 +382,13 @@ describe("analyzeAndCommit", () => {
     });
     const platform = createMockPlatform({
       exec,
-      createAgentSession: vi.fn().mockRejectedValue(new Error("no session")),
+      createAgentSession: mock().mockRejectedValue(new Error("no session")),
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn(),
-        notify: vi.fn(),
-        input: vi.fn().mockResolvedValue("fix: manual commit"),
+        select: mock(),
+        notify: mock(),
+        input: mock().mockResolvedValue("fix: manual commit"),
       },
     });
 
@@ -402,18 +402,18 @@ describe("analyzeAndCommit", () => {
 
   test("falls back to manual input when agent returns unparseable output", async () => {
     // Agent session that returns non-JSON
-    const createAgentSession = vi.fn().mockResolvedValue({
-      subscribe: vi.fn((handler: any) => {
+    const createAgentSession = mock().mockResolvedValue({
+      subscribe: mock((handler: any) => {
         setTimeout(() => handler({ type: "agent_end" }), 0);
         return () => {};
       }),
-      prompt: vi.fn().mockResolvedValue(undefined),
+      prompt: mock().mockResolvedValue(undefined),
       state: {
         messages: [
           { role: "assistant", content: "I think you should commit this as a fix." },
         ],
       },
-      dispose: vi.fn().mockResolvedValue(undefined),
+      dispose: mock().mockResolvedValue(undefined),
     });
 
     const exec = createMockExec({
@@ -428,9 +428,9 @@ describe("analyzeAndCommit", () => {
     const platform = createMockPlatform({ exec, createAgentSession });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn(),
-        notify: vi.fn(),
-        input: vi.fn().mockResolvedValue("fix: manual"),
+        select: mock(),
+        notify: mock(),
+        input: mock().mockResolvedValue("fix: manual"),
       },
     });
 
@@ -460,9 +460,9 @@ describe("analyzeAndCommit", () => {
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn().mockResolvedValue("abort — cancel"),
-        notify: vi.fn(),
-        input: vi.fn(),
+        select: mock().mockResolvedValue("abort — cancel"),
+        notify: mock(),
+        input: mock(),
       },
     });
 
@@ -486,7 +486,7 @@ describe("analyzeAndCommit", () => {
       "git config commit.template": { stdout: "", code: 1 },
       "git commit": { stdout: "", code: 0 },
     });
-    const createAgentSession = vi.fn();
+    const createAgentSession = mock();
     const platform = createMockPlatform({
       exec,
       createAgentSession,
@@ -494,9 +494,9 @@ describe("analyzeAndCommit", () => {
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn(),
-        notify: vi.fn(),
-        input: vi.fn().mockResolvedValue("chore: manual"),
+        select: mock(),
+        notify: mock(),
+        input: mock().mockResolvedValue("chore: manual"),
       },
     });
 
@@ -518,13 +518,13 @@ describe("analyzeAndCommit", () => {
     });
     const platform = createMockPlatform({
       exec,
-      createAgentSession: vi.fn().mockRejectedValue(new Error("fail")),
+      createAgentSession: mock().mockRejectedValue(new Error("fail")),
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn(),
-        notify: vi.fn(),
-        input: vi.fn().mockResolvedValue(""),
+        select: mock(),
+        notify: mock(),
+        input: mock().mockResolvedValue(""),
       },
     });
 
@@ -543,13 +543,13 @@ describe("analyzeAndCommit", () => {
     });
     const platform = createMockPlatform({
       exec,
-      createAgentSession: vi.fn().mockRejectedValue(new Error("fail")),
+      createAgentSession: mock().mockRejectedValue(new Error("fail")),
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn(),
-        notify: vi.fn(),
-        input: vi.fn().mockResolvedValue("bad message no type"),
+        select: mock(),
+        notify: mock(),
+        input: mock().mockResolvedValue("bad message no type"),
       },
     });
 
@@ -596,11 +596,11 @@ describe("analyzeAndCommit", () => {
 
     let capturedPrompt = "";
     const session = {
-      subscribe: vi.fn((handler: any) => {
+      subscribe: mock((handler: any) => {
         setTimeout(() => handler({ type: "agent_end" }), 0);
         return () => {};
       }),
-      prompt: vi.fn((text: string) => {
+      prompt: mock((text: string) => {
         capturedPrompt = text;
         return Promise.resolve();
       }),
@@ -612,7 +612,7 @@ describe("analyzeAndCommit", () => {
           },
         ],
       },
-      dispose: vi.fn().mockResolvedValue(undefined),
+      dispose: mock().mockResolvedValue(undefined),
     };
 
     const exec = createMockExec({
@@ -628,13 +628,13 @@ describe("analyzeAndCommit", () => {
     });
     const platform = createMockPlatform({
       exec,
-      createAgentSession: vi.fn().mockResolvedValue(session),
+      createAgentSession: mock().mockResolvedValue(session),
     });
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn().mockResolvedValue("commit — fix: fix auth"),
-        notify: vi.fn(),
-        input: vi.fn(),
+        select: mock().mockResolvedValue("commit — fix: fix auth"),
+        notify: mock(),
+        input: mock(),
       },
     });
 
@@ -660,13 +660,13 @@ describe("analyzeAndCommit", () => {
       exec,
       createAgentSession: mockAgentSession(plan),
     });
-    const setWidget = vi.fn();
-    const setStatus = vi.fn();
+    const setWidget = mock();
+    const setStatus = mock();
     const ctx = createMockCtx({
       ui: {
-        select: vi.fn().mockResolvedValue("commit — fix: fix bug"),
-        notify: vi.fn(),
-        input: vi.fn(),
+        select: mock().mockResolvedValue("commit — fix: fix bug"),
+        notify: mock(),
+        input: mock(),
         setWidget,
         setStatus,
       },
@@ -700,10 +700,10 @@ describe("analyzeAndCommit", () => {
       "git status": { stdout: "", code: 0 },
     });
     const platform = createMockPlatform({ exec });
-    const setWidget = vi.fn();
-    const setStatus = vi.fn();
+    const setWidget = mock();
+    const setStatus = mock();
     const ctx = createMockCtx({
-      ui: { setWidget, setStatus, notify: vi.fn() },
+      ui: { setWidget, setStatus, notify: mock() },
     });
 
     const result = await analyzeAndCommit(platform, ctx);

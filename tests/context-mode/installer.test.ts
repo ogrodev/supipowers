@@ -1,3 +1,5 @@
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+
 // tests/context-mode/installer.test.ts
 //
 // context-mode is detected via filesystem (not exec) — the checkFn in registry.ts
@@ -24,7 +26,7 @@ describe("checkInstallation", () => {
 
   test("detects CLI installed (via filesystem)", async () => {
     contextModeDep.checkFn = async () => ({ installed: true, version: "extension" });
-    const exec = vi.fn();
+    const exec = mock();
     const status = await checkInstallation(exec, ["ctx_execute"]);
     expect(status.cliInstalled).toBe(true);
     expect(status.toolsAvailable).toBe(true);
@@ -32,7 +34,7 @@ describe("checkInstallation", () => {
   });
 
   test("detects CLI not installed", async () => {
-    const exec = vi.fn();
+    const exec = mock();
     const status = await checkInstallation(exec, []);
     expect(status.cliInstalled).toBe(false);
     expect(status.toolsAvailable).toBe(false);
@@ -40,13 +42,13 @@ describe("checkInstallation", () => {
 
   test("reports extension as version when installed", async () => {
     contextModeDep.checkFn = async () => ({ installed: true, version: "extension" });
-    const exec = vi.fn();
+    const exec = mock();
     const status = await checkInstallation(exec, []);
     expect(status.version).toBe("extension");
   });
 
   test("reports null version when not installed", async () => {
-    const exec = vi.fn();
+    const exec = mock();
     const status = await checkInstallation(exec, []);
     expect(status.version).toBeNull();
   });
@@ -54,7 +56,7 @@ describe("checkInstallation", () => {
 
 describe("installContextMode", () => {
   test("reports failure (no install command configured)", async () => {
-    const exec = vi.fn();
+    const exec = mock();
     const result = await installContextMode(exec);
     expect(result.success).toBe(false);
     expect(result.error).toBeDefined();

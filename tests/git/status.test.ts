@@ -1,8 +1,8 @@
-import { describe, test, expect, vi } from "vitest";
+import { describe, expect, mock, test } from "bun:test";
 import { getWorkingTreeStatus } from "../../src/git/status.js";
 
 function mockExec(stdout: string, code = 0) {
-  return vi.fn().mockResolvedValue({ stdout, code });
+  return mock().mockResolvedValue({ stdout, code });
 }
 
 describe("getWorkingTreeStatus", () => {
@@ -32,7 +32,7 @@ describe("getWorkingTreeStatus", () => {
   });
 
   test("returns clean when exec throws", async () => {
-    const exec = vi.fn().mockRejectedValue(new Error("spawn failed"));
+    const exec = mock().mockRejectedValue(new Error("spawn failed"));
     const status = await getWorkingTreeStatus(exec, "/repo");
 
     expect(status.dirty).toBe(false);

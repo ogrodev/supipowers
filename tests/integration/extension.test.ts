@@ -1,21 +1,21 @@
-import { describe, test, expect, vi } from "vitest";
+import { describe, expect, mock, test } from "bun:test";
 import supipowers from "../../src/index.js";
 
 describe("extension entry point", () => {
   test("registers all commands without errors", () => {
     const registeredCommands: string[] = [];
     const mockPi = {
-      registerCommand: vi.fn((name: string) => {
+      registerCommand: mock((name: string) => {
         registeredCommands.push(name);
       }),
-      registerTool: vi.fn(),
-      registerMessageRenderer: vi.fn(),
-      on: vi.fn(),
-      sendMessage: vi.fn(),
-      getActiveTools: vi.fn(() => []),
-      getCommands: vi.fn(() => []),
-      exec: vi.fn(),
-      createAgentSession: vi.fn(),
+      registerTool: mock(),
+      registerMessageRenderer: mock(),
+      on: mock(),
+      sendMessage: mock(),
+      getActiveTools: mock(() => []),
+      getCommands: mock(() => []),
+      exec: mock(),
+      createAgentSession: mock(),
     } as any;
 
     expect(() => supipowers(mockPi)).not.toThrow();
@@ -34,15 +34,15 @@ describe("extension entry point", () => {
 
   test("registers context-mode hooks when enabled", () => {
     const mockPi = {
-      registerCommand: vi.fn(),
-      registerTool: vi.fn(),
-      registerMessageRenderer: vi.fn(),
-      on: vi.fn(),
-      sendMessage: vi.fn(),
-      getActiveTools: vi.fn(() => []),
-      getCommands: vi.fn(() => []),
-      exec: vi.fn(),
-      createAgentSession: vi.fn(),
+      registerCommand: mock(),
+      registerTool: mock(),
+      registerMessageRenderer: mock(),
+      on: mock(),
+      sendMessage: mock(),
+      getActiveTools: mock(() => []),
+      getCommands: mock(() => []),
+      exec: mock(),
+      createAgentSession: mock(),
     } as any;
 
     supipowers(mockPi);

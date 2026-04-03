@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+
 import { parseTags, shouldActivate, computeActiveServers } from "../../src/mcp/activation.js";
 import type { ServerConfig } from "../../src/mcp/types.js";
 

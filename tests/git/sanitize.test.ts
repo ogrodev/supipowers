@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+
 import { assertSafeRef, assertSafePath } from "../../src/git/sanitize.js";
 
 describe("assertSafeRef", () => {

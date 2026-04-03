@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+
 import { formatCheckResult, formatSummary, checkPlatform, checkConfig, checkStorage, checkEventStore, checkGit, checkGitHubCli, checkLsp, checkMcp, checkContextMode, checkNpm, checkCapabilities, runDoctorChecks } from "../../src/commands/doctor.js";
 import type { Platform } from "../../src/platform/types.js";
 

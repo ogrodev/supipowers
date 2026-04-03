@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+
 import type {
   FixPrConfig,
   ModelPref,
@@ -45,6 +45,7 @@ describe("FixPr types", () => {
       inReplyToId: null,
       diffHunk: "@@ -1,3 +1,3 @@",
       state: "COMMENTED",
+      userType: "User",
     };
     expect(comment.id).toBe(123);
     expect(comment.path).toBe("src/foo.ts");

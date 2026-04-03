@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+
 import { getActiveGates, createReviewReport } from "../../src/quality/gate-runner.js";
 import { BUILTIN_PROFILES } from "../../src/config/defaults.js";
 

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+
 import { buildSpecReviewerPrompt } from "../../src/planning/spec-reviewer.js";
 
 describe("spec reviewer prompt", () => {

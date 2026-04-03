@@ -1,5 +1,5 @@
 // tests/mcp/mcpc.test.ts
-import { describe, it, expect } from "vitest";
+
 import { McpcClient } from "../../src/mcp/mcpc.js";
 import { MCPC_EXIT } from "../../src/mcp/types.js";
 

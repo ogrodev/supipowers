@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+
 import { buildFixPrOrchestratorPrompt } from "../../src/fix-pr/prompt-builder.js";
 import { DEFAULT_FIX_PR_CONFIG } from "../../src/fix-pr/config.js";
 

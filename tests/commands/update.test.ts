@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+
 import { buildUpdateOptions } from "../../src/commands/update.js";
 import type { DependencyStatus } from "../../src/deps/registry.js";
 
