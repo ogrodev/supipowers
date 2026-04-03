@@ -113,7 +113,7 @@ describe("planning prompt builder", () => {
     test("includes plan format", () => {
       const prompt = buildQuickPlanPrompt("add user auth");
       expect(prompt).toContain("YAML frontmatter");
-      expect(prompt).toContain("parallel-safe");
+      expect(prompt).toContain("complexity");
     });
 
     test("appends skill content when provided", () => {

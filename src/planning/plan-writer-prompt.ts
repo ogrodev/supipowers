@@ -159,11 +159,12 @@ export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
     // ── Execution Handoff ────────────────────────────────────────
     "## Step 6: Execution Handoff",
     "",
-    "After saving the plan, ask:",
+    "After saving the plan, tell the user:",
     "",
-    '> "Plan complete and saved to `<path>`. Ready to execute?"',
+    '> "Plan saved to `<path>`. Review it and approve when ready."',
     "",
-    "Wait for user confirmation before proceeding to execution.",
+    "Then **stop and wait**. Do NOT start executing.",
+    "The user will see an approval prompt. Once they approve, a fresh execution session begins automatically.",
     "",
   ];
 

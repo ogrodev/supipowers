@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
+import { startPlanTracking } from "../planning/approval-flow.js";
 
 modelRegistry.register({
   id: "plan",
@@ -148,6 +149,9 @@ export function registerPlanCommand(platform: Platform): void {
         },
         { deliverAs: "steer", triggerTurn: true }
       );
+
+      // Track planning state for the approval flow (agent_end hook)
+      startPlanTracking(ctx.cwd, platform.paths);
 
       notifyInfo(ctx, "Planning started", args ? `Topic: ${args}` : "Describe what you want to build");
     },

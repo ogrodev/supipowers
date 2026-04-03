@@ -79,7 +79,7 @@ describe("plan writer prompt", () => {
   describe("execution handoff", () => {
     test("includes execution handoff", () => {
       const prompt = buildPlanWriterPrompt({ specPath, dotDirDisplay });
-      expect(prompt).toContain("Ready to execute");
+      expect(prompt).toContain("Review it and approve when ready");
     });
 
     test("includes save location", () => {

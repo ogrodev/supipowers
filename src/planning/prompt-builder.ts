@@ -166,10 +166,11 @@ export function buildQuickPlanPrompt(
     "---",
     "```",
     "",
-    "Each task should have: name, [parallel-safe] or [sequential] annotation,",
-    "**files**, **criteria**, and **complexity** (small/medium/large).",
+    "Each task should have: name, **files**, **criteria**, and **complexity** (small/medium/large).",
     "",
-    "After generating the plan, save it and confirm with the user.",
+    "After generating the plan, save it and tell the user:",
+    '> "Plan saved to `<path>`. Review it and approve when ready."',
+    "Then stop and wait. The user will see an approval prompt.",
   ];
 
   if (skillContent) {
