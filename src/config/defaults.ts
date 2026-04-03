@@ -4,13 +4,6 @@ import type { SupipowersConfig, Profile } from "../types.js";
 export const DEFAULT_CONFIG: SupipowersConfig = {
   version: "1.0.0",
   defaultProfile: "thorough",
-  orchestration: {
-    maxParallelAgents: 3,
-    maxFixRetries: 2,
-    maxNestingDepth: 2,
-    modelPreference: "auto",
-    taskTimeout: 600_000, // 10 minutes
-  },
   lsp: {
     setupGuide: true,
   },
@@ -51,10 +44,6 @@ export const BUILTIN_PROFILES: Record<string, Profile> = {
       testSuite: false,
       e2e: false,
     },
-    orchestration: {
-      reviewAfterEachBatch: false,
-      finalReview: false,
-    },
   },
   thorough: {
     name: "thorough",
@@ -65,10 +54,6 @@ export const BUILTIN_PROFILES: Record<string, Profile> = {
       testSuite: false,
       e2e: false,
     },
-    orchestration: {
-      reviewAfterEachBatch: true,
-      finalReview: true,
-    },
   },
   "full-regression": {
     name: "full-regression",
@@ -78,10 +63,6 @@ export const BUILTIN_PROFILES: Record<string, Profile> = {
       codeQuality: true,
       testSuite: true,
       e2e: true,
-    },
-    orchestration: {
-      reviewAfterEachBatch: true,
-      finalReview: true,
     },
   },
 };

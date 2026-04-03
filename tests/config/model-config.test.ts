@@ -6,7 +6,6 @@ import {
   loadModelConfig,
   saveModelAssignment,
   getAssignmentSource,
-  migrateModelPreference,
   DEFAULT_MODEL_CONFIG,
 } from "../../src/config/model-config.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
@@ -16,9 +15,18 @@ const paths = createPaths(".omp");
 
 describe("loadModelConfig", () => {
   let tmpDir: string;
+  // Isolated paths: redirect global scope to tmpDir so real ~/.omp/supipowers/model.json is never read
+  let localPaths: ReturnType<typeof createPaths>;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-model-test-"));
+    localPaths = {
+      dotDir: ".omp",
+      dotDirDisplay: ".omp",
+      project: (cwd: string, ...segments: string[]) => path.join(cwd, ".omp", "supipowers", ...segments),
+      global: (...segments: string[]) => path.join(tmpDir, "global-config", "supipowers", ...segments),
+      agent: (...segments: string[]) => path.join(tmpDir, "agent", ...segments),
+    };
   });
 
   afterEach(() => {
@@ -26,7 +34,7 @@ describe("loadModelConfig", () => {
   });
 
   test("returns empty config when no files exist", () => {
-    const config = loadModelConfig(paths, tmpDir);
+    const config = loadModelConfig(localPaths, tmpDir);
     expect(config).toEqual(DEFAULT_MODEL_CONFIG);
     expect(config.default).toBeNull();
     expect(config.actions).toEqual({});
@@ -43,7 +51,7 @@ describe("loadModelConfig", () => {
         actions: { plan: { model: "claude-opus-4-6", thinkingLevel: "high" } },
       }),
     );
-    const config = loadModelConfig(paths, tmpDir);
+    const config = loadModelConfig(localPaths, tmpDir);
     expect(config.default?.model).toBe("claude-opus-4-6");
     expect(config.actions.plan.model).toBe("claude-opus-4-6");
     expect(config.actions.plan.thinkingLevel).toBe("high");
@@ -144,68 +152,3 @@ describe("getAssignmentSource", () => {
   });
 });
 
-describe("migration from modelPreference", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-model-test-"));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test("migrates modelPreference to model.json default on first load", () => {
-    const configDir = path.join(tmpDir, ".omp", "supipowers");
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify({
-        ...DEFAULT_CONFIG,
-        orchestration: { ...DEFAULT_CONFIG.orchestration, modelPreference: "claude-opus-4-6" },
-      }),
-    );
-
-    migrateModelPreference(paths, tmpDir);
-
-    const modelPath = path.join(configDir, "model.json");
-    expect(fs.existsSync(modelPath)).toBe(true);
-    const modelJson = JSON.parse(fs.readFileSync(modelPath, "utf-8"));
-    expect(modelJson.default.model).toBe("claude-opus-4-6");
-  });
-
-  test("does not migrate when modelPreference is 'auto'", () => {
-    const configDir = path.join(tmpDir, ".omp", "supipowers");
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify(DEFAULT_CONFIG),
-    );
-
-    migrateModelPreference(paths, tmpDir);
-
-    const modelPath = path.join(configDir, "model.json");
-    expect(fs.existsSync(modelPath)).toBe(false);
-  });
-
-  test("does not migrate when model.json already exists", () => {
-    const configDir = path.join(tmpDir, ".omp", "supipowers");
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(configDir, "config.json"),
-      JSON.stringify({
-        ...DEFAULT_CONFIG,
-        orchestration: { ...DEFAULT_CONFIG.orchestration, modelPreference: "claude-opus-4-6" },
-      }),
-    );
-    fs.writeFileSync(
-      path.join(configDir, "model.json"),
-      JSON.stringify({ version: "1.0.0", default: null, actions: {} }),
-    );
-
-    migrateModelPreference(paths, tmpDir);
-
-    const modelJson = JSON.parse(fs.readFileSync(path.join(configDir, "model.json"), "utf-8"));
-    expect(modelJson.default).toBeNull();
-  });
-});

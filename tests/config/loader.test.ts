@@ -6,7 +6,6 @@ import * as os from "node:os";
 import { loadConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { createPaths } from "../../src/platform/types.js";
-import { AGENT_ROLES } from "../../src/types.js";
 
 const paths = createPaths(".omp");
 
@@ -52,11 +51,11 @@ describe("loadConfig", () => {
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
-      JSON.stringify({ orchestration: { maxParallelAgents: 5 } })
+      JSON.stringify({ contextMode: { compressionThreshold: 8192 } })
     );
     const config = loadConfig(paths, tmpDir);
-    expect(config.orchestration.maxParallelAgents).toBe(5);
-    expect(config.orchestration.maxFixRetries).toBe(2); // inherited from default
+    expect(config.contextMode.compressionThreshold).toBe(8192);
+    expect(config.contextMode.enabled).toBe(true); // inherited from default
   });
 });
 
@@ -80,12 +79,12 @@ describe("saveConfig / updateConfig", () => {
   });
 
   test("updateConfig deep-merges and persists", () => {
-    const updated = updateConfig(paths, tmpDir, { orchestration: { maxParallelAgents: 7 } });
-    expect(updated.orchestration.maxParallelAgents).toBe(7);
-    expect(updated.orchestration.maxFixRetries).toBe(2);
+    const updated = updateConfig(paths, tmpDir, { contextMode: { compressionThreshold: 8192 } });
+    expect(updated.contextMode.compressionThreshold).toBe(8192);
+    expect(updated.contextMode.enabled).toBe(true);
     // Verify it was persisted
     const reloaded = loadConfig(paths, tmpDir);
-    expect(reloaded.orchestration.maxParallelAgents).toBe(7);
+    expect(reloaded.contextMode.compressionThreshold).toBe(8192);
   });
 });
 
@@ -110,27 +109,5 @@ describe("contextMode config", () => {
     });
     expect(config.contextMode.compressionThreshold).toBe(8192);
     expect(config.contextMode.enabled).toBe(true); // untouched fields preserved
-  });
-});
-
-describe("AgentRole", () => {
-  test("AGENT_ROLES contains all known sub-agent roles", () => {
-    expect(AGENT_ROLES).toContain("implementer");
-    expect(AGENT_ROLES).toContain("spec-reviewer");
-    expect(AGENT_ROLES).toContain("quality-reviewer");
-    expect(AGENT_ROLES).toContain("fix-agent");
-  });
-
-  test("AGENT_ROLES has no duplicates", () => {
-    const unique = new Set(AGENT_ROLES);
-    expect(unique.size).toBe(AGENT_ROLES.length);
-  });
-
-  test("AGENT_ROLES has expected length", () => {
-    expect(AGENT_ROLES.length).toBe(4);
-    for (const role of AGENT_ROLES) {
-      expect(typeof role).toBe("string");
-      expect(role.length).toBeGreaterThan(0);
-    }
   });
 });
