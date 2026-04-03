@@ -5,7 +5,7 @@ import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { SupipowersConfig } from "../../src/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
 
-function createMockPi() {
+function createMockPlatformWithHandlers() {
   const handlers = new Map<string, Function>();
   const platform = createMockPlatform({
     on: vi.fn((event: string, handler: Function) => {
@@ -24,28 +24,28 @@ describe("registerContextModeHooks", () => {
   });
 
   test("registers hooks when enabled", () => {
-    const pi = createMockPi();
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
-    expect(pi.on).toHaveBeenCalledWith("tool_result", expect.any(Function));
-    expect(pi.on).toHaveBeenCalledWith("tool_call", expect.any(Function));
-    expect(pi.on).toHaveBeenCalledWith("before_agent_start", expect.any(Function));
+    const platform = createMockPlatformWithHandlers();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    expect(platform.on).toHaveBeenCalledWith("tool_result", expect.any(Function));
+    expect(platform.on).toHaveBeenCalledWith("tool_call", expect.any(Function));
+    expect(platform.on).toHaveBeenCalledWith("before_agent_start", expect.any(Function));
   });
 
   test("does not register hooks when disabled", () => {
-    const pi = createMockPi();
+    const platform = createMockPlatformWithHandlers();
     const config: SupipowersConfig = {
       ...DEFAULT_CONFIG,
       contextMode: { ...DEFAULT_CONFIG.contextMode, enabled: false },
     };
-    registerContextModeHooks(pi, config);
-    expect(pi.on).not.toHaveBeenCalled();
+    registerContextModeHooks(platform, config);
+    expect(platform.on).not.toHaveBeenCalled();
   });
 
   test("tool_result handler compresses large bash output", () => {
-    const pi = createMockPi();
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const platform = createMockPlatformWithHandlers();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
 
-    const handler = pi._handlers.get("tool_result");
+    const handler = platform._handlers.get("tool_result");
     expect(handler).toBeDefined();
 
     const bigOutput = Array.from({ length: 500 }, (_, i) => `line ${i}: ${'x'.repeat(20)}`).join("\n");
@@ -65,10 +65,10 @@ describe("registerContextModeHooks", () => {
   });
 
   test("tool_result handler passes through small output", () => {
-    const pi = createMockPi();
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const platform = createMockPlatformWithHandlers();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
 
-    const handler = pi._handlers.get("tool_result");
+    const handler = platform._handlers.get("tool_result");
     const event = {
       type: "tool_result",
       toolName: "bash",
@@ -84,11 +84,11 @@ describe("registerContextModeHooks", () => {
   });
 
   test("tool_call handler blocks curl when context-mode detected", () => {
-    const pi = createMockPi();
-    pi.getActiveTools.mockReturnValue(["bash", "ctx_fetch_and_index"]);
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const platform = createMockPlatformWithHandlers();
+    platform.getActiveTools.mockReturnValue(["bash", "ctx_fetch_and_index"]);
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
 
-    const handler = pi._handlers.get("tool_call");
+    const handler = platform._handlers.get("tool_call");
     const event = {
       type: "tool_call",
       toolName: "bash",
@@ -103,11 +103,11 @@ describe("registerContextModeHooks", () => {
   });
 
   test("tool_call handler passes through curl when context-mode not detected", () => {
-    const pi = createMockPi();
-    pi.getActiveTools.mockReturnValue(["bash", "read"]);
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const platform = createMockPlatformWithHandlers();
+    platform.getActiveTools.mockReturnValue(["bash", "read"]);
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
 
-    const handler = pi._handlers.get("tool_call");
+    const handler = platform._handlers.get("tool_call");
     const event = {
       type: "tool_call",
       toolName: "bash",
@@ -120,11 +120,11 @@ describe("registerContextModeHooks", () => {
   });
 
   test("tool_call handler passes through non-HTTP bash commands", () => {
-    const pi = createMockPi();
-    pi.getActiveTools.mockReturnValue(["bash", "ctx_fetch_and_index"]);
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const platform = createMockPlatformWithHandlers();
+    platform.getActiveTools.mockReturnValue(["bash", "ctx_fetch_and_index"]);
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
 
-    const handler = pi._handlers.get("tool_call");
+    const handler = platform._handlers.get("tool_call");
     const event = {
       type: "tool_call",
       toolName: "bash",
@@ -137,11 +137,11 @@ describe("registerContextModeHooks", () => {
   });
 
   test("before_agent_start handler concatenates routing when context-mode detected", () => {
-    const pi = createMockPi();
-    pi.getActiveTools.mockReturnValue(["bash", "ctx_execute", "ctx_search"]);
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const platform = createMockPlatformWithHandlers();
+    platform.getActiveTools.mockReturnValue(["bash", "ctx_execute", "ctx_search"]);
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
 
-    const handler = pi._handlers.get("before_agent_start");
+    const handler = platform._handlers.get("before_agent_start");
     expect(handler).toBeDefined();
 
     const event = { prompt: "fix the bug", systemPrompt: "You are an assistant." };
@@ -152,25 +152,25 @@ describe("registerContextModeHooks", () => {
   });
 
   test("before_agent_start handler is no-op when routing disabled", () => {
-    const pi = createMockPi();
-    pi.getActiveTools.mockReturnValue(["bash", "read"]);
+    const platform = createMockPlatformWithHandlers();
+    platform.getActiveTools.mockReturnValue(["bash", "read"]);
     const config: SupipowersConfig = {
       ...DEFAULT_CONFIG,
       contextMode: { ...DEFAULT_CONFIG.contextMode, routingInstructions: false, enforceRouting: false },
     };
-    registerContextModeHooks(pi, config);
+    registerContextModeHooks(platform, config);
 
-    const handler = pi._handlers.get("before_agent_start");
+    const handler = platform._handlers.get("before_agent_start");
     const event = { prompt: "fix the bug", systemPrompt: "You are an assistant." };
     const result = handler(event, {});
     expect(result).toBeUndefined();
   });
 
   test("tool_result handler extracts events without throwing (fire-and-forget)", () => {
-    const pi = createMockPi();
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
+    const platform = createMockPlatformWithHandlers();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
 
-    const handler = pi._handlers.get("tool_result");
+    const handler = platform._handlers.get("tool_result");
     const event = {
       type: "tool_result",
       toolName: "read",
@@ -186,21 +186,21 @@ describe("registerContextModeHooks", () => {
   });
 
   test("registers compaction hooks when compaction enabled", () => {
-    const pi = createMockPi();
-    registerContextModeHooks(pi, DEFAULT_CONFIG);
-    const events = pi.on.mock.calls.map((c: any[]) => c[0]);
+    const platform = createMockPlatformWithHandlers();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    const events = platform.on.mock.calls.map((c: any[]) => c[0]);
     expect(events).toContain("session_before_compact");
     expect(events).toContain("session_compact");
   });
 
   test("does not register compaction hooks when disabled", () => {
-    const pi = createMockPi();
+    const platform = createMockPlatformWithHandlers();
     const config = {
       ...DEFAULT_CONFIG,
       contextMode: { ...DEFAULT_CONFIG.contextMode, compaction: false },
     };
-    registerContextModeHooks(pi, config);
-    const events = pi.on.mock.calls.map((c: any[]) => c[0]);
+    registerContextModeHooks(platform, config);
+    const events = platform.on.mock.calls.map((c: any[]) => c[0]);
     expect(events).not.toContain("session_before_compact");
     expect(events).not.toContain("session_compact");
   });

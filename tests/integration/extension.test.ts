@@ -29,6 +29,7 @@ describe("extension entry point", () => {
     expect(registeredCommands).toContain("supi:status");
     expect(registeredCommands).toContain("supi:update");
     expect(registeredCommands).toContain("supi:context");
+    expect(registeredCommands).toContain("supi:commit");
   });
 
   test("registers context-mode hooks when enabled", () => {
