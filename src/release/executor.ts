@@ -9,6 +9,9 @@ type ExecFn = (
   opts?: { cwd?: string },
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
 
+/** Callback to report step progress during release execution. */
+export type ReleaseProgressFn = (step: string, status: "active" | "done" | "error", detail?: string) => void;
+
 export interface ExecuteReleaseOptions {
   exec: ExecFn;
   cwd: string;
@@ -16,6 +19,8 @@ export interface ExecuteReleaseOptions {
   changelog: string;
   channels: ReleaseChannel[];
   dryRun: boolean;
+  /** Optional callback for step-by-step progress reporting. */
+  onProgress?: ReleaseProgressFn;
 }
 
 /**
@@ -29,7 +34,8 @@ export interface ExecuteReleaseOptions {
  *   happen (all flags true) so callers can preview without side-effects.
  */
 export async function executeRelease(opts: ExecuteReleaseOptions): Promise<ReleaseResult> {
-  const { exec, cwd, version, changelog, channels, dryRun } = opts;
+  const { exec, cwd, version, changelog, channels, dryRun, onProgress } = opts;
+  const progress = onProgress ?? (() => {});
 
   if (dryRun) {
     console.log(`[dry-run] Would build (if scripts.build exists)`);
@@ -56,44 +62,66 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
 
   const scripts = pkg["scripts"] as Record<string, string> | undefined;
   if (scripts?.["build"]) {
+    progress("build", "active", "Running build script");
     const buildResult = await exec("bun", ["run", "build"], { cwd });
     if (buildResult.code !== 0) {
-      throw new Error("Build failed");
+      progress("build", "error", buildResult.stderr || "Non-zero exit");
+      throw new Error(`Build failed: ${buildResult.stderr || "non-zero exit"}`);
     }
+    progress("build", "done");
   }
 
   // ── 2. Bump version in package.json ──────────────────────────────────────
+  progress("version-bump", "active", `Bumping to ${version}`);
   pkg["version"] = version;
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf-8");
+  progress("version-bump", "done");
 
   // ── 3–6. Git operations ──────────────────────────────────────────────────
 
+  progress("git-add", "active", "git add -A");
   const gitAdd = await exec("git", ["add", "-A"], { cwd });
   if (gitAdd.code !== 0) {
-    return { version, tagCreated: false, pushed: false, channels: [] };
+    const err = gitAdd.stderr || "git add failed";
+    progress("git-add", "error", err);
+    return { version, tagCreated: false, pushed: false, channels: [], error: `git add failed: ${err}` };
   }
+  progress("git-add", "done");
 
+  progress("git-commit", "active", `release: v${version}`);
   const gitCommit = await exec("git", ["commit", "-m", `release: v${version}`], { cwd });
   if (gitCommit.code !== 0) {
-    return { version, tagCreated: false, pushed: false, channels: [] };
+    const err = gitCommit.stderr || "git commit failed";
+    progress("git-commit", "error", err);
+    return { version, tagCreated: false, pushed: false, channels: [], error: `git commit failed: ${err}` };
   }
+  progress("git-commit", "done");
 
+  progress("git-tag", "active", `v${version}`);
   const tagMessage = `Release v${version}\n\n${changelog}`;
   const gitTag = await exec("git", ["tag", "-a", `v${version}`, "-m", tagMessage], { cwd });
   if (gitTag.code !== 0) {
-    return { version, tagCreated: false, pushed: false, channels: [] };
+    const err = gitTag.stderr || "git tag failed";
+    progress("git-tag", "error", err);
+    return { version, tagCreated: false, pushed: false, channels: [], error: `git tag failed: ${err}` };
   }
+  progress("git-tag", "done");
 
+  progress("git-push", "active", "Pushing to origin");
   const gitPush = await exec("git", ["push", "origin", "HEAD", "--follow-tags"], { cwd });
   if (gitPush.code !== 0) {
+    const err = gitPush.stderr || "git push failed";
+    progress("git-push", "error", err);
     // Tag was created locally but push failed
-    return { version, tagCreated: true, pushed: false, channels: [] };
+    return { version, tagCreated: true, pushed: false, channels: [], error: `git push failed: ${err}` };
   }
+  progress("git-push", "done");
 
   // ── 7. Channel publishing ─────────────────────────────────────────────────
   const channelResults: ReleaseResult["channels"] = [];
 
   for (const channel of channels) {
+    progress(`publish-${channel}`, "active", `Publishing to ${channel}`);
     try {
       let result: { code: number; stderr: string };
       if (channel === "github") {
@@ -108,20 +136,17 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
       }
 
       if (result.code !== 0) {
-        channelResults.push({
-          channel,
-          success: false,
-          error: result.stderr || `${channel} publish exited with code ${result.code}`,
-        });
+        const err = result.stderr || `${channel} publish exited with code ${result.code}`;
+        progress(`publish-${channel}`, "error", err);
+        channelResults.push({ channel, success: false, error: err });
       } else {
+        progress(`publish-${channel}`, "done");
         channelResults.push({ channel, success: true });
       }
     } catch (err) {
-      channelResults.push({
-        channel,
-        success: false,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      progress(`publish-${channel}`, "error", msg);
+      channelResults.push({ channel, success: false, error: msg });
     }
   }
 
