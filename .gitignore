@@ -72,3 +72,5 @@ node-compile-cache
 jest_dx
 docs
 .pi/supipowers
+
+omp_source

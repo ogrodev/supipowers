@@ -6,7 +6,7 @@
 //
 // Setting CLAUDE_PROJECT_DIR causes start.mjs to also write a CLAUDE.md
 // in the project root. This is harmless (OMP doesn't read it) but the
-// user should gitignore it. We also write .omp/SYSTEM.md with routing
+// user should gitignore it. We also write .omp/APPEND_SYSTEM.md with routing
 // rules since that's what OMP actually loads as system prompt.
 
 import { resolve, join, dirname } from "node:path";
@@ -32,7 +32,7 @@ if (!startMjs) {
   process.exit(1);
 }
 
-// Write .omp/SYSTEM.md with routing rules (idempotent — only if marker absent)
+// Write .omp/APPEND_SYSTEM.md with routing rules (idempotent — only if marker absent)
 const ROUTING_MARKER = "# context-mode — MANDATORY routing rules";
 try {
   // Find SKILL.md from multiple possible locations
@@ -47,7 +47,7 @@ try {
 
   if (skillContent && skillContent.includes(ROUTING_MARKER)) {
     const ompDir = join(projectDir, ".omp");
-    const systemMdPath = join(ompDir, "SYSTEM.md");
+    const systemMdPath = join(ompDir, "APPEND_SYSTEM.md");
 
     if (!existsSync(ompDir)) mkdirSync(ompDir, { recursive: true });
 
