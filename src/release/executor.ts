@@ -88,18 +88,18 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
   progress("git-add", "active", "git add -A");
   const gitAdd = await exec("git", ["add", "-A"], { cwd });
   if (gitAdd.code !== 0) {
-    const err = gitAdd.stderr || "git add failed";
-    progress("git-add", "error", err);
-    return { version, tagCreated: false, pushed: false, channels: [], error: `git add failed: ${err}` };
+    const detail = gitAdd.stderr || gitAdd.stdout || `exit code ${gitAdd.code}`;
+    progress("git-add", "error", detail);
+    return { version, tagCreated: false, pushed: false, channels: [], error: `git add: ${detail}` };
   }
   progress("git-add", "done");
 
   progress("git-commit", "active", `release: v${version}`);
   const gitCommit = await exec("git", ["commit", "-m", `release: v${version}`], { cwd });
   if (gitCommit.code !== 0) {
-    const err = gitCommit.stderr || "git commit failed";
-    progress("git-commit", "error", err);
-    return { version, tagCreated: false, pushed: false, channels: [], error: `git commit failed: ${err}` };
+    const detail = gitCommit.stderr || gitCommit.stdout || `exit code ${gitCommit.code}`;
+    progress("git-commit", "error", detail);
+    return { version, tagCreated: false, pushed: false, channels: [], error: `git commit: ${detail}` };
   }
   progress("git-commit", "done");
 
@@ -107,19 +107,19 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
   const tagMessage = `Release v${version}\n\n${changelog}`;
   const gitTag = await exec("git", ["tag", "-a", `v${version}`, "-m", tagMessage], { cwd });
   if (gitTag.code !== 0) {
-    const err = gitTag.stderr || "git tag failed";
-    progress("git-tag", "error", err);
-    return { version, tagCreated: false, pushed: false, channels: [], error: `git tag failed: ${err}` };
+    const detail = gitTag.stderr || gitTag.stdout || `exit code ${gitTag.code}`;
+    progress("git-tag", "error", detail);
+    return { version, tagCreated: false, pushed: false, channels: [], error: `git tag: ${detail}` };
   }
   progress("git-tag", "done");
 
   progress("git-push", "active", "Pushing to origin");
   const gitPush = await exec("git", ["push", "origin", "HEAD", "--follow-tags"], { cwd });
   if (gitPush.code !== 0) {
-    const err = gitPush.stderr || "git push failed";
-    progress("git-push", "error", err);
+    const detail = gitPush.stderr || gitPush.stdout || `exit code ${gitPush.code}`;
+    progress("git-push", "error", detail);
     // Tag was created locally but push failed
-    return { version, tagCreated: true, pushed: false, channels: [], error: `git push failed: ${err}` };
+    return { version, tagCreated: true, pushed: false, channels: [], error: `git push: ${detail}` };
   }
   progress("git-push", "done");
 
@@ -129,7 +129,7 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
   for (const channel of channels) {
     progress(`publish-${channel}`, "active", `Publishing to ${channel}`);
     try {
-      let result: { code: number; stderr: string };
+      let result: { code: number; stdout: string; stderr: string };
       if (channel === "github") {
         result = await exec(
           "gh",
@@ -142,7 +142,7 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
       }
 
       if (result.code !== 0) {
-        const err = result.stderr || `${channel} publish exited with code ${result.code}`;
+        const err = result.stderr || result.stdout || `${channel} publish exited with code ${result.code}`;
         progress(`publish-${channel}`, "error", err);
         channelResults.push({ channel, success: false, error: err });
       } else {
