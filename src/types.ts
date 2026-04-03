@@ -1,15 +1,7 @@
 // src/types.ts — Shared type definitions for supipowers
 
-/** Sub-agent execution status */
-export type AgentStatus = "done" | "done_with_concerns" | "blocked";
-
 /** Task complexity level */
 export type TaskComplexity = "small" | "medium" | "large";
-
-/** Task parallelism annotation */
-export type TaskParallelism =
-  | { type: "parallel-safe" }
-  | { type: "sequential"; dependsOn: number[] };
 
 /** A single task in a plan */
 export interface PlanTask {
@@ -19,7 +11,6 @@ export interface PlanTask {
   files: string[];
   criteria: string;
   complexity: TaskComplexity;
-  parallelism: TaskParallelism;
   /** Optional model override from [model: ...] annotation */
   model?: string;
 }
@@ -32,40 +23,6 @@ export interface Plan {
   context: string;
   tasks: PlanTask[];
   filePath: string;
-}
-
-/** Per-agent result stored after execution */
-export interface AgentResult {
-  taskId: number;
-  status: AgentStatus;
-  output: string;
-  concerns?: string;
-  filesChanged: string[];
-  duration: number;
-}
-
-/** Batch status in a run */
-export type BatchStatus = "pending" | "running" | "completed" | "failed";
-
-/** A batch of tasks in a run */
-export interface RunBatch {
-  index: number;
-  taskIds: number[];
-  status: BatchStatus;
-}
-
-/** Overall run status */
-export type RunStatus = "running" | "completed" | "paused" | "failed" | "cancelled" | "interrupted";
-
-/** Run manifest stored on disk */
-export interface RunManifest {
-  id: string;
-  planRef: string;
-  profile: string;
-  status: RunStatus;
-  startedAt: string;
-  completedAt?: string;
-  batches: RunBatch[];
 }
 
 /** Notification severity level */
@@ -114,6 +71,8 @@ export interface CommitEntry {
   hash: string;
   message: string;
   scope?: string;
+  /** Original conventional commit prefix (feat, fix, refactor, etc.) */
+  type?: string;
 }
 
 /** Commits categorized by conventional-commit type */
@@ -121,7 +80,9 @@ export interface CategorizedCommits {
   features: CommitEntry[];
   fixes: CommitEntry[];
   breaking: CommitEntry[];
-  other: CommitEntry[];
+  improvements: CommitEntry[];  // refactor, perf, revert
+  maintenance: CommitEntry[];   // chore, ci, build, test, docs, style
+  other: CommitEntry[];          // non-conventional only
 }
 
 /** Result of a release execution */
@@ -208,13 +169,6 @@ export interface ResolvedModel {
 export interface SupipowersConfig {
   version: string;
   defaultProfile: string;
-  orchestration: {
-    maxParallelAgents: number;
-    maxFixRetries: number;
-    maxNestingDepth: number;
-    modelPreference: string;
-    taskTimeout: number; // milliseconds, 0 = no timeout
-  };
   lsp: {
     setupGuide: boolean;
   };
@@ -242,9 +196,5 @@ export interface Profile {
     codeQuality: boolean;
     testSuite: boolean;
     e2e: boolean;
-  };
-  orchestration: {
-    reviewAfterEachBatch: boolean;
-    finalReview: boolean;
   };
 }
