@@ -17,7 +17,7 @@ import { registerModelCommand, handleModel } from "./commands/model.js";
 import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { registerContextCommand, handleContext } from "./commands/context.js";
-import { registerCommitCommand } from "./commands/commit.js";
+import { registerCommitCommand, handleCommit } from "./commands/commit.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { loadMcpRegistry } from "./mcp/config.js";
@@ -28,7 +28,7 @@ import { registerPlanApprovalHook } from "./planning/approval-flow.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
-const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
+const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string) => void> = {
   "supi": (platform, ctx) => handleSupi(platform, ctx),
   "supi:config": (platform, ctx) => handleConfig(platform, ctx),
   "supi:status": (platform, ctx) => handleStatus(platform, ctx),
@@ -37,6 +37,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any) => void> = {
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
   "supi:model": (platform, ctx) => handleModel(platform, ctx),
   "supi:context": (platform, ctx) => handleContext(platform, ctx),
+  "supi:commit": (platform, ctx, args) => handleCommit(platform, ctx, args),
 };
 
 let pendingTags: string[] = [];
@@ -96,7 +97,8 @@ export function bootstrap(platform: Platform): void {
     const handler = TUI_COMMANDS[commandName];
     if (!handler) return;
 
-    handler(platform, ctx);
+    const args = spaceIndex === -1 ? undefined : text.slice(spaceIndex + 1);
+    handler(platform, ctx, args);
     return { action: "handled" };
   });
 
