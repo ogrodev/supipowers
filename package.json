@@ -1,16 +1,16 @@
 {
   "name": "supipowers",
   "version": "1.1.0",
-  "description": "Workflow extension for Pi and OMP coding agents.",
+  "description": "Workflow extension for OMP coding agents.",
   "type": "module",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "git config core.hooksPath hooks || true"
   },
   "keywords": [
-    "pi-extension",
     "omp-extension",
     "workflow",
     "agent",
@@ -27,14 +27,6 @@
     "README.md",
     "LICENSE"
   ],
-  "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ]
-  },
   "omp": {
     "extensions": [
       "./src/index.ts"
@@ -47,14 +39,10 @@
     "@clack/prompts": "^0.10.0"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
     "@oh-my-pi/pi-coding-agent": "*",
     "@sinclair/typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@mariozechner/pi-coding-agent": {
-      "optional": true
-    },
     "@oh-my-pi/pi-coding-agent": {
       "optional": true
     },
