@@ -43,6 +43,81 @@ export function parseSystemPrompt(text: string): PromptSection[] {
   return sections;
 }
 
+// ── Breakdown Builder ─────────────────────────────────────
+
+/** Context usage data from OMP runtime */
+export interface ContextUsage {
+  tokens: number | null;
+  contextWindow: number | null;
+  percent: number | null;
+}
+
+/** Format a token count as human-readable (e.g., 50000 → "50K") */
+function formatTokens(tokens: number): string {
+  if (tokens >= 1000) return `${Math.round(tokens / 1000)}K`;
+  return String(tokens);
+}
+
+/** Build display lines for the TUI breakdown */
+export function buildBreakdown(
+  usage: ContextUsage | null,
+  sections: PromptSection[],
+  activeTools: string[],
+  noSystemPrompt = false,
+): string[] {
+  const lines: string[] = [];
+
+  // Header — format: "Context Breakdown (~50K / 200K tokens, 25%)"
+  const headerParts: string[] = [];
+  if (usage?.tokens != null && usage?.contextWindow != null) {
+    headerParts.push(`~${formatTokens(usage.tokens)} / ${formatTokens(usage.contextWindow)} tokens`);
+  } else if (usage?.tokens != null) {
+    headerParts.push(`~${formatTokens(usage.tokens)} tokens`);
+  } else if (usage?.contextWindow != null) {
+    headerParts.push(`${formatTokens(usage.contextWindow)} window`);
+  }
+  if (usage?.percent != null) headerParts.push(`${usage.percent}%`);
+  const header = headerParts.length > 0
+    ? `Context Breakdown (${headerParts.join(", ")})`
+    : "Context Breakdown";
+  lines.push(header);
+  lines.push("\u2500".repeat(44));
+
+  // System prompt sections
+  if (sections.length > 0) {
+    const totalBytes = sections.reduce((sum, s) => sum + s.bytes, 0);
+    const totalTok = estimateTokens(sections.reduce((acc, s) => acc + s.content, ""));
+
+    const onlyBase = sections.length === 1 && sections[0].label === "Base system prompt";
+    if (onlyBase) {
+      lines.push(`  System Prompt  ${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`);
+    } else {
+      lines.push(`  System Prompt  ${formatSize(totalBytes)}  ~${formatTokens(totalTok)} tok`);
+      for (let i = 0; i < sections.length; i++) {
+        const s = sections[i];
+        const isLast = i === sections.length - 1;
+        const prefix = isLast ? "\u2514" : "\u251c";
+        const tok = estimateTokens(s.content);
+        lines.push(`    ${prefix} ${s.label}  ${formatSize(s.bytes)}  ~${formatTokens(tok)} tok`);
+      }
+    }
+  }
+
+  // Empty prompt fallback
+  if (noSystemPrompt && sections.length === 0) {
+    lines.push("  No system prompt captured");
+  }
+
+  // Tools
+  lines.push(`  Tools: ${activeTools.length} active`);
+
+  // Footer
+  lines.push("\u2500".repeat(34));
+  lines.push("  Close");
+
+  return lines;
+}
+
 // ── Internal helpers ──────────────────────────────────────
 
 function byteLength(str: string): number {

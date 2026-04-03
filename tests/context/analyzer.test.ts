@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { estimateTokens, formatSize, parseSystemPrompt } from "../../src/context/analyzer.js";
+import { estimateTokens, formatSize, parseSystemPrompt, buildBreakdown } from "../../src/context/analyzer.js";
 import type { PromptSection } from "../../src/context/analyzer.js";
 
 describe("estimateTokens", () => {
@@ -148,5 +148,73 @@ describe("parseSystemPrompt", () => {
     const sections = parseSystemPrompt(prompt);
     expect(sections.find((s) => s.label === "Project context")).toBeDefined();
     expect(sections.find((s) => s.label === "File: types.ts")).toBeUndefined();
+  });
+});
+
+describe("buildBreakdown", () => {
+  const sampleSections: PromptSection[] = [
+    { label: "Base system prompt", bytes: 2048, content: "x".repeat(2048) },
+    { label: "AGENTS.md", bytes: 4096, content: "x".repeat(4096) },
+    { label: "Skills (2)", bytes: 8192, content: "x".repeat(8192) },
+  ];
+
+  test("builds display lines with full data", () => {
+    const usage = { tokens: 50000, contextWindow: 200000, percent: 25 };
+    const tools = ["read", "edit", "bash"];
+    const lines = buildBreakdown(usage, sampleSections, tools);
+
+    expect(lines[0]).toBe("Context Breakdown (~50K / 200K tokens, 25%)");
+
+    const joined = lines.join("\n");
+    expect(joined).toContain("AGENTS.md");
+    expect(joined).toContain("Skills (2)");
+    expect(joined).toContain("Base system prompt");
+    expect(joined).toContain("Tools: 3 active");
+    expect(joined).toContain("Close");
+  });
+
+  test("builds display without usage data", () => {
+    const lines = buildBreakdown(null, sampleSections, ["read"]);
+    const joined = lines.join("\n");
+    expect(joined).toContain("AGENTS.md");
+    expect(joined).toContain("Tools: 1 active");
+    expect(joined).not.toContain("undefined");
+  });
+
+  test("builds display without sections", () => {
+    const usage = { tokens: 10000, contextWindow: 200000, percent: 5 };
+    const lines = buildBreakdown(usage, [], ["read", "edit"]);
+    const joined = lines.join("\n");
+    expect(joined).toContain("10K");
+    expect(joined).not.toContain("System Prompt");
+    expect(joined).toContain("Tools: 2 active");
+  });
+
+  test("shows single System Prompt line without sub-breakdown for base-only", () => {
+    const usage = { tokens: 5000, contextWindow: 200000, percent: 3 };
+    const baseSections: PromptSection[] = [
+      { label: "Base system prompt", bytes: 4096, content: "x".repeat(4096) },
+    ];
+    const lines = buildBreakdown(usage, baseSections, ["read"]);
+    const joined = lines.join("\n");
+    expect(joined).toContain("System Prompt");
+    expect(joined).not.toContain("\u251c");
+    expect(joined).not.toContain("\u2514");
+    expect(joined).not.toContain("Base system prompt");
+  });
+
+  test("handles null token fields in usage", () => {
+    const usage = { tokens: null, contextWindow: 200000, percent: null };
+    const lines = buildBreakdown(usage as any, sampleSections, []);
+    const joined = lines.join("\n");
+    expect(joined).toContain("200K");
+    expect(joined).not.toContain("null");
+  });
+
+  test("shows 'No system prompt captured' when prompt was empty", () => {
+    const usage = { tokens: 10000, contextWindow: 200000, percent: 5 };
+    const lines = buildBreakdown(usage, [], ["read"], true);
+    const joined = lines.join("\n");
+    expect(joined).toContain("No system prompt captured");
   });
 });
