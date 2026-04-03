@@ -280,8 +280,8 @@ describe("executeRelease", () => {
 
       expect(result.tagCreated).toBe(true);
       expect(result.pushed).toBe(true);
-      // 4 git calls (add, commit, tag, push), no build, no channels
-      expect(mockExec).toHaveBeenCalledTimes(4);
+      // skipBump skips add+commit → only 2 git calls (tag, push)
+      expect(mockExec).toHaveBeenCalledTimes(2);
     });
 
     test("overwrites package.json version when skipBump is false", async () => {

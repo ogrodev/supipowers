@@ -85,23 +85,30 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
 
   // ── 3–6. Git operations ──────────────────────────────────────────────────
 
-  progress("git-add", "active", "git add -A");
-  const gitAdd = await exec("git", ["add", "-A"], { cwd });
-  if (gitAdd.code !== 0) {
-    const detail = gitAdd.stderr || gitAdd.stdout || `exit code ${gitAdd.code}`;
-    progress("git-add", "error", detail);
-    return { version, tagCreated: false, pushed: false, channels: [], error: `git add: ${detail}` };
-  }
-  progress("git-add", "done");
+  // When skipBump is true the version was already committed locally —
+  // there's nothing to stage or commit, so skip straight to tag+push.
+  if (skipBump) {
+    progress("git-add", "done", "Skipped (no changes)");
+    progress("git-commit", "done", "Skipped (already committed)");
+  } else {
+    progress("git-add", "active", "git add -A");
+    const gitAdd = await exec("git", ["add", "-A"], { cwd });
+    if (gitAdd.code !== 0) {
+      const detail = gitAdd.stderr || gitAdd.stdout || `exit code ${gitAdd.code}`;
+      progress("git-add", "error", detail);
+      return { version, tagCreated: false, pushed: false, channels: [], error: `git add: ${detail}` };
+    }
+    progress("git-add", "done");
 
-  progress("git-commit", "active", `release: v${version}`);
-  const gitCommit = await exec("git", ["commit", "-m", `release: v${version}`], { cwd });
-  if (gitCommit.code !== 0) {
-    const detail = gitCommit.stderr || gitCommit.stdout || `exit code ${gitCommit.code}`;
-    progress("git-commit", "error", detail);
-    return { version, tagCreated: false, pushed: false, channels: [], error: `git commit: ${detail}` };
+    progress("git-commit", "active", `release: v${version}`);
+    const gitCommit = await exec("git", ["commit", "-m", `release: v${version}`], { cwd });
+    if (gitCommit.code !== 0) {
+      const detail = gitCommit.stderr || gitCommit.stdout || `exit code ${gitCommit.code}`;
+      progress("git-commit", "error", detail);
+      return { version, tagCreated: false, pushed: false, channels: [], error: `git commit: ${detail}` };
+    }
+    progress("git-commit", "done");
   }
-  progress("git-commit", "done");
 
   progress("git-tag", "active", `v${version}`);
   const tagMessage = `Release v${version}\n\n${changelog}`;
