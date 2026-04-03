@@ -91,4 +91,62 @@ describe("parseSystemPrompt", () => {
     expect(sections).toHaveLength(1);
     expect(sections[0].label).toBe("Base system prompt");
   });
+
+  test("extracts Memory section from heading", () => {
+    const prompt = `Some text\n# Memory Guidance\nMemory root: memory://root\nSome memory content\n# Other Section\nOther content`;
+    const sections = parseSystemPrompt(prompt);
+    const memory = sections.find((s) => s.label === "Memory");
+    expect(memory).toBeDefined();
+    expect(memory!.content).toContain("Memory root: memory://root");
+    expect(memory!.content).not.toContain("Other content");
+  });
+
+  test("extracts Routing rules section", () => {
+    const prompt = `Preamble\n# context-mode \u2014 MANDATORY routing rules\nYou have context-mode MCP tools\n## Some subsection\nMore rules\n# Next Top Section\nDone`;
+    const sections = parseSystemPrompt(prompt);
+    const routing = sections.find((s) => s.label === "Routing rules");
+    expect(routing).toBeDefined();
+    expect(routing!.content).toContain("context-mode MCP tools");
+  });
+
+  test("extracts MCP instructions section", () => {
+    const prompt = `Before\n## MCP Server Instructions\nThe following instructions\n## Another Section\nAfter`;
+    const sections = parseSystemPrompt(prompt);
+    const mcp = sections.find((s) => s.label === "MCP instructions");
+    expect(mcp).toBeDefined();
+    expect(mcp!.content).toContain("The following instructions");
+    expect(mcp!.content).not.toContain("After");
+  });
+
+  test("merges duplicate routing rule blocks", () => {
+    const prompt = `# context-mode \u2014 MANDATORY routing rules\nBlock 1\n# Other\nStuff\n# context-mode \u2014 MANDATORY routing rules\nBlock 2\n# End`;
+    const sections = parseSystemPrompt(prompt);
+    const routing = sections.filter((s) => s.label === "Routing rules");
+    expect(routing).toHaveLength(1);
+    expect(routing[0].content).toContain("Block 1");
+    expect(routing[0].content).toContain("Block 2");
+  });
+
+  test("section bytes sum to total prompt bytes", () => {
+    const prompt = `Preamble text\n<file path="/AGENTS.md">\nagent content\n</file>\n<skills>\n<skill name="a">skill a</skill>\n</skills>\n# Memory Guidance\nmemory stuff\n# Next\nTrailing`;
+    const sections = parseSystemPrompt(prompt);
+    const totalSectionBytes = sections.reduce((sum, s) => sum + s.bytes, 0);
+    const promptBytes = new TextEncoder().encode(prompt).length;
+    expect(totalSectionBytes).toBe(promptBytes);
+  });
+
+  test("handles bare <skill> tags without <skills> wrapper", () => {
+    const prompt = `Preamble\n<skill name="a">content a</skill>\n<skill name="b">content b</skill>\nPostamble`;
+    const sections = parseSystemPrompt(prompt);
+    const skills = sections.find((s) => s.label.startsWith("Skills"));
+    expect(skills).toBeDefined();
+    expect(skills!.label).toBe("Skills (2)");
+  });
+
+  test("does not double-count <file> nested inside <project>", () => {
+    const prompt = `<project>\n<file path="/src/types.ts">\ntype Foo = string;\n</file>\n</project>`;
+    const sections = parseSystemPrompt(prompt);
+    expect(sections.find((s) => s.label === "Project context")).toBeDefined();
+    expect(sections.find((s) => s.label === "File: types.ts")).toBeUndefined();
+  });
 });
