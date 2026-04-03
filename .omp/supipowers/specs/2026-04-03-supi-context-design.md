@@ -5,11 +5,11 @@
 
 ## Goal
 
-Add a `/supi:context` slash command that shows a detailed breakdown of what's consuming the LLM context window — system prompt sections, active tools, and conversation history — with byte sizes, estimated tokens, and percentages.
+Add a `/supi:context` slash command that shows what's consuming the LLM context window. It provides: (1) a per-section breakdown of the system prompt with byte sizes and estimated tokens, (2) a count of active tools, and (3) overall token usage from the OMP runtime.
 
 ## Motivation
 
-When working with OMP, the context window fills up from many sources: system prompt (AGENTS.md, skills, memory, routing rules, MCP instructions), tool definitions, and conversation history. Without visibility, it's impossible to know which parts are bloated or worth optimizing. This command gives that visibility as a zero-cost TUI-only operation.
+When working with OMP, the system prompt alone can grow large from many injected sources: AGENTS.md, skills, memory, routing rules, MCP instructions, and extension content. Without visibility, it's impossible to know which parts are bloated or worth optimizing. This command gives that visibility as a zero-cost TUI-only operation. It focuses on the system prompt (which we can fully measure) and surfaces overall token usage from the runtime.
 
 ## Architecture
 
@@ -43,8 +43,9 @@ The command uses OMP's `ExtensionCommandContext` APIs (available in slash comman
 
 | File | Responsibility |
 |---|---|
-| `src/commands/context.ts` | Command registration, input interception, TUI rendering |
+| `src/commands/context.ts` | Command registration, TUI rendering via `handleContext()` |
 | `src/context/analyzer.ts` | Pure functions: parse system prompt into sections, measure sizes, build display breakdown |
+| `src/bootstrap.ts` | Add `"supi:context"` to `TUI_COMMANDS` map for input-level interception |
 | `tests/context/analyzer.test.ts` | Unit tests for parser and breakdown builder |
 
 ### Data Flow
@@ -196,5 +197,5 @@ Add `"supi:context"` to the `TUI_COMMANDS` map in `bootstrap.ts` so it's interce
 - **Live monitoring** — this is a point-in-time snapshot, not a persistent widget
 - **Token counting accuracy** — we use chars/4 estimation, not a real tokenizer
 - **Drill-down into individual tool schemas** — we show tool counts, not per-tool definition sizes (the `context` event hook could enable this later but is out of scope)
-- **Conversation message-level breakdown** — we show total conversation size and message count, not per-message details
+- **Conversation history breakdown** — not available from command context APIs; would require the `context` event hook (future scope)
 - **Modifying context** — this command is read-only; it doesn't offer to remove/compress sections
