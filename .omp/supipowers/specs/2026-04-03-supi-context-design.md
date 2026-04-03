@@ -19,12 +19,21 @@ When working with OMP, the context window fills up from many sources: system pro
 
 ### Data Sources
 
+The command uses OMP's `ExtensionCommandContext` APIs (available in slash command handlers as `ctx`) and `ExtensionAPI` (`platform` in our abstraction). Since our `PlatformContext` type in `src/platform/types.ts` currently types `ctx` as `any`, these methods are accessed directly on the OMP-provided context object without needing to extend our platform abstraction.
+
 | Source | API | What It Provides |
 |---|---|---|
-| `ctx.getContextUsage()` | ExtensionCommandContext | Authoritative token/byte counts from OMP runtime |
-| `ctx.getSystemPrompt()` | ExtensionCommandContext | Raw system prompt text |
+| `ctx.getContextUsage()` | ExtensionCommandContext | Overall token usage: `{ tokens, contextWindow, percent }` — values may be `null` after compaction |
+| `ctx.getSystemPrompt()` | ExtensionCommandContext | Raw system prompt text (the full assembled prompt) |
 | `pi.getActiveTools()` | ExtensionAPI | List of currently active tool names |
 | `pi.getAllTools()` | ExtensionAPI | List of all registered tool names |
+
+**What we can measure directly vs. what we derive:**
+
+- **System prompt**: Full text from `ctx.getSystemPrompt()` — exact byte sizes per parsed section
+- **Tool count**: Names only from `pi.getActiveTools()` / `pi.getAllTools()` — we show counts, **not** per-tool schema byte sizes (tool definition JSON is not exposed by the API)
+- **Conversation + tools byte total**: Derived as `totalContextBytes - systemPromptBytes` when `ctx.getContextUsage()` provides totals. This is an aggregate — we cannot split tools vs. conversation individually.
+- **Message count**: Not available from these APIs — omitted from display unless `getContextUsage()` includes it
 
 ### File Structure
 
@@ -40,7 +49,7 @@ When working with OMP, the context window fills up from many sources: system pro
 User types /supi:context
   → input event handler intercepts (returns { handled: true })
   → handleContext(platform, ctx) called
-    → ctx.getContextUsage()        → overall usage data (tokens, bytes)
+    → ctx.getContextUsage()        → { tokens, contextWindow, percent } (any field may be null)
     → ctx.getSystemPrompt()        → raw system prompt string
     → parseSystemPrompt(text)      → array of { label, content, bytes }
     → pi.getActiveTools()          → active tool name list
@@ -98,33 +107,37 @@ The `ctx.getContextUsage()` return value provides authoritative totals. The per-
 Rendered as a `ctx.ui.select()` read-only display list:
 
 ```
-Context Breakdown (total: ~148K tokens, 592KB)
+Context Breakdown (~78K / 200K tokens, 39%)
 ────────────────────────────────────────────
-  System Prompt          312KB   53%  ~78K tok
-    ├ Base prompt          28KB    5%   ~7K tok
-    ├ AGENTS.md            14KB    2%   ~3K tok
-    ├ Skills (3)           42KB    7%  ~10K tok
-    ├ Memory               8KB    1%   ~2K tok
-    ├ Routing rules        86KB   15%  ~21K tok
-    ├ MCP instructions    124KB   21%  ~31K tok
-    └ Other                10KB    2%   ~2K tok
-  Tools (47 active / 52 total) 180KB   30%  ~45K tok
-  Conversation (23 msgs)  100KB   17%  ~25K tok
-────────────────────────────────────────────
+  System Prompt          312KB  ~78K tok
+    ├ Base prompt          28KB   ~7K tok
+    ├ AGENTS.md            14KB   ~3K tok
+    ├ Skills (3)           42KB  ~10K tok
+    ├ Memory               8KB   ~2K tok
+    ├ Routing rules        86KB  ~21K tok
+    ├ MCP instructions    124KB  ~31K tok
+    └ Other                10KB   ~2K tok
+  Tools: 47 active / 52 total
+  ──────────────────────────────────
   Close
 ```
 
 **Layout rules:**
-- Section labels left-aligned, sizes right-aligned
-- Sub-sections indented with tree characters (├, └)
-- Percentages relative to the total context size
+- Header shows authoritative data from `getContextUsage()`: tokens used, context window size, percentage
+- System prompt sections show KB and estimated tokens (chars/4) — these are the only values we can size per-section
+- Tool line shows counts only (no byte sizes — schema definitions are not exposed)
+- If `getContextUsage()` provides additional fields beyond what we expect, we display what's available
 - "Close" item at the bottom (or Esc to dismiss)
 
 ### Graceful Degradation
 
-- If `ctx.getContextUsage()` returns null → show "Usage data not available" and fall back to system prompt parsing only, skipping conversation/tool byte totals
-- If `ctx.getSystemPrompt()` returns empty → show "No system prompt captured" with just the usage totals
-- If parser finds no recognizable sections → show a single "System Prompt" line with total bytes, no sub-breakdown
+| Condition | Behavior |
+|----|-----|
+| `ctx.getContextUsage()` returns null/undefined | Show "Usage data not available" — display system prompt breakdown only |
+| `ctx.getContextUsage()` returns object with null `tokens` or `percent` | Show available fields, omit null ones (e.g., show context window size but skip percentage) |
+| `ctx.getSystemPrompt()` returns empty/null | Show "No system prompt captured" — display only usage totals and tool counts |
+| Parser finds no recognizable sections | Show single "System Prompt" line with total bytes, no sub-breakdown |
+| Both usage and system prompt unavailable | Show notification: "Context data unavailable" and return |
 
 ## Registration
 
