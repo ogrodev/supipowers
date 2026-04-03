@@ -58,9 +58,49 @@ function buildExecutionPrompt(planContent: string, planPath: string): string {
     "</instruction>",
     "",
     "<critical>",
-    "You **MUST** keep going until complete.",
+    "You **MUST** keep going until complete. This matters.",
     "</critical>",
   ].join("\n");
+}
+
+/**
+ * Execute the approve-and-execute flow.
+ *
+ * Clears the current session via ctx.newSession() (gives a clean slate),
+ * then sends the execution prompt as a user message so the agent picks it
+ * up immediately in the new session.
+ *
+ * Falls back to same-session steer when ctx.newSession is unavailable
+ * (headless / SDK environments that don't expose the session API).
+ */
+async function executeApproveFlow(
+  platform: Platform,
+  ctx: any,
+  planContent: string,
+  planPath: string,
+): Promise<void> {
+  const prompt = buildExecutionPrompt(planContent, planPath);
+
+  if (typeof ctx.newSession === "function") {
+    const result = await ctx.newSession();
+    if (result?.cancelled) {
+      // User dismissed the new-session prompt — keep plan state intact.
+      ctx.ui.notify("Session start cancelled. Plan saved; run /supi:plan again to execute.");
+      return;
+    }
+    ctx.sendUserMessage(prompt);
+  } else {
+    // Fallback: headless/SDK mode — steer in the current session.
+    platform.sendMessage(
+      {
+        customType: "supi-plan-execute",
+        content: [{ type: "text", text: prompt }],
+        display: "none",
+      },
+      { deliverAs: "steer", triggerTurn: true },
+    );
+    ctx.ui.notify("Plan approved — starting execution");
+  }
 }
 
 /**
@@ -68,9 +108,9 @@ function buildExecutionPrompt(planContent: string, planPath: string): string {
  *
  * After the planning agent finishes each turn, detect if a new plan
  * file appeared and show an approval selector:
- *   - "Approve and execute" → send execution steer
- *   - "Refine plan"        → let user type refinement
- *   - "Done (don't execute)" → cancel tracking
+ *   - "Approve and execute" → clear session, send execution prompt
+ *   - "Refine plan"        → let user type refinement (empty = approve)
+ *   - "Stay in plan mode"  → cancel tracking, return control
  */
 export function registerPlanApprovalHook(platform: Platform): void {
   platform.on("agent_end", async (_event: any, ctx: any) => {
@@ -92,39 +132,33 @@ export function registerPlanApprovalHook(platform: Platform): void {
     const planContent = readPlanFile(platform.paths, planCwd, planName);
     if (!planContent) return;
 
-    // Show approval UI
+    const planPath = `${platform.paths.dotDirDisplay}/supipowers/plans/${planName}`;
+
     const choice = await ctx.ui.select("Plan complete — what next?", [
       "Approve and execute",
       "Refine plan",
-      "Done (don't execute)",
+      "Stay in plan mode",
     ]);
 
     if (choice === "Approve and execute") {
       planningActive = false;
       plansBefore = [];
-
-      const planPath = `${platform.paths.dotDirDisplay}/supipowers/plans/${planName}`;
-      const prompt = buildExecutionPrompt(planContent, planPath);
-
-      platform.sendMessage(
-        {
-          customType: "supi-plan-execute",
-          content: [{ type: "text", text: prompt }],
-          display: "none",
-        },
-        { deliverAs: "steer", triggerTurn: true },
-      );
-
-      ctx.ui.notify("Plan approved — starting execution");
+      await executeApproveFlow(platform, ctx, planContent, planPath);
     } else if (choice === "Refine plan") {
-      // Keep planning active, let user type refinement
-      plansBefore = plansNow; // Update snapshot
+      // Keep planning active, let user type refinement.
+      // Empty input is treated as misclick → fall through to approve.
+      plansBefore = plansNow;
       const refinement = await ctx.ui.input("What should be refined?");
-      if (refinement) {
+      if (!refinement || !refinement.trim()) {
+        // Misclick: treat empty input as approval
+        planningActive = false;
+        plansBefore = [];
+        await executeApproveFlow(platform, ctx, planContent, planPath);
+      } else {
         ctx.ui.setEditorText?.(refinement);
       }
     } else {
-      // Done without executing
+      // Stay in plan mode — user keeps control, tracking cancelled
       cancelPlanTracking();
       ctx.ui.notify("Planning complete. Plan saved but not executing.");
     }

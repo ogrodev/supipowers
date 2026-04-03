@@ -137,7 +137,7 @@ export function registerPlanCommand(platform: Platform): void {
       const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
       const bridge = createModelBridge(platform);
       const resolved = resolveModelForAction("plan", modelRegistry, modelConfig, bridge);
-      if (resolved.source !== "main" && platform.setModel) {
+      if (resolved.source !== "main" && platform.setModel && resolved.model) {
         platform.setModel(resolved.model);
       }
 
