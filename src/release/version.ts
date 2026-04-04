@@ -79,3 +79,21 @@ export async function isVersionReleased(
     return false;
   }
 }
+
+/**
+ * Check whether a tag for the given version exists on the remote (origin).
+ * Returns true when `v{version}` is found via `git ls-remote --tags origin`.
+ */
+export async function isTagOnRemote(
+  exec: ExecFn,
+  cwd: string,
+  version: string,
+): Promise<boolean> {
+  try {
+    const tag = version.startsWith("v") ? version : `v${version}`;
+    const result = await exec("git", ["ls-remote", "--tags", "origin", tag], { cwd });
+    return result.code === 0 && result.stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
