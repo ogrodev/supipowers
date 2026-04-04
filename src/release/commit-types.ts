@@ -13,6 +13,7 @@ export const VALID_COMMIT_TYPES = [
   "test",
   "docs",
   "style",
+  "release",
 ] as const;
 
 export type ConventionalCommitType = (typeof VALID_COMMIT_TYPES)[number];
@@ -32,4 +33,5 @@ export const MAINTENANCE_TYPES = new Set<ConventionalCommitType>([
   "test",
   "docs",
   "style",
+  "release",
 ]);
