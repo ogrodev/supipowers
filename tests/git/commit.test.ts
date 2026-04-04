@@ -3,6 +3,7 @@ import {
   analyzeAndCommit,
   parseCommitPlan,
   buildAnalysisPrompt,
+  commitStaged,
 } from "../../src/git/commit.js";
 import type { CommitPlan } from "../../src/git/commit.js";
 
@@ -714,5 +715,61 @@ describe("analyzeAndCommit", () => {
     const lastCall = setWidget.mock.calls[setWidget.mock.calls.length - 1];
     expect(lastCall[0]).toBe("supi-commit");
     expect(lastCall[1]).toBeUndefined();
+  });
+});
+
+
+// ── commitStaged ───────────────────────────────────────────────────────
+
+describe("commitStaged", () => {
+  function mockExec(code = 0, stderr = "") {
+    return mock(async () => ({ stdout: "", stderr, code }));
+  }
+
+  test("succeeds with a valid conventional commit message", async () => {
+    const exec = mockExec(0);
+    const result = await commitStaged(exec as any, "/tmp", "feat(auth): add login");
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(exec).toHaveBeenCalledWith("git", ["commit", "-m", "feat(auth): add login"], { cwd: "/tmp" });
+  });
+
+  test("rejects invalid commit type before running git", async () => {
+    const exec = mockExec(0);
+    const result = await commitStaged(exec as any, "/tmp", "release: v1.0.0");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Invalid commit message");
+    expect(result.error).toContain('Unknown commit type "release"');
+    // git commit must NOT have been called
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  test("surfaces git hook failure from stderr", async () => {
+    const exec = mockExec(1, "husky - commit-msg hook exited with code 1");
+    const result = await commitStaged(exec as any, "/tmp", "chore(release): v2.0.0");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("husky");
+  });
+
+  test("uses exit code when stderr is empty", async () => {
+    const exec = mockExec(128, "");
+    const result = await commitStaged(exec as any, "/tmp", "fix: handle edge case");
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("exit code 128");
+  });
+
+  test("accepts all valid conventional commit types", async () => {
+    const validTypes = ["feat", "fix", "refactor", "perf", "revert", "chore", "ci", "build", "test", "docs", "style"];
+    for (const type of validTypes) {
+      const exec = mockExec(0);
+      const result = await commitStaged(exec as any, "/tmp", `${type}: some message`);
+      expect(result.success).toBe(true);
+    }
+  });
+
+  test("accepts scoped messages like chore(release): v1.0.0", async () => {
+    const exec = mockExec(0);
+    const result = await commitStaged(exec as any, "/tmp", "chore(release): v1.0.0");
+    expect(result.success).toBe(true);
   });
 });
