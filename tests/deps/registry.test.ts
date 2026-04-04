@@ -18,7 +18,7 @@ function createMockExec(
   versionOutput = "1.0.0",
 ): ExecFn {
   return async (cmd: string, args: string[]) => {
-    if (cmd === "which") {
+    if (cmd === "which" || cmd === "where") {
       const binary = args[0];
       const code = whichResults[binary] ?? 1;
       return {
@@ -114,6 +114,22 @@ describe("checkBinary", () => {
     const result = await checkBinary(exec, "git");
     expect(result.installed).toBe(false);
     expect(result.version).toBeUndefined();
+  });
+
+  it("uses the correct lookup command for the current platform", async () => {
+    // checkBinary should use 'where' on win32, 'which' elsewhere.
+    // We verify by recording which command was actually called.
+    const calledCmds: string[] = [];
+    const exec: ExecFn = async (cmd, args) => {
+      calledCmds.push(cmd);
+      if (cmd === "which" || cmd === "where") {
+        return { stdout: `/usr/bin/${args[0]}`, stderr: "", code: 0 };
+      }
+      return { stdout: "1.0.0", stderr: "", code: 0 };
+    };
+    await checkBinary(exec, "git");
+    const expected = process.platform === "win32" ? "where" : "which";
+    expect(calledCmds[0]).toBe(expected);
   });
 });
 
