@@ -736,10 +736,10 @@ describe("commitStaged", () => {
 
   test("rejects invalid commit type before running git", async () => {
     const exec = mockExec(0);
-    const result = await commitStaged(exec as any, "/tmp", "release: v1.0.0");
+    const result = await commitStaged(exec as any, "/tmp", "yolo: ship it");
     expect(result.success).toBe(false);
     expect(result.error).toContain("Invalid commit message");
-    expect(result.error).toContain('Unknown commit type "release"');
+    expect(result.error).toContain('Unknown commit type "yolo"');
     // git commit must NOT have been called
     expect(exec).not.toHaveBeenCalled();
   });
