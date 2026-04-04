@@ -3,11 +3,12 @@ import { isInProgressRelease } from "../../src/commands/release.js";
 
 // ---------------------------------------------------------------------------
 // isInProgressRelease — guards the confirmation bypass in handleRelease
-// ---------------------------------------------------------------------------
-// The rule: when the version in package.json hasn't been git-tagged yet AND
+// The rule: when the version should not be bumped (skipBump=true) AND
 // channels are already configured in config, re-running supi:release should
 // skip the "Ship v{version}?" dialog and proceed directly to execution.
-// The user made all decisions when they bumped the version — no new input needed.
+// skipBump=true covers two cases:
+//   1. No tag at all — version in package.json is unreleased
+//   2. Tag exists locally but not on remote — incomplete release (push failed)
 
 describe("isInProgressRelease", () => {
   test("unreleased version + pre-configured channels → resume (skip confirmation)", () => {
@@ -40,5 +41,13 @@ describe("isInProgressRelease", () => {
     expect(
       isInProgressRelease({ skipBump: true, channelsWerePreConfigured: true, isDryRun: true }),
     ).toBe(false);
+  });
+
+  test("local-only tag (push failed) + pre-configured channels → resume", () => {
+    // Tag was created locally but push failed — the release command sets
+    // skipBump=true AND skipTag=true, so isInProgressRelease triggers resume
+    expect(
+      isInProgressRelease({ skipBump: true, channelsWerePreConfigured: true, isDryRun: false }),
+    ).toBe(true);
   });
 });
