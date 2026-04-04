@@ -196,6 +196,25 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
       }
     }
 
+    // Install dependencies so the extension's runtime imports resolve.
+    // Bun installs peer deps by default, which provides @sinclair/typebox
+    // and @oh-my-pi/* packages that the extension needs at import time.
+    // Without this, the extension fails to load on systems where these
+    // packages aren't in Bun's global install (e.g. OMP installed via npm).
+    s.message("Installing extension dependencies...");
+    const install = run("bun", ["install", "--frozen-lockfile=false"], { cwd: extDir });
+    if (install.status !== 0) {
+      // Non-fatal: the extension may still work if OMP provides the deps.
+      // Log a warning but don't bail — the user might be offline or the
+      // registry might be temporarily unreachable.
+      note(
+        "Could not install extension dependencies.\n" +
+          "If /supi commands don't appear in OMP, run:\n" +
+          `  cd ~/${platformDir}/agent/extensions/supipowers && bun install`,
+        "Warning",
+      );
+    }
+
     s.stop(
       installedVersion
         ? `supipowers updated to v${VERSION} (${platformDir})`
