@@ -11,6 +11,7 @@ export function createMockPlatform(overrides?: Partial<Platform>): Platform {
     getActiveTools: mock(() => []),
     exec: mock(async () => ({ stdout: "", stderr: "", code: 0 })),
     sendMessage: mock(),
+    sendUserMessage: mock(),
     registerMessageRenderer: mock(),
     on: mock(),
     createAgentSession: mock(async () => ({

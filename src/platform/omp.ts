@@ -14,6 +14,7 @@ export function createOmpAdapter(api: any): Platform {
         triggerTurn: opts?.triggerTurn ?? false,
       });
     },
+    sendUserMessage: (text: string) => api.sendUserMessage(text),
     registerMessageRenderer: (type, fn) => api.registerMessageRenderer(type, fn),
 
     setModel(model: string): void {

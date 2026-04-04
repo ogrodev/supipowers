@@ -125,6 +125,7 @@ export interface Platform {
   // Execution
   exec(cmd: string, args: string[], opts?: ExecOptions): Promise<ExecResult>;
   sendMessage(content: any, opts?: SendMessageOptions): void;
+  sendUserMessage(text: string): void;
 
   // Introspection
   getActiveTools(): string[];
