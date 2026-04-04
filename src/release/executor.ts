@@ -22,6 +22,8 @@ export interface ExecuteReleaseOptions {
   dryRun: boolean;
   /** Skip the package.json version write (version was already set locally). */
   skipBump?: boolean;
+  /** Skip creating the git tag (it already exists locally). */
+  skipTag?: boolean;
   /** Optional callback for step-by-step progress reporting. */
   onProgress?: ReleaseProgressFn;
 }
@@ -37,7 +39,7 @@ export interface ExecuteReleaseOptions {
  *   happen (all flags true) so callers can preview without side-effects.
  */
 export async function executeRelease(opts: ExecuteReleaseOptions): Promise<ReleaseResult> {
-  const { exec, cwd, version, changelog, channels, dryRun, skipBump, onProgress } = opts;
+  const { exec, cwd, version, changelog, channels, dryRun, skipBump, skipTag, onProgress } = opts;
   const progress = onProgress ?? (() => {});
 
   if (dryRun) {
@@ -45,7 +47,11 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     console.log(`[dry-run] Would bump version to ${version}`);
     console.log(`[dry-run] Would git add -A`);
     console.log(`[dry-run] Would git commit -m "chore(release): v${version}"`);
-    console.log(`[dry-run] Would git tag -a v${version}`);
+    if (skipTag) {
+      console.log(`[dry-run] Would skip git tag (already exists locally)`);
+    } else {
+      console.log(`[dry-run] Would git tag -a v${version}`);
+    }
     console.log(`[dry-run] Would git push origin HEAD --follow-tags`);
     for (const ch of channels) {
       console.log(`[dry-run] Would publish to channel: ${ch}`);
@@ -111,15 +117,19 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     progress("git-commit", "done");
   }
 
-  progress("git-tag", "active", `v${version}`);
-  const tagMessage = `Release v${version}\n\n${changelog}`;
-  const gitTag = await exec("git", ["tag", "-a", `v${version}`, "-m", tagMessage], { cwd });
-  if (gitTag.code !== 0) {
-    const detail = gitTag.stderr || gitTag.stdout || `exit code ${gitTag.code}`;
-    progress("git-tag", "error", detail);
-    return { version, tagCreated: false, pushed: false, channels: [], error: `git tag: ${detail}` };
+  if (skipTag) {
+    progress("git-tag", "done", "Already exists");
+  } else {
+    progress("git-tag", "active", `v${version}`);
+    const tagMessage = `Release v${version}\n\n${changelog}`;
+    const gitTag = await exec("git", ["tag", "-a", `v${version}`, "-m", tagMessage], { cwd });
+    if (gitTag.code !== 0) {
+      const detail = gitTag.stderr || gitTag.stdout || `exit code ${gitTag.code}`;
+      progress("git-tag", "error", detail);
+      return { version, tagCreated: false, pushed: false, channels: [], error: `git tag: ${detail}` };
+    }
+    progress("git-tag", "done");
   }
-  progress("git-tag", "done");
 
   progress("git-push", "active", "Pushing to origin");
   const gitPush = await exec("git", ["push", "origin", "HEAD", "--follow-tags"], { cwd });
