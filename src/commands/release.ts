@@ -20,6 +20,24 @@ const BUMP_OPTIONS = [
   "major — breaking changes",
 ];
 
+/**
+ * Returns true when re-running supi:release should skip the confirmation
+ * dialog and proceed directly to execution.
+ *
+ * This is the resume path: the version in package.json hasn't been tagged yet
+ * AND all channels are already configured — the user staged the release
+ * deliberately when they bumped the version, so no new decisions are needed.
+ * Dry-run is excluded because it is exploratory by intent; the user explicitly
+ * wants to preview and confirm before anything happens.
+ */
+export function isInProgressRelease(opts: {
+  skipBump: boolean;
+  channelsWerePreConfigured: boolean;
+  isDryRun: boolean;
+}): boolean {
+  return opts.skipBump && opts.channelsWerePreConfigured && !opts.isDryRun;
+}
+
 // ── Release progress tracker ────────────────────────────────────
 
 interface ReleaseStep {
@@ -241,6 +259,11 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
       // 1. Ensure channels are configured (or detect + ask)
       progress.activate(1, "Detecting channels");
       let channels = config.release.channels;
+      // Track whether channels were already set in config before any interactive
+      // setup. This distinguishes "user already decided" from "just configured now",
+      // which determines whether we can auto-continue without a confirmation prompt.
+      const channelsWerePreConfigured = config.release.channels.length > 0;
+
       if (channels.length === 0) {
         progress.complete(1, "Awaiting selection");
         channels = await setupChannels(platform, ctx);
@@ -343,24 +366,43 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
         return;
       }
 
-      // 7. Confirm via UI
-      const confirmLabel = isDryRun ? `[DRY RUN] Ship v${nextVersion}?` : `Ship v${nextVersion}?`;
-      const confirmDetail = [
-        `${currentVersion} → ${nextVersion}`,
-        `Channels: ${channels.join(", ")}`,
-        `Changes: ${summary}`,
-        "",
-        changelog,
-      ].join("\n");
+      // 7. Confirm via UI — skipped when resuming a staged unreleased release.
+      //    When skipBump is true the user already decided on the version; when
+      //    channels were pre-configured there's nothing left to decide. Asking
+      //    again is friction without benefit. Dry-run always asks because the
+      //    user explicitly opted into preview mode.
+      const isResume = isInProgressRelease({ skipBump, channelsWerePreConfigured, isDryRun });
 
-      const confirmed = ctx.ui.confirm
-        ? await ctx.ui.confirm(confirmLabel, confirmDetail)
-        : (await ctx.ui.select(confirmLabel, ["Yes \u2014 publish", "No \u2014 abort"])) === "Yes \u2014 publish";
+      if (isResume) {
+        notifyInfo(
+          ctx,
+          `Resuming release v${nextVersion}`,
+          "Version staged and channels configured — proceeding without confirmation",
+        );
+      } else {
+        const confirmLabel = isDryRun ? `[DRY RUN] Ship v${nextVersion}?` : `Ship v${nextVersion}?`;
+        // When skipBump=true, currentVersion === nextVersion — avoid the
+        // misleading "0.5.0 → 0.5.0" display.
+        const versionLine = skipBump
+          ? `v${nextVersion} (staged, not yet released)`
+          : `${currentVersion} → ${nextVersion}`;
+        const confirmDetail = [
+          versionLine,
+          `Channels: ${channels.join(", ")}`,
+          `Changes: ${summary}`,
+          "",
+          changelog,
+        ].join("\n");
 
-      if (!confirmed) {
-        progress.dispose();
-        notifyInfo(ctx, "Release cancelled", "No changes were made");
-        return;
+        const confirmed = ctx.ui.confirm
+          ? await ctx.ui.confirm(confirmLabel, confirmDetail)
+          : (await ctx.ui.select(confirmLabel, ["Yes \u2014 publish", "No \u2014 abort"])) === "Yes \u2014 publish";
+
+        if (!confirmed) {
+          progress.dispose();
+          notifyInfo(ctx, "Release cancelled", "No changes were made");
+          return;
+        }
       }
 
       // 8. Execute release
