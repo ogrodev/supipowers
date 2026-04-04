@@ -69,7 +69,7 @@ describe("executeRelease", () => {
 
       const calls = mockExec.mock.calls;
       expect(calls[0]).toEqual(["git", ["add", "-A"], { cwd: tmpDir }]);
-      expect(calls[1]).toEqual(["git", ["commit", "-m", "release: v2.0.0"], { cwd: tmpDir }]);
+      expect(calls[1]).toEqual(["git", ["commit", "-m", "chore(release): v2.0.0"], { cwd: tmpDir }]);
       expect(calls[2]).toEqual([
         "git",
         ["tag", "-a", "v2.0.0", "-m", "Release v2.0.0\n\n- feat: something"],
