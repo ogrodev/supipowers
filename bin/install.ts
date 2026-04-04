@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import {
   readFileSync,
   writeFileSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
   cpSync,
@@ -123,10 +124,36 @@ async function exec(cmd: string, args: string[]): Promise<ExecResult> {
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", code: r.status ?? 1 };
 }
 
-// ── CLI Flags ────────────────────────────────────────────────
+// ── CLI Flags ────────────────────────────────────────────────────
 
 const cliArgs = process.argv.slice(2);
 const skipDeps = cliArgs.includes("--skip-deps");
+const DEBUG = cliArgs.includes("--debug");
+
+// ── Debug logging ────────────────────────────────────────────────
+
+const LOG_FILE = resolve(process.cwd(), "supipowers-install.log");
+
+function log(msg: string): void {
+  if (!DEBUG) return;
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  appendFileSync(LOG_FILE, line);
+}
+
+if (DEBUG) {
+  // Start fresh log
+  writeFileSync(LOG_FILE, `supipowers installer debug log\n`);
+  log(`platform: ${process.platform}`);
+  log(`arch: ${process.arch}`);
+  log(`bun: ${process.versions?.bun ?? "N/A"}`);
+  log(`node: ${process.version}`);
+  log(`cwd: ${process.cwd()}`);
+  log(`homedir: ${homedir()}`);
+  log(`argv: ${JSON.stringify(process.argv)}`);
+  log(`__dirname: ${__dirname}`);
+  log(`packageRoot will be: ${resolve(__dirname, "..")}`);
+  log(`isWindows: ${isWindows}`);
+}
 
 // ── Install to platform ──────────────────────────────────────
 
@@ -143,18 +170,26 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
   const extDir = join(agentDir, "extensions", "supipowers");
   const installedPkgPath = join(extDir, "package.json");
 
+  log(`installToPlatform(platformDir=${platformDir}, packageRoot=${packageRoot})`);
+  log(`  agentDir: ${agentDir}`);
+  log(`  extDir:   ${extDir}`);
+
   // Check for existing installation
   let installedVersion: string | null = null;
   if (existsSync(installedPkgPath)) {
     try {
       const installed = JSON.parse(readFileSync(installedPkgPath, "utf8"));
       installedVersion = installed.version;
+      log(`  existing version: ${installedVersion}`);
     } catch {
-      // corrupted package.json — treat as not installed
+      log(`  existing package.json corrupted, treating as fresh install`);
     }
+  } else {
+    log(`  no existing installation found`);
   }
 
   if (installedVersion === VERSION) {
+    log(`  already up to date, skipping`);
     note(
       `supipowers v${VERSION} is already installed and up to date.`,
       `Up to date (${platformDir})`,
@@ -164,7 +199,7 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
 
   const action = installedVersion ? "Updating" : "Installing";
   if (installedVersion) {
-    note(`v${installedVersion} → v${VERSION}`, `Updating supipowers (${platformDir})`);
+    note(`v${installedVersion} \u2192 v${VERSION}`, `Updating supipowers (${platformDir})`);
   }
 
   const s = spinner();
@@ -173,14 +208,17 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
   try {
     // Clean previous installation to remove stale files
     if (existsSync(extDir)) {
+      log(`  removing old extDir`);
       rmSync(extDir, { recursive: true });
     }
 
-    // Copy extension (src/ + bin/ + package.json) → ~/<platform>/agent/extensions/supipowers/
+    // Copy extension (src/ + bin/ + package.json) \u2192 ~/<platform>/agent/extensions/supipowers/
+    log(`  creating extDir and copying files`);
     mkdirSync(extDir, { recursive: true });
     cpSync(join(packageRoot, "src"), join(extDir, "src"), { recursive: true });
     cpSync(join(packageRoot, "bin"), join(extDir, "bin"), { recursive: true });
     cpSync(join(packageRoot, "package.json"), join(extDir, "package.json"));
+    log(`  files copied to ${extDir}`);
 
     // Rewrite package.json for the installed extension.
     // The npm-published package.json has bin, scripts, prepare, devDeps —
@@ -203,6 +241,7 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
       },
     };
     writeFileSync(join(extDir, "package.json"), JSON.stringify(runtimePkg, null, 2));
+    log(`  rewrote package.json: ${JSON.stringify(runtimePkg, null, 2)}`);
 
     // Copy skills → ~/<platform>/agent/skills/<skillname>/SKILL.md
     const skillsSource = join(packageRoot, "skills");
@@ -221,8 +260,13 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
     // Install runtime dependencies so the extension's imports resolve.
     // Without node_modules/, external imports (@sinclair/typebox, @oh-my-pi/*)
     // fail on systems where these packages aren't in Bun's global install.
+    log(`  running: bun install (cwd=${extDir})`);
     s.message("Installing extension dependencies...");
     const install = run("bun", ["install"], { cwd: extDir });
+    log(`  bun install exit code: ${install.status}`);
+    log(`  bun install stdout: ${install.stdout ?? "(null)"}`);
+    log(`  bun install stderr: ${install.stderr ?? "(null)"}`);
+    if (install.error) log(`  bun install error: ${install.error.message}`);
     if (install.status !== 0) {
       // Non-fatal: the extension may still work if OMP provides the deps
       // via its own module resolution (e.g. Bun global install on macOS).
@@ -234,12 +278,23 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
       );
     }
 
+    // Verify node_modules was created
+    const nmExists = existsSync(join(extDir, "node_modules"));
+    log(`  node_modules exists after install: ${nmExists}`);
+    if (nmExists) {
+      try {
+        const nmContents = readdirSync(join(extDir, "node_modules"));
+        log(`  node_modules top-level: ${nmContents.join(", ")}`);
+      } catch { /* ignore */ }
+    }
+
     s.stop(
       installedVersion
         ? `supipowers updated to v${VERSION} (${platformDir})`
         : `supipowers v${VERSION} installed (${platformDir})`,
     );
   } catch (err: unknown) {
+    log(`  installToPlatform FAILED: ${err instanceof Error ? err.stack : String(err)}`);
     s.stop(`${action} failed (${platformDir})`);
     const message = err instanceof Error ? err.message : `Failed to copy files to ~/${platformDir}/agent/`;
     bail(message);
@@ -396,8 +451,13 @@ async function main(): Promise<void> {
   const piBin = findPiBinary();
   const ompBin = findOmpBinary();
 
+  log(`findPiBinary() => ${piBin ?? "null"}`);
+  log(`findOmpBinary() => ${ompBin ?? "null"}`);
+
   const piVer = piBin ? run(piBin, ["--version"]).stdout?.trim() || "unknown" : null;
   const ompVer = ompBin ? run(ompBin, ["--version"]).stdout?.trim() || "unknown" : null;
+
+  log(`piVer: ${piVer ?? "N/A"}, ompVer: ${ompVer ?? "N/A"}`);
 
   const detected: string[] = [];
   if (piBin) detected.push(`Pi ${piVer}`);
@@ -467,12 +527,18 @@ async function main(): Promise<void> {
   // ── Step 3: Install supipowers to each chosen target ──────
 
   const packageRoot = resolve(__dirname, "..");
+  log(`packageRoot: ${packageRoot}`);
+  log(`targets: ${JSON.stringify(targets)}`);
 
   for (const target of targets) {
     installToPlatform(target.dir, packageRoot);
 
     // ── Step 3b: Install context-mode extension + register MCP ──
     await installContextMode(target.dir);
+  }
+
+  if (DEBUG) {
+    note(`Debug log written to:\n${LOG_FILE}`, "Debug");
   }
 
   // ── Step 4: Unified dependency check (--skip-deps to skip) ──
