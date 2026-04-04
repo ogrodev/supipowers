@@ -40,7 +40,7 @@ if ($supiBin) {
 
 # 4. Run the installer with --debug to deploy extension + write log
 Write-Host "-> Running installer (--debug mode)..."
-bun run "$ProjectDir\bin\install.ts" --debug
+bun run "$ProjectDir\bin\install.ts" --debug --force
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: installer failed (check supipowers-install.log)" -ForegroundColor Red
     exit 1

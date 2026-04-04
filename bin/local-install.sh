@@ -32,7 +32,7 @@ fi
 
 # 4. Run the installer with --debug to deploy extension + write log
 echo "-> Running installer (--debug mode)..."
-bun run "$PROJECT_DIR/bin/install.ts" --debug
+bun run "$PROJECT_DIR/bin/install.ts" --debug --force
 
 # 5. Show version and log location
 VERSION=$(node -e "console.log(require('$PROJECT_DIR/package.json').version)")

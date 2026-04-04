@@ -128,6 +128,7 @@ async function exec(cmd: string, args: string[]): Promise<ExecResult> {
 
 const cliArgs = process.argv.slice(2);
 const skipDeps = cliArgs.includes("--skip-deps");
+const FORCE = cliArgs.includes("--force");
 const DEBUG = cliArgs.includes("--debug");
 
 // ── Debug logging ────────────────────────────────────────────────
@@ -188,13 +189,23 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
     log(`  no existing installation found`);
   }
 
-  if (installedVersion === VERSION) {
-    log(`  already up to date, skipping`);
+  const hasNodeModules = existsSync(join(extDir, "node_modules"));
+  log(`  node_modules present: ${hasNodeModules}`);
+
+  if (installedVersion === VERSION && hasNodeModules && !FORCE) {
+    log(`  already up to date with deps, skipping`);
     note(
       `supipowers v${VERSION} is already installed and up to date.`,
       `Up to date (${platformDir})`,
     );
     return extDir;
+  }
+
+  if (installedVersion === VERSION && !hasNodeModules) {
+    log(`  same version but node_modules missing — reinstalling deps`);
+  }
+  if (FORCE) {
+    log(`  --force flag set, reinstalling`);
   }
 
   const action = installedVersion ? "Updating" : "Installing";
