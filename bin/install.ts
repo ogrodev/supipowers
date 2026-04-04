@@ -26,6 +26,8 @@ import { homedir } from "node:os";
 import { scanAll, installDep, formatReport } from "../src/deps/registry.js";
 import type { ExecResult } from "../src/platform/types.js";
 
+const isWindows = process.platform === "win32";
+
 // ── Helpers ──────────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +48,7 @@ function run(cmd: string, args: string[], opts: Record<string, unknown> = {}): R
     stdio: "pipe",
     encoding: "utf8",
     timeout: 120_000,
+    shell: isWindows,
     ...opts,
   }) as unknown as RunResult;
 }
@@ -56,32 +59,54 @@ function bail(msg: string): never {
 }
 
 function findOmpBinary(): string | null {
-  // Check PATH first
+  // Check PATH first (shell: true in run() resolves .cmd shims on Windows)
   const check = run("omp", ["--version"]);
   if (!check.error && check.status === 0) return "omp";
 
-  // Fallback: check common bun global location
-  const bunPath = join(homedir(), ".bun", "bin", "omp");
-  if (existsSync(bunPath)) {
-    const fallback = run(bunPath, ["--version"]);
-    if (!fallback.error && fallback.status === 0) return bunPath;
+  // Fallback: check common global locations
+  const candidates = [
+    join(homedir(), ".bun", "bin", "omp"),
+  ];
+  if (isWindows) {
+    // Bun on Windows installs .exe binaries
+    candidates.push(join(homedir(), ".bun", "bin", "omp.exe"));
+    // npm globals on Windows
+    const appData = process.env.APPDATA;
+    if (appData) candidates.push(join(appData, "npm", "omp.cmd"));
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      const fallback = run(candidate, ["--version"]);
+      if (!fallback.error && fallback.status === 0) return candidate;
+    }
   }
 
   return null;
 }
 
 function findPiBinary(): string | null {
-  // Check PATH first
+  // Check PATH first (shell: true in run() resolves .cmd shims on Windows)
   const check = run("pi", ["--version"]);
   if (!check.error && check.status === 0) return "pi";
 
-  // Fallback: check common npm/bun global locations
-  for (const candidate of [
-    join(homedir(), ".bun", "bin", "pi"),
-    join(homedir(), ".npm-global", "bin", "pi"),
-    "/usr/local/bin/pi",
-    "/opt/homebrew/bin/pi",
-  ]) {
+  // Fallback: check common global locations
+  const candidates: string[] = [];
+  if (isWindows) {
+    candidates.push(join(homedir(), ".bun", "bin", "pi.exe"));
+    const appData = process.env.APPDATA;
+    if (appData) {
+      candidates.push(join(appData, "npm", "pi.cmd"));
+      candidates.push(join(appData, "npm", "pi"));
+    }
+  } else {
+    candidates.push(
+      join(homedir(), ".bun", "bin", "pi"),
+      join(homedir(), ".npm-global", "bin", "pi"),
+      "/usr/local/bin/pi",
+      "/opt/homebrew/bin/pi",
+    );
+  }
+  for (const candidate of candidates) {
     if (existsSync(candidate)) {
       const fallback = run(candidate, ["--version"]);
       if (!fallback.error && fallback.status === 0) return candidate;
