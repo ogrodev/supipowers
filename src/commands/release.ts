@@ -3,7 +3,7 @@ import type { ReleaseChannel, BumpType } from "../types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
 import { parseConventionalCommits, buildChangelogMarkdown, summarizeChanges } from "../release/changelog.js";
-import { getCurrentVersion, suggestBump, bumpVersion, isVersionReleased } from "../release/version.js";
+import { getCurrentVersion, suggestBump, bumpVersion, isVersionReleased, isTagOnRemote } from "../release/version.js";
 import { executeRelease, type ReleaseProgressFn } from "../release/executor.js";
 import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
@@ -278,11 +278,16 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
       progress.activate(2, "Parsing git history");
       const lastTag = await getLastTag(platform, ctx.cwd);
       const currentVersion = getCurrentVersion(ctx.cwd);
-      const alreadyReleased = await isVersionReleased(
+      const localTagExists = await isVersionReleased(
         platform.exec.bind(platform),
         ctx.cwd,
         currentVersion,
       );
+      // Only check remote when local tag exists — avoids a network call when
+      // the version was never tagged at all.
+      const remoteTagExists = localTagExists
+        ? await isTagOnRemote(platform.exec.bind(platform), ctx.cwd, currentVersion)
+        : false;
 
       // 3. Parse commits since last tag
       const sinceArg = lastTag ? `${lastTag}..HEAD` : "HEAD~50..HEAD";
@@ -303,18 +308,30 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
       const commitCount = commits.features.length + commits.fixes.length + commits.breaking.length + commits.improvements.length + commits.maintenance.length + commits.other.length;
       progress.complete(2, `${commitCount} commits since ${lastTag ?? "start"}`);
 
-      // 4. Version resolution — skip bump when local version is unreleased
+      // 4. Version resolution
+      //    Three states:
+      //    a) No local tag              → version is unreleased, skip bump
+      //    b) Local tag, not on remote  → incomplete release, skip bump + skip tag
+      //    c) Local + remote tag        → fully released, ask for bump
       let nextVersion: string;
       let skipBump: boolean;
+      let skipTag = false;
 
-      if (!alreadyReleased && currentVersion !== "0.0.0") {
-        // Local version hasn't been tagged yet — use it as-is
+      if (!localTagExists && currentVersion !== "0.0.0") {
+        // (a) No tag at all — version in package.json is unreleased
         nextVersion = currentVersion;
         skipBump = true;
         progress.skip(3, `v${currentVersion} (already set, not yet released)`);
-        notifyInfo(ctx, `Using v${currentVersion}`, "Version not yet released — skipping bump");
+        notifyInfo(ctx, `Using v${currentVersion}`, "Version not yet released \u2014 skipping bump");
+      } else if (localTagExists && !remoteTagExists) {
+        // (b) Tag exists locally but never made it to origin — resume
+        nextVersion = currentVersion;
+        skipBump = true;
+        skipTag = true;
+        progress.skip(3, `v${currentVersion} (tag exists locally, not pushed)`);
+        notifyInfo(ctx, `Resuming v${currentVersion}`, "Tag exists locally but not on remote \u2014 will push");
       } else {
-        // Version already released — ask for bump
+        // (c) Fully released — ask for bump
         progress.activate(3, "Awaiting version selection");
         const suggested = suggestBump(commits);
         const bumpChoice = await ctx.ui.select(
@@ -330,7 +347,7 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
         const bump = bumpChoice.split(" \u2014 ")[0] as BumpType;
         nextVersion = bumpVersion(currentVersion, bump);
         skipBump = false;
-        progress.complete(3, `${currentVersion} → ${nextVersion} (${bump})`);
+        progress.complete(3, `${currentVersion} \u2192 ${nextVersion} (${bump})`);
       }
 
       // 5. Build changelog
@@ -416,6 +433,7 @@ export function handleRelease(platform: Platform, ctx: any, args?: string): void
           channels,
           dryRun: isDryRun,
           skipBump,
+          skipTag,
           onProgress: progress.executorProgress(),
         });
 
