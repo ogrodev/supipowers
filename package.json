@@ -43,17 +43,26 @@
   },
   "peerDependencies": {
     "@oh-my-pi/pi-coding-agent": "*",
+    "@oh-my-pi/pi-ai": "*",
+    "@oh-my-pi/pi-tui": "*",
     "@sinclair/typebox": "*"
   },
   "peerDependenciesMeta": {
     "@oh-my-pi/pi-coding-agent": {
       "optional": true
     },
+    "@oh-my-pi/pi-ai": {
+      "optional": true
+    },
     "@oh-my-pi/pi-tui": {
+      "optional": true
+    },
+    "@sinclair/typebox": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@oh-my-pi/pi-ai": "latest",
     "@oh-my-pi/pi-coding-agent": "latest",
     "@oh-my-pi/pi-tui": "latest",
     "@sinclair/typebox": "^0.34.48",
