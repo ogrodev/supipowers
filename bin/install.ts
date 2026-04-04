@@ -493,7 +493,12 @@ async function main(): Promise<void> {
   // ── Done ───────────────────────────────────────────────────
 
   const targetNames = targets.map((t) => t.name.toLowerCase()).join(" or ");
-  outro(`supipowers is ready! Run \`${targetNames}\` to start using it.`);
+  note(
+    "Restart OMP for the extension to take effect.\n" +
+      `Run \`${targetNames}\` in a new session to confirm /supi commands appear.`,
+    "Action required"
+  );
+  outro(`supipowers is ready!`);
 }
 
 main().catch((e) => {

@@ -1,0 +1,21 @@
+# Development artifacts
+node_modules/
+dist/
+.omp/
+bin/.omp/
+
+# Visual companion server deps (private sub-package, not for distribution)
+src/visual/scripts/node_modules/
+src/visual/scripts/package-lock.json
+
+# Test files
+tests/
+
+# Config / IDE
+.claude/
+node-compile-cache
+*.db
+*.db-shm
+*.db-wal
+tsconfig.json
+tsconfig.build.json
