@@ -303,5 +303,101 @@ describe("executeRelease", () => {
       expect(updated.version).toBe("5.0.0");
     });
   });
+
+  describe("skipTag option", () => {
+    test("skips git tag creation when skipTag is true", async () => {
+      const mockExec = okExec();
+
+      const result = await executeRelease({
+        exec: mockExec,
+        cwd: tmpDir,
+        version: "1.0.0",
+        changelog: "notes",
+        channels: [],
+        dryRun: false,
+        skipBump: false,
+        skipTag: true,
+      });
+
+      expect(result.tagCreated).toBe(true);
+      expect(result.pushed).toBe(true);
+
+      // add, commit, push — no tag call
+      expect(mockExec).toHaveBeenCalledTimes(3);
+      const calls = mockExec.mock.calls;
+      expect(calls[0][0]).toBe("git");
+      expect(calls[0][1]).toEqual(["add", "-A"]);
+      expect(calls[1][0]).toBe("git");
+      expect(calls[1][1][0]).toBe("commit");
+      // No tag call — next is push
+      expect(calls[2]).toEqual(["git", ["push", "origin", "HEAD", "--follow-tags"], { cwd: tmpDir }]);
+    });
+
+    test("still creates tag when skipTag is false or undefined", async () => {
+      const mockExec = okExec();
+
+      await executeRelease({
+        exec: mockExec,
+        cwd: tmpDir,
+        version: "1.0.0",
+        changelog: "notes",
+        channels: [],
+        dryRun: false,
+      });
+
+      // add, commit, tag, push = 4 calls
+      expect(mockExec).toHaveBeenCalledTimes(4);
+      const calls = mockExec.mock.calls;
+      expect(calls[2][0]).toBe("git");
+      expect(calls[2][1]).toEqual(["tag", "-a", "v1.0.0", "-m", "Release v1.0.0\n\nnotes"]);
+    });
+
+    test("skipBump=true and skipTag=true — only push is executed", async () => {
+      const mockExec = okExec();
+
+      const result = await executeRelease({
+        exec: mockExec,
+        cwd: tmpDir,
+        version: "1.0.0",
+        changelog: "",
+        channels: [],
+        dryRun: false,
+        skipBump: true,
+        skipTag: true,
+      });
+
+      expect(result.tagCreated).toBe(true);
+      expect(result.pushed).toBe(true);
+      // Only push — add, commit, and tag all skipped
+      expect(mockExec).toHaveBeenCalledTimes(1);
+      expect(mockExec.mock.calls[0]).toEqual([
+        "git",
+        ["push", "origin", "HEAD", "--follow-tags"],
+        { cwd: tmpDir },
+      ]);
+    });
+
+    test("reports progress with 'Already exists' when skipTag is true", async () => {
+      const mockExec = okExec();
+      const steps: Array<[string, string, string?]> = [];
+
+      await executeRelease({
+        exec: mockExec,
+        cwd: tmpDir,
+        version: "1.0.0",
+        changelog: "",
+        channels: [],
+        dryRun: false,
+        skipBump: true,
+        skipTag: true,
+        onProgress: (step, status, detail) => steps.push([step, status, detail]),
+      });
+
+      const tagStep = steps.find(([s]) => s === "git-tag");
+      expect(tagStep).toBeDefined();
+      expect(tagStep![1]).toBe("done");
+      expect(tagStep![2]).toBe("Already exists");
+    });
+  });
 });
 

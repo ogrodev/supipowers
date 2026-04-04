@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { suggestBump, bumpVersion, getCurrentVersion, isVersionReleased } from "../../src/release/version.js";
+import { suggestBump, bumpVersion, getCurrentVersion, isVersionReleased, isTagOnRemote } from "../../src/release/version.js";
 import type { CategorizedCommits } from "../../src/types.js";
 
 // ---------------------------------------------------------------------------
@@ -167,5 +167,43 @@ describe("isVersionReleased", () => {
   test("returns false when exec throws", async () => {
     const exec = async () => { throw new Error("git not found"); };
     expect(await isVersionReleased(exec, "/tmp", "1.0.0")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isTagOnRemote
+// ---------------------------------------------------------------------------
+
+describe("isTagOnRemote", () => {
+  function mockExec(stdout: string, code = 0) {
+    return async () => ({ stdout, stderr: "", code });
+  }
+
+  test("returns true when tag exists on remote", async () => {
+    const exec = mockExec("abc123\trefs/tags/v1.2.0\n");
+    expect(await isTagOnRemote(exec, "/tmp", "1.2.0")).toBe(true);
+  });
+
+  test("returns false when tag not on remote", async () => {
+    const exec = mockExec("");
+    expect(await isTagOnRemote(exec, "/tmp", "1.2.0")).toBe(false);
+  });
+
+  test("returns false when git command fails", async () => {
+    const exec = mockExec("", 128);
+    expect(await isTagOnRemote(exec, "/tmp", "1.2.0")).toBe(false);
+  });
+
+  test("handles version already prefixed with v", async () => {
+    const exec = async (_cmd: string, args: string[]) => {
+      expect(args).toEqual(["ls-remote", "--tags", "origin", "v1.2.0"]);
+      return { stdout: "abc123\trefs/tags/v1.2.0\n", stderr: "", code: 0 };
+    };
+    expect(await isTagOnRemote(exec, "/tmp", "v1.2.0")).toBe(true);
+  });
+
+  test("returns false when exec throws", async () => {
+    const exec = async () => { throw new Error("network error"); };
+    expect(await isTagOnRemote(exec, "/tmp", "1.0.0")).toBe(false);
   });
 });
