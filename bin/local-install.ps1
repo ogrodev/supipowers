@@ -1,9 +1,9 @@
 # Install supipowers locally from the current working tree.
 # Usage:  powershell -ExecutionPolicy Bypass -File bin\local-install.ps1
 #
-# This creates a global symlink so both the `supipowers` CLI and
-# the OMP extension resolve to your local source — no publish needed.
-# Re-run after pulling new changes; the symlink stays valid.
+# Creates a global symlink so `supipowers` CLI works, then runs the
+# installer with --debug to deploy the extension and write a log file.
+# Re-run after pulling new changes.
 
 $ErrorActionPreference = "Stop"
 
@@ -38,16 +38,19 @@ if ($supiBin) {
     Write-Host "  `$env:PATH += `";$env:USERPROFILE\.bun\bin`""
 }
 
-# 4. Run the installer to deploy to OMP extension directory
-Write-Host "-> Running installer to deploy extension..."
-bun run "$ProjectDir\bin\install.ts"
+# 4. Run the installer with --debug to deploy extension + write log
+Write-Host "-> Running installer (--debug mode)..."
+bun run "$ProjectDir\bin\install.ts" --debug
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: installer failed" -ForegroundColor Red
+    Write-Host "ERROR: installer failed (check supipowers-install.log)" -ForegroundColor Red
     exit 1
 }
 
-# 5. Show version
+# 5. Show version and log location
 $pkg = Get-Content "$ProjectDir\package.json" -Raw | ConvertFrom-Json
+$logFile = Join-Path $ProjectDir "supipowers-install.log"
 Write-Host ""
-Write-Host "[OK] supipowers v$($pkg.version) installed locally (linked to $ProjectDir)" -ForegroundColor Green
-Write-Host "  Any edits to src/ or skills/ take effect immediately - no rebuild needed."
+Write-Host "[OK] supipowers v$($pkg.version) installed locally" -ForegroundColor Green
+if (Test-Path $logFile) {
+    Write-Host "  Debug log: $logFile" -ForegroundColor Cyan
+}
