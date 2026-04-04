@@ -35,6 +35,50 @@ export interface CommitOptions {
   userContext?: string;
 }
 
+// ── Shared commit primitive ─────────────────────────────────
+
+/** Minimal exec function signature for commitStaged. */
+type ExecFn = (
+  cmd: string,
+  args: string[],
+  opts?: { cwd?: string },
+) => Promise<{ stdout: string; stderr: string; code: number }>;
+
+export interface CommitStagedResult {
+  success: boolean;
+  /** Human-readable error. Present only when success is false. */
+  error?: string;
+}
+
+/**
+ * Validate a commit message and run `git commit` on whatever is currently staged.
+ *
+ * This is the single commit primitive shared between `supi:commit` (AI-powered
+ * plans) and `supi:release` (executor). It ensures every commit in the project
+ * passes the same validation and respects any git hooks.
+ *
+ * Callers are responsible for staging files before calling this function.
+ */
+export async function commitStaged(
+  exec: ExecFn,
+  cwd: string,
+  message: string,
+): Promise<CommitStagedResult> {
+  const validation = validateCommitMessage(message);
+  if (!validation.valid) {
+    return { success: false, error: `Invalid commit message: ${validation.error}` };
+  }
+
+  const result = await exec("git", ["commit", "-m", message], { cwd });
+  if (result.code !== 0) {
+    const detail = result.stderr?.trim() || result.stdout?.trim() || `exit code ${result.code}`;
+    return { success: false, error: `git commit: ${detail}` };
+  }
+
+  return { success: true };
+}
+
+
 // ── Constants ──────────────────────────────────────────────
 
 /** Diff byte budget before we truncate */
@@ -372,20 +416,9 @@ async function manualFallback(
     return null;
   }
 
-  const validation = validateCommitMessage(message);
-  if (!validation.valid) {
-    notifyError(ctx, "Invalid commit message", validation.error);
-    return null;
-  }
-
-  const commitResult = await exec(
-    "git",
-    ["commit", "-m", message],
-    { cwd },
-  );
-
-  if (commitResult.code !== 0) {
-    notifyError(ctx, "git commit failed", commitResult.stderr || "Non-zero exit");
+  const commitResult = await commitStaged(exec, cwd, message);
+  if (!commitResult.success) {
+    notifyError(ctx, "Commit failed", commitResult.error);
     return null;
   }
 
@@ -428,27 +461,12 @@ async function executeCommitPlan(
     // Build commit message
     const message = formatCommitMessage(group);
 
-    const validation = validateCommitMessage(message);
-    if (!validation.valid) {
+    const commitResult = await commitStaged(exec, cwd, message);
+    if (!commitResult.success) {
       progress.dispose();
       return reportPartialFailure(ctx, exec, cwd, committedMessages, {
         step: `Commit ${i + 1}/${plan.commits.length}`,
-        error: `Invalid commit message: ${validation.error}\nMessage: ${message}`,
-      });
-    }
-
-    const commitResult = await exec(
-      "git",
-      ["commit", "-m", message],
-      { cwd },
-    );
-
-    if (commitResult.code !== 0) {
-      progress.dispose();
-      const reason = commitResult.stderr?.trim() || "git commit returned non-zero";
-      return reportPartialFailure(ctx, exec, cwd, committedMessages, {
-        step: `Commit ${i + 1}/${plan.commits.length}`,
-        error: `git commit failed: ${reason}`,
+        error: commitResult.error!,
       });
     }
 
