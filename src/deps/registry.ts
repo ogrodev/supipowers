@@ -34,7 +34,9 @@ export async function checkBinary(
   exec: ExecFn,
   binary: string,
 ): Promise<{ installed: boolean; version?: string }> {
-  const which = await exec("which", [binary]);
+  // `which` is Unix-only; Windows uses `where` to locate executables
+  const whichCmd = process.platform === "win32" ? "where" : "which";
+  const which = await exec(whichCmd, [binary]);
   if (which.code !== 0) return { installed: false };
 
   const ver = await exec(binary, ["--version"]);
