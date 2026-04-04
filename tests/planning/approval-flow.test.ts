@@ -24,6 +24,7 @@ type MockPlatform = {
   paths: any;
   on: ReturnType<typeof vi.fn>;
   sendMessage: ReturnType<typeof vi.fn>;
+  sendUserMessage: ReturnType<typeof vi.fn>;
   fireAgentEnd: (ctx: any) => Promise<void>;
 };
 
@@ -47,6 +48,7 @@ function makePlatform(overrides: Partial<MockPlatform> = {}): MockPlatform {
       if (event === "agent_end") hookedHandler = handler;
     }),
     sendMessage: vi.fn(),
+    sendUserMessage: vi.fn(),
     // Helper to fire the hook manually in tests
     fireAgentEnd: async (ctx: any) => {
       if (hookedHandler) await hookedHandler({}, ctx);
@@ -160,19 +162,19 @@ describe("Approve and execute", () => {
       .mockReturnValue(["2026-04-03-myplan.md"]); // agent_end
     mockReadPlanFile.mockReturnValue("## Tasks\n- step 1");
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp" });
+    const ctx = makeCtx();
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
 
     const platform = makePlatform();
-    const ctx = makeCtx();
     ctx.ui.select.mockResolvedValue("Approve and execute");
     registerPlanApprovalHook(platform as any);
 
     await platform.fireAgentEnd(ctx);
 
     expect(ctx.newSession).toHaveBeenCalledTimes(1);
-    expect(ctx.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(platform.sendUserMessage).toHaveBeenCalledTimes(1);
 
-    const prompt: string = ctx.sendUserMessage.mock.calls[0][0];
+    const prompt: string = platform.sendUserMessage.mock.calls[0][0];
     expect(prompt).toContain("Plan approved. You **MUST** execute it now.");
     expect(prompt).toContain(".omp/supipowers/plans/2026-04-03-myplan.md");
     expect(prompt).toContain("## Tasks");
@@ -185,10 +187,10 @@ describe("Approve and execute", () => {
       .mockReturnValue(["plan.md"]);
     mockReadPlanFile.mockReturnValue("content");
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp" });
+    const ctx = makeCtx();
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
 
     const platform = makePlatform();
-    const ctx = makeCtx();
     ctx.ui.select.mockResolvedValue("Approve and execute");
     registerPlanApprovalHook(platform as any);
 
@@ -203,11 +205,11 @@ describe("Approve and execute", () => {
       .mockReturnValue(["plan.md"]);
     mockReadPlanFile.mockReturnValue("content");
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp" });
-
-    const platform = makePlatform();
     const ctx = makeCtx();
     ctx.newSession.mockResolvedValue({ cancelled: true });
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
+
+    const platform = makePlatform();
     ctx.ui.select.mockResolvedValue("Approve and execute");
     registerPlanApprovalHook(platform as any);
 
@@ -279,10 +281,10 @@ describe("Refine plan", () => {
       .mockReturnValue(["plan.md"]);
     mockReadPlanFile.mockReturnValue("content");
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp" });
+    const ctx = makeCtx();
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
 
     const platform = makePlatform();
-    const ctx = makeCtx();
     ctx.ui.select.mockResolvedValue("Refine plan");
     ctx.ui.input.mockResolvedValue(""); // empty = misclick
     registerPlanApprovalHook(platform as any);
@@ -290,7 +292,7 @@ describe("Refine plan", () => {
     await platform.fireAgentEnd(ctx);
 
     expect(ctx.newSession).toHaveBeenCalledTimes(1);
-    expect(ctx.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(platform.sendUserMessage).toHaveBeenCalledTimes(1);
     expect(isPlanningActive()).toBe(false);
   });
 
@@ -300,10 +302,10 @@ describe("Refine plan", () => {
       .mockReturnValue(["plan.md"]);
     mockReadPlanFile.mockReturnValue("content");
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp" });
+    const ctx = makeCtx();
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
 
     const platform = makePlatform();
-    const ctx = makeCtx();
     ctx.ui.select.mockResolvedValue("Refine plan");
     ctx.ui.input.mockResolvedValue("   "); // whitespace = misclick
     registerPlanApprovalHook(platform as any);
@@ -311,7 +313,7 @@ describe("Refine plan", () => {
     await platform.fireAgentEnd(ctx);
 
     expect(ctx.newSession).toHaveBeenCalledTimes(1);
-    expect(ctx.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(platform.sendUserMessage).toHaveBeenCalledTimes(1);
   });
 });
 
