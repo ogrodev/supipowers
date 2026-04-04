@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ReleaseChannel, ReleaseResult } from "../types.js";
+import { commitStaged } from "../git/commit.js";
 
 type ExecFn = (
   cmd: string,
@@ -43,7 +44,7 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     console.log(`[dry-run] Would build (if scripts.build exists)`);
     console.log(`[dry-run] Would bump version to ${version}`);
     console.log(`[dry-run] Would git add -A`);
-    console.log(`[dry-run] Would git commit -m "release: v${version}"`);
+    console.log(`[dry-run] Would git commit -m "chore(release): v${version}"`);
     console.log(`[dry-run] Would git tag -a v${version}`);
     console.log(`[dry-run] Would git push origin HEAD --follow-tags`);
     for (const ch of channels) {
@@ -100,12 +101,12 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     }
     progress("git-add", "done");
 
-    progress("git-commit", "active", `release: v${version}`);
-    const gitCommit = await exec("git", ["commit", "-m", `release: v${version}`], { cwd });
-    if (gitCommit.code !== 0) {
-      const detail = gitCommit.stderr || gitCommit.stdout || `exit code ${gitCommit.code}`;
-      progress("git-commit", "error", detail);
-      return { version, tagCreated: false, pushed: false, channels: [], error: `git commit: ${detail}` };
+    const commitMessage = `chore(release): v${version}`;
+    progress("git-commit", "active", commitMessage);
+    const commitResult = await commitStaged(exec, cwd, commitMessage);
+    if (!commitResult.success) {
+      progress("git-commit", "error", commitResult.error);
+      return { version, tagCreated: false, pushed: false, channels: [], error: commitResult.error! };
     }
     progress("git-commit", "done");
   }

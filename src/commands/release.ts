@@ -541,7 +541,7 @@ function buildReleaseCommands(
 ): string[] {
   const commands: string[] = [
     `git add -A`,
-    `git commit -m "release: v${version}"`,
+    `git commit -m "chore(release): v${version}"`,
     `git tag -a v${version} -m "Release v${version}"`,
     `git push origin HEAD --follow-tags`,
   ];
