@@ -151,7 +151,7 @@ export function registerPlanCommand(platform: Platform): void {
       );
 
       // Track planning state for the approval flow (agent_end hook)
-      startPlanTracking(ctx.cwd, platform.paths);
+      startPlanTracking(ctx.cwd, platform.paths, ctx.newSession?.bind(ctx));
 
       notifyInfo(ctx, "Planning started", args ? `Topic: ${args}` : "Describe what you want to build");
     },

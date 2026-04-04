@@ -12,12 +12,19 @@ import { listPlans, readPlanFile } from "../storage/plans.js";
 let planningActive = false;
 let plansBefore: string[] = [];
 let planCwd: string = "";
+/** newSession function captured from the command context at plan start. */
+let capturedNewSession: ((options?: any) => Promise<{ cancelled: boolean }>) | null = null;
 
 /** Mark planning as started (called by plan command after sending steer). */
-export function startPlanTracking(cwd: string, paths: any): void {
+export function startPlanTracking(
+  cwd: string,
+  paths: any,
+  newSession?: (options?: any) => Promise<{ cancelled: boolean }>,
+): void {
   planningActive = true;
   planCwd = cwd;
   plansBefore = listPlans(paths, cwd);
+  capturedNewSession = newSession ?? null;
 }
 
 /** Cancel plan tracking (e.g., session change). */
@@ -25,6 +32,7 @@ export function cancelPlanTracking(): void {
   planningActive = false;
   plansBefore = [];
   planCwd = "";
+  capturedNewSession = null;
 }
 
 /** Whether a planning session is currently active. */
@@ -81,14 +89,14 @@ async function executeApproveFlow(
 ): Promise<void> {
   const prompt = buildExecutionPrompt(planContent, planPath);
 
-  if (typeof ctx.newSession === "function") {
-    const result = await ctx.newSession();
+  if (capturedNewSession) {
+    const result = await capturedNewSession();
     if (result?.cancelled) {
       // User dismissed the new-session prompt — keep plan state intact.
       ctx.ui.notify("Session start cancelled. Plan saved; run /supi:plan again to execute.");
       return;
     }
-    ctx.sendUserMessage(prompt);
+    platform.sendUserMessage(prompt);
   } else {
     // Fallback: headless/SDK mode — steer in the current session.
     platform.sendMessage(
