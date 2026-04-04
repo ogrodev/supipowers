@@ -34,10 +34,10 @@ export async function checkBinary(
   exec: ExecFn,
   binary: string,
 ): Promise<{ installed: boolean; version?: string }> {
-  // `which` is Unix-only; Windows uses `where` to locate executables
-  const whichCmd = process.platform === "win32" ? "where" : "which";
-  const which = await exec(whichCmd, [binary]);
-  if (which.code !== 0) return { installed: false };
+  // Bun.which() is cross-platform (handles .cmd/.exe/.bat on Windows)
+  // and doesn't require shelling out to `which` (Unix) or `where` (Windows).
+  const found = Bun.which(binary);
+  if (!found) return { installed: false };
 
   const ver = await exec(binary, ["--version"]);
   const version = ver.code === 0 ? ver.stdout.trim().split("\n")[0] : undefined;

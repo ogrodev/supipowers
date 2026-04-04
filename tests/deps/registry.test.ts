@@ -1,4 +1,4 @@
-
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   DEPENDENCIES,
   scanAll,
@@ -11,27 +11,40 @@ import {
   type DependencyStatus,
 } from "../../src/deps/registry.js";
 
+// ── Bun.which mock ───────────────────────────────────────
+// checkBinary uses Bun.which() for cross-platform binary lookup.
+// Tests must mock it so results are deterministic.
+
+let bunWhichSpy: ReturnType<typeof spyOn>;
+let bunWhichResults: Record<string, string | null>;
+
+beforeEach(() => {
+  bunWhichResults = {};
+  bunWhichSpy = spyOn(Bun, "which");
+  bunWhichSpy.mockImplementation((binary: string) => {
+    return bunWhichResults[binary] ?? null;
+  });
+});
+
+afterEach(() => {
+  bunWhichSpy.mockRestore();
+});
+
+/** Configure Bun.which to find the given binaries. */
+function setBinariesFound(binaries: string[]): void {
+  for (const b of binaries) {
+    bunWhichResults[b] = `/usr/bin/${b}`;
+  }
+}
+
 // ── Mock exec ─────────────────────────────────────────────
 
 function createMockExec(
-  whichResults: Record<string, number> = {},
   versionOutput = "1.0.0",
 ): ExecFn {
   return async (cmd: string, args: string[]) => {
-    if (cmd === "which" || cmd === "where") {
-      const binary = args[0];
-      const code = whichResults[binary] ?? 1;
-      return {
-        stdout: code === 0 ? `/usr/bin/${binary}` : "",
-        stderr: code === 0 ? "" : `${binary} not found`,
-        code,
-      };
-    }
     // Handle npx <binary> --version (playwright uses this pattern)
     if (cmd === "npx" && args.length >= 2 && args[1] === "--version") {
-      const binary = args[0];
-      const code = whichResults[binary] ?? 1;
-      if (code !== 0) return { stdout: "", stderr: `${binary} not found`, code };
       return { stdout: versionOutput, stderr: "", code: 0 };
     }
     if (args[0] === "--version") {
@@ -102,46 +115,43 @@ describe("DEPENDENCIES", () => {
 // ── checkBinary ───────────────────────────────────────────
 
 describe("checkBinary", () => {
-  it("returns installed: true with version when which succeeds", async () => {
-    const exec = createMockExec({ git: 0 }, "git version 2.43.0");
+  it("returns installed: true with version when Bun.which finds binary", async () => {
+    setBinariesFound(["git"]);
+    const exec = createMockExec("git version 2.43.0");
     const result = await checkBinary(exec, "git");
     expect(result.installed).toBe(true);
     expect(result.version).toBe("git version 2.43.0");
   });
 
-  it("returns installed: false when which fails", async () => {
-    const exec = createMockExec({ git: 1 });
+  it("returns installed: false when Bun.which returns null", async () => {
+    // bunWhichResults is empty by default — no binaries found
+    const exec = createMockExec();
     const result = await checkBinary(exec, "git");
     expect(result.installed).toBe(false);
     expect(result.version).toBeUndefined();
   });
 
-  it("uses the correct lookup command for the current platform", async () => {
-    // checkBinary should use 'where' on win32, 'which' elsewhere.
-    // We verify by recording which command was actually called.
+  it("does not call exec for lookup — uses Bun.which instead", async () => {
+    setBinariesFound(["git"]);
     const calledCmds: string[] = [];
-    const exec: ExecFn = async (cmd, args) => {
+    const exec: ExecFn = async (cmd, _args) => {
       calledCmds.push(cmd);
-      if (cmd === "which" || cmd === "where") {
-        return { stdout: `/usr/bin/${args[0]}`, stderr: "", code: 0 };
-      }
       return { stdout: "1.0.0", stderr: "", code: 0 };
     };
     await checkBinary(exec, "git");
-    const expected = process.platform === "win32" ? "where" : "which";
-    expect(calledCmds[0]).toBe(expected);
+    // exec should only be called for --version, never for which/where
+    expect(calledCmds).toEqual(["git"]);
+    expect(bunWhichSpy).toHaveBeenCalledWith("git");
   });
 });
 
 // ── scanAll ───────────────────────────────────────────────
 
 describe("scanAll", () => {
-  it("marks deps as installed when which returns code 0", async () => {
-    const allBinaries: Record<string, number> = {};
-    for (const dep of DEPENDENCIES) {
-      allBinaries[dep.binary] = 0;
-    }
-    const exec = createMockExec(allBinaries);
+  it("marks deps as installed when Bun.which finds all binaries", async () => {
+    // Make Bun.which find every dependency's binary
+    setBinariesFound(DEPENDENCIES.map((d) => d.binary));
+    const exec = createMockExec();
     const statuses = await scanAll(exec);
 
     // All binary-checked deps should be installed (bun:sqlite uses its own check)
@@ -152,9 +162,9 @@ describe("scanAll", () => {
     }
   });
 
-  it("marks deps as not installed when which returns code 1", async () => {
-    // All binaries fail which
-    const exec = createMockExec({});
+  it("marks deps as not installed when Bun.which returns null", async () => {
+    // bunWhichResults is empty by default — no binaries found
+    const exec = createMockExec();
     const statuses = await scanAll(exec);
 
     for (const s of statuses) {
@@ -166,13 +176,13 @@ describe("scanAll", () => {
   });
 
   it("returns correct number of statuses", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const statuses = await scanAll(exec);
     expect(statuses.length).toBe(DEPENDENCIES.length);
   });
 
   it("each status has required fields", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const statuses = await scanAll(exec);
     for (const s of statuses) {
       expect(s).toHaveProperty("name");
@@ -188,12 +198,13 @@ describe("scanAll", () => {
 
 describe("scanMissing", () => {
   it("returns only deps that are not installed", async () => {
-    const exec = createMockExec({ git: 0 }); // only git installed
+    setBinariesFound(["git"]); // only git is findable
+    const exec = createMockExec();
     const missing = await scanMissing(exec);
 
     const names = missing.map((m) => m.name);
     expect(names).not.toContain("Git");
-    // mcpc is not in whichResults so should be missing
+    // mcpc is not in Bun.which results so should be missing
     expect(names).toContain("mcpc");
   });
 });
@@ -202,21 +213,21 @@ describe("scanMissing", () => {
 
 describe("installDep", () => {
   it("runs install command and returns success", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const result = await installDep(exec, "mcpc");
     expect(result.success).toBe(true);
     expect(result.name).toBe("mcpc");
   });
 
   it("returns error for unknown dependency", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const result = await installDep(exec, "nonexistent");
     expect(result.success).toBe(false);
     expect(result.error).toContain("Unknown dependency");
   });
 
   it("returns error when dep has no install command", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const result = await installDep(exec, "Git");
     expect(result.success).toBe(false);
     expect(result.error).toContain("No install command");
@@ -238,7 +249,7 @@ describe("installDep", () => {
 
 describe("installAll", () => {
   it("skips deps with null installCmd", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const deps: DependencyStatus[] = [
       {
         name: "Git",
@@ -267,7 +278,7 @@ describe("installAll", () => {
   });
 
   it("returns empty array when no installable deps", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const deps: DependencyStatus[] = [
       {
         name: "Git",
@@ -285,7 +296,7 @@ describe("installAll", () => {
   });
 
   it("does not include result entries for null installCmd deps", async () => {
-    const exec = createMockExec({});
+    const exec = createMockExec();
     const deps: DependencyStatus[] = [
       {
         name: "Git",
