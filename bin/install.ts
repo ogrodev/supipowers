@@ -182,6 +182,28 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
     cpSync(join(packageRoot, "bin"), join(extDir, "bin"), { recursive: true });
     cpSync(join(packageRoot, "package.json"), join(extDir, "package.json"));
 
+    // Rewrite package.json for the installed extension.
+    // The npm-published package.json has bin, scripts, prepare, devDeps —
+    // all of which cause problems during `bun install` in the extension dir.
+    // We keep only what OMP needs (omp.extensions) and the runtime dependencies.
+    const sourcePkg = JSON.parse(readFileSync(join(extDir, "package.json"), "utf8"));
+    const runtimePkg = {
+      name: sourcePkg.name,
+      version: sourcePkg.version,
+      type: sourcePkg.type,
+      omp: sourcePkg.omp,
+      dependencies: {
+        // Only packages imported at runtime by src/ code:
+        // - config/schema.ts → @sinclair/typebox
+        // - commands/model.ts, model-picker.ts → @oh-my-pi/pi-ai
+        // - commands/model-picker.ts → @oh-my-pi/pi-tui
+        "@sinclair/typebox": "*",
+        "@oh-my-pi/pi-ai": "*",
+        "@oh-my-pi/pi-tui": "*",
+      },
+    };
+    writeFileSync(join(extDir, "package.json"), JSON.stringify(runtimePkg, null, 2));
+
     // Copy skills → ~/<platform>/agent/skills/<skillname>/SKILL.md
     const skillsSource = join(packageRoot, "skills");
     if (existsSync(skillsSource)) {
@@ -196,17 +218,14 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
       }
     }
 
-    // Install dependencies so the extension's runtime imports resolve.
-    // Bun installs peer deps by default, which provides @sinclair/typebox
-    // and @oh-my-pi/* packages that the extension needs at import time.
-    // Without this, the extension fails to load on systems where these
-    // packages aren't in Bun's global install (e.g. OMP installed via npm).
+    // Install runtime dependencies so the extension's imports resolve.
+    // Without node_modules/, external imports (@sinclair/typebox, @oh-my-pi/*)
+    // fail on systems where these packages aren't in Bun's global install.
     s.message("Installing extension dependencies...");
-    const install = run("bun", ["install", "--frozen-lockfile=false"], { cwd: extDir });
+    const install = run("bun", ["install"], { cwd: extDir });
     if (install.status !== 0) {
-      // Non-fatal: the extension may still work if OMP provides the deps.
-      // Log a warning but don't bail — the user might be offline or the
-      // registry might be temporarily unreachable.
+      // Non-fatal: the extension may still work if OMP provides the deps
+      // via its own module resolution (e.g. Bun global install on macOS).
       note(
         "Could not install extension dependencies.\n" +
           "If /supi commands don't appear in OMP, run:\n" +
