@@ -1,4 +1,6 @@
 import type { Platform } from "../platform/types.js";
+import type { ResolvedModel } from "../types.js";
+import { applyModelOverride } from "../config/model-resolver.js";
 import { listPlans, readPlanFile } from "../storage/plans.js";
 
 /**
@@ -14,17 +16,21 @@ let plansBefore: string[] = [];
 let planCwd: string = "";
 /** newSession function captured from the command context at plan start. */
 let capturedNewSession: ((options?: any) => Promise<{ cancelled: boolean }>) | null = null;
+/** Resolved model for plan action — re-applied on execution handoff. */
+let capturedResolvedModel: ResolvedModel | null = null;
 
 /** Mark planning as started (called by plan command after sending steer). */
 export function startPlanTracking(
   cwd: string,
   paths: any,
   newSession?: (options?: any) => Promise<{ cancelled: boolean }>,
+  resolvedModel?: ResolvedModel,
 ): void {
   planningActive = true;
   planCwd = cwd;
   plansBefore = listPlans(paths, cwd);
   capturedNewSession = newSession ?? null;
+  capturedResolvedModel = resolvedModel ?? null;
 }
 
 /** Cancel plan tracking (e.g., session change). */
@@ -33,6 +39,7 @@ export function cancelPlanTracking(): void {
   plansBefore = [];
   planCwd = "";
   capturedNewSession = null;
+  capturedResolvedModel = null;
 }
 
 /** Whether a planning session is currently active. */
@@ -89,10 +96,16 @@ async function executeApproveFlow(
 ): Promise<void> {
   const prompt = buildExecutionPrompt(planContent, planPath);
 
+  // Re-apply the plan model override for the execution turn.
+  // The planning turn's restore hook already fired (model reverted to default).
+  // We must switch again so the execution LLM turn uses the configured model.
+  if (capturedResolvedModel) {
+    await applyModelOverride(platform, ctx, capturedResolvedModel);
+  }
+
   if (capturedNewSession) {
     const result = await capturedNewSession();
     if (result?.cancelled) {
-      // User dismissed the new-session prompt — keep plan state intact.
       ctx.ui.notify("Session start cancelled. Plan saved; run /supi:plan again to execute.");
       return;
     }
