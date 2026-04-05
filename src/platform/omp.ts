@@ -17,8 +17,11 @@ export function createOmpAdapter(api: any): Platform {
     sendUserMessage: (text: string) => api.sendUserMessage(text),
     registerMessageRenderer: (type, fn) => api.registerMessageRenderer(type, fn),
 
-    setModel(model: string): void {
-      api.setModel(model);
+    async setModel(model: any): Promise<boolean> {
+      return api.setModel(model);
+    },
+    setThinkingLevel(level: string, persist?: boolean): void {
+      api.setThinkingLevel?.(level, persist);
     },
     getCurrentModel(): string {
       return api.getCurrentModel?.() ?? "unknown";

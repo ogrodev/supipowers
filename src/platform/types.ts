@@ -138,7 +138,8 @@ export interface Platform {
   registerMessageRenderer<T>(type: string, renderer: any): void;
 
   // Model access
-  setModel?(model: string): void;
+  setModel?(model: any): Promise<boolean>;
+  setThinkingLevel?(level: string, persist?: boolean): void;
   getCurrentModel?(): string;
   getModelForRole?(role: string): string | null;
 
