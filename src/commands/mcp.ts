@@ -8,6 +8,16 @@ import { generateReadme, writeReadme, writeToolsCache, generateSkill, writeSkill
 import { MCPC_EXIT } from "../mcp/types.js";
 import type { McpTool, ServerConfig, HostMcpServer } from "../mcp/types.js";
 import { lookupMcpServer, pickBestMatch } from "../mcp/registry.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
+
+modelRegistry.register({
+  id: "mcp",
+  category: "command",
+  label: "MCP",
+  harnessRoleHint: "slow",
+});
 
 export interface ParsedMcpArgs {
   subcommand?: string;
@@ -789,6 +799,10 @@ export function registerMcpCommand(platform: Platform): void {
   platform.registerCommand("supi:mcp", {
     description: "Manage MCP servers — add, remove, enable, disable, refresh",
     async handler(args: string | undefined, ctx: any) {
+      const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("mcp", modelRegistry, modelCfg, bridge);
+      await applyModelOverride(platform, ctx, resolved);
       if (args) {
         // CLI mode — parse and dispatch
         await handleMcpCli(platform, ctx, parseCliArgs(args));

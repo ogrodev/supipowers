@@ -1,7 +1,7 @@
 import type { Platform } from "../platform/types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadFixPrConfig, saveFixPrConfig, DEFAULT_FIX_PR_CONFIG } from "../fix-pr/config.js";
+import { loadFixPrConfig, saveFixPrConfig } from "../fix-pr/config.js";
 import { buildFixPrOrchestratorPrompt } from "../fix-pr/prompt-builder.js";
 import type { FixPrConfig, CommentReplyPolicy } from "../fix-pr/types.js";
 import {
@@ -12,7 +12,7 @@ import {
 } from "../storage/fix-pr-sessions.js";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
-import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { detectBotReviewers } from "../fix-pr/bot-detector.js";
 
@@ -20,6 +20,14 @@ modelRegistry.register({
   id: "fix-pr",
   category: "command",
   label: "Fix PR",
+  harnessRoleHint: "default",
+});
+
+modelRegistry.register({
+  id: "task",
+  category: "sub-agent",
+  parent: "fix-pr",
+  label: "Task (sub-agent)",
   harnessRoleHint: "default",
 });
 
@@ -42,6 +50,12 @@ export function registerFixPrCommand(platform: Platform): void {
   platform.registerCommand("supi:fix-pr", {
     description: "Fix PR review comments with token-optimized agent orchestration",
     async handler(args: string | undefined, ctx: any): Promise<void> {
+      // Resolve and apply model override early — before any logic that might fail
+      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("fix-pr", modelRegistry, modelConfig, bridge);
+      await applyModelOverride(platform, ctx, resolved);
+
       // ── Step 1: Detect PR ──────────────────────────────────────────
       let prNumber: number | null = null;
       let repo: string | null = null;
@@ -178,6 +192,9 @@ export function registerFixPrCommand(platform: Platform): void {
       }
 
       // ── Step 6: Build and send prompt ──────────────────────────────
+      // Resolve task model (sub-agents: planner, fixer). Falls back to fix-pr model.
+      const taskResolved = resolveModelForAction("task", modelRegistry, modelConfig, bridge);
+      const taskModel = taskResolved.model ?? resolved.model ?? "claude-sonnet-4-6";
       const prompt = buildFixPrOrchestratorPrompt({
         prNumber,
         repo,
@@ -187,15 +204,9 @@ export function registerFixPrCommand(platform: Platform): void {
         config,
         iteration: ledger.iteration,
         skillContent,
+        taskModel,
       });
 
-      // Resolve model for this action
-      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
-      const bridge = createModelBridge(platform);
-      const resolved = resolveModelForAction("fix-pr", modelRegistry, modelConfig, bridge);
-      if (resolved.source !== "main" && platform.setModel && resolved.model) {
-        platform.setModel(resolved.model);
-      }
 
       platform.sendMessage(
         {
@@ -234,10 +245,6 @@ const ITERATION_OPTIONS = [
   "5",
 ];
 
-const MODEL_TIER_OPTIONS = [
-  "high — thorough reasoning, more tokens",
-  "low — fast execution, fewer tokens",
-];
 
 async function runSetupWizard(ctx: any): Promise<FixPrConfig | null> {
 
@@ -270,46 +277,10 @@ async function runSetupWizard(ctx: any): Promise<FixPrConfig | null> {
   if (!iterChoice) return null;
   const maxIterations = parseInt(iterChoice, 10);
 
-  // 4. Model preferences
-  const orchestratorTier = await ctx.ui.select(
-    "Orchestrator model tier (assessment & grouping)",
-    MODEL_TIER_OPTIONS,
-    { helpText: "Higher tier = more thorough analysis" },
-  );
-  if (!orchestratorTier) return null;
-
-  const plannerTier = await ctx.ui.select(
-    "Planner model tier (fix planning)",
-    MODEL_TIER_OPTIONS,
-    { helpText: "Higher tier = more detailed plans" },
-  );
-  if (!plannerTier) return null;
-
-  const fixerTier = await ctx.ui.select(
-    "Fixer model tier (code changes)",
-    MODEL_TIER_OPTIONS,
-    { helpText: "Lower tier usually sufficient for execution" },
-  );
-  if (!fixerTier) return null;
-
   const config: FixPrConfig = {
     reviewer: { type: "none", triggerMethod: null },
     commentPolicy,
     loop: { delaySeconds, maxIterations },
-    models: {
-      orchestrator: {
-        ...DEFAULT_FIX_PR_CONFIG.models.orchestrator,
-        tier: orchestratorTier.startsWith("high") ? "high" : "low",
-      },
-      planner: {
-        ...DEFAULT_FIX_PR_CONFIG.models.planner,
-        tier: plannerTier.startsWith("high") ? "high" : "low",
-      },
-      fixer: {
-        ...DEFAULT_FIX_PR_CONFIG.models.fixer,
-        tier: fixerTier.startsWith("high") ? "high" : "low",
-      },
-    },
   };
 
   return config;

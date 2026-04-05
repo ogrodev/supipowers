@@ -8,6 +8,16 @@ import { createNewE2eSession } from "../qa/session.js";
 import { buildE2eOrchestratorPrompt } from "../qa/prompt-builder.js";
 import { findActiveSession, getSessionDir } from "../storage/qa-sessions.js";
 import type { E2eQaConfig, AppType, E2eRegression } from "../qa/types.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
+
+modelRegistry.register({
+  id: "qa",
+  category: "command",
+  label: "QA",
+  harnessRoleHint: "slow",
+});
 
 function getScriptsDir(): string {
   return path.join(path.dirname(new URL(import.meta.url).pathname), "..", "qa", "scripts");
@@ -104,6 +114,11 @@ export function registerQaCommand(platform: Platform): void {
   platform.registerCommand("supi:qa", {
     description: "Run autonomous E2E product testing pipeline with playwright",
     async handler(args: string | undefined, ctx: any) {
+      const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("qa", modelRegistry, modelCfg, bridge);
+      await applyModelOverride(platform, ctx, resolved);
+
       const scriptsDir = getScriptsDir();
 
       // ── Step 1: Detect app type ─────────────────────────────────────

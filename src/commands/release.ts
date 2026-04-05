@@ -1,4 +1,7 @@
 import type { Platform } from "../platform/types.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
 import type { ReleaseChannel, BumpType } from "../types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
@@ -9,6 +12,13 @@ import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
 import { analyzeAndCommit } from "../git/commit.js";
 import { getWorkingTreeStatus } from "../git/status.js";
+
+modelRegistry.register({
+  id: "release",
+  category: "command",
+  label: "Release",
+  harnessRoleHint: "slow",
+});
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const STATUS_KEY = "supi-release";
@@ -185,7 +195,12 @@ export function registerReleaseCommand(platform: Platform): void {
  * TUI-only handler — called from the input event dispatcher in bootstrap.ts.
  * Runs the full release flow without triggering the outer LLM session.
  */
-export function handleRelease(platform: Platform, ctx: any, args?: string): void {
+export async function handleRelease(platform: Platform, ctx: any, args?: string): Promise<void> {
+  const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
+  const bridge = createModelBridge(platform);
+  const resolved = resolveModelForAction("release", modelRegistry, modelCfg, bridge);
+  await applyModelOverride(platform, ctx, resolved);
+
   if (!ctx.hasUI) {
     ctx.ui.notify("Release requires interactive mode", "warning");
     return;

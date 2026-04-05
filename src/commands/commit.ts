@@ -5,7 +5,15 @@
 
 import type { Platform } from "../platform/types.js";
 import type { PlatformContext } from "../platform/types.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
 import { analyzeAndCommit } from "../git/commit.js";
+
+modelRegistry.register({
+  id: "commit",
+  category: "command",
+  label: "Commit",
+  harnessRoleHint: "default",
+});
 
 /**
  * Register the command for autocomplete and /help listing.

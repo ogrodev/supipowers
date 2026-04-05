@@ -12,7 +12,7 @@ import { buildPlanningPrompt, buildQuickPlanPrompt } from "../planning/prompt-bu
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { modelRegistry } from "../config/model-registry-instance.js";
-import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { startPlanTracking } from "../planning/approval-flow.js";
 
@@ -38,6 +38,12 @@ export function registerPlanCommand(platform: Platform): void {
   platform.registerCommand("supi:plan", {
     description: "Start collaborative planning for a feature or task",
     async handler(args: string | undefined, ctx: any) {
+      // Resolve and apply model override early — before any logic that might fail
+      const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("plan", modelRegistry, modelCfg, bridge);
+      await applyModelOverride(platform, ctx, resolved);
+
       const skillPath = findSkillPath("planning");
       let skillContent = "";
       if (skillPath) {
@@ -133,13 +139,6 @@ export function registerPlanCommand(platform: Platform): void {
         prompt += "\n\n" + buildVisualInstructions(visualUrl, visualSessionDir);
       }
 
-      // Resolve model for this action
-      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
-      const bridge = createModelBridge(platform);
-      const resolved = resolveModelForAction("plan", modelRegistry, modelConfig, bridge);
-      if (resolved.source !== "main" && platform.setModel && resolved.model) {
-        platform.setModel(resolved.model);
-      }
 
       platform.sendMessage(
         {
@@ -151,7 +150,7 @@ export function registerPlanCommand(platform: Platform): void {
       );
 
       // Track planning state for the approval flow (agent_end hook)
-      startPlanTracking(ctx.cwd, platform.paths, ctx.newSession?.bind(ctx));
+      startPlanTracking(ctx.cwd, platform.paths, ctx.newSession?.bind(ctx), resolved);
 
       notifyInfo(ctx, "Planning started", args ? `Topic: ${args}` : "Describe what you want to build");
     },

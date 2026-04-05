@@ -5,7 +5,7 @@ import { buildReviewPrompt } from "../quality/gate-runner.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
-import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 
 modelRegistry.register({
@@ -19,6 +19,12 @@ export function registerReviewCommand(platform: Platform): void {
   platform.registerCommand("supi:review", {
     description: "Run quality gates at chosen depth (quick/thorough/full-regression)",
     async handler(args: string | undefined, ctx: any) {
+      // Resolve and apply model override early — before any logic that might fail
+      const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
+      const bridge = createModelBridge(platform);
+      const resolved = resolveModelForAction("review", modelRegistry, modelCfg, bridge);
+      await applyModelOverride(platform, ctx, resolved);
+
       const config = loadConfig(platform.paths, ctx.cwd);
 
       let profileOverride: string | undefined;
@@ -96,13 +102,6 @@ export function registerReviewCommand(platform: Platform): void {
 
       notifyInfo(ctx, `Review started`, `profile: ${profile.name}`);
 
-      // Resolve model for this action
-      const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
-      const bridge = createModelBridge(platform);
-      const resolved = resolveModelForAction("review", modelRegistry, modelConfig, bridge);
-      if (resolved.source !== "main" && platform.setModel && resolved.model) {
-        platform.setModel(resolved.model);
-      }
 
       platform.sendMessage(
         {
