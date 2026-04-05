@@ -169,14 +169,14 @@ describe("applyModelOverride", () => {
     };
   }
 
-  function makeCtx(model: any, available: any[]) {
-    return { model, modelRegistry: { getAvailable: () => available } };
+  function makeCtx(model: any, available: any[], ui?: { setStatus?: Function }) {
+    return { model, modelRegistry: { getAvailable: () => available }, ui };
   }
 
   test("skips when source is 'main' (nothing to override)", async () => {
     const { platform, calls } = makeMockPlatform();
     const resolved = { model: "claude-sonnet-4-6", thinkingLevel: null, source: "main" as const };
-    const result = await applyModelOverride(platform, {}, resolved);
+    const result = await applyModelOverride(platform, {}, "test-action", resolved);
     expect(result).toBe(false);
     expect(calls.setModel).toHaveLength(0);
     expect(calls.setThinkingLevel).toHaveLength(0);
@@ -185,7 +185,7 @@ describe("applyModelOverride", () => {
   test("skips entirely when model is undefined", async () => {
     const { platform, calls } = makeMockPlatform();
     const resolved = { model: undefined, thinkingLevel: "high" as const, source: "action" as const };
-    const result = await applyModelOverride(platform, {}, resolved);
+    const result = await applyModelOverride(platform, {}, "test-action", resolved);
     expect(result).toBe(false);
     expect(calls.setModel).toHaveLength(0);
     expect(calls.setThinkingLevel).toHaveLength(0);
@@ -198,7 +198,7 @@ describe("applyModelOverride", () => {
     const ctx = makeCtx(currentModel, [fakeModel, currentModel]);
     const resolved = { model: "claude-opus-4-6", thinkingLevel: "xhigh" as const, source: "action" as const };
 
-    const result = await applyModelOverride(platform, ctx, resolved);
+    const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
     expect(result).toBe(true);
     expect(calls.setModel).toHaveLength(1);
@@ -213,7 +213,7 @@ describe("applyModelOverride", () => {
     const ctx = makeCtx(null, [fakeModel]);
     const resolved = { model: "anthropic/claude-opus-4-6", thinkingLevel: null, source: "action" as const };
 
-    const result = await applyModelOverride(platform, ctx, resolved);
+    const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
     expect(result).toBe(true);
     expect(calls.setModel[0]).toBe(fakeModel);
@@ -224,7 +224,7 @@ describe("applyModelOverride", () => {
     const ctx = { modelRegistry: { getAvailable: () => [makeFakeModel("claude-sonnet-4-6")] } };
     const resolved = { model: "nonexistent-model", thinkingLevel: null, source: "action" as const };
 
-    const result = await applyModelOverride(platform, ctx, resolved);
+    const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
     expect(result).toBe(false);
     expect(calls.setModel).toHaveLength(0);
@@ -235,7 +235,7 @@ describe("applyModelOverride", () => {
     const ctx = {};
     const resolved = { model: "claude-opus-4-6", thinkingLevel: "high" as const, source: "action" as const };
 
-    const result = await applyModelOverride(platform, ctx, resolved);
+    const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
     expect(result).toBe(false);
     // thinkingLevel should still be set
@@ -251,7 +251,7 @@ describe("applyModelOverride", () => {
     } as any;
     const resolved = { model: "claude-opus-4-6", thinkingLevel: "medium" as const, source: "action" as const };
 
-    const result = await applyModelOverride(platform, {}, resolved);
+    const result = await applyModelOverride(platform, {}, "test-action", resolved);
 
     expect(result).toBe(false);
     expect(calls).toEqual(["medium"]);
@@ -263,7 +263,7 @@ describe("applyModelOverride", () => {
     const ctx = makeCtx(null, [fakeModel]);
     const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
 
-    await applyModelOverride(platform, ctx, resolved);
+    await applyModelOverride(platform, ctx, "test-action", resolved);
 
     expect(calls.setThinkingLevel).toHaveLength(0);
     expect(calls.setModel).toHaveLength(1);
@@ -276,7 +276,7 @@ describe("applyModelOverride", () => {
     const ctx = makeCtx(originalModel, [overrideModel, originalModel]);
     const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
 
-    await applyModelOverride(platform, ctx, resolved);
+    await applyModelOverride(platform, ctx, "test-action", resolved);
 
     expect(calls.setModel).toHaveLength(1);
     expect(calls.setModel[0]).toBe(overrideModel);
@@ -296,21 +296,105 @@ describe("applyModelOverride", () => {
     const ctx = makeCtx(originalModel, [overrideModel, originalModel]);
     const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
 
-    await applyModelOverride(platform, ctx, resolved);
+    await applyModelOverride(platform, ctx, "test-action", resolved);
     await handlers["agent_end"][0]();
     await handlers["agent_end"][0](); // second call — should be no-op
 
     expect(calls.setModel).toHaveLength(2); // override + restore, not 3
   });
 
-  test("does not register restore hook when no original model", async () => {
+  test("always registers agent_end hook to clear status bar", async () => {
     const { platform, handlers } = makeMockPlatform();
     const fakeModel = makeFakeModel("claude-opus-4-6");
-    const ctx = makeCtx(undefined, [fakeModel]);
+    const statusCalls: any[] = [];
+    const ctx = makeCtx(undefined, [fakeModel], { setStatus: (...args: any[]) => statusCalls.push(args) });
     const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
 
-    await applyModelOverride(platform, ctx, resolved);
+    await applyModelOverride(platform, ctx, "test-action", resolved);
 
-    expect(handlers["agent_end"] ?? []).toHaveLength(0);
+    // Hook registered even without originalModel (needed to clear status)
+    expect(handlers["agent_end"]).toHaveLength(1);
+    await handlers["agent_end"][0]();
+    // Status cleared, but no model restore (no original)
+    expect(statusCalls.some((c: any[]) => c[1] === undefined)).toBe(true);
+  });
+
+  test("sets status bar with model name and source on success", async () => {
+    const { platform } = makeMockPlatform();
+    const fakeModel = makeFakeModel("claude-opus-4-6");
+    const statusCalls: any[] = [];
+    const ctx = makeCtx(null, [fakeModel], { setStatus: (...args: any[]) => statusCalls.push(args) });
+    const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
+
+    await applyModelOverride(platform, ctx, "review", resolved);
+
+    const setCall = statusCalls.find((c: any[]) => c[1] !== undefined);
+    expect(setCall).toBeDefined();
+    expect(setCall[1]).toContain("claude-opus-4-6");
+    expect(setCall[1]).toContain("configured for review");
+  });
+
+  test("status bar includes thinking level when set", async () => {
+    const { platform } = makeMockPlatform();
+    const fakeModel = makeFakeModel("claude-opus-4-6");
+    const statusCalls: any[] = [];
+    const ctx = makeCtx(null, [fakeModel], { setStatus: (...args: any[]) => statusCalls.push(args) });
+    const resolved = { model: "claude-opus-4-6", thinkingLevel: "high" as const, source: "default" as const };
+
+    await applyModelOverride(platform, ctx, "plan", resolved);
+
+    const setCall = statusCalls.find((c: any[]) => c[1] !== undefined);
+    expect(setCall[1]).toContain("supipowers default");
+    expect(setCall[1]).toContain("high thinking");
+  });
+
+  test("status bar shows harness role source", async () => {
+    const { platform } = makeMockPlatform();
+    const fakeModel = makeFakeModel("claude-opus-4-6");
+    const statusCalls: any[] = [];
+    const ctx = makeCtx(null, [fakeModel], { setStatus: (...args: any[]) => statusCalls.push(args) });
+    const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "harness-role" as const };
+
+    await applyModelOverride(platform, ctx, "qa", resolved);
+
+    const setCall = statusCalls.find((c: any[]) => c[1] !== undefined);
+    expect(setCall[1]).toContain("harness role");
+  });
+
+  test("no status set when source is 'main' (early return)", async () => {
+    const { platform } = makeMockPlatform();
+    const statusCalls: any[] = [];
+    const ctx = { ui: { setStatus: (...args: any[]) => statusCalls.push(args) } };
+    const resolved = { model: "claude-sonnet-4-6", thinkingLevel: null, source: "main" as const };
+
+    await applyModelOverride(platform, ctx, "plan", resolved);
+
+    expect(statusCalls).toHaveLength(0);
+  });
+
+  test("no crash when ctx.ui is undefined", async () => {
+    const { platform } = makeMockPlatform();
+    const fakeModel = makeFakeModel("claude-opus-4-6");
+    const ctx = makeCtx(null, [fakeModel]); // no ui
+    const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
+
+    const result = await applyModelOverride(platform, ctx, "review", resolved);
+    expect(result).toBe(true); // succeeds without crashing
+  });
+
+  test("agent_end hook clears status bar", async () => {
+    const { platform, handlers } = makeMockPlatform();
+    const fakeModel = makeFakeModel("claude-opus-4-6");
+    const originalModel = makeFakeModel("claude-sonnet-4-6");
+    const statusCalls: any[] = [];
+    const ctx = makeCtx(originalModel, [fakeModel, originalModel], { setStatus: (...args: any[]) => statusCalls.push(args) });
+    const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
+
+    await applyModelOverride(platform, ctx, "review", resolved);
+    statusCalls.length = 0; // clear the initial set call
+    await handlers["agent_end"][0]();
+
+    expect(statusCalls).toHaveLength(1);
+    expect(statusCalls[0][1]).toBeUndefined(); // cleared
   });
 });
