@@ -111,3 +111,70 @@ export function createModelBridge(platform: Platform): ModelPlatformBridge {
     },
   };
 }
+
+/**
+ * Apply a resolved model override to the current session.
+ *
+ * Resolves the string model ID to an OMP Model object via the context's
+ * modelRegistry, then calls platform.setModel() with it. Also applies
+ * thinking level if specified.
+ *
+ * @param platform - The platform adapter
+ * @param ctx - Command handler context (must have modelRegistry.getAvailable())
+ * @param resolved - The resolved model from resolveModelForAction()
+ * @returns true if model was applied, false if skipped or failed
+ */
+export async function applyModelOverride(
+  platform: Platform,
+  ctx: any,
+  resolved: ResolvedModel,
+): Promise<boolean> {
+  // Skip if resolution fell through to the main session model (nothing to change)
+  if (resolved.source === "main") return false;
+
+  const modelId = resolved.model;
+  if (!modelId) return false;
+
+  // Apply thinking level (independent of model switch success)
+  if (resolved.thinkingLevel && platform.setThinkingLevel) {
+    platform.setThinkingLevel(resolved.thinkingLevel);
+  }
+
+  if (!platform.setModel) return false;
+
+  // Resolve string model ID to full OMP Model object via the context's model registry.
+  // OMP's setModel expects a Model object (with provider, id, api, etc.), not a string.
+  const available = ctx.modelRegistry?.getAvailable?.() as any[] | undefined;
+  if (!available) return false;
+
+  const modelObj = available.find((m: any) => {
+    if (!m?.id) return false;
+    if (modelId === m.id) return true;
+    if (modelId === `${m.provider}/${m.id}`) return true;
+    return modelId.includes("/") ? false : m.id === modelId;
+  });
+
+  if (!modelObj) return false;
+
+  // Save current model so we can restore after the agent turn completes.
+  // OMP's extension API setModel() persists to settings (calls session.setModel,
+  // not session.setModelTemporary). We must restore to avoid permanently
+  // overriding the user's default model.
+  const originalModel = ctx.model;
+
+  const applied = await platform.setModel(modelObj);
+  if (!applied) return false;
+
+  // Register a one-shot agent_end hook to restore the original model.
+  // This fires after the LLM turn triggered by the steer message completes.
+  if (originalModel) {
+    let restored = false;
+    platform.on("agent_end", async () => {
+      if (restored) return;
+      restored = true;
+      await platform.setModel!(originalModel);
+    });
+  }
+
+  return true;
+}
