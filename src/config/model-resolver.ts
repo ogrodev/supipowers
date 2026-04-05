@@ -121,12 +121,14 @@ export function createModelBridge(platform: Platform): ModelPlatformBridge {
  *
  * @param platform - The platform adapter
  * @param ctx - Command handler context (must have modelRegistry.getAvailable())
+ * @param actionId - The action being configured (e.g. "plan", "review") — used in notification
  * @param resolved - The resolved model from resolveModelForAction()
  * @returns true if model was applied, false if skipped or failed
  */
 export async function applyModelOverride(
   platform: Platform,
   ctx: any,
+  actionId: string,
   resolved: ResolvedModel,
 ): Promise<boolean> {
   // Skip if resolution fell through to the main session model (nothing to change)
@@ -165,14 +167,32 @@ export async function applyModelOverride(
   const applied = await platform.setModel(modelObj);
   if (!applied) return false;
 
-  // Register a one-shot agent_end hook to restore the original model.
-  // This fires after the LLM turn triggered by the steer message completes.
-  if (originalModel) {
+  // Show persistent model override info in the footer status bar.
+  // ctx.ui.notify() is transient and gets immediately replaced by progress widgets;
+  // setStatus persists alongside them.
+  const STATUS_KEY = "supi-model";
+  const displayName = modelObj.name ?? modelObj.id ?? modelId;
+  const sourceLabel =
+    resolved.source === "action" ? `configured for ${actionId}` :
+    resolved.source === "default" ? "supipowers default" :
+    "harness role";
+  let detail = sourceLabel;
+  if (resolved.thinkingLevel) {
+    detail += ` \u00b7 ${resolved.thinkingLevel} thinking`;
+  }
+  ctx.ui?.setStatus?.(STATUS_KEY, `Model: ${displayName} (${detail})`);
+
+  // Register a one-shot agent_end hook to restore the original model
+  // and clear the status bar entry.
+  {
     let restored = false;
     platform.on("agent_end", async () => {
       if (restored) return;
       restored = true;
-      await platform.setModel!(originalModel);
+      ctx.ui?.setStatus?.(STATUS_KEY, undefined);
+      if (originalModel) {
+        await platform.setModel!(originalModel);
+      }
     });
   }
 
