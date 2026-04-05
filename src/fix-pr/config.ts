@@ -13,11 +13,6 @@ export const DEFAULT_FIX_PR_CONFIG: FixPrConfig = {
   reviewer: { type: "none", triggerMethod: null },
   commentPolicy: "answer-selective",
   loop: { delaySeconds: 180, maxIterations: 3 },
-  models: {
-    orchestrator: { provider: "anthropic", model: "claude-opus-4-6", tier: "high" },
-    planner: { provider: "anthropic", model: "claude-opus-4-6", tier: "high" },
-    fixer: { provider: "anthropic", model: "claude-sonnet-4-6", tier: "low" },
-  },
 };
 
 export function loadFixPrConfig(paths: PlatformPaths, cwd: string): FixPrConfig | null {

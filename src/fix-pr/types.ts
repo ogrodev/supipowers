@@ -4,12 +4,6 @@ export type ReviewerType = "coderabbit" | "copilot" | "gemini" | "none";
 /** How to handle comment replies */
 export type CommentReplyPolicy = "answer-all" | "answer-selective" | "no-answer";
 
-/** Model preference for a specific role */
-export interface ModelPref {
-  provider: string;
-  model: string;
-  tier: "low" | "high";
-}
 
 /** Per-repo fix-pr configuration */
 export interface FixPrConfig {
@@ -21,11 +15,6 @@ export interface FixPrConfig {
   loop: {
     delaySeconds: number;
     maxIterations: number;
-  };
-  models: {
-    orchestrator: ModelPref;
-    planner: ModelPref;
-    fixer: ModelPref;
   };
 }
 

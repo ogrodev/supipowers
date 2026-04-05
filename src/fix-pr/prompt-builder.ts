@@ -10,6 +10,8 @@ export interface FixPrPromptOptions {
   config: FixPrConfig;
   iteration: number;
   skillContent: string;
+  /** Resolved model ID for sub-agent tasks (planner, fixer roles). */
+  taskModel: string;
 }
 
 function buildReplyInstructions(config: FixPrConfig): string {
@@ -47,8 +49,8 @@ function buildReplyInstructions(config: FixPrConfig): string {
 }
 
 export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): string {
-  const { prNumber, repo, comments, sessionDir, scriptsDir, config, iteration, skillContent } = options;
-  const { loop, models, reviewer } = config;
+  const { prNumber, repo, comments, sessionDir, scriptsDir, config, iteration, skillContent, taskModel } = options;
+  const { loop, reviewer } = config;
   const maxIter = loop.maxIterations;
   const delay = loop.delaySeconds;
 
@@ -190,11 +192,10 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
   sections.push(
     "## Model Guidance",
     "",
-    `- **Orchestrator** (assessment, grouping): ${models.orchestrator.model} (${models.orchestrator.tier} tier) — thorough analysis`,
-    `- **Planner** (fix planning): ${models.planner.model} (${models.planner.tier} tier) — detailed planning`,
-    `- **Fixer** (code changes): ${models.fixer.model} (${models.fixer.tier} tier) — focused execution`,
+    `- **Orchestrator** (this session): handles assessment & grouping`,
+    `- **Planner & Fixer** (sub-agents): use model \`${taskModel}\``,
     "",
-    "These indicate the expected reasoning depth for each phase of work.",
+    "Sub-agents inherit the task model for planning and code changes.",
   );
 
   return sections.join("\n");
