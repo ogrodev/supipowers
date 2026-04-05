@@ -42,7 +42,7 @@ export function registerPlanCommand(platform: Platform): void {
       const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
       const bridge = createModelBridge(platform);
       const resolved = resolveModelForAction("plan", modelRegistry, modelCfg, bridge);
-      await applyModelOverride(platform, ctx, resolved);
+      await applyModelOverride(platform, ctx, "plan", resolved);
 
       const skillPath = findSkillPath("planning");
       let skillContent = "";

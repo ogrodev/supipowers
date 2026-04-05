@@ -100,7 +100,7 @@ async function executeApproveFlow(
   // The planning turn's restore hook already fired (model reverted to default).
   // We must switch again so the execution LLM turn uses the configured model.
   if (capturedResolvedModel) {
-    await applyModelOverride(platform, ctx, capturedResolvedModel);
+    await applyModelOverride(platform, ctx, "plan", capturedResolvedModel);
   }
 
   if (capturedNewSession) {

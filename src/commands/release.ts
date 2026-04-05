@@ -199,7 +199,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
   const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
   const bridge = createModelBridge(platform);
   const resolved = resolveModelForAction("release", modelRegistry, modelCfg, bridge);
-  await applyModelOverride(platform, ctx, resolved);
+  await applyModelOverride(platform, ctx, "release", resolved);
 
   if (!ctx.hasUI) {
     ctx.ui.notify("Release requires interactive mode", "warning");

@@ -802,7 +802,7 @@ export function registerMcpCommand(platform: Platform): void {
       const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
       const bridge = createModelBridge(platform);
       const resolved = resolveModelForAction("mcp", modelRegistry, modelCfg, bridge);
-      await applyModelOverride(platform, ctx, resolved);
+      await applyModelOverride(platform, ctx, "mcp", resolved);
       if (args) {
         // CLI mode — parse and dispatch
         await handleMcpCli(platform, ctx, parseCliArgs(args));

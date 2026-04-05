@@ -23,7 +23,7 @@ export function registerReviewCommand(platform: Platform): void {
       const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
       const bridge = createModelBridge(platform);
       const resolved = resolveModelForAction("review", modelRegistry, modelCfg, bridge);
-      await applyModelOverride(platform, ctx, resolved);
+      await applyModelOverride(platform, ctx, "review", resolved);
 
       const config = loadConfig(platform.paths, ctx.cwd);
 

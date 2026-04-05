@@ -54,7 +54,7 @@ export function registerFixPrCommand(platform: Platform): void {
       const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
       const bridge = createModelBridge(platform);
       const resolved = resolveModelForAction("fix-pr", modelRegistry, modelConfig, bridge);
-      await applyModelOverride(platform, ctx, resolved);
+      await applyModelOverride(platform, ctx, "fix-pr", resolved);
 
       // ── Step 1: Detect PR ──────────────────────────────────────────
       let prNumber: number | null = null;
