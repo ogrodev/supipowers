@@ -10,6 +10,9 @@ import { validateCommitMessage } from "./commit-msg.js";
 import { getWorkingTreeStatus } from "./status.js";
 import { discoverCommitConventions } from "./conventions.js";
 import { notifyInfo, notifyError, notifySuccess } from "../notifications/renderer.js";
+import { modelRegistry } from "../config/model-registry-instance.js";
+import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { loadModelConfig } from "../config/model-config.js";
 
 // ── Public types ───────────────────────────────────────────
 
@@ -292,8 +295,13 @@ export async function analyzeAndCommit(
 
     if (platform.capabilities.agentSessions) {
       progress.activate(4, `${fileList.length} file(s)`);
-      plan = await tryAgentPlan(platform, cwd, prompt);
+      // Resolve the commit sub-agent model from config (falls back to session default)
+      const modelCfg = loadModelConfig(platform.paths, cwd);
+      const bridge = createModelBridge(platform);
+      const commitModel = resolveModelForAction("commit", modelRegistry, modelCfg, bridge);
+      plan = await tryAgentPlan(platform, cwd, prompt, commitModel.model);
       if (plan) {
+        plan = validatePlanFiles(plan, fileList);
         progress.complete(4, `${plan.commits.length} commit(s)`);
       } else {
         progress.skip(4, "unavailable");
@@ -332,7 +340,7 @@ export async function analyzeAndCommit(
 
     // 7. Execute commits
     progress.activate(6, `0/${plan.commits.length}`);
-    return executeCommitPlan(platform, ctx, cwd, plan, progress);
+    return executeCommitPlan(platform, ctx, cwd, plan, fileList, progress);
   } finally {
     // Always clean up, even on unexpected errors
     progress.dispose();
@@ -345,10 +353,11 @@ async function tryAgentPlan(
   platform: Platform,
   cwd: string,
   prompt: string,
+  model?: string,
 ): Promise<CommitPlan | null> {
   let session: Awaited<ReturnType<Platform["createAgentSession"]>> | null = null;
   try {
-    session = await platform.createAgentSession({ cwd, hasUI: false });
+    session = await platform.createAgentSession({ cwd, hasUI: false, ...(model ? { model } : {}) });
 
     const agentDone = new Promise<void>((resolve) => {
       session!.subscribe((event: any) => {
@@ -426,6 +435,26 @@ async function manualFallback(
   return { committed: 1, messages: [message] };
 }
 
+// ── Plan validation ────────────────────────────────────────
+
+/**
+ * Filter an AI-generated commit plan against the actual staged file list.
+ * Removes hallucinated paths that aren't staged, and drops empty groups.
+ * Falls back to the original plan if filtering would leave nothing.
+ */
+export function validatePlanFiles(plan: CommitPlan, stagedFiles: string[]): CommitPlan {
+  const stagedSet = new Set(stagedFiles);
+  const validCommits = plan.commits
+    .map((group) => ({
+      ...group,
+      files: group.files.filter((f) => stagedSet.has(f)),
+    }))
+    .filter((group) => group.files.length > 0);
+
+  return validCommits.length > 0 ? { commits: validCommits } : plan;
+}
+
+
 // ── Commit execution ───────────────────────────────────────
 
 async function executeCommitPlan(
@@ -433,38 +462,45 @@ async function executeCommitPlan(
   ctx: any,
   cwd: string,
   plan: CommitPlan,
+  stagedFiles: string[],
   progress: ReturnType<typeof createProgress>,
 ): Promise<CommitResult | null> {
   const exec = platform.exec.bind(platform);
   const committedMessages: string[] = [];
+
+  // Snapshot the full index as a tree object. This lets us restore the
+  // staging area for each commit group via `git read-tree` — which reads
+  // from git's object store and never consults .gitignore.
+  const writeTreeResult = await exec("git", ["write-tree"], { cwd });
+  if (writeTreeResult.code !== 0) {
+    progress.dispose();
+    notifyError(ctx, "Commit failed", "Could not snapshot index (git write-tree)");
+    return null;
+  }
+  const savedTree = writeTreeResult.stdout.trim();
 
   for (let i = 0; i < plan.commits.length; i++) {
     const group = plan.commits[i];
     const header = formatCommitMessage(group).split("\n")[0];
     progress.detail(`${i + 1}/${plan.commits.length}: ${header}`);
 
-    // Reset staging area
-    await exec("git", ["reset", "HEAD"], { cwd });
+    // Restore the full saved index (no gitignore involvement)
+    await exec("git", ["read-tree", savedTree], { cwd });
 
-    // Stage only this group's files
-    const addResult = await exec("git", ["add", ...group.files], { cwd });
-    if (addResult.code !== 0) {
-      progress.dispose();
-      const failedFiles = group.files.join(", ");
-      const reason = addResult.stderr?.trim() || "git add returned non-zero";
-      return reportPartialFailure(ctx, exec, cwd, committedMessages, {
-        step: `Commit ${i + 1}/${plan.commits.length}`,
-        error: `Could not stage files (${failedFiles}): ${reason}`,
-      });
+    // Unstage everything NOT in this group
+    const groupSet = new Set(group.files);
+    const filesToUnstage = stagedFiles.filter((f) => !groupSet.has(f));
+    if (filesToUnstage.length > 0) {
+      await exec("git", ["reset", "HEAD", "--", ...filesToUnstage], { cwd });
     }
 
-    // Build commit message
     const message = formatCommitMessage(group);
-
     const commitResult = await commitStaged(exec, cwd, message);
     if (!commitResult.success) {
       progress.dispose();
-      return reportPartialFailure(ctx, exec, cwd, committedMessages, {
+      // Restore full staging area so the user isn't left with a partial index
+      await exec("git", ["read-tree", savedTree], { cwd });
+      return reportPartialFailure(ctx, committedMessages, {
         step: `Commit ${i + 1}/${plan.commits.length}`,
         error: commitResult.error!,
       });
@@ -472,6 +508,10 @@ async function executeCommitPlan(
 
     committedMessages.push(message);
   }
+
+  // Restore the saved index so any staged files NOT in the plan remain staged.
+  // Files already committed now match HEAD, so they appear as not-staged.
+  await exec("git", ["read-tree", savedTree], { cwd });
 
   progress.complete(6, `${committedMessages.length} done`);
   progress.dispose();
@@ -486,18 +526,12 @@ async function executeCommitPlan(
 
 /**
  * Report a mid-plan failure with context on what succeeded and what failed.
- * Re-stages remaining files so the user isn't left with a half-reset index.
  */
-async function reportPartialFailure(
+function reportPartialFailure(
   ctx: any,
-  exec: Platform["exec"],
-  cwd: string,
   committedMessages: string[],
   failure: { step: string; error: string },
-): Promise<CommitResult | null> {
-  // Re-stage everything so the user isn't stuck with a partial index
-  await exec("git", ["add", "-A"], { cwd });
-
+): CommitResult | null {
   const lines: string[] = [];
   lines.push(`Failed at ${failure.step}: ${failure.error}`);
 
