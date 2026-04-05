@@ -216,6 +216,7 @@ function createProgress(ctx: any) {
     dispose() {
       stopTimer();
       ctx.ui.setStatus?.(STATUS_KEY, undefined);
+      ctx.ui.setStatus?.("supi-model", undefined);
       ctx.ui.setWidget?.(WIDGET_KEY, undefined);
     },
   };
@@ -299,6 +300,19 @@ export async function analyzeAndCommit(
       const modelCfg = loadModelConfig(platform.paths, cwd);
       const bridge = createModelBridge(platform);
       const commitModel = resolveModelForAction("commit", modelRegistry, modelCfg, bridge);
+
+      // Show model override in status bar if not using the main session model
+      if (commitModel.source !== "main" && commitModel.model) {
+        const sourceLabel =
+          commitModel.source === "action" ? "configured for commit" :
+          commitModel.source === "default" ? "supipowers default" :
+          "harness role";
+        let detail = sourceLabel;
+        if (commitModel.thinkingLevel) {
+          detail += ` \u00b7 ${commitModel.thinkingLevel} thinking`;
+        }
+        ctx.ui?.setStatus?.("supi-model", `Model: ${commitModel.model} (${detail})`);
+      }
       plan = await tryAgentPlan(platform, cwd, prompt, commitModel.model);
       if (plan) {
         plan = validatePlanFiles(plan, fileList);
