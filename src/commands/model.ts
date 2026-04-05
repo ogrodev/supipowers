@@ -39,7 +39,7 @@ function buildDashboard(
   bridge: ModelPlatformBridge,
 ): string {
   const config = loadModelConfig(paths, cwd);
-  const lines: string[] = ["", "  Model Configuration", ""];
+  const lines: string[] = ["\n  Model Configuration\n", `  ${"action".padEnd(20)} ${"model".padEnd(24)} ${"thinking".padEnd(10)} source`];
 
   let lastCategory: "command" | "sub-agent" | null = null;
   let lastParent: string | undefined = undefined;
@@ -56,10 +56,11 @@ function buildDashboard(
     const modelDisplay = (resolved.source === "main" && source === "main"
       ? "—"
       : resolved.model) ?? "—";
+    const thinkingDisplay = resolved.thinkingLevel ?? "—";
     const sourceDisplay = formatSource(source);
 
     lines.push(
-      `  ${action.id.padEnd(20)} ${modelDisplay.padEnd(28)} ${sourceDisplay}`,
+      `  ${action.id.padEnd(20)} ${modelDisplay.padEnd(24)} ${thinkingDisplay.padEnd(10)} ${sourceDisplay}`,
     );
 
     lastCategory = action.category;
