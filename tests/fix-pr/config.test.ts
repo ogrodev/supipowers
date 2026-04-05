@@ -86,7 +86,5 @@ describe("DEFAULT_FIX_PR_CONFIG", () => {
     expect(DEFAULT_FIX_PR_CONFIG.commentPolicy).toBe("answer-selective");
     expect(DEFAULT_FIX_PR_CONFIG.loop.delaySeconds).toBe(180);
     expect(DEFAULT_FIX_PR_CONFIG.loop.maxIterations).toBe(3);
-    expect(DEFAULT_FIX_PR_CONFIG.models.orchestrator.tier).toBe("high");
-    expect(DEFAULT_FIX_PR_CONFIG.models.fixer.tier).toBe("low");
   });
 });

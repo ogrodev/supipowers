@@ -4,6 +4,7 @@ import {
   parseCommitPlan,
   buildAnalysisPrompt,
   commitStaged,
+  validatePlanFiles,
 } from "../../src/git/commit.js";
 import type { CommitPlan } from "../../src/git/commit.js";
 
@@ -302,8 +303,9 @@ describe("analyzeAndCommit", () => {
       "git diff --cached --stat": { stdout: " 1 file changed\n", code: 0 },
       "git diff --cached": { stdout: "diff --git a/src/auth.ts\n+new code", code: 0 },
       "git config commit.template": { stdout: "", code: 1 },
-      "git reset HEAD": { stdout: "", code: 0 },
-      "git add src/auth.ts": { stdout: "", code: 0 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
       "git commit": { stdout: "", code: 0 },
     });
     const platform = createMockPlatform({
@@ -340,9 +342,9 @@ describe("analyzeAndCommit", () => {
       "git diff --cached --stat": { stdout: " 2 files changed\n", code: 0 },
       "git diff --cached": { stdout: "small diff", code: 0 },
       "git config commit.template": { stdout: "", code: 1 },
-      "git reset HEAD": { stdout: "", code: 0 },
-      "git add src/types.ts": { stdout: "", code: 0 },
-      "git add src/feature.ts": { stdout: "", code: 0 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
       "git commit": { stdout: "", code: 0 },
     });
     const platform = createMockPlatform({
@@ -364,11 +366,17 @@ describe("analyzeAndCommit", () => {
     expect(result!.messages[0]).toContain("refactor: extract types");
     expect(result!.messages[1]).toContain("feat: add feature");
 
-    // Verify reset + selective staging happened
+    // Verify write-tree/read-tree index management was used (not --only)
     const execCalls = exec.mock.calls.map((c: any[]) => `${c[0]} ${c[1].join(" ")}`);
-    expect(execCalls).toContain("git reset HEAD");
-    expect(execCalls).toContain("git add src/types.ts");
-    expect(execCalls).toContain("git add src/feature.ts");
+    expect(execCalls.some((c: string) => c.startsWith("git write-tree"))).toBe(true);
+    expect(execCalls.some((c: string) => c.startsWith("git read-tree"))).toBe(true);
+    // Must NOT contain --only (bypasses gitignore)
+    const commitCalls = exec.mock.calls.filter(
+      (c: any[]) => c[0] === "git" && c[1][0] === "commit",
+    );
+    for (const call of commitCalls) {
+      expect(call[1]).not.toContain("--only");
+    }
   });
 
   test("falls back to manual input when agent session fails", async () => {
@@ -623,8 +631,9 @@ describe("analyzeAndCommit", () => {
       "git diff --cached --stat": { stdout: " 1 file\n", code: 0 },
       "git diff --cached": { stdout: "diff", code: 0 },
       "git config commit.template": { stdout: "", code: 1 },
-      "git reset HEAD": { stdout: "", code: 0 },
-      "git add a.ts": { stdout: "", code: 0 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
       "git commit": { stdout: "", code: 0 },
     });
     const platform = createMockPlatform({
@@ -653,8 +662,9 @@ describe("analyzeAndCommit", () => {
       "git diff --cached --stat": { stdout: " 1 file\n", code: 0 },
       "git diff --cached": { stdout: "small diff", code: 0 },
       "git config commit.template": { stdout: "", code: 1 },
-      "git reset HEAD": { stdout: "", code: 0 },
-      "git add a.ts": { stdout: "", code: 0 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
       "git commit": { stdout: "", code: 0 },
     });
     const platform = createMockPlatform({
@@ -771,5 +781,62 @@ describe("commitStaged", () => {
     const exec = mockExec(0);
     const result = await commitStaged(exec as any, "/tmp", "chore(release): v1.0.0");
     expect(result.success).toBe(true);
+  });
+
+  test("never uses --only flag (bypasses gitignore)", async () => {
+    const exec = mockExec(0);
+    const result = await commitStaged(exec as any, "/tmp", "feat: add feature");
+    expect(result.success).toBe(true);
+    // Must produce a plain commit, no --only (which bypasses gitignore)
+    expect(exec).toHaveBeenCalledWith("git", ["commit", "-m", "feat: add feature"], { cwd: "/tmp" });
+  });
+});
+
+// ── validatePlanFiles ───────────────────────────────────────────────────────
+
+describe("validatePlanFiles", () => {
+  test("filters out files not in the staged list", () => {
+    const plan: CommitPlan = {
+      commits: [
+        { type: "feat", scope: null, summary: "add feature", details: [], files: ["src/a.ts", "hallucinated.ts"] },
+      ],
+    };
+    const result = validatePlanFiles(plan, ["src/a.ts", "src/b.ts"]);
+    expect(result.commits).toHaveLength(1);
+    expect(result.commits[0].files).toEqual(["src/a.ts"]);
+  });
+
+  test("drops commit groups that become empty after filtering", () => {
+    const plan: CommitPlan = {
+      commits: [
+        { type: "feat", scope: null, summary: "real", details: [], files: ["src/a.ts"] },
+        { type: "fix", scope: null, summary: "hallucinated", details: [], files: ["ghost.ts"] },
+      ],
+    };
+    const result = validatePlanFiles(plan, ["src/a.ts"]);
+    expect(result.commits).toHaveLength(1);
+    expect(result.commits[0].summary).toBe("real");
+  });
+
+  test("falls back to original plan when all files are filtered out", () => {
+    const plan: CommitPlan = {
+      commits: [
+        { type: "feat", scope: null, summary: "ghost", details: [], files: ["ghost.ts"] },
+      ],
+    };
+    const result = validatePlanFiles(plan, ["src/a.ts"]);
+    // Falls back to original because filtering would leave nothing
+    expect(result).toBe(plan);
+  });
+
+  test("returns plan unchanged when all files match", () => {
+    const plan: CommitPlan = {
+      commits: [
+        { type: "feat", scope: null, summary: "add feature", details: [], files: ["src/a.ts", "src/b.ts"] },
+      ],
+    };
+    const result = validatePlanFiles(plan, ["src/a.ts", "src/b.ts", "src/c.ts"]);
+    expect(result.commits).toHaveLength(1);
+    expect(result.commits[0].files).toEqual(["src/a.ts", "src/b.ts"]);
   });
 });

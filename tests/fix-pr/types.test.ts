@@ -1,7 +1,6 @@
 
 import type {
   FixPrConfig,
-  ModelPref,
   PrComment,
   CommentVerdict,
   FixGroup,
@@ -14,23 +13,10 @@ describe("FixPr types", () => {
       reviewer: { type: "coderabbit", triggerMethod: "/review" },
       commentPolicy: "answer-selective",
       loop: { delaySeconds: 180, maxIterations: 3 },
-      models: {
-        orchestrator: { provider: "anthropic", model: "claude-opus-4-6", tier: "high" },
-        planner: { provider: "openai", model: "gpt-5.4", tier: "high" },
-        fixer: { provider: "anthropic", model: "claude-sonnet-4-6", tier: "low" },
-      },
     };
     expect(config.reviewer.type).toBe("coderabbit");
     expect(config.commentPolicy).toBe("answer-selective");
     expect(config.loop.delaySeconds).toBe(180);
-    expect(config.models.orchestrator.provider).toBe("anthropic");
-  });
-
-  test("ModelPref has provider, model, tier", () => {
-    const pref: ModelPref = { provider: "anthropic", model: "claude-opus-4-6", tier: "high" };
-    expect(pref.provider).toBeTruthy();
-    expect(pref.model).toBeTruthy();
-    expect(["low", "high"]).toContain(pref.tier);
   });
 
   test("PrComment has all fields", () => {
@@ -80,11 +66,6 @@ describe("FixPr types", () => {
         reviewer: { type: "none", triggerMethod: null },
         commentPolicy: "no-answer",
         loop: { delaySeconds: 180, maxIterations: 3 },
-        models: {
-          orchestrator: { provider: "anthropic", model: "claude-opus-4-6", tier: "high" },
-          planner: { provider: "anthropic", model: "claude-opus-4-6", tier: "high" },
-          fixer: { provider: "anthropic", model: "claude-sonnet-4-6", tier: "low" },
-        },
       },
       commentsProcessed: [],
     };

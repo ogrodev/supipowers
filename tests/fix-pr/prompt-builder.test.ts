@@ -14,6 +14,7 @@ function buildDefaultPrompt() {
     config: DEFAULT_FIX_PR_CONFIG,
     iteration: 0,
     skillContent: "# Assessment Skill\nAssess each comment critically.",
+    taskModel: "claude-sonnet-4-6",
   });
 }
 
@@ -135,6 +136,7 @@ describe("buildFixPrOrchestratorPrompt", () => {
       config: { ...DEFAULT_FIX_PR_CONFIG, commentPolicy: "no-answer" },
       iteration: 0,
       skillContent: "",
+      taskModel: "claude-sonnet-4-6",
     });
     expect(noAnswer.toLowerCase()).toContain("do not reply");
   });
