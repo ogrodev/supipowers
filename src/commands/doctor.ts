@@ -39,7 +39,7 @@ export async function checkPlatform(platform: Platform): Promise<CheckResult> {
   const name = platform.name.toUpperCase();
   const presence = { ok: true, detail: `${name} detected` };
   try {
-    const r = await platform.exec("echo", ["ok"]);
+    const r = await platform.exec("node", ["--version"]);
     return { name: "Platform", presence, functional: { ok: r.code === 0, detail: r.code === 0 ? "exec works" : "exec failed" } };
   } catch {
     return { name: "Platform", presence, functional: { ok: false, detail: "exec failed" } };
@@ -221,7 +221,7 @@ const CTX_TOOL_NAMES: Record<string, string> = {
 export function checkContextMode(activeTools: string[]): CheckResult {
   const status = detectContextMode(activeTools);
   if (!status.available) {
-    return { name: "Context Mode", presence: { ok: false, detail: "No context-mode tools detected" } };
+    return { name: "Context Mode", presence: { ok: false, detail: "No supi-context-mode tools detected" } };
   }
 
   const foundNames = Object.entries(status.tools)

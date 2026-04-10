@@ -315,12 +315,12 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
 }
 
 /**
- * Install context-mode as a platform extension and register MCP server.
+ * Install supi-context-mode as a platform extension and register MCP server.
  *
  * Per upstream docs (Pi Coding Agent):
  *   1. git clone → ~/<platformDir>/extensions/context-mode
  *   2. npm install && npm run build
- *   3. Register MCP in ~/<platformDir>/settings/mcp.json
+ *   3. Register MCP in ~/<platformDir>/agent/mcp.json
  *
  * Build requires Node.js 18+ (tsc, esbuild, node -e in build script).
  * Runtime uses bun to leverage bun:sqlite — context-mode auto-detects
@@ -338,14 +338,14 @@ async function installContextMode(platformDir: string): Promise<void> {
   }
 
   const shouldInstall = await confirm({
-    message: `Install context-mode extension for context window protection? (${platformDir})`,
+    message: `Install supi-context-mode extension for context window protection? (${platformDir})`,
   });
   if (isCancel(shouldInstall) || !shouldInstall) {
     note(
       `Skipped. You can install later:\n` +
         `  git clone https://github.com/mksglu/context-mode.git ~/${platformDir}/extensions/context-mode\n` +
         `  cd ~/${platformDir}/extensions/context-mode && npm install && npm run build`,
-      `context-mode (${platformDir})`,
+      `supi-context-mode (${platformDir})`,
     );
     return;
   }
@@ -354,24 +354,24 @@ async function installContextMode(platformDir: string): Promise<void> {
   const nodeCheck = run("node", ["--version"]);
   if (nodeCheck.error || nodeCheck.status !== 0) {
     note(
-      "Node.js 18+ is required to build context-mode.\n" +
+      "Node.js 18+ is required to build supi-context-mode.\n" +
         "Install from https://nodejs.org then re-run the installer.",
-      "context-mode requires Node.js",
+      "supi-context-mode requires Node.js",
     );
     return;
   }
   const nodeVersion = parseInt((nodeCheck.stdout ?? "").replace(/^v/, ""), 10);
   if (nodeVersion < 18) {
     note(
-      `Found Node.js v${nodeCheck.stdout?.trim()} but context-mode requires v18+.\n` +
+      `Found Node.js v${nodeCheck.stdout?.trim()} but supi-context-mode requires v18+.\n` +
         "Update Node.js from https://nodejs.org then re-run the installer.",
-      "context-mode requires Node.js 18+",
+      "supi-context-mode requires Node.js 18+",
     );
     return;
   }
 
   const s = spinner();
-  s.start(`Cloning context-mode to ~/${platformDir}/extensions/context-mode...`);
+  s.start(`Cloning supi-context-mode to ~/${platformDir}/extensions/context-mode...`);
 
   // Clone
   const cloneResult = run("git", [
@@ -380,53 +380,56 @@ async function installContextMode(platformDir: string): Promise<void> {
     extDir,
   ]);
   if (cloneResult.status !== 0) {
-    s.stop(`Failed to clone context-mode`);
+    s.stop(`Failed to clone supi-context-mode`);
     note(
       cloneResult.stderr?.trim() || "Unknown git clone error",
-      "context-mode install failed",
+      "supi-context-mode install failed",
     );
     return;
   }
 
   // npm install (builds better-sqlite3 native bindings for Node.js fallback;
   // at runtime under Bun, bun:sqlite is used instead via auto-detection)
-  s.message("Installing context-mode dependencies...");
+  s.message("Installing supi-context-mode dependencies...");
   const npmInstall = run("npm", ["install"], { cwd: extDir });
   if (npmInstall.status !== 0) {
-    s.stop(`Failed to install context-mode dependencies`);
+    s.stop(`Failed to install supi-context-mode dependencies`);
     note(
       npmInstall.stderr?.trim() || "Unknown npm install error",
-      "context-mode install failed",
+      "supi-context-mode install failed",
     );
     return;
   }
 
   // npm run build (requires tsc + esbuild from devDeps, runs under Node.js)
-  s.message("Building context-mode...");
+  s.message("Building supi-context-mode...");
   const npmBuild = run("npm", ["run", "build"], { cwd: extDir });
   if (npmBuild.status !== 0) {
-    s.stop(`Failed to build context-mode`);
+    s.stop(`Failed to build supi-context-mode`);
     note(
       npmBuild.stderr?.trim() || "Unknown build error",
-      "context-mode install failed",
+      "supi-context-mode install failed",
     );
     return;
   }
 
-  s.stop(`context-mode installed to ~/${platformDir}/extensions/context-mode`);
+  s.stop(`supi-context-mode installed to ~/${platformDir}/extensions/context-mode`);
 
   // Register MCP server
   registerContextModeMcp(platformDir, startMjs);
 }
 
 /**
- * Register context-mode MCP entry in the platform's settings/mcp.json.
+ * Register supi-context-mode MCP entry in the platform's agent/mcp.json.
  *
  * Uses "bun" as the command so context-mode auto-detects Bun runtime
  * and uses bun:sqlite — no better-sqlite3 native bindings needed at runtime.
+ *
+ * When the supipowers wrapper is available, uses it as entry point to preserve
+ * the project directory and write routing rules to .omp/APPEND_SYSTEM.md.
  */
 function registerContextModeMcp(platformDir: string, startMjs: string): void {
-  const mcpConfigPath = join(homedir(), platformDir, "settings", "mcp.json");
+  const mcpConfigPath = join(homedir(), platformDir, "agent", "mcp.json");
   let mcpConfig: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
   if (existsSync(mcpConfigPath)) {
     try {
@@ -437,17 +440,57 @@ function registerContextModeMcp(platformDir: string, startMjs: string): void {
     }
   }
 
-  mcpConfig.mcpServers["context-mode"] = {
+  // Use the wrapper to preserve project directory and inject routing rules;
+  // fall back to direct start.mjs if supipowers was removed but supi-context-mode remains
+  const wrapperMjs = join(
+    homedir(), platformDir, "agent", "extensions", "supipowers", "bin", "ctx-mode-wrapper.mjs",
+  );
+  const args = existsSync(wrapperMjs) ? [wrapperMjs, startMjs] : [startMjs];
+
+  // Remove legacy "context-mode" entry (renamed to "supi-context-mode" in v0.5.x)
+  delete mcpConfig.mcpServers["context-mode"];
+
+  mcpConfig.mcpServers["supi-context-mode"] = {
     command: "bun",
-    args: [startMjs],
+    args,
   };
 
   mkdirSync(dirname(mcpConfigPath), { recursive: true });
   writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
   note(
-    `Registered in ~/${platformDir}/settings/mcp.json`,
-    `context-mode (${platformDir})`,
+    `Registered in ~/${platformDir}/agent/mcp.json`,
+    `supi-context-mode (${platformDir})`,
   );
+
+  cleanupLegacyMcp(platformDir);
+}
+
+/**
+ * Remove stale MCP artifacts from pre-v0.5.x installs.
+ *
+ * Before the path fix, the installer wrote to ~/<platformDir>/settings/mcp.json
+ * instead of ~/<platformDir>/agent/mcp.json. Clean up both the old file and any
+ * leftover "context-mode" key (now "supi-context-mode").
+ */
+function cleanupLegacyMcp(platformDir: string): void {
+  const oldMcpPath = join(homedir(), platformDir, "settings", "mcp.json");
+  if (!existsSync(oldMcpPath)) return;
+
+  try {
+    const config = JSON.parse(readFileSync(oldMcpPath, "utf8"));
+    delete config.mcpServers?.["context-mode"];
+    delete config.mcpServers?.["supi-context-mode"];
+
+    if (!config.mcpServers || Object.keys(config.mcpServers).length === 0) {
+      rmSync(oldMcpPath);
+    } else {
+      // Other servers exist — keep the file, just remove our entries
+      writeFileSync(oldMcpPath, JSON.stringify(config, null, 2));
+    }
+  } catch {
+    // Corrupted — remove it
+    try { rmSync(oldMcpPath); } catch { /* best effort */ }
+  }
 }
 
 // ── Main ─────────────────────────────────────────────────────
@@ -544,7 +587,7 @@ async function main(): Promise<void> {
   for (const target of targets) {
     installToPlatform(target.dir, packageRoot);
 
-    // ── Step 3b: Install context-mode extension + register MCP ──
+    // ── Step 3b: Install supi-context-mode extension + register MCP ──
     await installContextMode(target.dir);
   }
 
