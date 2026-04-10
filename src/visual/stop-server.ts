@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-export function stopVisualServer(sessionDir: string): { status: "stopped" | "not_running" } {
+export function stopVisualServer(
+  sessionDir: string,
+ ): { status: "stopped" | "not_running" | "failed" } {
   const pidFile = path.join(sessionDir, ".server.pid");
 
   if (!fs.existsSync(pidFile)) {
@@ -13,20 +15,25 @@ export function stopVisualServer(sessionDir: string): { status: "stopped" | "not
 
   if (isNaN(pid)) {
     // Corrupt PID file — clean up and treat as not running
-    fs.rmSync(pidFile, { force: true });
-    fs.rmSync(path.join(sessionDir, ".server-info"), { force: true });
+    cleanupServerArtifacts(sessionDir);
     return { status: "not_running" };
   }
 
   try {
     process.kill(pid);
-  } catch {
-    // Process already dead (ESRCH) or permission error — proceed with cleanup
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH") {
+      return { status: "failed" };
+    }
   }
 
-  fs.rmSync(pidFile, { force: true });
+  cleanupServerArtifacts(sessionDir);
+  return { status: "stopped" };
+}
+
+function cleanupServerArtifacts(sessionDir: string): void {
+  fs.rmSync(path.join(sessionDir, ".server.pid"), { force: true });
   fs.rmSync(path.join(sessionDir, ".server.log"), { force: true });
   fs.rmSync(path.join(sessionDir, ".server-info"), { force: true });
-
-  return { status: "stopped" };
 }
