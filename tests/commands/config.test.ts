@@ -105,6 +105,25 @@ describe("buildSettings", () => {
     expect(readProjectConfig(localPaths, tmpDir)).toEqual(originalConfig);
   });
 
+  test("settings no longer expose Default profile", () => {
+    const inspection: InspectionLoadResult = {
+      mergedConfig: DEFAULT_CONFIG as unknown as Record<string, unknown>,
+      effectiveConfig: DEFAULT_CONFIG,
+      parseErrors: [],
+      validationErrors: [],
+    };
+
+    const settings = buildSettings(platform, ctx, inspection, {
+      inspectConfig: mock(() => inspection),
+      updateConfig: mock(updateConfig),
+      setupGates: mock(),
+      interactivelySaveGateSetup: mock(),
+      checkInstallation: mock(async () => ({ cliInstalled: false, mcpConfigured: false, toolsAvailable: false })),
+    } as any);
+
+    expect(settings.map((setting) => setting.label)).not.toContain("Default profile");
+  });
+
   test("qa framework setting persists only qa.framework", async () => {
     const inspection: InspectionLoadResult = {
       mergedConfig: DEFAULT_CONFIG as unknown as Record<string, unknown>,
