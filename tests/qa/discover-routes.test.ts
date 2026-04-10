@@ -24,11 +24,12 @@ function fixture(rel: string, content = ""): void {
 // ─── nextjs-app ──────────────────────────────────────────
 
 describe("nextjs-app", () => {
-  test("app/page.tsx is discovered as a page", () => {
+  test("app/page.tsx resolves to '/'", () => {
     fixture("app/page.tsx", "export default function Home() { return <div/>; }");
     const routes = discoverRoutes(tmpDir, "nextjs-app");
     const page = routes.find((r) => r.type === "page" && r.file === "app/page.tsx");
     expect(page).toBeDefined();
+    expect(page!.path).toBe("/");
     expect(page!.type).toBe("page");
   });
 
@@ -72,11 +73,12 @@ describe("nextjs-app", () => {
 // ─── nextjs-pages ────────────────────────────────────────
 
 describe("nextjs-pages", () => {
-  test("pages/index.tsx is discovered as a page", () => {
+  test("pages/index.tsx resolves to '/'", () => {
     fixture("pages/index.tsx", "export default function Index() {}");
     const routes = discoverRoutes(tmpDir, "nextjs-pages");
     const page = routes.find((r) => r.type === "page" && r.file === "pages/index.tsx");
     expect(page).toBeDefined();
+    expect(page!.path).toBe("/");
   });
 
   test("pages/about.tsx → route '/about'", () => {

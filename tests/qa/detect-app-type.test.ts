@@ -40,6 +40,20 @@ describe("detectAppType", () => {
     expect(result.type).toBe("nextjs-app");
   });
 
+  test("Next.js App Router — app/ dir without next.config is still detected", () => {
+    fs.mkdirSync(path.join(tmpDir, "app"), { recursive: true });
+
+    const result = detectAppType(tmpDir);
+    expect(result.type).toBe("nextjs-app");
+  });
+
+  test("Next.js Pages Router — pages/ dir without next.config is still detected", () => {
+    fs.mkdirSync(path.join(tmpDir, "pages"), { recursive: true });
+
+    const result = detectAppType(tmpDir);
+    expect(result.type).toBe("nextjs-pages");
+  });
+
   test("Vite — vite.config.ts present", () => {
     fs.writeFileSync(path.join(tmpDir, "vite.config.ts"), "");
 
