@@ -37,12 +37,14 @@ export function detectAppType(cwd: string): AppDetection {
     fileExists(cwd, "next.config.js") ||
     fileExists(cwd, "next.config.mjs") ||
     fileExists(cwd, "next.config.ts");
+  const hasNextAppDir = dirExists(cwd, "app") || dirExists(cwd, "src", "app");
+  const hasNextPagesDir = dirExists(cwd, "pages") || dirExists(cwd, "src", "pages");
 
-  if (hasNextConfig) {
+  if (hasNextConfig || hasNextAppDir || hasNextPagesDir) {
     // Default nextjs-app; only switch to pages if pages dir exists and app dir does not
-    if (dirExists(cwd, "app") || dirExists(cwd, "src", "app")) {
+    if (hasNextAppDir) {
       type = "nextjs-app";
-    } else if (dirExists(cwd, "pages") || dirExists(cwd, "src", "pages")) {
+    } else if (hasNextPagesDir) {
       type = "nextjs-pages";
     } else {
       type = "nextjs-app";

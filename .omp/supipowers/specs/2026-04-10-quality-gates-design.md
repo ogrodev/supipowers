@@ -91,8 +91,6 @@ interface GateResult {
 
 If git-based changed-file detection returns no files or cannot determine a diff, the runner sets `fileScope: "all-files"` and passes an empty `changedFiles` array. Gates must treat that as an explicit repo-wide scope, not as a blocked or empty-input condition.
 
-Changed-file detection is part of the runner contract. It uses the current review behavior exactly: first `git diff --name-only HEAD`, then `git diff --name-only --cached` as a fallback when the first result is empty, and finally `fileScope: "all-files"` if both checks are empty or git is unavailable.
-
 This contract is intentionally small. The runner owns orchestration. The gate owns execution and result truthfulness.
 
 ### Config model
@@ -187,7 +185,7 @@ First iteration defines exactly three executable gates:
   - **Blocked when:** command execution cannot start or required runtime prerequisites are missing
 
 - `ai-review`
-  - **Input:** changed files, cwd, gate config, and the resolved review model from the command layer
+  - **Input:** changed files, cwd, and gate config
   - **Execution boundary:** the gate creates a dedicated agent session via the platform, sends a strict review prompt, waits for the final assistant message, parses that message as structured JSON, and converts that result into `GateResult`
   - **Output contract:** `{ summary: string, issues: GateIssue[], recommendedStatus: "passed" | "failed" }`
   - **Blocked when:** the model response is missing, malformed, or cannot be parsed into the declared output contract
@@ -203,8 +201,6 @@ interface StructuredAgentRunOptions {
   cwd: string;
   prompt: string;
   timeoutMs: number;
-  model?: string;
-  thinkingLevel?: string | null;
 }
 
 interface StructuredAgentRunResult {
@@ -217,12 +213,11 @@ interface StructuredAgentRunResult {
 Responsibilities:
 
 - create and dispose the agent session
-- use the already-resolved `/supi:review` model settings passed from the command layer
 - wait for completion or timeout
 - read the final assistant message text from session state
 - return a typed success/error result to the gate
 
-Model resolution stays centralized in the review command flow. The AI gate and adapter consume the resolved settings; they do not re-run model selection logic. `ai-review` is responsible for turning `finalText` into structured JSON. The adapter is responsible only for session lifecycle and final-message extraction. This boundary makes the gate independently understandable and testable.
+`ai-review` is responsible for turning `finalText` into structured JSON. The adapter is responsible only for session lifecycle and final-message extraction. This boundary makes the gate independently understandable and testable.
 
 ### Setup flow
 
@@ -317,8 +312,6 @@ interface ReviewReport {
   overallStatus: "passed" | "failed" | "blocked";
 }
 ```
-
-`selectedGates` means the post-filter gate IDs the runner attempted to execute. It does not include configured gates that were turned into `skipped` results by `--only` or `--skip`; those appear only in `gates`.
 
 `overallStatus` is `failed` if any gate failed, otherwise `blocked` if any gate was blocked, otherwise `passed`. There is no aggregate boolean because it loses information the system now knows.
 
