@@ -30,48 +30,48 @@ The installer detects your agent, registers the extension, and optionally sets u
 
 ### Requirements
 
-| Dependency | What it's for |
-| --- | --- |
-| [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) | The coding agent that supipowers extends |
-| [Bun](https://bun.sh) | Runtime — required for installation and the built-in SQLite FTS index |
-| [Git](https://git-scm.com) | Used by the installer and context-mode setup |
+| Dependency                                            | What it's for                                                         |
+| ----------------------------------------------------- | --------------------------------------------------------------------- |
+| [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) | The coding agent that supipowers extends                              |
+| [Bun](https://bun.sh)                                 | Runtime — required for installation and the built-in SQLite FTS index |
+| [Git](https://git-scm.com)                            | Used by the installer and context-mode setup                          |
 
 ### Optional dependencies
 
 The installer scans for these and offers to install any that are missing. Everything works without them, but each one unlocks additional capabilities.
 
-| Dependency | What it enables |
-| --- | --- |
-| [mcpc](https://github.com/apify/mcpc) | MCP server management via `/supi:mcp` |
+| Dependency                                              | What it enables                                                       |
+| ------------------------------------------------------- | --------------------------------------------------------------------- |
+| [mcpc](https://github.com/apify/mcpc)                   | MCP server management via `/supi:mcp`                                 |
 | [context-mode](https://github.com/ogrodev/context-mode) | Context window protection — large outputs are sandboxed automatically |
-| `typescript-language-server` | TypeScript/JS diagnostics and references in review gates |
-| `pyright` | Python type checking |
-| `rust-analyzer` | Rust language server |
-| `gopls` | Go language server |
-| `@playwright/cli` | Browser exploration and E2E test execution via `/supi:qa` |
+| `typescript-language-server`                            | TypeScript/JS diagnostics and references in review gates              |
+| `pyright`                                               | Python type checking                                                  |
+| `rust-analyzer`                                         | Rust language server                                                  |
+| `gopls`                                                 | Go language server                                                    |
+| `@playwright/cli`                                       | Browser exploration and E2E test execution via `/supi:qa`             |
 
 > [!NOTE]
 > LSP servers are language-specific — install only the ones that match your project's stack.
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `/supi` | Interactive menu with commands and project status |
-| `/supi:plan` | Collaborative planning with structured task breakdown |
-| `/supi:review` | Run quality gates at chosen depth |
-| `/supi:qa` | E2E testing pipeline with Playwright |
-| `/supi:fix-pr` | Assess and fix PR review comments |
-| `/supi:release` | Version bump, release notes, publish |
-| `/supi:commit` | AI-powered commit with conventional message generation |
-| `/supi:model` | Configure model assignments per action (plan, review, qa…) |
-| `/supi:context` | Show current context window usage and system prompt breakdown |
-| `/supi:optimize-context` | Analyze loaded prompt/context usage and suggest reductions |
-| `/supi:mcp` | Manage MCP servers (connect, disconnect, migrate) |
-| `/supi:config` | Interactive settings TUI |
-| `/supi:status` | Check running sub-agents and progress |
-| `/supi:doctor` | Diagnose extension health and missing dependencies |
-| `/supi:update` | Update supipowers to the latest version |
+| Command                  | What it does                                                  |
+| ------------------------ | ------------------------------------------------------------- |
+| `/supi`                  | Interactive menu with commands and project status             |
+| `/supi:plan`             | Collaborative planning with structured task breakdown         |
+| `/supi:review`           | Run quality gates at chosen depth                             |
+| `/supi:qa`               | E2E testing pipeline with Playwright                          |
+| `/supi:fix-pr`           | Assess and fix PR review comments                             |
+| `/supi:release`          | Version bump, release notes, publish                          |
+| `/supi:commit`           | AI-powered commit with conventional message generation        |
+| `/supi:model`            | Configure model assignments per action (plan, review, qa…)    |
+| `/supi:context`          | Show current context window usage and system prompt breakdown |
+| `/supi:optimize-context` | Analyze loaded prompt/context usage and suggest reductions    |
+| `/supi:mcp`              | Manage MCP servers (connect, disconnect, migrate)             |
+| `/supi:config`           | Interactive settings TUI                                      |
+| `/supi:status`           | Check running sub-agents and progress                         |
+| `/supi:doctor`           | Diagnose extension health and missing dependencies            |
+| `/supi:update`           | Update supipowers to the latest version                       |
 
 Commands like `/supi`, `/supi:config`, `/supi:commit`, and `/supi:status` are TUI-only — they open native dialogs without triggering the AI session.
 
@@ -85,39 +85,38 @@ Commands like `/supi`, `/supi:config`, `/supi:commit`, and `/supi:status` are TU
 
 **Context protection.** When [context-mode](https://github.com/ogrodev/context-mode) is detected, supipowers injects routing hooks that protect the agent's context window. Large outputs, file reads, and HTTP calls are automatically routed through sandboxed execution so only summaries enter the conversation.
 
-**Model assignment.** Each action (planning, review, QA) can be assigned a different model and thinking level. `/supi:model` opens a TUI picker backed by OMP's model registry.
+**Model assignment.** Each action can be assigned a different model and thinking level. `/supi:model` opens a TUI picker backed by OMP's model registry.
 
 ## Feature comparison with `obra/superpowers`
 
 > [!NOTE]
-> This compares current `supipowers` features with the capabilities documented in [`obra/superpowers`](https://github.com/obra/superpowers), based on its README and published skill list. `Not documented` means the feature is not described upstream, not that it is impossible.
+> Based on the current `supipowers` repo and the documented features in [`obra/superpowers`](https://github.com/obra/superpowers). ✅ = part of the current documented product surface. ❌ = not part of the current documented product surface.
 
-| Capability | supipowers | obra/superpowers |
-| --- | --- | --- |
-| Agent host support | OMP-native extension | Multi-agent distribution for Claude Code, Cursor, Codex, OpenCode, GitHub Copilot CLI, and Gemini CLI |
-| Primary trigger model | Explicit `/supi:*` slash commands plus reusable runtime skills | Automatic skill activation from initial instructions |
-| Planning and approval flow | `/supi:plan` guides scope → decompose → estimate → verify, saves plans, shows approval UI, then executes in-session | `brainstorming` + `writing-plans`, with design sign-off handled in chat before execution |
-| Parallel execution workflow | In-session orchestration for plan execution, QA, and fix-PR flows | Dedicated `dispatching-parallel-agents`, `executing-plans`, and `subagent-driven-development` skills |
-| Review workflow | `/supi:review` profiles combine LSP, AI review, code-quality, test, and E2E gates | `requesting-code-review` and `receiving-code-review` skills |
-| TDD, debugging, verification | Built-in `tdd`, `debugging`, `verification`, and `receiving-code-review` skills | `test-driven-development`, `systematic-debugging`, `verification-before-completion`, and `receiving-code-review` skills |
-| Browser QA / E2E automation | `/supi:qa` runs a Playwright-based product QA pipeline with regression tracking | Not documented in upstream README/skill list |
-| PR review comment remediation | `/supi:fix-pr` fetches review comments, evaluates them, then applies or rejects fixes with evidence | Not documented in upstream README/skill list |
-| Release and commit tooling | `/supi:release` and `/supi:commit` are first-class workflows | Not documented in upstream README/skill list |
-| Context-window tooling | `/supi:context`, `/supi:optimize-context`, and optional context-mode routing hooks | Not documented in upstream README/skill list |
-| MCP server management | `/supi:mcp` manages server registration, activation, and migration | Not documented in upstream README/skill list |
-| Config, model routing, diagnostics | `/supi:config`, `/supi:model`, `/supi:doctor`, `/supi:status` | Not documented in upstream README/skill list |
-| Git worktree workflow | No dedicated command today | Dedicated `using-git-worktrees` and `finishing-a-development-branch` skills |
-
+| What is being compared                | supipowers | obra/superpowers |
+| ------------------------------------- | ---------- | ---------------- |
+| OMP-native slash commands             | ✅         | ❌               |
+| Automatic skill activation            | ❌         | ✅               |
+| Plan approval UI                      | ✅         | ❌               |
+| Parallel agent execution workflow     | ✅         | ✅               |
+| Code review workflow                  | ✅         | ✅               |
+| TDD / debugging / verification skills | ✅         | ✅               |
+| Browser QA / Playwright workflow      | ✅         | ❌               |
+| PR review comment fixing workflow     | ✅         | ❌               |
+| Release automation                    | ✅         | ❌               |
+| Commit workflow                       | ✅         | ❌               |
+| Context-window optimizations          | ✅         | ❌               |
+| MCP server management through mcpc    | ✅         | ❌               |
+| Git worktree workflow                 | ❌         | ✅               |
 
 ## Quality profiles
 
 Three built-in profiles control how much `/supi:review` checks:
 
-| Profile | LSP | AI Review | Code Quality | Tests | E2E |
-| --- | --- | --- | --- | --- | --- |
-| `quick` | ✓ | quick scan | — | — | — |
-| `thorough` _(default)_ | ✓ | deep | ✓ | — | — |
-| `full-regression` | ✓ | deep | ✓ | ✓ | ✓ |
+| Profile                | LSP | AI Review  | Code Quality | Tests | E2E |
+| ---------------------- | --- | ---------- | ------------ | ----- | --- |
+| `quick`                | ✓   | quick scan | —            | —     | —   |
+| `thorough` _(default)_ | ✓   | deep       | ✓            | —     | —   |
+| `full-regression`      | ✓   | deep       | ✓            | ✓     | ✓   |
 
 Create custom profiles in `.omp/supipowers/profiles/`.
 
@@ -139,17 +138,17 @@ Configuration is a three-layer deep-merge (lowest to highest priority):
 
 Supipowers ships runtime-loaded prompt skills that are also available to the agent during regular sessions:
 
-| Skill | Used by |
-| --- | --- |
-| `planning` | `/supi:plan` |
-| `code-review` | `/supi:review` |
-| `qa-strategy` | `/supi:qa` |
-| `fix-pr` | `/supi:fix-pr` |
-| `debugging` | Agent sessions |
-| `tdd` | Agent sessions |
-| `verification` | Agent sessions |
-| `receiving-code-review` | Agent sessions |
-| `context-mode` | Context window guidance |
+| Skill                   | Used by                 |
+| ----------------------- | ----------------------- |
+| `planning`              | `/supi:plan`            |
+| `code-review`           | `/supi:review`          |
+| `qa-strategy`           | `/supi:qa`              |
+| `fix-pr`                | `/supi:fix-pr`          |
+| `debugging`             | Agent sessions          |
+| `tdd`                   | Agent sessions          |
+| `verification`          | Agent sessions          |
+| `receiving-code-review` | Agent sessions          |
+| `context-mode`          | Context window guidance |
 
 ## Development
 
