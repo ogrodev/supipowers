@@ -1,3 +1,6 @@
+import type { TSchema } from "@sinclair/typebox";
+import type { AgentSession, AgentSessionOptions, ExecOptions, ExecResult } from "./platform/types.js";
+
 // src/types.ts — Shared type definitions for supipowers
 
 /** Task complexity level */
@@ -35,12 +38,11 @@ export interface Notification {
   detail?: string;
 }
 
-/** Quality gate result */
-export interface GateResult {
-  gate: string;
-  passed: boolean;
-  issues: GateIssue[];
-}
+/** Canonical quality gate identifiers */
+export type GateId = "lsp-diagnostics" | "test-suite" | "ai-review";
+
+/** Aggregate gate execution status */
+export type GateStatus = "passed" | "failed" | "skipped" | "blocked";
 
 /** A single issue from a quality gate */
 export interface GateIssue {
@@ -48,15 +50,118 @@ export interface GateIssue {
   message: string;
   file?: string;
   line?: number;
+  detail?: string;
+}
+
+/** A single quality gate result */
+export interface GateResult {
+  gate: GateId;
+  status: GateStatus;
+  summary: string;
+  issues: GateIssue[];
+  metadata?: Record<string, unknown>;
+}
+
+/** Aggregate quality-gate summary */
+export interface GateSummary {
+  passed: number;
+  failed: number;
+  skipped: number;
+  blocked: number;
 }
 
 /** Review report */
 export interface ReviewReport {
-  profile: string;
   timestamp: string;
+  selectedGates: GateId[];
   gates: GateResult[];
-  passed: boolean;
+  summary: GateSummary;
+  overallStatus: Exclude<GateStatus, "skipped">;
 }
+
+/** Config for the lsp-diagnostics gate */
+export interface LspDiagnosticsGateConfig {
+  enabled: boolean;
+}
+
+/** Config for the ai-review gate */
+export interface AiReviewGateConfig {
+  enabled: boolean;
+  depth: "quick" | "deep";
+}
+
+/** Config for the test-suite gate */
+export type TestSuiteGateConfig =
+  | { enabled: false; command?: string | null }
+  | { enabled: true; command: string };
+
+/** Canonical quality gate config map */
+export interface QualityGatesConfig {
+  "lsp-diagnostics"?: LspDiagnosticsGateConfig;
+  "ai-review"?: AiReviewGateConfig;
+  "test-suite"?: TestSuiteGateConfig;
+}
+
+/** Gate filter options provided by commands */
+export interface GateFilters {
+  only?: GateId[];
+  skip?: GateId[];
+}
+
+/** Project facts used by gate setup/detection */
+export interface ProjectFacts {
+  cwd: string;
+  packageScripts: Record<string, string>;
+  lockfiles: string[];
+  activeTools: string[];
+  existingGates: QualityGatesConfig;
+}
+
+/** Recommendation returned by gate auto-detection */
+export interface GateDetectionResult<TConfig = unknown> {
+  suggestedConfig: TConfig | null;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+}
+
+/** Shared runtime context passed to each gate */
+export interface GateExecutionContext {
+  cwd: string;
+  changedFiles: string[];
+  scopeFiles: string[];
+  fileScope: "changed-files" | "all-files";
+  exec: (cmd: string, args: string[], opts?: ExecOptions) => Promise<ExecResult>;
+  execShell: (command: string, opts?: ExecOptions) => Promise<ExecResult>;
+  getLspDiagnostics: (
+    scopeFiles: string[],
+    fileScope: GateExecutionContext["fileScope"]
+  ) => Promise<GateIssue[]>;
+  createAgentSession: (
+    opts: Pick<AgentSessionOptions, "cwd" | "model" | "thinkingLevel">
+  ) => Promise<AgentSession>;
+  activeTools: string[];
+  reviewModel?: Pick<ResolvedModel, "model" | "thinkingLevel">;
+}
+
+/** Registered quality gate contract */
+export interface GateDefinition<TConfig> {
+  id: GateId;
+  description: string;
+  configSchema: TSchema;
+  detect(projectFacts: ProjectFacts): GateDetectionResult<TConfig> | null;
+  run(context: GateExecutionContext, config: TConfig): Promise<GateResult>;
+}
+
+/** A proposed quality-gate configuration */
+export interface SetupProposal {
+  gates: QualityGatesConfig;
+}
+
+/** Result of running the setup flow */
+export type SetupGatesResult =
+  | { status: "proposed"; proposal: SetupProposal }
+  | { status: "invalid"; proposal: SetupProposal; errors: string[] }
+  | { status: "cancelled"; proposal?: SetupProposal; errors?: string[] };
 
 // ── Release types ──────────────────────────────────────────
 
@@ -170,7 +275,9 @@ export interface ResolvedModel {
 /** Config shape */
 export interface SupipowersConfig {
   version: string;
-  defaultProfile: string;
+  quality: {
+    gates: QualityGatesConfig;
+  };
   lsp: {
     setupGuide: boolean;
   };
@@ -179,7 +286,6 @@ export interface SupipowersConfig {
   };
   qa: {
     framework: string | null;
-    command: string | null;
     e2e: boolean;
   };
   release: {
@@ -187,16 +293,4 @@ export interface SupipowersConfig {
   };
   contextMode: ContextModeConfig;
   mcp: McpManagementConfig;
-}
-
-/** Profile shape */
-export interface Profile {
-  name: string;
-  gates: {
-    lspDiagnostics: boolean;
-    aiReview: { enabled: boolean; depth: "quick" | "deep" };
-    codeQuality: boolean;
-    testSuite: boolean;
-    e2e: boolean;
-  };
 }

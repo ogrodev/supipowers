@@ -5,6 +5,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { loadConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
+import type { ReviewReport } from "../../src/types.js";
 import { createPaths } from "../../src/platform/types.js";
 
 const paths = createPaths(".omp");
@@ -46,6 +47,14 @@ describe("loadConfig", () => {
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
+  test("DEFAULT_CONFIG uses empty quality gate defaults", () => {
+    expect(DEFAULT_CONFIG).toMatchObject({
+      quality: { gates: {} },
+    });
+    expect("defaultProfile" in DEFAULT_CONFIG).toBe(false);
+  });
+
+
   test("merges project config over defaults", () => {
     const configDir = path.join(tmpDir, ".omp", "supipowers");
     fs.mkdirSync(configDir, { recursive: true });
@@ -58,6 +67,20 @@ describe("loadConfig", () => {
     expect(config.contextMode.enabled).toBe(true); // inherited from default
   });
 });
+
+describe("quality gate types", () => {
+  test("ReviewReport stores aggregate statuses instead of profile boolean", () => {
+    const report: ReviewReport = {
+      timestamp: "2026-04-10T00:00:00.000Z",
+      selectedGates: ["lsp-diagnostics"],
+      gates: [],
+      summary: { passed: 1, failed: 0, skipped: 0, blocked: 0 },
+      overallStatus: "passed",
+    };
+    expect(report.overallStatus).toBe("passed");
+  });
+});
+
 
 describe("saveConfig / updateConfig", () => {
   let tmpDir: string;

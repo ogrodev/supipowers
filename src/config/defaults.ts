@@ -1,9 +1,11 @@
 // src/config/defaults.ts
-import type { SupipowersConfig, Profile } from "../types.js";
+import type { SupipowersConfig } from "../types.js";
 
 export const DEFAULT_CONFIG: SupipowersConfig = {
   version: "1.0.0",
-  defaultProfile: "thorough",
+  quality: {
+    gates: {},
+  },
   lsp: {
     setupGuide: true,
   },
@@ -12,7 +14,6 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   },
   qa: {
     framework: null,
-    command: null,
     e2e: false,
   },
   release: {
@@ -31,38 +32,5 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   },
   mcp: {
     closeSessionsOnExit: false,
-  },
-};
-
-export const BUILTIN_PROFILES: Record<string, Profile> = {
-  quick: {
-    name: "quick",
-    gates: {
-      lspDiagnostics: true,
-      aiReview: { enabled: true, depth: "quick" },
-      codeQuality: false,
-      testSuite: false,
-      e2e: false,
-    },
-  },
-  thorough: {
-    name: "thorough",
-    gates: {
-      lspDiagnostics: true,
-      aiReview: { enabled: true, depth: "deep" },
-      codeQuality: true,
-      testSuite: false,
-      e2e: false,
-    },
-  },
-  "full-regression": {
-    name: "full-regression",
-    gates: {
-      lspDiagnostics: true,
-      aiReview: { enabled: true, depth: "deep" },
-      codeQuality: true,
-      testSuite: true,
-      e2e: true,
-    },
   },
 };
