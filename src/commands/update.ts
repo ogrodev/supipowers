@@ -1,8 +1,8 @@
 import type { Platform, PlatformContext } from "../platform/types.js";
 import type { DependencyStatus, InstallResult } from "../deps/registry.js";
 import { scanAll, installAll, formatReport } from "../deps/registry.js";
-import { readFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
 // ── Options builder ──────────────────────────────────────
@@ -94,6 +94,10 @@ async function updateSupipowers(
     // Copy extension files
     mkdirSync(extDir, { recursive: true });
     cpSync(join(downloadedRoot, "src"), join(extDir, "src"), { recursive: true });
+    const binSource = join(downloadedRoot, "bin");
+    if (existsSync(binSource)) {
+      cpSync(binSource, join(extDir, "bin"), { recursive: true });
+    }
     cpSync(join(downloadedRoot, "package.json"), join(extDir, "package.json"));
 
     // Copy skills
@@ -109,6 +113,9 @@ async function updateSupipowers(
         cpSync(skillFile, join(destDir, "SKILL.md"));
       }
     }
+
+    // Clean up legacy MCP entries and re-register with current name
+    cleanupLegacyMcp(agentDir);
 
     ctx.ui.notify(`supipowers updated to v${latestVersion}`, "info");
     return { updated: true, fromVersion: currentVersion, toVersion: latestVersion };
@@ -172,6 +179,63 @@ export function handleUpdate(platform: Platform, ctx: PlatformContext): void {
       );
     }
   })();
+}
+
+// ── Legacy cleanup ───────────────────────────────────────
+
+/**
+ * Remove stale MCP artifacts from pre-v0.5.x installs and re-register
+ * the supi-context-mode server under the correct name and path.
+ *
+ * Handles:
+ *  1. Old "context-mode" key in agent/mcp.json (renamed to "supi-context-mode")
+ *  2. Old settings/mcp.json file (wrong path — should be agent/mcp.json)
+ *  3. Re-registration of supi-context-mode with the wrapper entry point
+ */
+function cleanupLegacyMcp(agentDir: string): void {
+  const mcpConfigPath = join(agentDir, "mcp.json");
+
+  // Re-register supi-context-mode and remove old "context-mode" key
+  if (existsSync(mcpConfigPath)) {
+    try {
+      const config = JSON.parse(readFileSync(mcpConfigPath, "utf8"));
+      if (config.mcpServers) {
+        delete config.mcpServers["context-mode"];
+
+        // Re-register with wrapper if context-mode extension is installed
+        const platformRoot = dirname(agentDir);
+        const startMjs = join(platformRoot, "extensions", "context-mode", "start.mjs");
+        if (existsSync(startMjs)) {
+          const wrapperMjs = join(agentDir, "extensions", "supipowers", "bin", "ctx-mode-wrapper.mjs");
+          const args = existsSync(wrapperMjs) ? [wrapperMjs, startMjs] : [startMjs];
+          config.mcpServers["supi-context-mode"] = { command: "bun", args };
+        }
+
+        writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2));
+      }
+    } catch {
+      // Corrupted mcp.json — leave it for the user
+    }
+  }
+
+  // Remove old settings/mcp.json from pre-v0.5.x installs (wrong path)
+  const platformRoot = dirname(agentDir);
+  const oldMcpPath = join(platformRoot, "settings", "mcp.json");
+  if (!existsSync(oldMcpPath)) return;
+
+  try {
+    const config = JSON.parse(readFileSync(oldMcpPath, "utf8"));
+    delete config.mcpServers?.["context-mode"];
+    delete config.mcpServers?.["supi-context-mode"];
+
+    if (!config.mcpServers || Object.keys(config.mcpServers).length === 0) {
+      rmSync(oldMcpPath);
+    } else {
+      writeFileSync(oldMcpPath, JSON.stringify(config, null, 2));
+    }
+  } catch {
+    try { rmSync(oldMcpPath); } catch { /* best effort */ }
+  }
 }
 
 // ── Command registration ─────────────────────────────────
