@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 /** Estimate token count from text using chars/4 heuristic */
 export function estimateTokens(text: string): number {
   if (text.length === 0) return 0;
@@ -247,7 +249,7 @@ function extractXmlSections(
     const content = match[0];
     const label = filePath.toLowerCase().endsWith("agents.md")
       ? "AGENTS.md"
-      : `File: ${filePath.split("/").pop() || filePath}`;
+      : `File: ${basename(filePath) || filePath}`;
     sections.push({ label, bytes: byteLength(content), content });
     markConsumed(consumed, match.index, match.index + content.length);
   }
@@ -292,7 +294,7 @@ function extractHeadingSections(
 ): void {
   const headingPatterns: Array<{ pattern: RegExp; label: string }> = [
     { pattern: /^# Memory Guidance\b/m, label: "Memory" },
-    { pattern: /^# supi-context-mode — MANDATORY routing rules\b/m, label: "Routing rules" },
+    { pattern: /^# (?:supi-)?context-mode — MANDATORY routing rules\b/m, label: "Routing rules" },
     { pattern: /^## MCP Server Instructions\b/m, label: "MCP instructions" },
   ];
 
