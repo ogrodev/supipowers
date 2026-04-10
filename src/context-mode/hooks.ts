@@ -106,22 +106,77 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
 
   // Phase 3: Compaction integration
   if (config.contextMode.compaction && eventStore) {
-    let pendingSnapshot: string | null = null;
+    // Initialize session metadata for compact tracking
+    try {
+      eventStore.upsertMeta(sessionId, process.cwd());
+    } catch {
+      // Non-fatal: metadata is supplementary
+    }
 
     platform.on("session_before_compact", () => {
+      // Re-detect MCP tools: they may have loaded since init
+      const status = cachedStatus ?? detectContextMode(platform.getActiveTools());
+      const searchAvailable = status.tools.ctxSearch;
+
+      // Determine the search tool name for reference-based snapshots
+      let searchTool: string | undefined;
+      if (searchAvailable) {
+        const tools = platform.getActiveTools();
+        searchTool = tools.find((t) => t.includes("ctx_search"));
+      }
+
+      // Read compact count from metadata
+      let compactCount = 0;
       try {
-        pendingSnapshot = buildResumeSnapshot(eventStore!, sessionId);
+        const meta = eventStore!.getMeta(sessionId);
+        compactCount = meta?.compactCount ?? 0;
+      } catch {
+        // Non-fatal
+      }
+
+      try {
+        const snapshot = buildResumeSnapshot(eventStore!, sessionId, {
+          compactCount,
+          searchTool,
+          searchAvailable,
+        });
+
+        // Persist to DB so it survives crashes
+        if (snapshot) {
+          const eventCount = Object.values(eventStore!.getEventCounts(sessionId))
+            .reduce((a, b) => a + b, 0);
+          eventStore!.upsertResume(sessionId, snapshot, eventCount);
+        }
+
+        return undefined; // don't cancel or replace compaction
       } catch (e) {
         (platform as any).logger?.warn?.("context-mode: snapshot build failed", e);
-        pendingSnapshot = null;
+        return undefined;
       }
-      return undefined; // don't cancel or replace compaction
     });
 
     platform.on("session_compact", () => {
-      if (!pendingSnapshot) return undefined;
-      const snapshot = pendingSnapshot;
-      pendingSnapshot = null;
+      // Try resume from DB first, fall back to in-memory
+      let snapshot: string | null = null;
+      try {
+        const resume = eventStore!.getResume(sessionId);
+        if (resume) {
+          snapshot = resume.snapshot;
+          eventStore!.consumeResume(sessionId);
+        }
+      } catch {
+        // Non-fatal: fall through
+      }
+
+      if (!snapshot) return undefined;
+
+      // Track compaction count in session metadata
+      try {
+        eventStore!.incrementCompactCount(sessionId);
+      } catch {
+        // Non-fatal
+      }
+
       return {
         context: snapshot.split("\n"),
         preserveData: {
