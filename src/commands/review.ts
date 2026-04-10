@@ -1,12 +1,16 @@
 import type { Platform } from "../platform/types.js";
 import { loadConfig } from "../config/loader.js";
-import { listProfiles, resolveProfile } from "../config/profiles.js";
-import { buildReviewPrompt } from "../quality/gate-runner.js";
-import { isLspAvailable } from "../lsp/detector.js";
-import { notifyInfo, notifyWarning } from "../notifications/renderer.js";
+import { notifyInfo } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
+import { runQualityGates } from "../quality/runner.js";
+import type { GateFilters, GateId, QualityGatesConfig, ReviewReport } from "../types.js";
+import { CANONICAL_GATE_ORDER, type GateRegistry } from "../quality/registry.js";
+import { saveReviewReport } from "../storage/reports.js";
+import { lspDiagnosticsGate } from "../quality/gates/lsp-diagnostics.js";
+import { testSuiteGate } from "../quality/gates/test-suite.js";
+import { aiReviewGate } from "../quality/gates/ai-review.js";
 
 modelRegistry.register({
   id: "review",
@@ -15,102 +19,160 @@ modelRegistry.register({
   harnessRoleHint: "slow",
 });
 
+const REVIEW_GATE_REGISTRY: GateRegistry = {
+  "lsp-diagnostics": lspDiagnosticsGate,
+  "test-suite": testSuiteGate,
+  "ai-review": aiReviewGate,
+};
+
+export interface ReviewCommandDependencies {
+  loadModelConfig: typeof loadModelConfig;
+  createModelBridge: typeof createModelBridge;
+  resolveModelForAction: typeof resolveModelForAction;
+  applyModelOverride: typeof applyModelOverride;
+  loadConfig: typeof loadConfig;
+  runQualityGates: typeof runQualityGates;
+  saveReviewReport: typeof saveReviewReport;
+  notifyInfo: typeof notifyInfo;
+}
+
+const REVIEW_COMMAND_DEPENDENCIES: ReviewCommandDependencies = {
+  loadModelConfig,
+  createModelBridge,
+  resolveModelForAction,
+  applyModelOverride,
+  loadConfig,
+  runQualityGates,
+  saveReviewReport,
+  notifyInfo,
+};
+
+function tokenizeGateList(raw: string): string[] {
+  return raw
+    .split(/[\s,]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function extractFlagValues(args: string | undefined, flag: "--only" | "--skip"): string[] {
+  if (!args) {
+    return [];
+  }
+
+  const escapedFlag = flag.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+  const match = args.match(new RegExp(`${escapedFlag}\\s+([^]+?)(?=\\s--\\w+|$)`));
+  if (!match) {
+    return [];
+  }
+
+  return tokenizeGateList(match[1]);
+}
+
+function assertKnownGateIds(gateIds: string[]): GateId[] {
+  const uniqueGateIds = [...new Set(gateIds)];
+
+  for (const gateId of uniqueGateIds) {
+    if (!CANONICAL_GATE_ORDER.includes(gateId as GateId)) {
+      throw new Error(`Unknown gate id: ${gateId}`);
+    }
+  }
+
+  return uniqueGateIds as GateId[];
+}
+
+export function parseGateFilters(args: string | undefined): GateFilters {
+  const only = assertKnownGateIds(extractFlagValues(args, "--only"));
+  const skip = assertKnownGateIds(extractFlagValues(args, "--skip"));
+
+  if (only.length > 0 && skip.length > 0) {
+    throw new Error("--only and --skip are mutually exclusive.");
+  }
+
+  return {
+    ...(only.length > 0 ? { only } : {}),
+    ...(skip.length > 0 ? { skip } : {}),
+  };
+}
+
+function getEnabledGateIds(gates: QualityGatesConfig): GateId[] {
+  return CANONICAL_GATE_ORDER.filter((gateId) => gates[gateId]?.enabled === true);
+}
+
+function validateGateSelection(enabledGateIds: GateId[], filters: GateFilters): void {
+  if (enabledGateIds.length === 0) {
+    throw new Error("No quality gates configured. Run /supi:config → Setup quality gates.");
+  }
+
+  if (filters.only) {
+    for (const gateId of filters.only) {
+      if (!enabledGateIds.includes(gateId)) {
+        throw new Error(`Gate ${gateId} is not configured or is disabled.`);
+      }
+    }
+  }
+
+  const selectedGateIds = filters.only?.length
+    ? enabledGateIds.filter((gateId) => filters.only?.includes(gateId))
+    : enabledGateIds;
+  const skippedGateIds = new Set(filters.skip ?? []);
+  const runnableGateIds = selectedGateIds.filter((gateId) => !skippedGateIds.has(gateId));
+
+  if (runnableGateIds.length === 0) {
+    throw new Error("The current filters leave no selected gates to run.");
+  }
+}
+
+export function buildReviewSummary(report: ReviewReport, reportPath: string): string {
+  const orderedGates = [...report.gates].sort(
+    (left, right) =>
+      CANONICAL_GATE_ORDER.indexOf(left.gate) - CANONICAL_GATE_ORDER.indexOf(right.gate),
+  );
+
+  return [
+    `passed: ${report.summary.passed} | failed: ${report.summary.failed} | blocked: ${report.summary.blocked} | skipped: ${report.summary.skipped}`,
+    ...orderedGates.map((gate) => `${gate.gate}: ${gate.status}`),
+    `saved: ${reportPath}`,
+  ].join("\n");
+}
+
+export async function handleReview(
+  platform: Platform,
+  ctx: any,
+  args: string | undefined,
+  deps: ReviewCommandDependencies = REVIEW_COMMAND_DEPENDENCIES,
+): Promise<void> {
+  const modelCfg = deps.loadModelConfig(platform.paths, ctx.cwd);
+  const bridge = deps.createModelBridge(platform);
+  const resolved = deps.resolveModelForAction("review", modelRegistry, modelCfg, bridge);
+  await deps.applyModelOverride(platform, ctx, "review", resolved);
+
+  const config = deps.loadConfig(platform.paths, ctx.cwd);
+  const enabledGateIds = getEnabledGateIds(config.quality.gates);
+  const filters = parseGateFilters(args);
+  validateGateSelection(enabledGateIds, filters);
+
+  const report = await deps.runQualityGates({
+    platform,
+    cwd: ctx.cwd,
+    gates: config.quality.gates,
+    filters,
+    reviewModel: resolved,
+    gateRegistry: REVIEW_GATE_REGISTRY,
+  });
+  const reportPath = deps.saveReviewReport(platform.paths, ctx.cwd, report);
+
+  deps.notifyInfo(
+    ctx,
+    `Review complete: ${report.overallStatus}`,
+    buildReviewSummary(report, reportPath),
+  );
+}
+
 export function registerReviewCommand(platform: Platform): void {
   platform.registerCommand("supi:review", {
-    description: "Run quality gates at chosen depth (quick/thorough/full-regression)",
+    description: "Run configured quality gates",
     async handler(args: string | undefined, ctx: any) {
-      // Resolve and apply model override early — before any logic that might fail
-      const modelCfg = loadModelConfig(platform.paths, ctx.cwd);
-      const bridge = createModelBridge(platform);
-      const resolved = resolveModelForAction("review", modelRegistry, modelCfg, bridge);
-      await applyModelOverride(platform, ctx, "review", resolved);
-
-      const config = loadConfig(platform.paths, ctx.cwd);
-
-      let profileOverride: string | undefined;
-      if (args?.includes("--quick")) profileOverride = "quick";
-      else if (args?.includes("--thorough")) profileOverride = "thorough";
-      else if (args?.includes("--full")) profileOverride = "full-regression";
-      else if (args?.includes("--profile")) {
-        const match = args.match(/--profile\s+(\S+)/);
-        if (match) profileOverride = match[1];
-      }
-
-      // If no flag provided and UI is available, let the user pick
-      if (!profileOverride && ctx.hasUI) {
-        const profiles = listProfiles(platform.paths, ctx.cwd);
-        const choice = await ctx.ui.select(
-          "Review profile",
-          profiles,
-          {
-            initialIndex: profiles.indexOf(config.defaultProfile),
-            helpText: "Select review depth · Esc to cancel",
-          },
-        );
-        if (!choice) return;
-        profileOverride = choice;
-      }
-
-      const profile = resolveProfile(platform.paths, ctx.cwd, config, profileOverride);
-      const lsp = isLspAvailable(platform.getActiveTools());
-
-      if (!lsp && profile.gates.lspDiagnostics) {
-        notifyWarning(
-          ctx,
-          "LSP not available",
-          "Review will continue without LSP diagnostics. Run /supi:config for setup."
-        );
-      }
-
-      let changedFiles: string[] = [];
-      try {
-        const result = await platform.exec("git", ["diff", "--name-only", "HEAD"], { cwd: ctx.cwd });
-        if (result.code === 0) {
-          changedFiles = result.stdout
-            .split("\n")
-            .map((f) => f.trim())
-            .filter((f) => f.length > 0);
-        }
-      } catch {
-        // If git fails, we'll review without file filtering
-      }
-
-      if (changedFiles.length === 0) {
-        try {
-          const result = await platform.exec("git", ["diff", "--name-only", "--cached"], { cwd: ctx.cwd });
-          if (result.code === 0) {
-            changedFiles = result.stdout
-              .split("\n")
-              .map((f) => f.trim())
-              .filter((f) => f.length > 0);
-          }
-        } catch {
-          // continue without
-        }
-      }
-
-      if (changedFiles.length === 0) {
-        notifyInfo(ctx, "No changed files detected", "Reviewing all files in scope");
-      }
-
-      const reviewPrompt = buildReviewPrompt({
-        profile,
-        changedFiles,
-        testCommand: config.qa.command,
-        lspAvailable: lsp,
-      });
-
-      notifyInfo(ctx, `Review started`, `profile: ${profile.name}`);
-
-
-      platform.sendMessage(
-        {
-          customType: "supi-review",
-          content: [{ type: "text", text: reviewPrompt }],
-          display: "none",
-        },
-        { deliverAs: "steer", triggerTurn: true }
-      );
+      await handleReview(platform, ctx, args);
     },
   });
 }
