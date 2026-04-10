@@ -12,6 +12,8 @@ import type { E2eQaConfig, AppType, E2eRegression } from "../qa/types.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
+import { detectAppType } from "../qa/detect-app-type.js";
+import { discoverRoutes } from "../qa/discover-routes.js";
 
 modelRegistry.register({
   id: "qa",
@@ -128,17 +130,10 @@ export function registerQaCommand(platform: Platform): void {
       let detectedPort: number | null = null;
 
       try {
-        const detectResult = await platform.exec("bash", [
-          `${scriptsDir}/detect-app-type.sh`,
-          toBashPath(ctx.cwd),
-        ], { cwd: ctx.cwd });
-
-        if (detectResult.code === 0) {
-          const detected = JSON.parse(detectResult.stdout.trim());
-          detectedType = detected.type;
-          detectedDevCommand = detected.devCommand;
-          detectedPort = detected.port;
-        }
+        const detected = detectAppType(ctx.cwd);
+        detectedType = detected.type;
+        detectedDevCommand = detected.devCommand;
+        detectedPort = detected.port;
       } catch { /* proceed without detection */ }
 
       // ── Step 2: Load or create config ────────────────────────────────
@@ -190,14 +185,9 @@ export function registerQaCommand(platform: Platform): void {
       // ── Step 4: Route discovery ──────────────────────────────────────
       let discoveredRoutes = "";
       try {
-        const routeResult = await platform.exec("bash", [
-          `${scriptsDir}/discover-routes.sh`,
-          toBashPath(ctx.cwd),
-          config.app.type,
-        ], { cwd: ctx.cwd });
-
-        if (routeResult.code === 0 && routeResult.stdout.trim()) {
-          discoveredRoutes = routeResult.stdout.trim();
+        const routes = discoverRoutes(ctx.cwd, config.app.type);
+        if (routes.length > 0) {
+          discoveredRoutes = routes.map((r) => JSON.stringify(r)).join("\n");
         }
       } catch { /* agent will discover routes manually */ }
 
