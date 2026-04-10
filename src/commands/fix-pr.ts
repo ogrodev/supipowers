@@ -16,6 +16,7 @@ import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { detectBotReviewers } from "../fix-pr/bot-detector.js";
+import { fetchPrComments } from "../fix-pr/fetch-comments.js";
 
 modelRegistry.register({
   id: "fix-pr",
@@ -141,17 +142,12 @@ export function registerFixPrCommand(platform: Platform): void {
       // ── Step 4: Fetch initial comments ─────────────────────────────
       const sessionDir = toBashPath(getSessionDir(platform.paths, ctx.cwd, ledger.id));
       const scriptsDir = getScriptsDir();
-      const snapshotPath = toBashPath(path.join(sessionDir, "snapshots", `comments-${ledger.iteration}.jsonl`));
+      const snapshotPath = path.join(sessionDir, "snapshots", `comments-${ledger.iteration}.jsonl`);
 
-      const fetchResult = await platform.exec("bash", [
-        `${scriptsDir}/fetch-pr-comments.sh`,
-        repo,
-        String(prNumber),
-        snapshotPath,
-      ], { cwd: ctx.cwd });
+      const fetchError = await fetchPrComments(platform, repo, prNumber, snapshotPath, ctx.cwd);
 
-      if (fetchResult.code !== 0) {
-        notifyError(ctx, "Failed to fetch PR comments", fetchResult.stderr);
+      if (fetchError) {
+        notifyError(ctx, "Failed to fetch PR comments", fetchError);
         return;
       }
 
