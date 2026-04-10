@@ -14,7 +14,8 @@ interface ToolResultEventResult {
 
 const BASH_HEAD_LINES = 5;
 const BASH_TAIL_LINES = 10;
-const READ_PREVIEW_LINES = 10;
+const READ_HEAD_LINES = 80;
+const READ_TAIL_LINES = 30;
 const GREP_MAX_MATCHES = 10;
 const FIND_MAX_PATHS = 20;
 
@@ -68,23 +69,25 @@ function compressBash(text: string, details: unknown): string | undefined {
   ].join("\n");
 }
 
-/** Compress read tool output */
+/** Compress read tool output — head+tail with hashline preservation */
 function compressRead(text: string, input: Record<string, unknown>): string | undefined {
-  // Scoped reads (offset/limit) are already targeted — pass through
-  if (input.offset !== undefined || input.limit !== undefined) return undefined;
+  // Scoped reads (offset/limit/sel) are already targeted — pass through
+  if (input.offset != null || input.limit != null || input.sel != null) return undefined;
 
   const lines = text.split("\n");
   const totalLines = lines.length;
-  const path = typeof input.path === "string" ? input.path : "unknown";
 
-  if (totalLines <= READ_PREVIEW_LINES) return undefined;
+  if (totalLines <= READ_HEAD_LINES + READ_TAIL_LINES) return undefined;
 
-  const preview = lines.slice(0, READ_PREVIEW_LINES);
+  const head = lines.slice(0, READ_HEAD_LINES);
+  const tail = lines.slice(-READ_TAIL_LINES);
+  const omittedStart = READ_HEAD_LINES + 1;
+  const omittedEnd = totalLines - READ_TAIL_LINES;
+
   return [
-    `File: ${path} (${totalLines} lines total)`,
-    "",
-    ...preview,
-    `[...compressed: remaining ${totalLines - READ_PREVIEW_LINES} lines omitted...]`,
+    ...head,
+    `[...${omittedEnd - omittedStart + 1} lines omitted. Use read(path, sel="L${omittedStart}-L${omittedEnd}") to view...]`,
+    ...tail,
   ].join("\n");
 }
 
