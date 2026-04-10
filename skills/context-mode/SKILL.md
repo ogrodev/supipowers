@@ -33,10 +33,6 @@ Instead use:
 - `ctx_execute(language: "shell", code: "find ...")` to run in sandbox
 - `ctx_batch_execute(commands, queries)` for multiple searches
 
-### Read (full-file, no limit) — BLOCKED
-Reading an entire file without a `limit` parameter is blocked.
-- If you need to **Edit** the file → re-call Read with `limit` parameter (e.g., `limit: 200`)
-- If you need to **analyze or explore** → use `ctx_execute_file(path, language, code)` instead. Only your printed summary enters context.
 
 ## REDIRECTED tools — use sandbox equivalents
 
@@ -46,9 +42,9 @@ For everything else, use:
 - `ctx_batch_execute(commands, queries)` — run multiple commands + search in ONE call
 - `ctx_execute(language: "shell", code: "...")` — run in sandbox, only stdout enters context
 
-### Read (for analysis)
-If you are reading a file to **Edit** it → Read with `limit` is correct (Edit needs content in context).
-If you are reading to **analyze, explore, or summarize** → use `ctx_execute_file(path, language, code)` instead. Only your printed summary enters context. The raw file content stays in the sandbox.
+### Read (large files)
+Reads are never blocked — they always go through OMP's native read tool so hashline anchors (`N#XX`) are preserved for the edit contract. Large file reads (>110 lines) are automatically compressed to head (80 lines) + tail (30 lines) with a `sel` hint for the omitted section.
+For analysis-only reads where hashlines aren't needed, `ctx_execute_file(path, language, code)` remains more efficient — only your printed summary enters context.
 
 ## Tool selection hierarchy
 
