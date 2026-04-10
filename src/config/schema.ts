@@ -1,55 +1,160 @@
 // src/config/schema.ts
+import type { TSchema } from "@sinclair/typebox";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { SupipowersConfig, Profile } from "../types.js";
+import type { SupipowersConfig } from "../types.js";
 
-const ConfigSchema = Type.Object({
-  version: Type.String(),
-  defaultProfile: Type.String(),
-  orchestration: Type.Object({
-    maxParallelAgents: Type.Number({ minimum: 1, maximum: 10 }),
-    maxFixRetries: Type.Number({ minimum: 0, maximum: 5 }),
-    maxNestingDepth: Type.Number({ minimum: 0, maximum: 5 }),
-    modelPreference: Type.String(),
-  }),
-  lsp: Type.Object({
-    setupGuide: Type.Boolean(),
-  }),
-  notifications: Type.Object({
-    verbosity: Type.Union([
-      Type.Literal("quiet"),
-      Type.Literal("normal"),
-      Type.Literal("verbose"),
-    ]),
-  }),
-  qa: Type.Object({
-    framework: Type.Union([Type.String(), Type.Null()]),
-    command: Type.Union([Type.String(), Type.Null()]),
-    e2e: Type.Boolean(),
-  }),
-  release: Type.Object({
-    pipeline: Type.Union([Type.String(), Type.Null()]),
-  }),
-  contextMode: Type.Object({
+
+const LspDiagnosticsGateConfigSchema = Type.Object(
+  {
     enabled: Type.Boolean(),
-    compressionThreshold: Type.Number({ minimum: 1024 }),
-    blockHttpCommands: Type.Boolean(),
-    routingInstructions: Type.Boolean(),
-    eventTracking: Type.Boolean(),
-    compaction: Type.Boolean(),
-    llmSummarization: Type.Boolean(),
-    llmThreshold: Type.Number({ minimum: 4096 }),
-  }),
-  mcp: Type.Object({
-    closeSessionsOnExit: Type.Boolean(),
-  }),
-});
+  },
+  { additionalProperties: false },
+);
+
+const AiReviewGateConfigSchema = Type.Object(
+  {
+    enabled: Type.Boolean(),
+    depth: Type.Union([Type.Literal("quick"), Type.Literal("deep")]),
+  },
+  { additionalProperties: false },
+);
+
+const TestSuiteGateConfigSchema = Type.Union([
+  Type.Object(
+    {
+      enabled: Type.Literal(false),
+      command: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      enabled: Type.Literal(true),
+      command: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const QualityGatesSchema = Type.Object(
+  {
+    "lsp-diagnostics": Type.Optional(LspDiagnosticsGateConfigSchema),
+    "ai-review": Type.Optional(AiReviewGateConfigSchema),
+    "test-suite": Type.Optional(TestSuiteGateConfigSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const ConfigSchema = Type.Object(
+  {
+    version: Type.String(),
+    quality: Type.Object(
+      {
+        gates: QualityGatesSchema,
+      },
+      { additionalProperties: false },
+    ),
+    lsp: Type.Object(
+      {
+        setupGuide: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
+    notifications: Type.Object(
+      {
+        verbosity: Type.Union([
+          Type.Literal("quiet"),
+          Type.Literal("normal"),
+          Type.Literal("verbose"),
+        ]),
+      },
+      { additionalProperties: false },
+    ),
+    qa: Type.Object(
+      {
+        framework: Type.Union([Type.String(), Type.Null()]),
+        e2e: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
+    release: Type.Object(
+      {
+        channels: Type.Array(
+          Type.Union([Type.Literal("github"), Type.Literal("npm")]),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    contextMode: Type.Object(
+      {
+        enabled: Type.Boolean(),
+        compressionThreshold: Type.Number({ minimum: 1024 }),
+        blockHttpCommands: Type.Boolean(),
+        routingInstructions: Type.Boolean(),
+        eventTracking: Type.Boolean(),
+        compaction: Type.Boolean(),
+        llmSummarization: Type.Boolean(),
+        llmThreshold: Type.Number({ minimum: 4096 }),
+        enforceRouting: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
+    mcp: Type.Object(
+      {
+        closeSessionsOnExit: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export interface ConfigParseError {
+  source: "global" | "project";
+  path: string;
+  message: string;
+}
+
+export interface ConfigValidationError {
+  path: string;
+  message: string;
+}
+
+export interface InspectionLoadResult {
+  mergedConfig: Record<string, unknown>;
+  effectiveConfig: SupipowersConfig | null;
+  parseErrors: ConfigParseError[];
+  validationErrors: ConfigValidationError[];
+}
+
+function normalizeErrorPath(path: string): string {
+  return path.replace(/^\//, "").replace(/\//g, ".") || "(root)";
+}
+
+function collectValidationErrors(schema: TSchema, data: unknown): ConfigValidationError[] {
+  return [...Value.Errors(schema, data)].map((error) => ({
+    path: normalizeErrorPath(error.path),
+    message: error.message,
+  }));
+}
+
+export function validateQualityGates(data: unknown): { valid: boolean; errors: string[] } {
+  const errors = collectValidationErrors(QualityGatesSchema, data).map(
+    (error) => `${error.path}: ${error.message}`,
+  );
+
+  return { valid: errors.length === 0, errors };
+}
+
+export function collectConfigValidationErrors(data: unknown): ConfigValidationError[] {
+  return collectValidationErrors(ConfigSchema, data);
+}
 
 export function validateConfig(data: unknown): { valid: boolean; errors: string[] } {
-  const valid = Value.Check(ConfigSchema, data);
-  if (valid) return { valid: true, errors: [] };
-  const errors = [...Value.Errors(ConfigSchema, data)].map(
-    (e) => `${e.path}: ${e.message}`
+  const errors = collectConfigValidationErrors(data).map(
+    (error) => `${error.path}: ${error.message}`,
   );
-  return { valid: false, errors };
+
+  return { valid: errors.length === 0, errors };
 }

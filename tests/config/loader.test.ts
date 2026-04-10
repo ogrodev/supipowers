@@ -3,12 +3,54 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { loadConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
+import { loadConfig, inspectConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { ReviewReport } from "../../src/types.js";
 import { createPaths } from "../../src/platform/types.js";
 
 const paths = createPaths(".omp");
+
+function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
+  return {
+    dotDir: ".omp",
+    dotDirDisplay: ".omp",
+    project: (cwd: string, ...segments: string[]) =>
+      path.join(cwd, ".omp", "supipowers", ...segments),
+    global: (...segments: string[]) =>
+      path.join(rootDir, "global-config", ".omp", "supipowers", ...segments),
+    agent: (...segments: string[]) => path.join(rootDir, "agent", ...segments),
+  };
+}
+
+function writeJsonFile(filePath: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data));
+}
+
+function writeProjectConfig(
+  localPaths: ReturnType<typeof createPaths>,
+  cwd: string,
+  data: unknown
+): void {
+  writeJsonFile(localPaths.project(cwd, "config.json"), data);
+}
+
+function writeRawProjectConfig(
+  localPaths: ReturnType<typeof createPaths>,
+  cwd: string,
+  raw: string
+): void {
+  const filePath = localPaths.project(cwd, "config.json");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, raw);
+}
+
+function writeGlobalConfig(
+  localPaths: ReturnType<typeof createPaths>,
+  data: unknown
+): void {
+  writeJsonFile(localPaths.global("config.json"), data);
+}
 
 describe("deepMerge", () => {
   test("merges nested objects", () => {
@@ -67,6 +109,51 @@ describe("loadConfig", () => {
     expect(config.contextMode.enabled).toBe(true); // inherited from default
   });
 });
+
+describe("strict and inspection config loading", () => {
+  let tmpDir: string;
+  let localPaths: ReturnType<typeof createPaths>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-config-test-"));
+    localPaths = createTestPaths(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("strict load rejects invalid quality gate config", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      quality: { gates: { "ai-review": { enabled: true, depth: "invalid" } } },
+    });
+
+    expect(() => loadConfig(localPaths, tmpDir)).toThrow(/quality\.gates/);
+  });
+
+  test("inspection load reports malformed JSON without hiding the file", () => {
+    writeRawProjectConfig(localPaths, tmpDir, "{ invalid json");
+
+    const result = inspectConfig(localPaths, tmpDir);
+
+    expect(result.parseErrors).toHaveLength(1);
+    expect(result.effectiveConfig).toBeNull();
+  });
+
+  test("project quality.gates replaces inherited global gates", () => {
+    writeGlobalConfig(localPaths, {
+      quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } },
+    });
+    writeProjectConfig(localPaths, tmpDir, {
+      quality: { gates: { "test-suite": { enabled: true, command: "npm test" } } },
+    });
+
+    expect(loadConfig(localPaths, tmpDir).quality.gates).toEqual({
+      "test-suite": { enabled: true, command: "npm test" },
+    });
+  });
+});
+
 
 describe("quality gate types", () => {
   test("ReviewReport stores aggregate statuses instead of profile boolean", () => {
