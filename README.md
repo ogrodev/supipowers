@@ -40,18 +40,19 @@ The installer detects your agent, registers the extension, and optionally sets u
 
 The installer scans for these and offers to install any that are missing. Everything works without them, but each one unlocks additional capabilities.
 
-| Dependency                                              | What it enables                                                       |
-| ------------------------------------------------------- | --------------------------------------------------------------------- |
-| [mcpc](https://github.com/apify/mcpc)                   | MCP server management via `/supi:mcp`                                 |
-| [context-mode](https://github.com/ogrodev/context-mode) | Context window protection — large outputs are sandboxed automatically |
-| `typescript-language-server`                            | TypeScript/JS diagnostics and references in review gates              |
-| `pyright`                                               | Python type checking                                                  |
-| `rust-analyzer`                                         | Rust language server                                                  |
-| `gopls`                                                 | Go language server                                                    |
-| `@playwright/cli`                                       | Browser exploration and E2E test execution via `/supi:qa`             |
+| Dependency                            | What it enables                                                       |
+| ------------------------------------- | --------------------------------------------------------------------- |
+| [mcpc](https://github.com/apify/mcpc) | MCP server management via `/supi:mcp`                                 |
+| supi-context-mode                     | Context window protection — large outputs are sandboxed automatically |
+| `typescript-language-server`          | TypeScript/JS diagnostics and references in review gates              |
+| `pyright`                             | Python type checking                                                  |
+| `rust-analyzer`                       | Rust language server                                                  |
+| `gopls`                               | Go language server                                                    |
+| `@playwright/cli`                     | Browser exploration and E2E test execution via `/supi:qa`             |
 
 > [!NOTE]
 > LSP servers are language-specific — install only the ones that match your project's stack.
+> supi-context-mode is heavily inspired at [context-mode](https://github.com/mksglu/context-mode)
 
 ## Commands
 
