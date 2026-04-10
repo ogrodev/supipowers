@@ -1,9 +1,11 @@
 import type { Platform, PlatformContext, PlatformCapabilities } from "../platform/types.js";
 import { existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig } from "../config/loader.js";
+import { DEFAULT_CONFIG } from "../config/defaults.js";
+import { formatConfigErrors, inspectConfig } from "../config/loader.js";
 import { detectContextMode } from "../context-mode/detector.js";
 import { isLspAvailable } from "../lsp/detector.js";
+import { summarizeEnabledGates } from "../quality/setup.js";
 import { DEPENDENCIES } from "../deps/registry.js";
 
 export interface CheckResult {
@@ -51,15 +53,14 @@ export async function checkConfig(platform: Platform, cwd: string): Promise<Chec
   const globalPath = platform.paths.global("config.json");
   const projectExists = existsSync(projectPath);
   const globalExists = existsSync(globalPath);
-
-  // loadConfig never throws — it falls back to DEFAULT_CONFIG via readJsonSafe
-  const config = loadConfig(platform.paths, cwd);
+  const inspection = inspectConfig(platform.paths, cwd);
+  const config = inspection.effectiveConfig ?? DEFAULT_CONFIG;
 
   if (!projectExists && !globalExists) {
     return {
       name: "Config",
       presence: { ok: false, detail: "No config.json found (using defaults)" },
-      functional: { ok: true, detail: `defaultProfile: ${config.defaultProfile}` },
+      functional: { ok: true, detail: `quality.gates: ${summarizeEnabledGates(config.quality.gates)}` },
     };
   }
 
@@ -67,10 +68,18 @@ export async function checkConfig(platform: Platform, cwd: string): Promise<Chec
     ? `${platform.paths.dotDir}/supipowers/config.json (project)`
     : `~/${platform.paths.dotDir}/supipowers/config.json (global)`;
 
+  if (inspection.parseErrors.length > 0 || inspection.validationErrors.length > 0) {
+    return {
+      name: "Config",
+      presence: { ok: true, detail: `Found ${foundPath}` },
+      functional: { ok: false, detail: formatConfigErrors(inspection) },
+    };
+  }
+
   return {
     name: "Config",
     presence: { ok: true, detail: `Found ${foundPath}` },
-    functional: { ok: true, detail: `Parsed (defaultProfile: ${config.defaultProfile})` },
+    functional: { ok: true, detail: `quality.gates: ${summarizeEnabledGates(config.quality.gates)}` },
   };
 }
 
