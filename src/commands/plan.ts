@@ -5,8 +5,8 @@ import {
   generateVisualSessionId,
   createSessionDir,
   getScriptsDir,
-  parseServerInfo,
 } from "../visual/companion.js";
+import { startVisualServer } from "../visual/start-server.js";
 import { buildVisualInstructions } from "../visual/prompt-instructions.js";
 import { buildPlanningPrompt, buildQuickPlanPrompt } from "../planning/prompt-builder.js";
 import * as fs from "node:fs";
@@ -15,6 +15,7 @@ import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { startPlanTracking } from "../planning/approval-flow.js";
+import { stopVisualServer } from "../visual/stop-server.js";
 
 modelRegistry.register({
   id: "plan",
@@ -91,31 +92,18 @@ export function registerPlanCommand(platform: Platform): void {
           if (visualSessionDir) {
             // Stop any previous visual companion
             if (activeSessionDir) {
-              const stopScript = path.join(scriptsDir, "stop-server.sh");
-              await platform.exec("bash", [stopScript, activeSessionDir], { cwd: scriptsDir });
+              stopVisualServer(activeSessionDir);
             }
 
-            // Start the server (pass session dir via env command since ExecOptions has no env)
-            const startScript = path.join(scriptsDir, "start-server.sh");
-            const startResult = await platform.exec("env", [
-              `SUPI_VISUAL_DIR=${visualSessionDir}`,
-              "bash",
-              startScript,
-            ], { cwd: scriptsDir });
+            // Start the server in a detached cross-platform process
+            const serverInfo = await startVisualServer({ sessionDir: visualSessionDir });
 
-            if (startResult.code === 0) {
-              const serverInfo = parseServerInfo(startResult.stdout);
-              if (serverInfo) {
-                visualUrl = serverInfo.url;
-                activeSessionDir = visualSessionDir;
-                notifyInfo(ctx, "Visual companion ready", visualUrl);
-              } else {
-                notifyError(ctx, "Visual companion started but no connection info received");
-                visualSessionDir = null;
-              }
+            if (serverInfo) {
+              visualUrl = serverInfo.url;
+              activeSessionDir = visualSessionDir;
+              notifyInfo(ctx, "Visual companion ready", visualUrl);
             } else {
-              const errorMsg = startResult.stderr || startResult.stdout;
-              notifyError(ctx, "Failed to start visual companion", errorMsg);
+              notifyError(ctx, "Visual companion failed to start");
               visualSessionDir = null;
             }
           }

@@ -6,7 +6,7 @@ import { registerSupiCommand, handleSupi } from "./commands/supi.js";
 import { registerConfigCommand, handleConfig } from "./commands/config.js";
 import { registerStatusCommand, handleStatus } from "./commands/status.js";
 import { registerPlanCommand, getActiveVisualSessionDir, setActiveVisualSessionDir } from "./commands/plan.js";
-import { getScriptsDir } from "./visual/companion.js";
+import { stopVisualServer } from "./visual/stop-server.js";
 import { registerReviewCommand } from "./commands/review.js";
 import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand, handleRelease } from "./commands/release.js";
@@ -139,8 +139,7 @@ export function bootstrap(platform: Platform): void {
     // Clean up any leftover visual companion from a previous session
     const previousVisualDir = getActiveVisualSessionDir();
     if (previousVisualDir) {
-      const stopScript = join(getScriptsDir(), "stop-server.sh");
-      platform.exec("bash", [stopScript, previousVisualDir], { cwd: getScriptsDir() }).catch(() => {});
+      stopVisualServer(previousVisualDir);
       setActiveVisualSessionDir(null);
     }
 

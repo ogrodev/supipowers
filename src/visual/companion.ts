@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { VisualServerInfo, VisualEvent } from "./types.js";
+import { normalizeLineEndings } from "../text.js";
 import type { PlatformPaths } from "../platform/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ export function readEvents(sessionDir: string): VisualEvent[] {
   const eventsFile = path.join(sessionDir, ".events");
   if (!fs.existsSync(eventsFile)) return [];
 
-  const content = fs.readFileSync(eventsFile, "utf-8");
+  const content = normalizeLineEndings(fs.readFileSync(eventsFile, "utf-8"));
   const events: VisualEvent[] = [];
 
   for (const line of content.split("\n")) {
@@ -60,9 +61,10 @@ export function getScriptsDir(): string {
   return path.join(__dirname, "scripts");
 }
 
-/** Parse server info from start-server.sh JSON output */
+/** Parse server info from launcher output or server logs. */
 export function parseServerInfo(stdout: string): VisualServerInfo | null {
-  for (const line of stdout.split("\n")) {
+  const normalizedStdout = normalizeLineEndings(stdout);
+  for (const line of normalizedStdout.split("\n")) {
     if (!line.trim()) continue;
     try {
       const data = JSON.parse(line);
