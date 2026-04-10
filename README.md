@@ -66,6 +66,7 @@ The installer scans for these and offers to install any that are missing. Everyt
 | `/supi:commit` | AI-powered commit with conventional message generation |
 | `/supi:model` | Configure model assignments per action (plan, review, qa…) |
 | `/supi:context` | Show current context window usage and system prompt breakdown |
+| `/supi:optimize-context` | Analyze loaded prompt/context usage and suggest reductions |
 | `/supi:mcp` | Manage MCP servers (connect, disconnect, migrate) |
 | `/supi:config` | Interactive settings TUI |
 | `/supi:status` | Check running sub-agents and progress |
@@ -85,6 +86,28 @@ Commands like `/supi`, `/supi:config`, `/supi:commit`, and `/supi:status` are TU
 **Context protection.** When [context-mode](https://github.com/ogrodev/context-mode) is detected, supipowers injects routing hooks that protect the agent's context window. Large outputs, file reads, and HTTP calls are automatically routed through sandboxed execution so only summaries enter the conversation.
 
 **Model assignment.** Each action (planning, review, QA) can be assigned a different model and thinking level. `/supi:model` opens a TUI picker backed by OMP's model registry.
+
+## Feature comparison with `obra/superpowers`
+
+> [!NOTE]
+> This compares current `supipowers` features with the capabilities documented in [`obra/superpowers`](https://github.com/obra/superpowers), based on its README and published skill list. `Not documented` means the feature is not described upstream, not that it is impossible.
+
+| Capability | supipowers | obra/superpowers |
+| --- | --- | --- |
+| Agent host support | OMP-native extension | Multi-agent distribution for Claude Code, Cursor, Codex, OpenCode, GitHub Copilot CLI, and Gemini CLI |
+| Primary trigger model | Explicit `/supi:*` slash commands plus reusable runtime skills | Automatic skill activation from initial instructions |
+| Planning and approval flow | `/supi:plan` guides scope → decompose → estimate → verify, saves plans, shows approval UI, then executes in-session | `brainstorming` + `writing-plans`, with design sign-off handled in chat before execution |
+| Parallel execution workflow | In-session orchestration for plan execution, QA, and fix-PR flows | Dedicated `dispatching-parallel-agents`, `executing-plans`, and `subagent-driven-development` skills |
+| Review workflow | `/supi:review` profiles combine LSP, AI review, code-quality, test, and E2E gates | `requesting-code-review` and `receiving-code-review` skills |
+| TDD, debugging, verification | Built-in `tdd`, `debugging`, `verification`, and `receiving-code-review` skills | `test-driven-development`, `systematic-debugging`, `verification-before-completion`, and `receiving-code-review` skills |
+| Browser QA / E2E automation | `/supi:qa` runs a Playwright-based product QA pipeline with regression tracking | Not documented in upstream README/skill list |
+| PR review comment remediation | `/supi:fix-pr` fetches review comments, evaluates them, then applies or rejects fixes with evidence | Not documented in upstream README/skill list |
+| Release and commit tooling | `/supi:release` and `/supi:commit` are first-class workflows | Not documented in upstream README/skill list |
+| Context-window tooling | `/supi:context`, `/supi:optimize-context`, and optional context-mode routing hooks | Not documented in upstream README/skill list |
+| MCP server management | `/supi:mcp` manages server registration, activation, and migration | Not documented in upstream README/skill list |
+| Config, model routing, diagnostics | `/supi:config`, `/supi:model`, `/supi:doctor`, `/supi:status` | Not documented in upstream README/skill list |
+| Git worktree workflow | No dedicated command today | Dedicated `using-git-worktrees` and `finishing-a-development-branch` skills |
+
 
 ## Quality profiles
 
