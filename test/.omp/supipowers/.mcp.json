@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "servers": {
+    "figma": {
+      "transport": "http",
+      "activation": "contextual",
+      "taggable": true,
+      "triggers": [
+        "figma"
+      ],
+      "antiTriggers": [],
+      "enabled": true,
+      "authPending": false,
+      "addedAt": "2026-04-10T17:43:05.374Z",
+      "url": "https://mcp.figma.com"
+    },
+    "local-db": {
+      "transport": "stdio",
+      "activation": "contextual",
+      "taggable": true,
+      "triggers": [
+        "local-db"
+      ],
+      "antiTriggers": [],
+      "enabled": true,
+      "authPending": false,
+      "addedAt": "2026-04-10T17:43:05.376Z",
+      "command": "node",
+      "args": [
+        "./server.js"
+      ]
+    }
+  }
+}
