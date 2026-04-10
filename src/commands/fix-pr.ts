@@ -1,6 +1,7 @@
 import type { Platform } from "../platform/types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { moduleDir, toBashPath } from "../utils/paths.js";
 import { loadFixPrConfig, saveFixPrConfig } from "../fix-pr/config.js";
 import { buildFixPrOrchestratorPrompt } from "../fix-pr/prompt-builder.js";
 import type { FixPrConfig, CommentReplyPolicy } from "../fix-pr/types.js";
@@ -32,13 +33,13 @@ modelRegistry.register({
 });
 
 function getScriptsDir(): string {
-  return path.join(path.dirname(new URL(import.meta.url).pathname), "..", "fix-pr", "scripts");
+  return toBashPath(path.join(moduleDir(import.meta.url), "..", "fix-pr", "scripts"));
 }
 
 function findSkillPath(skillName: string): string | null {
   const candidates = [
     path.join(process.cwd(), "skills", skillName, "SKILL.md"),
-    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", "skills", skillName, "SKILL.md"),
+    path.join(moduleDir(import.meta.url), "..", "..", "skills", skillName, "SKILL.md"),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
@@ -138,12 +139,12 @@ export function registerFixPrCommand(platform: Platform): void {
       }
 
       // ── Step 4: Fetch initial comments ─────────────────────────────
-      const sessionDir = getSessionDir(platform.paths, ctx.cwd, ledger.id);
+      const sessionDir = toBashPath(getSessionDir(platform.paths, ctx.cwd, ledger.id));
       const scriptsDir = getScriptsDir();
-      const snapshotPath = path.join(sessionDir, "snapshots", `comments-${ledger.iteration}.jsonl`);
+      const snapshotPath = toBashPath(path.join(sessionDir, "snapshots", `comments-${ledger.iteration}.jsonl`));
 
       const fetchResult = await platform.exec("bash", [
-        path.join(scriptsDir, "fetch-pr-comments.sh"),
+        `${scriptsDir}/fetch-pr-comments.sh`,
         repo,
         String(prNumber),
         snapshotPath,

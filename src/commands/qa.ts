@@ -1,6 +1,7 @@
 import type { Platform } from "../platform/types.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { moduleDir, toBashPath } from "../utils/paths.js";
 import { notifyInfo } from "../notifications/renderer.js";
 import { loadE2eQaConfig, saveE2eQaConfig, DEFAULT_E2E_QA_CONFIG } from "../qa/config.js";
 import { loadE2eMatrix } from "../qa/matrix.js";
@@ -20,13 +21,13 @@ modelRegistry.register({
 });
 
 function getScriptsDir(): string {
-  return path.join(path.dirname(new URL(import.meta.url).pathname), "..", "qa", "scripts");
+  return toBashPath(path.join(moduleDir(import.meta.url), "..", "qa", "scripts"));
 }
 
 function findSkillPath(skillName: string): string | null {
   const candidates = [
     path.join(process.cwd(), "skills", skillName, "SKILL.md"),
-    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "..", "skills", skillName, "SKILL.md"),
+    path.join(moduleDir(import.meta.url), "..", "..", "skills", skillName, "SKILL.md"),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
@@ -128,8 +129,8 @@ export function registerQaCommand(platform: Platform): void {
 
       try {
         const detectResult = await platform.exec("bash", [
-          path.join(scriptsDir, "detect-app-type.sh"),
-          ctx.cwd,
+          `${scriptsDir}/detect-app-type.sh`,
+          toBashPath(ctx.cwd),
         ], { cwd: ctx.cwd });
 
         if (detectResult.code === 0) {
@@ -190,8 +191,8 @@ export function registerQaCommand(platform: Platform): void {
       let discoveredRoutes = "";
       try {
         const routeResult = await platform.exec("bash", [
-          path.join(scriptsDir, "discover-routes.sh"),
-          ctx.cwd,
+          `${scriptsDir}/discover-routes.sh`,
+          toBashPath(ctx.cwd),
           config.app.type,
         ], { cwd: ctx.cwd });
 
@@ -210,7 +211,7 @@ export function registerQaCommand(platform: Platform): void {
 
       // ── Step 6: Create session ───────────────────────────────────────
       const ledger = createNewE2eSession(platform.paths, ctx.cwd, config);
-      const sessionDir = getSessionDir(platform.paths, ctx.cwd, ledger.id);
+      const sessionDir = toBashPath(getSessionDir(platform.paths, ctx.cwd, ledger.id));
 
       // ── Step 7: Load skill ───────────────────────────────────────────
       let skillContent = "";
@@ -225,7 +226,7 @@ export function registerQaCommand(platform: Platform): void {
       const routeCount = discoveredRoutes.split("\n").filter(Boolean).length;
 
       const prompt = buildE2eOrchestratorPrompt({
-        cwd: ctx.cwd,
+        cwd: toBashPath(ctx.cwd),
         appType: config.app,
         sessionDir,
         scriptsDir,
