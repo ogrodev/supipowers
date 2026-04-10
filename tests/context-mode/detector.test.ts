@@ -87,6 +87,38 @@ describe("detectContextMode", () => {
     expect(status.tools.ctxFetchAndIndex).toBe(true);
   });
 
+  test("returns available: true with new OMP-style MCP names (supi_context_mode)", () => {
+    const tools = [
+      "bash", "read", "edit",
+      "mcp_supi_context_mode_ctx_execute",
+      "mcp_supi_context_mode_ctx_batch_execute",
+      "mcp_supi_context_mode_ctx_execute_file",
+      "mcp_supi_context_mode_ctx_index",
+      "mcp_supi_context_mode_ctx_search",
+      "mcp_supi_context_mode_ctx_fetch_and_index",
+    ];
+    const status = detectContextMode(tools);
+    expect(status.available).toBe(true);
+    expect(status.tools.ctxExecute).toBe(true);
+    expect(status.tools.ctxBatchExecute).toBe(true);
+    expect(status.tools.ctxExecuteFile).toBe(true);
+    expect(status.tools.ctxIndex).toBe(true);
+    expect(status.tools.ctxSearch).toBe(true);
+    expect(status.tools.ctxFetchAndIndex).toBe(true);
+  });
+
+  test("detects partial availability (new OMP-style supi_context_mode names)", () => {
+    const status = detectContextMode([
+      "bash",
+      "mcp_supi_context_mode_ctx_execute",
+      "mcp_supi_context_mode_ctx_search",
+    ]);
+    expect(status.available).toBe(true);
+    expect(status.tools.ctxExecute).toBe(true);
+    expect(status.tools.ctxSearch).toBe(true);
+    expect(status.tools.ctxBatchExecute).toBe(false);
+  });
+
   test("detects partial availability (OMP-style names)", () => {
     const status = detectContextMode([
       "bash",
