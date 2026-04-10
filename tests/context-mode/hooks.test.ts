@@ -34,6 +34,8 @@ describe("registerContextModeHooks", () => {
     expect(platform.on).toHaveBeenCalledWith("tool_result", expect.any(Function));
     expect(platform.on).toHaveBeenCalledWith("tool_call", expect.any(Function));
     expect(platform.on).toHaveBeenCalledWith("before_agent_start", expect.any(Function));
+    expect(platform.on).toHaveBeenCalledWith("session_start", expect.any(Function));
+    expect(platform.on).toHaveBeenCalledWith("session_shutdown", expect.any(Function));
   });
 
   test("does not register hooks when disabled", () => {
@@ -421,12 +423,43 @@ describe("exported helpers", () => {
     expect(getSessionId()).toMatch(/^session-\d+$/);
   });
 
+  test("session_start prefers a stable session-file hash when available", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
+
+    const handler = platform._handlers.get("session_start");
+    expect(handler).toBeDefined();
+
+    handler({}, {
+      cwd: "/tmp/project",
+      sessionManager: {
+        getSessionFile: () => "/tmp/project/.omp/sessions/active-session.json",
+      },
+    });
+
+    expect(getSessionId()).toMatch(/^[0-9a-f]{16}$/);
+  });
+
   test("_resetCache clears event store and session id", () => {
     const platform = createPlatformWithTmpPaths();
     registerContextModeHooks(platform, DEFAULT_CONFIG);
     expect(getEventStore()).not.toBeNull();
     expect(getSessionId()).not.toBe("");
     _resetCache();
+    expect(getEventStore()).toBeNull();
+    expect(getSessionId()).toBe("");
+  });
+
+  test("session_shutdown clears exported state", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    expect(getEventStore()).not.toBeNull();
+    expect(getSessionId()).not.toBe("");
+
+    const handler = platform._handlers.get("session_shutdown");
+    expect(handler).toBeDefined();
+    handler({}, {});
+
     expect(getEventStore()).toBeNull();
     expect(getSessionId()).toBe("");
   });

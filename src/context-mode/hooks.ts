@@ -7,9 +7,15 @@ import { EventStore } from "./event-store.js";
 import { extractEvents, extractPromptEvents } from "./event-extractor.js";
 import { buildResumeSnapshot } from "./snapshot-builder.js";
 import { routeToolCall } from "./routing.js";
+import { createHash } from "node:crypto";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+
+type SessionContextLike = {
+  cwd?: string;
+  sessionManager?: { getSessionFile?: () => string } | null;
+};
 
 // Cached detection result
 let cachedStatus: ContextModeStatus | null = null;
@@ -24,28 +30,104 @@ function loadRoutingSkill(): string | null {
   }
 }
 
+function resolveSessionCwd(ctx?: SessionContextLike): string {
+  return typeof ctx?.cwd === "string" && ctx.cwd.length > 0 ? ctx.cwd : process.cwd();
+}
+
+function deriveSessionId(ctx?: SessionContextLike): string {
+  try {
+    const sessionFile = ctx?.sessionManager?.getSessionFile?.();
+    if (typeof sessionFile === "string" && sessionFile.length > 0) {
+      return createHash("sha256").update(sessionFile).digest("hex").slice(0, 16);
+    }
+  } catch {
+    // Best effort only — session lifecycle must never fail on ID derivation.
+  }
+  return `session-${Date.now()}`;
+}
+
+function getSessionDbPath(platform: Platform, cwd: string): string {
+  return join(platform.paths.project(cwd, "sessions"), "events.db");
+}
+
 /** Register supi-context-mode hooks on the platform */
 export function registerContextModeHooks(platform: Platform, config: SupipowersConfig): void {
   if (!config.contextMode.enabled) return;
 
-  // Phase 2: Event store initialization
   let eventStore: EventStore | null = null;
-  let sessionId = `session-${Date.now()}`;
+  let eventStorePath: string | null = null;
+  let sessionCwd = process.cwd();
+  let sessionId = deriveSessionId();
 
-  if (config.contextMode.eventTracking) {
-    try {
-      const dbDir = platform.paths.project(process.cwd(), "sessions");
-      mkdirSync(dbDir, { recursive: true });
-      eventStore = new EventStore(join(dbDir, "events.db"));
-      eventStore.init();
-    } catch (e) {
-      (platform as any).logger?.error?.("supi-context-mode: failed to initialize event store", e);
+  const ensureEventStore = (cwd: string): EventStore | null => {
+    if (!config.contextMode.eventTracking) return null;
+
+    const dbPath = getSessionDbPath(platform, cwd);
+    if (eventStore && eventStorePath === dbPath) return eventStore;
+
+    if (eventStore) {
+      try {
+        eventStore.close();
+      } catch {
+        // Best effort — we are about to reopen against the active session path.
+      }
     }
-  }
 
-  // Update module-level refs for compaction hooks
-  _eventStoreRef = eventStore;
+    try {
+      mkdirSync(platform.paths.project(cwd, "sessions"), { recursive: true });
+      eventStore = new EventStore(dbPath);
+      eventStore.init();
+      eventStore.pruneOldSessions(7);
+      eventStorePath = dbPath;
+      _eventStoreRef = eventStore;
+      return eventStore;
+    } catch (e) {
+      eventStore = null;
+      eventStorePath = null;
+      _eventStoreRef = null;
+      (platform as any).logger?.error?.("supi-context-mode: failed to initialize event store", e);
+      return null;
+    }
+  };
+
+  ensureEventStore(sessionCwd);
+
   _sessionIdRef = sessionId;
+
+  platform.on("session_start", (_event, ctx) => {
+    sessionCwd = resolveSessionCwd(ctx as SessionContextLike | undefined);
+    sessionId = deriveSessionId(ctx as SessionContextLike | undefined);
+    _sessionIdRef = sessionId;
+
+    const store = ensureEventStore(sessionCwd);
+    if (!store) return;
+
+    try {
+      store.upsertMeta(sessionId, sessionCwd);
+    } catch (e) {
+      (platform as any).logger?.warn?.("supi-context-mode: failed to initialize session metadata", e);
+    }
+  });
+
+  platform.on("session_shutdown", () => {
+    if (!eventStore) {
+      _eventStoreRef = null;
+      _sessionIdRef = "";
+      return;
+    }
+
+    try {
+      eventStore.pruneOldSessions(7);
+      eventStore.close();
+    } catch (e) {
+      (platform as any).logger?.warn?.("supi-context-mode: failed to close event store", e);
+    } finally {
+      eventStore = null;
+      eventStorePath = null;
+      _eventStoreRef = null;
+      _sessionIdRef = "";
+    }
+  });
 
   // Phase 1: Result compression + Phase 2: Event extraction
   platform.on("tool_result", (event) => {
@@ -105,10 +187,12 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   });
 
   // Phase 3: Compaction integration
-  if (config.contextMode.compaction && eventStore) {
-    // Initialize session metadata for compact tracking
+  const compactionStore = config.contextMode.compaction ? ensureEventStore(sessionCwd) : null;
+  if (compactionStore) {
+
+    // Initialize fallback session metadata for sessions that never emit session_start in tests.
     try {
-      eventStore.upsertMeta(sessionId, process.cwd());
+      compactionStore.upsertMeta(sessionId, sessionCwd);
     } catch {
       // Non-fatal: metadata is supplementary
     }
