@@ -103,6 +103,15 @@ describe("isFullFileRead", () => {
   test("returns false when both limit and offset are set", () => {
     expect(isFullFileRead({ limit: 50, offset: 10 })).toBe(false);
   });
+
+  test("returns false when sel is set", () => {
+    expect(isFullFileRead({ sel: "L50-L120" })).toBe(false);
+    expect(isFullFileRead({ sel: "raw" })).toBe(false);
+  });
+
+  test("returns false when sel and limit are both set", () => {
+    expect(isFullFileRead({ sel: "L50", limit: 50 })).toBe(false);
+  });
 });
 
 describe("isHttpCommand", () => {
@@ -127,6 +136,38 @@ describe("isHttpCommand", () => {
     expect(isHttpCommand(null)).toBe(false);
   });
 });
+
+  test("detects JavaScript fetch() calls", () => {
+    expect(isHttpCommand('node -e "fetch(\"https://api.example.com\")"')).toBe(true);
+    expect(isHttpCommand("fetch('http://localhost:3000')")).toBe(true);
+  });
+
+  test("detects Python requests calls", () => {
+    expect(isHttpCommand('python -c "import requests; requests.get(\"https://api.example.com\")"')).toBe(true);
+    expect(isHttpCommand("requests.post('http://localhost')")).toBe(true);
+  });
+
+  test("detects Node http module calls", () => {
+    expect(isHttpCommand('node -e "http.get(\"http://localhost\")"')).toBe(true);
+    expect(isHttpCommand("http.request('http://api.example.com')")).toBe(true);
+  });
+
+  test("detects Python urllib", () => {
+    expect(isHttpCommand("python -c 'urllib.request.urlopen(...)'")).toBe(true);
+  });
+
+  test("detects PowerShell Invoke-WebRequest", () => {
+    expect(isHttpCommand("Invoke-WebRequest -Uri https://example.com")).toBe(true);
+  });
+
+  test("does not false-positive on git fetch", () => {
+    expect(isHttpCommand("git fetch origin")).toBe(false);
+    expect(isHttpCommand("git fetch --all")).toBe(false);
+  });
+
+  test("does not false-positive on non-HTTP fetch usage", () => {
+    expect(isHttpCommand("fetchmail")).toBe(false);
+  });
 
 // Helper: all ctx tools available
 const ALL_TOOLS: ContextModeStatus = {
@@ -166,31 +207,16 @@ describe("routeToolCall", () => {
     expect(result).toBeUndefined();
   });
 
-  test("blocks Read (no limit/offset) when ctxExecuteFile available", () => {
+  test("allows Read through (never blocked)", () => {
     const result = routeToolCall("read", { file_path: "/foo.ts" }, ALL_TOOLS, ENFORCE);
-    expect(result).toBeDefined();
-    expect(result!.block).toBe(true);
-    expect(result!.reason).toContain("ctx_execute_file");
-  });
-
-  test("allows Read when limit is set (edit prerequisite)", () => {
-    const result = routeToolCall("read", { file_path: "/foo.ts", limit: 50 }, ALL_TOOLS, ENFORCE);
     expect(result).toBeUndefined();
   });
 
-  test("allows Read when offset is set", () => {
+  test("allows Read with scoped params", () => {
     const result = routeToolCall("read", { file_path: "/foo.ts", offset: 10 }, ALL_TOOLS, ENFORCE);
     expect(result).toBeUndefined();
-  });
-
-  test("allows Read when ctxExecuteFile not available", () => {
-    const result = routeToolCall("read", { file_path: "/foo.ts" }, NO_TOOLS, ENFORCE);
-    expect(result).toBeUndefined();
-  });
-
-  test("allows Read when enforceRouting disabled", () => {
-    const result = routeToolCall("read", { file_path: "/foo.ts" }, ALL_TOOLS, NO_ENFORCE);
-    expect(result).toBeUndefined();
+    const result2 = routeToolCall("read", { file_path: "/foo.ts", sel: "L50-L120" }, ALL_TOOLS, ENFORCE);
+    expect(result2).toBeUndefined();
   });
 
   test("blocks Bash search commands", () => {

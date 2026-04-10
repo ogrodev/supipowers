@@ -7,7 +7,13 @@ const HTTP_PATTERNS = [
   /^\s*wget\s/,
   /\bcurl\s+(-[a-zA-Z]*\s+)*https?:\/\//,
   /\bwget\s+(-[a-zA-Z]*\s+)*https?:\/\//,
-];
+  // Inline HTTP patterns
+  /\bfetch\s*\(/,
+  /\brequests\.(get|post|put|delete|patch)\s*\(/,
+  /\bhttp\.(get|request)\s*\(/,
+  /\burllib\.request/,
+  /\bInvoke-WebRequest/,
+]; 
 
 /** Bash commands that are search/find operations */
 const BASH_SEARCH_PATTERNS = [
@@ -41,10 +47,10 @@ export function isBashSearchCommand(command: unknown): boolean {
   return BASH_SEARCH_PATTERNS.some((p) => p.test(command));
 }
 
-/** Check if a Read call is a full-file read (no limit/offset = likely analysis, not edit prep) */
+/** Check if a Read call is a full-file read (no limit/offset/sel = likely analysis, not edit prep) */
 export function isFullFileRead(input: Record<string, unknown> | undefined): boolean {
   if (!input) return true;
-  return input.limit == null && input.offset == null;
+  return input.limit == null && input.offset == null && input.sel == null;
 }
 
 /** Block result returned by routing functions */
@@ -95,17 +101,6 @@ export function routeToolCall(
     };
   }
 
-  // Read (full-file, no limit/offset) → block, redirect to ctx_execute_file
-  if (options.enforceRouting && toolName === "read") {
-    if (!status.tools.ctxExecuteFile) return undefined;
-    if (!isFullFileRead(input)) return undefined;
-    return {
-      block: true,
-      reason:
-        "Use ctx_execute_file(path, language, code) for file analysis instead of Read. " +
-        "If you need to Read before editing, re-call with a limit parameter.",
-    };
-  }
 
   // Bash routing
   if (toolName === "bash") {
