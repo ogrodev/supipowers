@@ -86,10 +86,11 @@ function scanNextjsApp(cwd: string): DiscoveredRoute[] {
 
       // page files → page routes
       if (/^page\.(tsx|jsx|ts|js)$/.test(basename)) {
-        let route = "/" + rel.replace(/\/page\.\w+$/, "");
+        const routePath = rel.replace(/(^|\/)page\.\w+$/, "");
+        let route = routePath ? "/" + routePath : "/";
         // strip route groups: /(groupname)
         route = route.replace(/\/\([^)]*\)/g, "");
-        if (route === "/" || route === "") {
+        if (route === "" || route === "/") {
           route = "/";
         }
         // normalize double slashes
@@ -142,8 +143,10 @@ function scanNextjsPages(cwd: string): DiscoveredRoute[] {
       const fullDisk = path.join(dir, rel);
 
       // Strip extension, then replace /index with /
-      let route =
-        "/" + rel.replace(/\.(tsx|jsx|ts|js)$/, "").replace(/\/index$/, "/");
+      const routePath = rel
+        .replace(/\.(tsx|jsx|ts|js)$/, "")
+        .replace(/(^|\/)index$/, "");
+      let route = routePath ? "/" + routePath : "/";
       if (route === "/" || route === "") route = "/";
       route = route.replace(/\/+/g, "/");
 
