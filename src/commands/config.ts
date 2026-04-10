@@ -1,18 +1,24 @@
 import type { Platform, PlatformContext } from "../platform/types.js";
-import { loadConfig, updateConfig } from "../config/loader.js";
-import { listProfiles } from "../config/profiles.js";
+import { DEFAULT_CONFIG } from "../config/defaults.js";
+import { formatConfigErrors, inspectConfig, updateConfig } from "../config/loader.js";
 import { checkInstallation } from "../context-mode/installer.js";
+import type { InspectionLoadResult } from "../config/schema.js";
 import type { SupipowersConfig } from "../types.js";
+import {
+  interactivelySaveGateSetup,
+  setupGates,
+  summarizeEnabledGates,
+} from "../quality/setup.js";
 
 const FRAMEWORK_OPTIONS = [
-  { value: "", label: "not set — auto-detect on first /supi:qa run", command: null },
-  { value: "vitest", label: "vitest — npx vitest run", command: "npx vitest run" },
-  { value: "jest", label: "jest — npx jest", command: "npx jest" },
-  { value: "mocha", label: "mocha — npx mocha", command: "npx mocha" },
-  { value: "pytest", label: "pytest — pytest", command: "pytest" },
-  { value: "cargo-test", label: "cargo-test — cargo test", command: "cargo test" },
-  { value: "go-test", label: "go-test — go test ./...", command: "go test ./..." },
-  { value: "npm-test", label: "npm-test — npm test", command: "npm test" },
+  { value: "", label: "not set — auto-detect on first /supi:qa run" },
+  { value: "vitest", label: "vitest — npx vitest run" },
+  { value: "jest", label: "jest — npx jest" },
+  { value: "mocha", label: "mocha — npx mocha" },
+  { value: "pytest", label: "pytest — pytest" },
+  { value: "cargo-test", label: "cargo-test — cargo test" },
+  { value: "go-test", label: "go-test — go test ./..." },
+  { value: "npm-test", label: "npm-test — npm test" },
 ];
 
 const CHANNEL_OPTIONS = [
@@ -22,35 +28,90 @@ const CHANNEL_OPTIONS = [
   { value: ["npm"], label: "npm — npm publish to registry" },
 ];
 
-interface SettingDef {
+export interface SettingDef {
   label: string;
   key: string;
   helpText: string;
   type: "select" | "toggle";
   options?: string[];
-  get: (config: SupipowersConfig) => string;
-  set: (cwd: string, value: unknown) => void;
+  get: () => string;
+  set: (cwd: string, value: unknown) => Promise<string | null>;
 }
 
-function buildSettings(platform: Platform, cwd: string): SettingDef[] {
+export interface ConfigCommandDependencies {
+  inspectConfig: typeof inspectConfig;
+  updateConfig: typeof updateConfig;
+  setupGates: typeof setupGates;
+  interactivelySaveGateSetup: typeof interactivelySaveGateSetup;
+  checkInstallation: typeof checkInstallation;
+}
+
+const CONFIG_COMMAND_DEPENDENCIES: ConfigCommandDependencies = {
+  inspectConfig,
+  updateConfig,
+  setupGates,
+  interactivelySaveGateSetup,
+  checkInstallation,
+};
+
+function currentConfig(inspection: InspectionLoadResult): SupipowersConfig {
+  return inspection.effectiveConfig ?? DEFAULT_CONFIG;
+}
+
+function describeInspection(inspection: InspectionLoadResult, config: SupipowersConfig): string {
+  if (inspection.parseErrors.length > 0 || inspection.validationErrors.length > 0) {
+    return `config error — ${formatConfigErrors(inspection).split("\n")[0]}`;
+  }
+
+  return summarizeEnabledGates(config.quality.gates);
+}
+
+export function buildSettings(
+  platform: Platform,
+  ctx: PlatformContext,
+  inspection: InspectionLoadResult,
+  deps: ConfigCommandDependencies = CONFIG_COMMAND_DEPENDENCIES,
+): SettingDef[] {
   const { paths } = platform;
+  const config = currentConfig(inspection);
+
   return [
     {
-      label: "Default profile",
-      key: "defaultProfile",
-      helpText: "Review depth used when no flag is passed to /supi:review",
+      label: "Setup quality gates",
+      key: "quality.gates",
+      helpText: "Inspect the project and configure review gates",
       type: "select",
-      options: listProfiles(paths, cwd),
-      get: (c) => c.defaultProfile,
-      set: (d, v) => updateConfig(paths, d, { defaultProfile: v }),
+      options: ["Run deterministic setup", "Run AI-assisted setup"],
+      get: () => describeInspection(inspection, config),
+      set: async (cwd, value) => {
+        const mode = String(value).includes("AI-assisted") ? "ai-assisted" : "deterministic";
+        const result = await deps.setupGates(platform, cwd, deps.inspectConfig(platform.paths, cwd), {
+          mode,
+        });
+
+        if (result.status === "invalid") {
+          ctx.ui.notify(result.errors.join("\n"), "error");
+          return null;
+        }
+
+        if (result.status !== "proposed") {
+          return null;
+        }
+
+        const saveResult = await deps.interactivelySaveGateSetup(ctx, paths, cwd, result.proposal);
+        return saveResult === "saved" ? "saved" : null;
+      },
     },
     {
       label: "LSP setup guide",
       key: "lsp.setupGuide",
       helpText: "Show LSP setup tips when no language server is active",
       type: "toggle",
-      get: (c) => c.lsp.setupGuide ? "on" : "off",
-      set: (d, v) => updateConfig(paths, d, { lsp: { setupGuide: v === "on" } }),
+      get: () => (config.lsp.setupGuide ? "on" : "off"),
+      set: async (cwd, value) => {
+        deps.updateConfig(paths, cwd, { lsp: { setupGuide: value === "on" } });
+        return String(value);
+      },
     },
     {
       label: "Notification verbosity",
@@ -58,21 +119,27 @@ function buildSettings(platform: Platform, cwd: string): SettingDef[] {
       helpText: "How much detail supipowers shows in notifications",
       type: "select",
       options: ["quiet", "normal", "verbose"],
-      get: (c) => c.notifications.verbosity,
-      set: (d, v) => updateConfig(paths, d, { notifications: { verbosity: v } }),
+      get: () => config.notifications.verbosity,
+      set: async (cwd, value) => {
+        deps.updateConfig(paths, cwd, { notifications: { verbosity: value } });
+        return String(value);
+      },
     },
     {
       label: "QA framework",
       key: "qa.framework",
       helpText: "Test runner used by /supi:qa",
       type: "select",
-      options: FRAMEWORK_OPTIONS.map((f) => f.label),
-      get: (c) => c.qa.framework ?? "not set",
-      set: (d, v) => {
-        const chosen = FRAMEWORK_OPTIONS.find((f) => f.label === v);
-        if (chosen) {
-          updateConfig(paths, d, { qa: { framework: chosen.value || null, command: chosen.command } });
+      options: FRAMEWORK_OPTIONS.map((framework) => framework.label),
+      get: () => config.qa.framework ?? "not set",
+      set: async (cwd, value) => {
+        const chosen = FRAMEWORK_OPTIONS.find((framework) => framework.label === value);
+        if (!chosen) {
+          return null;
         }
+
+        deps.updateConfig(paths, cwd, { qa: { framework: chosen.value || null } });
+        return chosen.label.split(" — ")[0];
       },
     },
     {
@@ -80,50 +147,58 @@ function buildSettings(platform: Platform, cwd: string): SettingDef[] {
       key: "release.channels",
       helpText: "Where /supi:release publishes your project",
       type: "select",
-      options: CHANNEL_OPTIONS.map((p) => p.label),
-      get: (c) => c.release.channels.length > 0 ? c.release.channels.join(", ") : "not set",
-      set: (d, v) => {
-        const chosen = CHANNEL_OPTIONS.find((p) => p.label === v);
-        if (chosen) {
-          updateConfig(paths, d, { release: { channels: chosen.value } });
+      options: CHANNEL_OPTIONS.map((channel) => channel.label),
+      get: () =>
+        config.release.channels.length > 0 ? config.release.channels.join(", ") : "not set",
+      set: async (cwd, value) => {
+        const chosen = CHANNEL_OPTIONS.find((channel) => channel.label === value);
+        if (!chosen) {
+          return null;
         }
+
+        deps.updateConfig(paths, cwd, { release: { channels: chosen.value } });
+        return chosen.label.split(" — ")[0];
       },
     },
   ];
 }
 
-export function handleConfig(platform: Platform, ctx: PlatformContext): void {
+export async function runConfigMenu(
+  platform: Platform,
+  ctx: PlatformContext,
+  deps: ConfigCommandDependencies = CONFIG_COMMAND_DEPENDENCIES,
+): Promise<void> {
   if (!ctx.hasUI) {
     ctx.ui.notify("Config UI requires interactive mode", "warning");
     return;
   }
 
-  void (async () => {
-    const settings = buildSettings(platform, ctx.cwd);
+  while (true) {
+    const inspection = deps.inspectConfig(platform.paths, ctx.cwd);
+    const settings = buildSettings(platform, ctx, inspection, deps);
+    const options = settings.map((setting) => `${setting.label}: ${setting.get()}`);
+    options.push("Done");
 
-    while (true) {
-      const config = loadConfig(platform.paths, ctx.cwd);
+    const choice = await ctx.ui.select(
+      "Supipowers Settings",
+      options,
+      { helpText: "Select a setting to change · Esc to close" },
+    );
 
-      const options = settings.map(
-        (s) => `${s.label}: ${s.get(config)}`
-      );
-      options.push("Done");
+    if (choice === undefined || choice === null || choice === "Done") {
+      break;
+    }
 
-      const choice = await ctx.ui.select(
-        "Supipowers Settings",
-        options,
-        { helpText: "Select a setting to change · Esc to close" },
-      );
+    const index = options.indexOf(choice);
+    const setting = settings[index];
+    if (!setting) {
+      break;
+    }
 
-      if (choice === undefined || choice === null || choice === "Done") break;
-
-      const index = options.indexOf(choice);
-      const setting = settings[index];
-      if (!setting) break;
-
+    try {
       if (setting.type === "select" && setting.options) {
-        const currentValue = setting.get(config);
-        const currentIndex = setting.options.findIndex((o) => o.startsWith(currentValue));
+        const currentValue = setting.get();
+        const currentIndex = setting.options.findIndex((option) => option.startsWith(currentValue));
         const value = await ctx.ui.select(
           setting.label,
           setting.options,
@@ -132,39 +207,50 @@ export function handleConfig(platform: Platform, ctx: PlatformContext): void {
             helpText: setting.helpText,
           },
         );
+
         if (value !== undefined && value !== null) {
-          setting.set(ctx.cwd, value);
-          const display = value.split(" — ")[0];
-          ctx.ui.notify(`${setting.label} → ${display}`, "info");
+          const display = await setting.set(ctx.cwd, value);
+          if (display) {
+            ctx.ui.notify(`${setting.label} → ${display}`, "info");
+          }
         }
       } else if (setting.type === "toggle") {
-        const current = setting.get(config);
+        const current = setting.get();
         const newValue = current === "on" ? "off" : "on";
-        setting.set(ctx.cwd, newValue);
-        ctx.ui.notify(`${setting.label} → ${newValue}`, "info");
+        const display = await setting.set(ctx.cwd, newValue);
+        if (display) {
+          ctx.ui.notify(`${setting.label} → ${display}`, "info");
+        }
       }
+    } catch (error) {
+      ctx.ui.notify((error as Error).message, "error");
     }
-  })();
+  }
+}
 
-  // Context-mode status (async, fire-and-forget)
-  checkInstallation(
+export function handleConfig(platform: Platform, ctx: PlatformContext): void {
+  void runConfigMenu(platform, ctx, CONFIG_COMMAND_DEPENDENCIES);
+
+  void CONFIG_COMMAND_DEPENDENCIES.checkInstallation(
     (cmd: string, args: string[]) => platform.exec(cmd, args),
     platform.getActiveTools(),
-  ).then((status) => {
-    const lines = [
-      "",
-      "Context Mode:",
-      `  CLI installed: ${status.cliInstalled ? "\u2713" + (status.version ? ` v${status.version}` : "") : "\u2717"}`,
-      `  MCP configured: ${status.mcpConfigured ? "\u2713" : "\u2717"}`,
-      `  Tools available: ${status.toolsAvailable ? "\u2713" : "\u2717"}`,
-    ];
-    if (!status.mcpConfigured && status.cliInstalled) {
-      lines.push(`  \u2192 Run \`${platform.name} mcp add context-mode\` to enable`);
-    }
-    ctx.ui.notify(lines.join("\n"), "info");
-  }).catch(() => {
-    // Silently ignore — context-mode status is optional
-  });
+  )
+    .then((status) => {
+      const lines = [
+        "",
+        "Context Mode:",
+        `  CLI installed: ${status.cliInstalled ? "✓" + (status.version ? ` v${status.version}` : "") : "✗"}`,
+        `  MCP configured: ${status.mcpConfigured ? "✓" : "✗"}`,
+        `  Tools available: ${status.toolsAvailable ? "✓" : "✗"}`,
+      ];
+      if (!status.mcpConfigured && status.cliInstalled) {
+        lines.push(`  → Run \`${platform.name} mcp add context-mode\` to enable`);
+      }
+      ctx.ui.notify(lines.join("\n"), "info");
+    })
+    .catch(() => {
+      // Silently ignore — context-mode status is optional.
+    });
 }
 
 export function registerConfigCommand(platform: Platform): void {
