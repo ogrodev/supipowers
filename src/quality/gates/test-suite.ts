@@ -22,6 +22,10 @@ export const testSuiteGate: GateDefinition<TestSuiteGateConfig> = {
     };
   },
   async run(context, config) {
+    if (config.enabled !== true || typeof config.command !== "string") {
+      throw new Error("test-suite gate requires an enabled config with a command.");
+    }
+
     const result = await context.execShell(config.command, {
       cwd: context.cwd,
       timeout: 120000,

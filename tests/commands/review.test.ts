@@ -3,6 +3,7 @@ import type { Platform } from "../../src/platform/types.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { ReviewReport, SupipowersConfig } from "../../src/types.js";
 import { handleReview, registerReviewCommand } from "../../src/commands/review.js";
+import type { ReviewCommandDependencies } from "../../src/commands/review.js";
 
 function createConfig(overrides: Partial<SupipowersConfig> = {}): SupipowersConfig {
   return {
@@ -70,11 +71,18 @@ function createContext() {
   } as any;
 }
 
-function createDependencies(config: SupipowersConfig, report = createReport()) {
+function createDependencies(
+  config: SupipowersConfig,
+  report = createReport(),
+): ReviewCommandDependencies {
   return {
     loadModelConfig: mock(() => ({ version: "1.0.0", default: null, actions: {} })),
     createModelBridge: mock(() => ({ getModelForRole: () => null, getCurrentModel: () => "unknown" })),
-    resolveModelForAction: mock(() => ({ model: "claude-opus-4-6", thinkingLevel: "high", source: "action" })),
+    resolveModelForAction: mock(() => ({
+      model: "claude-opus-4-6",
+      thinkingLevel: "high" as const,
+      source: "action" as const,
+    })),
     applyModelOverride: mock(async () => true),
     loadConfig: mock(() => config),
     runQualityGates: mock(async () => report),

@@ -51,11 +51,11 @@ describe("testSuiteGate", () => {
   });
 
   test("run passes when the test command exits successfully", async () => {
-    let receivedCommand: string | null = null;
-    let receivedOptions: { cwd?: string; timeout?: number } | null = null;
+    let receivedCommand: string | undefined;
+    let receivedOptions: { cwd?: string; timeout?: number } | undefined;
     const context = createContext(async (command, options): Promise<ExecResult> => {
       receivedCommand = command;
-      receivedOptions = options ?? null;
+      receivedOptions = options;
       return { stdout: "all good", stderr: "", code: 0 };
     });
 

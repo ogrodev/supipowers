@@ -173,7 +173,7 @@ export function inspectConfig(paths: PlatformPaths, cwd: string): InspectionLoad
     mergedConfig,
     effectiveConfig:
       parseErrors.length === 0 && validationErrors.length === 0
-        ? (mergedConfig as SupipowersConfig)
+        ? (mergedConfig as unknown as SupipowersConfig)
         : null,
     parseErrors,
     validationErrors,
@@ -219,6 +219,6 @@ export function updateConfig(
     );
   }
 
-  saveConfig(paths, cwd, updated as SupipowersConfig);
-  return updated as SupipowersConfig;
+  saveConfig(paths, cwd, updated as unknown as SupipowersConfig);
+  return updated as unknown as SupipowersConfig;
 }
