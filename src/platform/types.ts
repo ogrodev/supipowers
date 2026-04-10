@@ -62,6 +62,7 @@ export interface AgentSession {
 export interface ExecOptions {
   cwd?: string;
   timeout?: number;
+  env?: Record<string, string>;
 }
 
 export interface ExecResult {

@@ -1,3 +1,6 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 // src/platform/test-utils.ts
 import { mock } from "bun:test";
 import type { Platform, PlatformContext } from "./types.js";
@@ -33,7 +36,7 @@ export function createMockPlatform(overrides?: Partial<Platform>): Platform {
 
 export function createMockContext(overrides?: Partial<PlatformContext>): PlatformContext {
   return {
-    cwd: "/tmp/test",
+    cwd: join(tmpdir(), "test"),
     hasUI: true,
     ui: {
       select: mock(async () => null),

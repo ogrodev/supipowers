@@ -1,5 +1,48 @@
-import type { Platform, AgentSession, AgentSessionOptions } from "./types.js";
+import type {
+  Platform,
+  AgentSession,
+  AgentSessionOptions,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import { createPaths } from "./types.js";
+
+async function execWithEnv(cmd: string, args: string[], opts: ExecOptions): Promise<ExecResult> {
+  const subprocess = Bun.spawn([cmd, ...args], {
+    cwd: opts.cwd,
+    env: { ...process.env, ...opts.env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let timedOut = false;
+  const timeoutId =
+    opts.timeout == null
+      ? undefined
+      : setTimeout(() => {
+          timedOut = true;
+          subprocess.kill("SIGTERM");
+        }, opts.timeout);
+
+  try {
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(subprocess.stdout).text(),
+      new Response(subprocess.stderr).text(),
+      subprocess.exited,
+    ]);
+
+    return {
+      stdout,
+      stderr,
+      code: code ?? 1,
+      ...(timedOut || subprocess.killed ? { killed: true } : {}),
+    };
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 export function createOmpAdapter(api: any): Platform {
   return {
@@ -7,7 +50,8 @@ export function createOmpAdapter(api: any): Platform {
     registerCommand: (name, opts) => api.registerCommand(name, opts),
     getCommands: () => api.getCommands(),
     getActiveTools: () => api.getActiveTools(),
-    exec: (cmd, args, opts) => api.exec(cmd, args, opts),
+    exec: (cmd, args, opts) =>
+      opts?.env ? execWithEnv(cmd, args, opts) : api.exec(cmd, args, opts),
     sendMessage: (content, opts) => {
       api.sendMessage(content, {
         deliverAs: opts?.deliverAs ?? "steer",

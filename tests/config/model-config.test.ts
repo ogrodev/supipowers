@@ -119,9 +119,17 @@ describe("saveModelAssignment", () => {
 
 describe("getAssignmentSource", () => {
   let tmpDir: string;
+  let localPaths: ReturnType<typeof createPaths>;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-model-test-"));
+    localPaths = {
+      dotDir: ".omp",
+      dotDirDisplay: ".omp",
+      project: (cwd: string, ...segments: string[]) => path.join(cwd, ".omp", "supipowers", ...segments),
+      global: (...segments: string[]) => path.join(tmpDir, "global-config", "supipowers", ...segments),
+      agent: (...segments: string[]) => path.join(tmpDir, "agent", ...segments),
+    };
   });
 
   afterEach(() => {
@@ -129,25 +137,25 @@ describe("getAssignmentSource", () => {
   });
 
   test("returns 'action-project' when action is in project file", () => {
-    saveModelAssignment(paths, tmpDir, "project", "plan", {
+    saveModelAssignment(localPaths, tmpDir, "project", "plan", {
       model: "claude-opus-4-6",
       thinkingLevel: null,
     });
-    const source = getAssignmentSource(paths, tmpDir, "plan");
+    const source = getAssignmentSource(localPaths, tmpDir, "plan");
     expect(source).toBe("action-project");
   });
 
   test("returns 'main' when no config exists", () => {
-    const source = getAssignmentSource(paths, tmpDir, "plan");
+    const source = getAssignmentSource(localPaths, tmpDir, "plan");
     expect(source).toBe("main");
   });
 
   test("returns 'default-project' when only default is set in project", () => {
-    saveModelAssignment(paths, tmpDir, "project", null, {
+    saveModelAssignment(localPaths, tmpDir, "project", null, {
       model: "claude-sonnet-4-6",
       thinkingLevel: null,
     });
-    const source = getAssignmentSource(paths, tmpDir, "review");
+    const source = getAssignmentSource(localPaths, tmpDir, "review");
     expect(source).toBe("default-project");
   });
 });
