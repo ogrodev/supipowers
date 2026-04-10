@@ -20,6 +20,7 @@ export function handleSupi(platform: Platform, ctx: PlatformContext): void {
       "/supi:doctor   — Run health checks",
       "/supi:update   — Update to latest version",
       "/supi:context  — Show context breakdown",
+      "/supi:optimize-context — Optimize context to save tokens",
     ];
 
     const status = [

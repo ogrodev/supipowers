@@ -17,6 +17,7 @@ import { registerModelCommand, handleModel } from "./commands/model.js";
 import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { registerContextCommand, handleContext } from "./commands/context.js";
+import { registerOptimizeContextCommand, handleOptimizeContext } from "./commands/optimize-context.js";
 import { registerCommitCommand, handleCommit } from "./commands/commit.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
@@ -37,6 +38,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
   "supi:model": (platform, ctx) => handleModel(platform, ctx),
   "supi:context": (platform, ctx) => handleContext(platform, ctx),
+  "supi:optimize-context": (platform, ctx) => handleOptimizeContext(platform, ctx),
   "supi:commit": (platform, ctx, args) => handleCommit(platform, ctx, args),
   "supi:release": (platform, ctx, args) => handleRelease(platform, ctx, args),
 };
@@ -68,6 +70,7 @@ export function bootstrap(platform: Platform): void {
   registerMcpCommand(platform);
   registerModelCommand(platform);
   registerContextCommand(platform);
+  registerOptimizeContextCommand(platform);
   registerCommitCommand(platform);
 
 
