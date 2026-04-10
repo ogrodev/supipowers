@@ -33,7 +33,7 @@ if (!startMjs) {
 }
 
 // Write .omp/APPEND_SYSTEM.md with routing rules (idempotent — only if marker absent)
-const ROUTING_MARKER = "# context-mode — MANDATORY routing rules";
+const ROUTING_MARKER = "# supi-context-mode — MANDATORY routing rules";
 try {
   // Find SKILL.md from multiple possible locations
   const skillCandidates = [

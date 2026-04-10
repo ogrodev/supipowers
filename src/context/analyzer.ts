@@ -292,7 +292,7 @@ function extractHeadingSections(
 ): void {
   const headingPatterns: Array<{ pattern: RegExp; label: string }> = [
     { pattern: /^# Memory Guidance\b/m, label: "Memory" },
-    { pattern: /^# context-mode — MANDATORY routing rules\b/m, label: "Routing rules" },
+    { pattern: /^# supi-context-mode — MANDATORY routing rules\b/m, label: "Routing rules" },
     { pattern: /^## MCP Server Instructions\b/m, label: "MCP instructions" },
   ];
 

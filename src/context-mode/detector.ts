@@ -1,6 +1,6 @@
 // src/context-mode/detector.ts
 
-/** Which context-mode MCP tools are available in the current session */
+/** Which supi-context-mode MCP tools are available in the current session */
 export interface ContextModeStatus {
   available: boolean;
   tools: {
@@ -24,18 +24,20 @@ const TOOL_SUFFIXES: Array<[string, keyof ContextModeStatus["tools"]]> = [
 ];
 
 /**
- * Check if a tool name matches a context-mode tool suffix.
+ * Check if a tool name matches a supi-context-mode tool suffix.
  * Handles multiple naming conventions:
  *   - Bare names: "ctx_execute"
  *   - Claude Code MCP: "mcp__plugin_context-mode_context-mode__ctx_execute"
- *   - OMP MCP: "mcp_context_mode_ctx_execute"
+ *   - OMP MCP (new): "mcp_supi_context_mode_ctx_execute"
+ *   - OMP MCP (legacy): "mcp_context_mode_ctx_execute"
  *
- * We match by checking if the tool contains a known context-mode server
+ * We match by checking if the tool contains a known supi-context-mode server
  * prefix followed by the suffix, or is the bare suffix itself.
  */
 const CONTEXT_MODE_PREFIXES = [
   "mcp__plugin_context-mode_context-mode__",  // Claude Code
-  "mcp_context_mode_",                        // OMP
+  "mcp_supi_context_mode_",                   // OMP (current)
+  "mcp_context_mode_",                        // OMP (legacy, backward compat)
 ];
 
 function matchesSuffix(tool: string, suffix: string): boolean {
@@ -46,7 +48,7 @@ function matchesSuffix(tool: string, suffix: string): boolean {
   return false;
 }
 
-/** Detect context-mode MCP tool availability from the active tools list */
+/** Detect supi-context-mode MCP tool availability from the active tools list */
 export function detectContextMode(activeTools: string[]): ContextModeStatus {
   const tools: ContextModeStatus["tools"] = {
     ctxExecute: false,

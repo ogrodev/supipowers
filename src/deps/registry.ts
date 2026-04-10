@@ -94,13 +94,13 @@ export const DEPENDENCIES: Dependency[] = [
     url: "https://github.com/apify/mcpc",
   },
   {
-    name: "context-mode",
+    name: "supi-context-mode",
     binary: "context-mode",
     required: false,
     category: "mcp",
-    description: "Context-mode MCP server for context window protection",
+    description: "supi-context-mode MCP server for context window protection",
     checkFn: async (_exec) => {
-      // context-mode is installed as a platform extension (git clone), not globally.
+      // supi-context-mode is installed as a platform extension (git clone), not globally.
       // start.mjs lives at the repo root after cloning.
       const { existsSync } = await import("node:fs");
       const { join } = await import("node:path");

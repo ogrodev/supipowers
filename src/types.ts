@@ -97,7 +97,7 @@ export interface ReleaseResult {
 
 /** Context-mode integration settings */
 export interface ContextModeConfig {
-  /** Master toggle for all context-mode integration (default: true) */
+  /** Master toggle for all supi-context-mode integration (default: true) */
   enabled: boolean;
   /** Byte threshold above which tool results are compressed (default: 4096) */
   compressionThreshold: number;

@@ -13,7 +13,7 @@ export interface ContextModeInstallStatus {
   version: string | null;
 }
 
-/** Check context-mode installation status */
+/** Check supi-context-mode installation status */
 export async function checkInstallation(
   exec: ExecFn,
   activeTools: string[],
@@ -30,7 +30,7 @@ export async function checkInstallation(
   };
 }
 
-/** Install context-mode globally */
+/** Install supi-context-mode globally */
 export async function installContextMode(
   exec: ExecFn,
 ): Promise<{ success: boolean; error?: string }> {

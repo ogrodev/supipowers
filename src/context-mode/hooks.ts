@@ -24,7 +24,7 @@ function loadRoutingSkill(): string | null {
   }
 }
 
-/** Register context-mode hooks on the platform */
+/** Register supi-context-mode hooks on the platform */
 export function registerContextModeHooks(platform: Platform, config: SupipowersConfig): void {
   if (!config.contextMode.enabled) return;
 
@@ -39,7 +39,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
       eventStore = new EventStore(join(dbDir, "events.db"));
       eventStore.init();
     } catch (e) {
-      (platform as any).logger?.error?.("context-mode: failed to initialize event store", e);
+      (platform as any).logger?.error?.("supi-context-mode: failed to initialize event store", e);
     }
   }
 
@@ -58,7 +58,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
         const events = extractEvents(event, sessionId);
         if (events.length > 0) eventStore.writeEvents(events);
       } catch (e) {
-        (platform as any).logger?.warn?.("context-mode: event extraction failed", e);
+        (platform as any).logger?.warn?.("supi-context-mode: event extraction failed", e);
       }
     }
 
@@ -88,7 +88,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
           if (events.length > 0) eventStore.writeEvents(events);
         }
       } catch (e) {
-        (platform as any).logger?.warn?.("context-mode: prompt event extraction failed", e);
+        (platform as any).logger?.warn?.("supi-context-mode: prompt event extraction failed", e);
       }
     }
 

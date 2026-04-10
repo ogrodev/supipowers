@@ -42,7 +42,7 @@ export function buildResumeSnapshot(
 }
 
 // ---------------------------------------------------------------------------
-// Reference-based format (context-mode MCP available)
+// Reference-based format (supi-context-mode MCP available)
 // ---------------------------------------------------------------------------
 
 function buildReferenceSnapshot(eventStore: EventStore, sessionId: string, opts: SnapshotOpts): string {
@@ -247,7 +247,7 @@ function buildReferenceSnapshot(eventStore: EventStore, sessionId: string, opts:
 }
 
 // ---------------------------------------------------------------------------
-// Fallback inline-truncated format (no context-mode MCP)
+// Fallback inline-truncated format (no supi-context-mode MCP)
 // ---------------------------------------------------------------------------
 
 function buildFallbackSnapshot(eventStore: EventStore, sessionId: string): string {
