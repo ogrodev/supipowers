@@ -43,6 +43,63 @@ export function parseSystemPrompt(text: string): PromptSection[] {
   return sections;
 }
 
+// ── Per-Skill Parser ──────────────────────────────────────
+
+/** A single skill extracted from the system prompt */
+export interface ParsedSkill {
+  name: string;
+  bytes: number;
+  tokens: number;
+  content: string;
+}
+
+/** Extract individual skills from system prompt text */
+export function parseIndividualSkills(systemPrompt: string): ParsedSkill[] {
+  if (!systemPrompt) return [];
+
+  // OMP renders skills as markdown headings under "# Skills":
+  //   ## skill-name
+  //   Description text...
+  // Find the Skills section bounded by the next h1 heading or end of text.
+  const skillsSectionMatch = systemPrompt.match(
+    /^# Skills\n[\s\S]*?\n(?=##\s)/m,
+  );
+  if (!skillsSectionMatch) return [];
+
+  // Extract the region from first ## to the next # (h1) or end of text
+  const sectionStart = skillsSectionMatch.index! + skillsSectionMatch[0].length;
+  const afterSection = systemPrompt.slice(sectionStart);
+  const nextH1 = afterSection.search(/^# [^#]/m);
+  const skillsBody =
+    skillsSectionMatch[0].slice(skillsSectionMatch[0].indexOf("\n## ") + 1) +
+    (nextH1 === -1 ? afterSection : afterSection.slice(0, nextH1));
+
+  // Split on ## headings
+  const skills: ParsedSkill[] = [];
+  const headingRegex = /^## (.+)$/gm;
+  const headings: { name: string; index: number }[] = [];
+  let match;
+
+  while ((match = headingRegex.exec(skillsBody)) !== null) {
+    headings.push({ name: match[1].trim(), index: match.index });
+  }
+
+  for (let i = 0; i < headings.length; i++) {
+    const start = headings[i].index;
+    const end = i + 1 < headings.length ? headings[i + 1].index : skillsBody.length;
+    const content = skillsBody.slice(start, end).trimEnd();
+    const bytes = byteLength(content);
+    skills.push({
+      name: headings[i].name,
+      bytes,
+      tokens: estimateTokens(content),
+      content,
+    });
+  }
+
+  return skills;
+}
+
 // ── Breakdown Builder ─────────────────────────────────────
 
 /** Context usage data from OMP runtime */

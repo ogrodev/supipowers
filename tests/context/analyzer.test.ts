@@ -7,6 +7,7 @@ import {
   buildBreakdownItems,
   formatSectionReport,
   formatToolsReport,
+  parseIndividualSkills,
 } from "../../src/context/analyzer.js";
 import type { PromptSection } from "../../src/context/analyzer.js";
 
@@ -338,5 +339,106 @@ describe("formatToolsReport", () => {
     const report = formatToolsReport(["read"]);
     expect(report).toContain("1 tools active");
     expect(report).toContain("- read");
+  });
+});
+
+describe("parseIndividualSkills", () => {
+  test("returns empty array for empty string", () => {
+    expect(parseIndividualSkills("")).toEqual([]);
+  });
+
+  test("returns empty array for prompt with no skills section", () => {
+    expect(parseIndividualSkills("Just a normal prompt with no skill tags")).toEqual([]);
+  });
+
+  test("extracts skills from markdown headings under # Skills", () => {
+    const prompt = [
+      "# Skills",
+      "Specialized knowledge packs loaded for this session.",
+      "",
+      "## planning",
+      "Guides collaborative brainstorming and planning",
+      "## debugging",
+      "Systematic debugging methodology",
+      "",
+      "# Tools",
+      "Some tools here",
+    ].join("\n");
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(2);
+    expect(skills[0].name).toBe("planning");
+    expect(skills[1].name).toBe("debugging");
+  });
+
+  test("returns empty when Skills section has no ## headings", () => {
+    const prompt = "# Skills\nNo skill headings here\n# Tools\n";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(0);
+  });
+
+  test("calculates correct bytes and tokens", () => {
+    const description = "x".repeat(100);
+    const prompt = `# Skills\nInfo\n\n## test-skill\n${description}\n\n# Other`;
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(1);
+    expect(skills[0].bytes).toBe(new TextEncoder().encode(skills[0].content).length);
+    expect(skills[0].tokens).toBe(Math.ceil(skills[0].content.length / 4));
+  });
+
+  test("content includes heading and description", () => {
+    const prompt = "# Skills\nInfo\n\n## my-skill\nDo useful things\n\n# Other";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(1);
+    expect(skills[0].content).toContain("## my-skill");
+    expect(skills[0].content).toContain("Do useful things");
+  });
+
+  test("handles multiline skill descriptions", () => {
+    const prompt = [
+      "# Skills",
+      "Packs",
+      "",
+      "## multi-line",
+      "Line 1",
+      "Line 2",
+      "Line 3",
+    ].join("\n");
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(1);
+    expect(skills[0].content).toContain("Line 2");
+  });
+
+  test("does not extract skills from other sections", () => {
+    const prompt = [
+      "# Skills",
+      "Packs",
+      "",
+      "## real-skill",
+      "Real description",
+      "",
+      "# Documentation",
+      "",
+      "## fake-skill",
+      "This is in a different section",
+    ].join("\n");
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(1);
+    expect(skills[0].name).toBe("real-skill");
+  });
+
+  test("skills section extends to end of text when no next h1", () => {
+    const prompt = [
+      "# Skills",
+      "Packs",
+      "",
+      "## alpha",
+      "Alpha description",
+      "## beta",
+      "Beta description",
+    ].join("\n");
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(2);
+    expect(skills[0].name).toBe("alpha");
+    expect(skills[1].name).toBe("beta");
   });
 });
