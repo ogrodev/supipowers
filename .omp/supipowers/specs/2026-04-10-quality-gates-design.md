@@ -38,6 +38,26 @@ Quality execution is built around a registry of gate definitions. Each gate is a
 - `run(context, config)` — execution entry point
 - `description` — user-facing explanation shown in setup and config UI
 
+`projectFacts` and `detect()` are typed, shared contracts owned by `src/types.ts`, not ad hoc per gate. The setup boundary is:
+
+```ts
+interface ProjectFacts {
+  cwd: string;
+  packageScripts: Record<string, string>;
+  lockfiles: string[];
+  activeTools: string[];
+  existingGates: Record<string, unknown>;
+}
+
+interface GateDetectionResult {
+  suggestedConfig: Record<string, unknown> | null;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+}
+```
+
+`detect()` returns `null` when the gate has no recommendation. Otherwise it returns a single `GateDetectionResult` for `setup.ts` to merge into the candidate config.
+
 Profiles are removed from runtime behavior. The active quality configuration lives in `SupipowersConfig` under a dedicated `quality.gates` record keyed by gate ID.
 
 ### Gate contract
@@ -70,6 +90,8 @@ interface GateResult {
 ```
 
 If git-based changed-file detection returns no files or cannot determine a diff, the runner sets `fileScope: "all-files"` and passes an empty `changedFiles` array. Gates must treat that as an explicit repo-wide scope, not as a blocked or empty-input condition.
+
+Changed-file detection is part of the runner contract. It uses the current review behavior exactly: first `git diff --name-only HEAD`, then `git diff --name-only --cached` as a fallback when the first result is empty, and finally `fileScope: "all-files"` if both checks are empty or git is unavailable.
 
 This contract is intentionally small. The runner owns orchestration. The gate owns execution and result truthfulness.
 
@@ -165,7 +187,7 @@ First iteration defines exactly three executable gates:
   - **Blocked when:** command execution cannot start or required runtime prerequisites are missing
 
 - `ai-review`
-  - **Input:** changed files, cwd, and gate config
+  - **Input:** changed files, cwd, gate config, and the resolved review model from the command layer
   - **Execution boundary:** the gate creates a dedicated agent session via the platform, sends a strict review prompt, waits for the final assistant message, parses that message as structured JSON, and converts that result into `GateResult`
   - **Output contract:** `{ summary: string, issues: GateIssue[], recommendedStatus: "passed" | "failed" }`
   - **Blocked when:** the model response is missing, malformed, or cannot be parsed into the declared output contract
@@ -181,6 +203,8 @@ interface StructuredAgentRunOptions {
   cwd: string;
   prompt: string;
   timeoutMs: number;
+  model?: string;
+  thinkingLevel?: string | null;
 }
 
 interface StructuredAgentRunResult {
@@ -193,11 +217,12 @@ interface StructuredAgentRunResult {
 Responsibilities:
 
 - create and dispose the agent session
+- use the already-resolved `/supi:review` model settings passed from the command layer
 - wait for completion or timeout
 - read the final assistant message text from session state
 - return a typed success/error result to the gate
 
-`ai-review` is responsible for turning `finalText` into structured JSON. The adapter is responsible only for session lifecycle and final-message extraction. This boundary makes the gate independently understandable and testable.
+Model resolution stays centralized in the review command flow. The AI gate and adapter consume the resolved settings; they do not re-run model selection logic. `ai-review` is responsible for turning `finalText` into structured JSON. The adapter is responsible only for session lifecycle and final-message extraction. This boundary makes the gate independently understandable and testable.
 
 ### Setup flow
 
@@ -292,6 +317,8 @@ interface ReviewReport {
   overallStatus: "passed" | "failed" | "blocked";
 }
 ```
+
+`selectedGates` means the post-filter gate IDs the runner attempted to execute. It does not include configured gates that were turned into `skipped` results by `--only` or `--skip`; those appear only in `gates`.
 
 `overallStatus` is `failed` if any gate failed, otherwise `blocked` if any gate was blocked, otherwise `passed`. There is no aggregate boolean because it loses information the system now knows.
 
@@ -411,7 +438,7 @@ Update all consumers that currently surface profile or boolean review state, inc
 - `src/commands/status.ts`
 - `src/commands/doctor.ts`
 
-The system should tell the truth about the new design. Do not keep compatibility shims for profile names or dual report formats.
+The system should tell the truth about the new design. Do not keep compatibility shims for profile names or dual report formats. Persisted legacy `review-*.json` files using the old `{ profile, passed }` shape are treated as stale: `src/storage/reports.ts` must ignore them by returning `null` rather than trying to coerce them into the new schema.
 
 If a one-time config migration is implemented, it must be explicit and test-covered. It is optional and must not preserve profile semantics at runtime.
 
