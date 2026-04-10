@@ -1,7 +1,7 @@
 // src/git/conventions.ts — Discover commit message conventions from repo docs and config
 
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 type ExecFn = (
   cmd: string,
@@ -110,7 +110,7 @@ export async function discoverCommitConventions(
     );
     if (result.code === 0 && result.stdout.trim()) {
       const templatePath = result.stdout.trim();
-      const absPath = templatePath.startsWith("/")
+      const absPath = isAbsolute(templatePath)
         ? templatePath
         : join(cwd, templatePath);
       const content = readFileSafe(absPath);

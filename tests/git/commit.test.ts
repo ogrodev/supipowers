@@ -667,13 +667,23 @@ describe("analyzeAndCommit", () => {
       "git reset HEAD --": { stdout: "", code: 0 },
       "git commit": { stdout: "", code: 0 },
     });
+    const isolatedRoot = `/tmp/supi-commit-paths-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const isolatedPaths = {
+      dotDir: ".omp",
+      dotDirDisplay: ".omp",
+      project: (cwd: string, ...segments: string[]) => [cwd, ".omp", "supipowers", ...segments].join("/"),
+      global: (...segments: string[]) => [isolatedRoot, ".omp", "supipowers", ...segments].join("/"),
+      agent: (...segments: string[]) => [isolatedRoot, ".omp", "agent", ...segments].join("/"),
+    };
     const platform = createMockPlatform({
       exec,
       createAgentSession: mockAgentSession(plan),
+      paths: isolatedPaths,
     });
     const setWidget = mock();
     const setStatus = mock();
     const ctx = createMockCtx({
+      cwd: `${isolatedRoot}/project`,
       ui: {
         select: mock().mockResolvedValue("commit — fix: fix bug"),
         notify: mock(),
@@ -696,13 +706,15 @@ describe("analyzeAndCommit", () => {
     expect(lastCall[0]).toBe("supi-commit");
     expect(lastCall[1]).toBeUndefined();
 
-    // Status was shown during the flow (animated spinner)
+    // Status keys are cleared during dispose
     expect(setStatus).toHaveBeenCalled();
     const statusCalls = setStatus.mock.calls;
 
-    // Last status call clears it (dispose)
+    expect(statusCalls).toContainEqual(["supi-commit", undefined]);
+    expect(statusCalls).toContainEqual(["supi-model", undefined]);
+
     const lastStatusCall = statusCalls[statusCalls.length - 1];
-    expect(lastStatusCall[0]).toBe("supi-commit");
+    expect(lastStatusCall[0]).toBe("supi-model");
     expect(lastStatusCall[1]).toBeUndefined();
   });
 

@@ -1,3 +1,6 @@
+import { normalizeLineEndings } from "../text.js";
+
+
 type ExecFn = (cmd: string, args: string[], opts?: { cwd?: string }) => Promise<{ stdout: string; code: number }>;
 
 export interface WorkingTreeStatus {
@@ -16,7 +19,7 @@ export async function getWorkingTreeStatus(exec: ExecFn, cwd: string): Promise<W
     if (result.code !== 0) {
       return { dirty: false, files: [] };
     }
-    const files = result.stdout
+    const files = normalizeLineEndings(result.stdout)
       .split("\n")
       .filter(Boolean)
       .map((line) => line.slice(3)); // strip 2-char status + space

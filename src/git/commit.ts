@@ -9,6 +9,7 @@ import { VALID_COMMIT_TYPES } from "../release/commit-types.js";
 import { validateCommitMessage } from "./commit-msg.js";
 import { getWorkingTreeStatus } from "./status.js";
 import { discoverCommitConventions } from "./conventions.js";
+import { normalizeLineEndings } from "../text.js";
 import { notifyInfo, notifyError, notifySuccess } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
@@ -268,7 +269,7 @@ export async function analyzeAndCommit(
       exec("git", ["diff", "--cached", "--name-only"], { cwd }),
     ]);
 
-    const fileList = filesResult.stdout.trim().split("\n").filter(Boolean);
+    const fileList = normalizeLineEndings(filesResult.stdout).trim().split("\n").filter(Boolean);
     if (fileList.length === 0) {
       progress.complete(2, "empty");
       progress.dispose();
@@ -581,6 +582,7 @@ interface PromptInput {
 /** Exported for testing */
 export function buildAnalysisPrompt(input: PromptInput): string {
   const { diff, stat, fileList, conventions, userContext } = input;
+  const normalizedDiff = normalizeLineEndings(diff);
 
   const parts: string[] = [
     "You are a commit message generator. Analyze the following code changes and produce a commit plan.",
@@ -602,12 +604,12 @@ export function buildAnalysisPrompt(input: PromptInput): string {
   }
 
   // Diff content — truncate for large diffs
-  const diffBytes = Buffer.byteLength(diff, "utf8");
+  const diffBytes = Buffer.byteLength(normalizedDiff, "utf8");
 
   if (diffBytes <= DIFF_FULL_LIMIT) {
-    parts.push("**Full diff:**", "```", diff, "```", "");
+    parts.push("**Full diff:**", "```", normalizedDiff, "```", "");
   } else if (diffBytes <= DIFF_STAT_ONLY_LIMIT) {
-    const truncated = diff.split("\n").slice(0, DIFF_TRUNCATED_LINES).join("\n");
+    const truncated = normalizedDiff.split("\n").slice(0, DIFF_TRUNCATED_LINES).join("\n");
     parts.push(
       "**Diff (truncated — too large for full inclusion):**",
       "```",

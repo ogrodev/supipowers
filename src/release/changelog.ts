@@ -1,6 +1,7 @@
 // src/release/changelog.ts — Conventional commit parsing and changelog generation
 
 import type { CategorizedCommits, CommitEntry } from "../types.js";
+import { normalizeLineEndings } from "../text.js";
 import { IMPROVEMENT_TYPES, MAINTENANCE_TYPES, type ConventionalCommitType } from "./commit-types.js";
 
 // Matches: feat(scope)!: message  or  feat!: message  or  feat(scope): message  or  feat: message
@@ -39,6 +40,7 @@ function parseLine(line: string): { hash: string; raw: string } | null {
  */
 
 export function parseConventionalCommits(gitLog: string): CategorizedCommits {
+  const normalizedGitLog = normalizeLineEndings(gitLog);
   const result: CategorizedCommits = {
     features: [],
     fixes: [],
@@ -48,7 +50,7 @@ export function parseConventionalCommits(gitLog: string): CategorizedCommits {
     other: [],
   };
 
-  for (const line of gitLog.split("\n")) {
+  for (const line of normalizedGitLog.split("\n")) {
     const parsed = parseLine(line);
     if (!parsed) continue;
 

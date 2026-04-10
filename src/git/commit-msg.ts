@@ -1,6 +1,7 @@
 // src/git/commit-msg.ts — Commit message validation against conventional commit format
 
 import { VALID_COMMIT_TYPES } from "../release/commit-types.js";
+import { normalizeLineEndings } from "../text.js";
 
 // Same regex shape as changelog.ts CONVENTIONAL_PREFIX
 const CONVENTIONAL_RE = /^([a-z]+)(?:\(([^)]+)\))?(!)?:\s+(.+)$/;
@@ -20,7 +21,7 @@ export interface CommitValidation {
 }
 
 export function validateCommitMessage(message: string): CommitValidation {
-  const firstLine = message.split("\n")[0].trim();
+  const firstLine = normalizeLineEndings(message).split("\n")[0].trim();
 
   if (!firstLine) {
     return { valid: false, error: "Commit message is empty." };

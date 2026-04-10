@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { normalizeLineEndings } from "../text.js";
 import type { Plan, PlanTask, TaskComplexity } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
 
@@ -36,7 +37,8 @@ export function savePlan(paths: PlatformPaths, cwd: string, filename: string, co
 
 /** Parse a plan markdown file into a Plan object */
 export function parsePlan(content: string, filePath: string): Plan {
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  const normalizedContent = normalizeLineEndings(content);
+  const frontmatterMatch = normalizedContent.match(/^---\n([\s\S]*?)\n---/);
   const meta: Record<string, string | string[]> = {};
 
   if (frontmatterMatch) {
@@ -56,13 +58,13 @@ export function parsePlan(content: string, filePath: string): Plan {
     }
   }
 
-  const tasks = parseTasksFromMarkdown(content);
+  const tasks = parseTasksFromMarkdown(normalizedContent);
 
   return {
     name: (meta.name as string) ?? path.basename(filePath, ".md"),
     created: (meta.created as string) ?? "",
     tags: (meta.tags as string[]) ?? [],
-    context: extractContext(content),
+    context: extractContext(normalizedContent),
     tasks,
     filePath,
   };
