@@ -1,25 +1,30 @@
 import { stripMarkdownCodeFence } from "../../text.js";
-import { GATE_CONFIG_SCHEMAS } from "../registry.js";
 import { runStructuredAgentSession } from "../ai-session.js";
 import type {
-  AiReviewGateConfig,
-  GateDefinition,
+  GateExecutionContext,
   GateIssue,
   GateStatus,
-  GateResult,
-  ProjectFacts,
 } from "../../types.js";
+
+export type AiReviewDepth = "quick" | "deep";
+
+export interface AiReviewResult {
+  status: Extract<GateStatus, "passed" | "failed" | "blocked">;
+  summary: string;
+  issues: GateIssue[];
+  metadata?: Record<string, unknown>;
+}
 
 interface AiReviewPayload {
   summary: string;
   issues: GateIssue[];
-  recommendedStatus: Extract<GateStatus, "passed" | "failed" | "blocked">;
+  recommendedStatus: AiReviewResult["status"];
 }
 
-function buildAiReviewPrompt(
+export function buildAiReviewPrompt(
   scopeFiles: string[],
   fileScope: "changed-files" | "all-files",
-  depth: AiReviewGateConfig["depth"],
+  depth: AiReviewDepth,
 ): string {
   const scopeLabel = fileScope === "changed-files" ? "changed files" : "repository files";
   const files = scopeFiles.length > 0 ? scopeFiles.map((file) => `- ${file}`).join("\n") : "- (no files reported)";
@@ -29,7 +34,7 @@ function buildAiReviewPrompt(
       : "Review deeply for correctness, edge cases, security, maintainability, and missing validation.";
 
   return [
-    "You are running a structured code review quality gate.",
+    "You are running a structured code review pass.",
     `Scope: ${scopeLabel}.`,
     `Depth: ${depth}.`,
     depthInstructions,
@@ -46,7 +51,6 @@ function buildAiReviewPrompt(
     "- Do not wrap the JSON in markdown fences.",
   ].join("\n");
 }
-
 
 function isGateIssue(value: unknown): value is GateIssue {
   return (
@@ -84,9 +88,8 @@ function parseAiReviewPayload(raw: string): AiReviewPayload | null {
   }
 }
 
-function buildBlockedResult(summary: string, metadata?: Record<string, unknown>): GateResult {
+function buildBlockedResult(summary: string, metadata?: Record<string, unknown>): AiReviewResult {
   return {
-    gate: "ai-review",
     status: "blocked",
     summary,
     issues: [],
@@ -94,43 +97,33 @@ function buildBlockedResult(summary: string, metadata?: Record<string, unknown>)
   };
 }
 
-export const aiReviewGate: GateDefinition<AiReviewGateConfig> = {
-  id: "ai-review",
-  description: "Runs a structured AI review over the selected scope.",
-  configSchema: GATE_CONFIG_SCHEMAS["ai-review"],
-  detect(_projectFacts: ProjectFacts) {
-    return {
-      suggestedConfig: { enabled: true, depth: "deep" },
-      confidence: "medium",
-      reason: "AI review is the default human-readable gate.",
-    };
-  },
-  async run(context, config) {
-    const sessionResult = await runStructuredAgentSession(context.createAgentSession, {
-      cwd: context.cwd,
-      prompt: buildAiReviewPrompt(context.scopeFiles, context.fileScope, config.depth),
-      model: context.reviewModel?.model,
-      thinkingLevel: context.reviewModel?.thinkingLevel ?? null,
-      timeoutMs: 120_000,
+export async function runAiReview(
+  context: Pick<GateExecutionContext, "cwd" | "scopeFiles" | "fileScope" | "createAgentSession" | "reviewModel">,
+  depth: AiReviewDepth,
+): Promise<AiReviewResult> {
+  const sessionResult = await runStructuredAgentSession(context.createAgentSession, {
+    cwd: context.cwd,
+    prompt: buildAiReviewPrompt(context.scopeFiles, context.fileScope, depth),
+    model: context.reviewModel?.model,
+    thinkingLevel: context.reviewModel?.thinkingLevel ?? null,
+    timeoutMs: 120_000,
+  });
+
+  if (sessionResult.status !== "ok") {
+    return buildBlockedResult(sessionResult.error);
+  }
+
+  const parsed = parseAiReviewPayload(sessionResult.finalText);
+  if (!parsed) {
+    return buildBlockedResult("AI review returned invalid JSON.", {
+      rawOutput: sessionResult.finalText,
     });
+  }
 
-    if (sessionResult.status !== "ok") {
-      return buildBlockedResult(sessionResult.error);
-    }
-
-    const parsed = parseAiReviewPayload(sessionResult.finalText);
-    if (!parsed) {
-      return buildBlockedResult("AI review returned invalid JSON.", {
-        rawOutput: sessionResult.finalText,
-      });
-    }
-
-    return {
-      gate: "ai-review",
-      status: parsed.recommendedStatus,
-      summary: parsed.summary,
-      issues: parsed.issues,
-      metadata: { depth: config.depth },
-    };
-  },
-};
+  return {
+    status: parsed.recommendedStatus,
+    summary: parsed.summary,
+    issues: parsed.issues,
+    metadata: { depth },
+  };
+}

@@ -236,11 +236,11 @@ export async function runQualityGates(input: RunQualityGatesInput): Promise<Revi
   const registry = input.gateRegistry ?? {};
   const gates: GateResult[] = [];
 
-  for (const gateId of selectedGates) {
+  // Run all gates concurrently — each gate is independent (no shared mutable state)
+  const promises = selectedGates.map(async (gateId): Promise<GateResult> => {
     if (skipped.has(gateId)) {
       input.onEvent?.({ type: "gate-skipped", gateId, reason: "Skipped by filter" });
-      gates.push(createSkippedGateResult(gateId));
-      continue;
+      return createSkippedGateResult(gateId);
     }
 
     input.onEvent?.({ type: "gate-started", gateId });
@@ -251,8 +251,10 @@ export async function runQualityGates(input: RunQualityGatesInput): Promise<Revi
       status: result.status,
       summary: result.summary,
     });
-    gates.push(result);
-  }
+    return result;
+  });
+
+  gates.push(...await Promise.all(promises));
 
   const summary = summarizeGateStatuses(gates);
 

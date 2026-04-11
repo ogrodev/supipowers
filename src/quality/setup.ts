@@ -11,9 +11,26 @@ import type {
 import type { InspectionLoadResult } from "../config/schema.js";
 import { validateQualityGates } from "../config/schema.js";
 import { writeQualityGatesConfig } from "../config/loader.js";
+import { CANONICAL_GATE_ORDER } from "./registry.js";
+import { detectReviewGates } from "./review-gates.js";
+import { suggestQualityGatesWithAi } from "./ai-setup.js";
+
+export type GateSetupMode = "deterministic" | "ai-assisted";
+
+export type SetupGatesProgressEvent =
+  | { type: "collecting-project-facts" }
+  | { type: "baseline-ready" }
+  | { type: "ai-analysis-started" }
+  | { type: "ai-analysis-completed" };
 
 export interface SetupGatesOptions {
-  mode?: "deterministic" | "ai-assisted";
+  mode?: GateSetupMode;
+  onProgress?: (event: SetupGatesProgressEvent) => void;
+}
+
+export interface GateSetupDialogOptions {
+  title?: string;
+  intro?: string;
 }
 
 export interface SetupGatesDependencies {
@@ -61,15 +78,15 @@ export function collectProjectFacts(
 }
 
 export function summarizeEnabledGates(gates: QualityGatesConfig): string {
-  const enabled = Object.entries(gates)
-    .filter(([, config]) => config?.enabled === true)
-    .map(([gateId]) => gateId);
+  const enabled = CANONICAL_GATE_ORDER.filter((gateId) => gates[gateId]?.enabled === true);
 
   return enabled.length > 0 ? enabled.join(", ") : "none";
 }
 
 export function formatGateProposal(proposal: SetupProposal): string {
-  const entries = Object.entries(proposal.gates);
+  const entries = CANONICAL_GATE_ORDER
+    .filter((gateId) => proposal.gates[gateId] !== undefined)
+    .map((gateId) => [gateId, proposal.gates[gateId]] as const);
   if (entries.length === 0) {
     return "No gates suggested.";
   }
@@ -80,20 +97,7 @@ export function formatGateProposal(proposal: SetupProposal): string {
 }
 
 export function buildDeterministicSuggestion(projectFacts: ProjectFacts): SetupProposal {
-  const gates: QualityGatesConfig = {
-    "ai-review": { enabled: true, depth: "deep" },
-  };
-
-  if (projectFacts.activeTools.some((tool) => tool.toLowerCase().includes("lsp"))) {
-    gates["lsp-diagnostics"] = { enabled: true };
-  }
-
-  const testCommand = projectFacts.packageScripts.test?.trim();
-  if (testCommand) {
-    gates["test-suite"] = { enabled: true, command: testCommand };
-  }
-
-  return { gates };
+  return { gates: detectReviewGates(projectFacts) };
 }
 
 export async function setupGates(
@@ -103,18 +107,23 @@ export async function setupGates(
   options: SetupGatesOptions = {},
   deps: SetupGatesDependencies = {},
 ): Promise<SetupGatesResult> {
+  options.onProgress?.({ type: "collecting-project-facts" });
   const projectFacts = collectProjectFacts(cwd, inspection, platform.getActiveTools());
   let proposal = buildDeterministicSuggestion(projectFacts);
+  options.onProgress?.({ type: "baseline-ready" });
 
-  if (options.mode === "ai-assisted" && deps.suggestWithAi) {
+  if (options.mode === "ai-assisted") {
+    options.onProgress?.({ type: "ai-analysis-started" });
+    const suggestWithAi = deps.suggestWithAi ?? suggestQualityGatesWithAi;
     proposal = {
-      gates: await deps.suggestWithAi({
+      gates: await suggestWithAi({
         platform,
         cwd,
         projectFacts,
         proposal,
       }),
     };
+    options.onProgress?.({ type: "ai-analysis-completed" });
   }
 
   const validation = validateQualityGates(proposal.gates);
@@ -165,19 +174,24 @@ async function selectSaveScope(ctx: PlatformContext): Promise<ConfigScope | null
   return choice === labelForScope("global") ? "global" : "project";
 }
 
+function buildProposalHelpText(proposal: SetupProposal, options?: GateSetupDialogOptions): string {
+  return [options?.intro, formatGateProposal(proposal)].filter(Boolean).join("\n\n");
+}
+
 export async function interactivelySaveGateSetup(
   ctx: PlatformContext,
   paths: Platform["paths"],
   cwd: string,
   initial: SetupProposal,
+  options: GateSetupDialogOptions = {},
 ): Promise<"saved" | "cancelled"> {
   let proposal = initial;
 
   while (true) {
     const choice = await ctx.ui.select(
-      "Quality gate setup",
+      options.title ?? "Quality gate setup",
       ["Accept", "Revise", "Cancel"],
-      { helpText: formatGateProposal(proposal) },
+      { helpText: buildProposalHelpText(proposal, options) },
     );
 
     if (!choice || choice === "Cancel") {

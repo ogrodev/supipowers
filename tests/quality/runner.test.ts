@@ -96,19 +96,19 @@ describe("runQualityGates", () => {
       platform: createPlatform(),
       cwd: "/tmp/project",
       gates: {
-        "ai-review": { enabled: true, depth: "deep" },
+        "lint": { enabled: true, command: "eslint ." },
         "lsp-diagnostics": { enabled: true },
       },
       filters: {},
       reviewModel: defaultReviewModel,
       gateRegistry: {
         "lsp-diagnostics": createGate("lsp-diagnostics"),
-        "ai-review": createGate("ai-review"),
+        "lint": createGate("lint"),
       },
       now: () => new Date("2026-04-10T00:00:00.000Z"),
     });
 
-    expect(report.selectedGates).toEqual(["lsp-diagnostics", "ai-review"]);
+    expect(report.selectedGates).toEqual(["lsp-diagnostics", "lint"]);
     expect(report.summary).toEqual({ passed: 2, failed: 0, skipped: 0, blocked: 0 });
     expect(report.overallStatus).toBe("passed");
   });
@@ -119,19 +119,19 @@ describe("runQualityGates", () => {
       cwd: "/tmp/project",
       gates: {
         "lsp-diagnostics": { enabled: true },
-        "ai-review": { enabled: true, depth: "deep" },
+        "lint": { enabled: true, command: "eslint ." },
         "test-suite": { enabled: false, command: null },
       },
-      filters: { skip: ["ai-review"] },
+      filters: { skip: ["lint"] },
       reviewModel: { model: "claude-opus-4-6", thinkingLevel: null, source: "action" },
       gateRegistry: {
         "lsp-diagnostics": createGate("lsp-diagnostics"),
-        "ai-review": createGate("ai-review"),
+        "lint": createGate("lint"),
         "test-suite": createGate("test-suite"),
       },
     });
 
-    expect(report.gates.find((gate) => gate.gate === "ai-review")?.status).toBe("skipped");
+    expect(report.gates.find((gate) => gate.gate === "lint")?.status).toBe("skipped");
     expect(report.gates.find((gate) => gate.gate === "test-suite")).toBeUndefined();
     expect(report.summary).toEqual({ passed: 1, failed: 0, skipped: 1, blocked: 0 });
   });
@@ -143,13 +143,13 @@ describe("runQualityGates", () => {
       cwd: "/tmp/project",
       gates: {
         "lsp-diagnostics": { enabled: true },
-        "ai-review": { enabled: true, depth: "deep" },
+        "lint": { enabled: true, command: "eslint ." },
       },
-      filters: { skip: ["ai-review"] },
+      filters: { skip: ["lint"] },
       reviewModel: defaultReviewModel,
       gateRegistry: {
         "lsp-diagnostics": createGate("lsp-diagnostics"),
-        "ai-review": createGate("ai-review"),
+        "lint": createGate("lint"),
       },
       onEvent,
     });
@@ -158,13 +158,13 @@ describe("runQualityGates", () => {
     expect(onEvent.mock.calls).toEqual([
       [{ type: "scope-discovered", changedFiles: 2, scopeFiles: 2, fileScope: "changed-files" }],
       [{ type: "gate-started", gateId: "lsp-diagnostics" }],
+      [{ type: "gate-skipped", gateId: "lint", reason: "Skipped by filter" }],
       [{
         type: "gate-completed",
         gateId: "lsp-diagnostics",
         status: "passed",
         summary: "lsp-diagnostics: passed",
       }],
-      [{ type: "gate-skipped", gateId: "ai-review", reason: "Skipped by filter" }],
     ]);
   });
 
