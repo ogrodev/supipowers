@@ -38,7 +38,7 @@ describe("formatSetupGuide", () => {
 
 describe("buildLspDiagnosticsPrompt", () => {
   test("includes all files in prompt", () => {
-    const prompt = buildLspDiagnosticsPrompt(["src/a.ts", "src/b.ts"]);
+    const prompt = buildLspDiagnosticsPrompt(["src/a.ts", "src/b.ts"], "changed-files");
     expect(prompt).toContain("src/a.ts");
     expect(prompt).toContain("src/b.ts");
     expect(prompt).toContain("diagnostics");
