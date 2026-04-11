@@ -63,8 +63,18 @@ function writeProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: str
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+function writeGlobalConfig(localPaths: ReturnType<typeof createPaths>, data: unknown): void {
+  const filePath = localPaths.global("config.json");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+
 function readProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: string): unknown {
   return JSON.parse(fs.readFileSync(localPaths.project(cwd, "config.json"), "utf-8"));
+}
+
+function readGlobalConfig(localPaths: ReturnType<typeof createPaths>): unknown {
+  return JSON.parse(fs.readFileSync(localPaths.global("config.json"), "utf-8"));
 }
 
 describe("setupGates", () => {
@@ -132,16 +142,23 @@ describe("interactivelySaveGateSetup", () => {
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({ notifications: { verbosity: "quiet" } });
   });
 
-  test("save replaces inherited quality.gates but preserves unrelated project fields", async () => {
+  test("save to project replaces quality.gates but preserves unrelated project fields", async () => {
     writeProjectConfig(localPaths, tmpDir, {
       notifications: { verbosity: "quiet" },
       quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } },
+    });
+    const select = mock(async () => {
+      const choices = [
+        "Accept",
+        "Project (.omp/supipowers/config.json)",
+      ];
+      return choices[select.mock.calls.length - 1] ?? null;
     });
     const ctx = {
       cwd: tmpDir,
       hasUI: true,
       ui: {
-        select: mock(async () => "Accept"),
+        select,
         notify: mock(),
         input: mock(async () => null),
       },
@@ -157,10 +174,44 @@ describe("interactivelySaveGateSetup", () => {
     });
   });
 
+  test("save to global writes only the selected scope", async () => {
+    writeGlobalConfig(localPaths, { notifications: { verbosity: "verbose" } });
+    const select = mock(async () => {
+      const choices = [
+        "Accept",
+        "Global (~/.omp/supipowers/config.json)",
+      ];
+      return choices[select.mock.calls.length - 1] ?? null;
+    });
+    const ctx = {
+      cwd: tmpDir,
+      hasUI: true,
+      ui: {
+        select,
+        notify: mock(),
+        input: mock(async () => null),
+      },
+    } as any;
+
+    await interactivelySaveGateSetup(ctx, localPaths, tmpDir, {
+      gates: { "lsp-diagnostics": { enabled: true } },
+    });
+
+    expect(readGlobalConfig(localPaths)).toEqual({
+      notifications: { verbosity: "verbose" },
+      quality: { gates: { "lsp-diagnostics": { enabled: true } } },
+    });
+    expect(fs.existsSync(localPaths.project(tmpDir, "config.json"))).toBe(false);
+  });
+
   test("revise updates proposal before save", async () => {
     const select = mock(async () => {
-      const value = select.mock.calls.length === 1 ? "Revise" : "Accept";
-      return value;
+      const choices = [
+        "Revise",
+        "Accept",
+        "Project (.omp/supipowers/config.json)",
+      ];
+      return choices[select.mock.calls.length - 1] ?? null;
     });
     const ctx = {
       cwd: tmpDir,

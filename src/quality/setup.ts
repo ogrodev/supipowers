@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Platform, PlatformContext, PlatformPaths } from "../platform/types.js";
+import type { Platform, PlatformContext } from "../platform/types.js";
 import type {
+  ConfigScope,
   ProjectFacts,
   QualityGatesConfig,
   SetupGatesResult,
@@ -9,6 +10,7 @@ import type {
 } from "../types.js";
 import type { InspectionLoadResult } from "../config/schema.js";
 import { validateQualityGates } from "../config/schema.js";
+import { writeQualityGatesConfig } from "../config/loader.js";
 
 export interface SetupGatesOptions {
   mode?: "deterministic" | "ai-assisted";
@@ -130,38 +132,6 @@ export async function setupGates(
   };
 }
 
-function getProjectConfigPath(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, "config.json");
-}
-
-function readProjectConfigFile(paths: PlatformPaths, cwd: string): Record<string, unknown> {
-  const configPath = getProjectConfigPath(paths, cwd);
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-
-  return JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-}
-
-export function writeProjectQualityGates(
-  paths: PlatformPaths,
-  cwd: string,
-  gates: QualityGatesConfig,
-): void {
-  const configPath = getProjectConfigPath(paths, cwd);
-  const current = readProjectConfigFile(paths, cwd);
-  const quality =
-    current.quality && typeof current.quality === "object" && !Array.isArray(current.quality)
-      ? { ...(current.quality as Record<string, unknown>) }
-      : {};
-
-  quality.gates = gates;
-  current.quality = quality;
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(current, null, 2) + "\n");
-}
-
 function parseRevisedProposal(raw: string): SetupProposal {
   const parsed = JSON.parse(raw) as QualityGatesConfig;
   const validation = validateQualityGates(parsed);
@@ -172,9 +142,32 @@ function parseRevisedProposal(raw: string): SetupProposal {
   return { gates: parsed };
 }
 
+function labelForScope(scope: ConfigScope): string {
+  return scope === "project"
+    ? "Project (.omp/supipowers/config.json)"
+    : "Global (~/.omp/supipowers/config.json)";
+}
+
+async function selectSaveScope(ctx: PlatformContext): Promise<ConfigScope | null> {
+  const choice = await ctx.ui.select(
+    "Save quality gates to",
+    [labelForScope("project"), labelForScope("global"), "Cancel"],
+    {
+      initialIndex: 0,
+      helpText: "Choose whether review gates apply only to this project or all projects.",
+    },
+  );
+
+  if (!choice || choice === "Cancel") {
+    return null;
+  }
+
+  return choice === labelForScope("global") ? "global" : "project";
+}
+
 export async function interactivelySaveGateSetup(
   ctx: PlatformContext,
-  paths: PlatformPaths,
+  paths: Platform["paths"],
   cwd: string,
   initial: SetupProposal,
 ): Promise<"saved" | "cancelled"> {
@@ -209,7 +202,12 @@ export async function interactivelySaveGateSetup(
       continue;
     }
 
-    writeProjectQualityGates(paths, cwd, proposal.gates);
+    const scope = await selectSaveScope(ctx);
+    if (!scope) {
+      return "cancelled";
+    }
+
+    writeQualityGatesConfig(paths, cwd, scope, proposal.gates);
     return "saved";
   }
 }
