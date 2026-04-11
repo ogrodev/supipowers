@@ -41,6 +41,8 @@ export interface Notification {
 /** Canonical quality gate identifiers */
 export type GateId = "lsp-diagnostics" | "test-suite" | "ai-review";
 
+export type ConfigScope = "project" | "global";
+
 /** Aggregate gate execution status */
 export type GateStatus = "passed" | "failed" | "skipped" | "blocked";
 
@@ -293,4 +295,12 @@ export interface SupipowersConfig {
   };
   contextMode: ContextModeConfig;
   mcp: McpManagementConfig;
+}
+
+
+/** Persisted state for /supi:generate docs — tracks which docs are monitored and the last checked commit */
+export interface DocDriftState {
+  trackedFiles: string[];
+  lastCommit: string | null;
+  lastRunAt: string | null;
 }
