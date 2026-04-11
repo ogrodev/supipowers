@@ -25,7 +25,8 @@ export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
     "",
     "Write the plan assuming the implementing engineer has zero context for this codebase.",
     "Document everything they need: which files to touch, complete code, testing, exact commands.",
-    "Give them the whole plan as bite-sized tasks. DRY. YAGNI. TDD. Frequent commits.",
+    "Give them the whole plan as bite-sized tasks. DRY. YAGNI. TDD.",
+    "Keep the plan local-only: do NOT include git add, git commit, git push, or other VCS steps in the plan.",
     "",
 
     // ── Scope Check ──────────────────────────────────────────────
@@ -73,7 +74,6 @@ export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
     "- Run it to verify it fails — one step",
     "- Write minimal implementation — one step",
     "- Run tests to verify it passes — one step",
-    "- Commit — one step",
     "",
 
     // ── Task Structure ───────────────────────────────────────────
@@ -113,13 +113,6 @@ export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
     "",
     "Run: `bun test tests/path/test.ts`",
     "Expected: PASS",
-    "",
-    "- [ ] **Step 5: Commit**",
-    "",
-    "```bash",
-    "git add tests/path/test.ts src/path/file.ts",
-    'git commit -m "feat: add specific feature"',
-    "```",
     "````",
     "",
 
@@ -129,9 +122,9 @@ export function buildPlanWriterPrompt(options: PlanWriterOptions): string {
     "- Exact file paths always",
     "- Complete code in plan (not 'add validation' — show the actual code)",
     "- Exact commands with expected output",
-    "- DRY, YAGNI, TDD, frequent commits",
+    "- DRY, YAGNI, TDD",
+    "- No git commit, push, or other VCS steps in the plan",
     "",
-
     // ── Plan Review Loop ─────────────────────────────────────────
     "## Step 4: plan review loop",
     "",

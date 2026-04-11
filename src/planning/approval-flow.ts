@@ -1,5 +1,7 @@
 import type { Platform } from "../platform/types.js";
+import type { DebugLogger } from "../debug/logger.js";
 import type { ResolvedModel } from "../types.js";
+import type { PlanningSystemPromptOptions } from "./system-prompt.js";
 import { applyModelOverride } from "../config/model-resolver.js";
 import { listPlans, readPlanFile } from "../storage/plans.js";
 
@@ -18,6 +20,12 @@ let planCwd: string = "";
 let capturedNewSession: ((options?: any) => Promise<{ cancelled: boolean }>) | null = null;
 /** Resolved model for plan action — re-applied on execution handoff. */
 let capturedResolvedModel: ResolvedModel | null = null;
+/** Guards against concurrent approval prompts from rapid agent_end events. */
+let approvalPending = false;
+/** Planning-system-prompt options captured from the command context at plan start. */
+let planningPromptOptions: PlanningSystemPromptOptions | null = null;
+/** Active debug logger for the current planning session. */
+let planningDebugLogger: DebugLogger | null = null;
 
 /** Mark planning as started (called by plan command after sending steer). */
 export function startPlanTracking(
@@ -25,12 +33,25 @@ export function startPlanTracking(
   paths: any,
   newSession?: (options?: any) => Promise<{ cancelled: boolean }>,
   resolvedModel?: ResolvedModel,
-): void {
+  promptOptions?: PlanningSystemPromptOptions,
+  debugLogger?: DebugLogger,
+ ): void {
   planningActive = true;
   planCwd = cwd;
   plansBefore = listPlans(paths, cwd);
   capturedNewSession = newSession ?? null;
   capturedResolvedModel = resolvedModel ?? null;
+  planningPromptOptions = promptOptions ?? null;
+  planningDebugLogger = debugLogger ?? null;
+  approvalPending = false;
+
+  planningDebugLogger?.log("planning_tracking_started", {
+    cwd,
+    existingPlanCount: plansBefore.length,
+    hasNewSession: Boolean(newSession),
+    hasResolvedModel: Boolean(resolvedModel),
+    promptOptions: promptOptions ?? null,
+  });
 }
 
 /** Cancel plan tracking (e.g., session change). */
@@ -40,11 +61,22 @@ export function cancelPlanTracking(): void {
   planCwd = "";
   capturedNewSession = null;
   capturedResolvedModel = null;
+  planningPromptOptions = null;
+  planningDebugLogger = null;
+  approvalPending = false;
 }
 
 /** Whether a planning session is currently active. */
 export function isPlanningActive(): boolean {
   return planningActive;
+}
+
+export function getPlanningPromptOptions(): PlanningSystemPromptOptions | null {
+  return planningPromptOptions;
+}
+
+export function getPlanningDebugLogger(): DebugLogger | null {
+  return planningDebugLogger;
 }
 
 /**
@@ -93,23 +125,40 @@ async function executeApproveFlow(
   ctx: any,
   planContent: string,
   planPath: string,
-): Promise<void> {
+  newSession: ((options?: any) => Promise<{ cancelled: boolean }>) | null,
+  resolvedModel: ResolvedModel | null,
+  debugLogger: DebugLogger | null,
+ ): Promise<void> {
   const prompt = buildExecutionPrompt(planContent, planPath);
+  debugLogger?.log("execution_handoff_started", {
+    planPath,
+    promptLength: prompt.length,
+    usesNewSession: Boolean(newSession),
+  });
 
   // Re-apply the plan model override for the execution turn.
   // The planning turn's restore hook already fired (model reverted to default).
   // We must switch again so the execution LLM turn uses the configured model.
-  if (capturedResolvedModel) {
-    await applyModelOverride(platform, ctx, "plan", capturedResolvedModel);
+  if (resolvedModel) {
+    await applyModelOverride(platform, ctx, "plan", resolvedModel);
+    debugLogger?.log("execution_handoff_model_override_applied", {
+      configuredAction: "plan",
+    });
   }
 
-  if (capturedNewSession) {
-    const result = await capturedNewSession();
+  if (newSession) {
+    const result = await newSession();
     if (result?.cancelled) {
+      debugLogger?.log("execution_handoff_new_session_cancelled", {
+        planPath,
+      });
       ctx.ui.notify("Session start cancelled. Plan saved; run /supi:plan again to execute.");
       return;
     }
     platform.sendUserMessage(prompt);
+    debugLogger?.log("execution_handoff_user_message_sent", {
+      planPath,
+    });
   } else {
     // Fallback: headless/SDK mode — steer in the current session.
     platform.sendMessage(
@@ -120,6 +169,9 @@ async function executeApproveFlow(
       },
       { deliverAs: "steer", triggerTurn: true },
     );
+    debugLogger?.log("execution_handoff_same_session_steer_sent", {
+      planPath,
+    });
     ctx.ui.notify("Plan approved — starting execution");
   }
 }
@@ -135,7 +187,7 @@ async function executeApproveFlow(
  */
 export function registerPlanApprovalHook(platform: Platform): void {
   platform.on("agent_end", async (_event: any, ctx: any) => {
-    if (!planningActive || !ctx?.hasUI) return;
+    if (!planningActive || !ctx?.hasUI || approvalPending) return;
 
     // Detect newly written plan files
     const plansNow = listPlans(platform.paths, planCwd);
@@ -151,20 +203,47 @@ export function registerPlanApprovalHook(platform: Platform): void {
     // Pick the most recent new plan
     const planName = newPlans[newPlans.length - 1];
     const planContent = readPlanFile(platform.paths, planCwd, planName);
-    if (!planContent) return;
+    const debugLogger = planningDebugLogger;
+    if (!planContent) {
+      debugLogger?.log("approval_flow_plan_content_missing", {
+        planName,
+      });
+      return;
+    }
 
     const planPath = `${platform.paths.dotDirDisplay}/supipowers/plans/${planName}`;
-
-    const choice = await ctx.ui.select("Plan complete — what next?", [
+    const approvalOptions = [
       "Approve and execute",
       "Refine plan",
       "Stay in plan mode",
-    ]);
+    ];
+
+    approvalPending = true;
+    debugLogger?.log("approval_flow_presented", {
+      planName,
+      planPath,
+      options: approvalOptions,
+    });
+    const choice = await ctx.ui.select("Plan complete — what next?", approvalOptions);
+    approvalPending = false;
+    debugLogger?.log("approval_flow_choice", {
+      choice: choice ?? null,
+      planPath,
+    });
 
     if (choice === "Approve and execute") {
-      planningActive = false;
-      plansBefore = [];
-      await executeApproveFlow(platform, ctx, planContent, planPath);
+      const executionNewSession = capturedNewSession;
+      const executionModel = capturedResolvedModel;
+      cancelPlanTracking();
+      await executeApproveFlow(
+        platform,
+        ctx,
+        planContent,
+        planPath,
+        executionNewSession,
+        executionModel,
+        debugLogger,
+      );
     } else if (choice === "Refine plan") {
       // Keep planning active, let user type refinement.
       // Empty input is treated as misclick → fall through to approve.
@@ -172,16 +251,43 @@ export function registerPlanApprovalHook(platform: Platform): void {
       const refinement = await ctx.ui.input("What should be refined?");
       if (!refinement || !refinement.trim()) {
         // Misclick: treat empty input as approval
-        planningActive = false;
-        plansBefore = [];
-        await executeApproveFlow(platform, ctx, planContent, planPath);
+        debugLogger?.log("approval_flow_empty_refinement_treated_as_approve", {
+          planPath,
+        });
+        const executionNewSession = capturedNewSession;
+        const executionModel = capturedResolvedModel;
+        cancelPlanTracking();
+        await executeApproveFlow(
+        platform,
+        ctx,
+        planContent,
+        planPath,
+        executionNewSession,
+        executionModel,
+        debugLogger,
+      );
       } else {
+        debugLogger?.log("approval_flow_refine_requested", {
+          planPath,
+          refinementLength: refinement.length,
+        });
         ctx.ui.setEditorText?.(refinement);
       }
-    } else {
-      // Stay in plan mode — user keeps control, tracking cancelled
+    } else if (choice === "Stay in plan mode") {
+      // Explicit user choice — cancel tracking, return control
+      debugLogger?.log("planning_tracking_cancelled", {
+        reason: "stay_in_plan_mode",
+        planPath,
+      });
       cancelPlanTracking();
       ctx.ui.notify("Planning complete. Plan saved but not executing.");
+    } else {
+      // Select was cancelled (returned undefined/null) — likely because a new
+      // agent turn started (e.g., background job completion). Don't cancel
+      // tracking; the next agent_end will re-prompt.
+      debugLogger?.log("approval_flow_choice_cancelled", {
+        planPath,
+      });
     }
   });
 }

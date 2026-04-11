@@ -37,7 +37,7 @@ describe("plan writer prompt", () => {
       expect(prompt).toContain("verify it fails");
       expect(prompt).toContain("minimal implementation");
       expect(prompt).toContain("verify it passes");
-      expect(prompt).toContain("Commit");
+      expect(prompt).toContain("do NOT include git");
     });
 
     test("includes checkbox syntax", () => {
