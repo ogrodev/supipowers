@@ -160,12 +160,8 @@ function legacyGatesFromProfile(
 ): QualityGatesConfig | null {
   const gates: QualityGatesConfig = {};
 
-  if (profileName === "quick") {
+  if (profileName === "quick" || profileName === "thorough" || profileName === "full-regression") {
     gates["lsp-diagnostics"] = { enabled: true };
-    gates["ai-review"] = { enabled: true, depth: "quick" };
-  } else if (profileName === "thorough" || profileName === "full-regression") {
-    gates["lsp-diagnostics"] = { enabled: true };
-    gates["ai-review"] = { enabled: true, depth: "deep" };
   }
 
   if (legacyTestCommand) {
@@ -203,6 +199,10 @@ function migrateConfig(config: Record<string, unknown>): Record<string, unknown>
   const quality = asRecord(migrated.quality);
   if (quality) {
     const gates = asRecord(quality.gates);
+    if (gates) {
+      // Strip legacy ai-review gate — removed from the schema in the checks/review split.
+      delete gates["ai-review"];
+    }
     if (!gates || Object.keys(gates).length === 0) {
       const legacyGates = legacyGatesFromProfile(legacyProfile, legacyTestCommand);
       if (legacyGates) {

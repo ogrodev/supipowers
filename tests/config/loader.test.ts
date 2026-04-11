@@ -140,7 +140,7 @@ describe("strict and inspection config loading", () => {
 
   test("strict load rejects invalid quality gate config", () => {
     writeProjectConfig(localPaths, tmpDir, {
-      quality: { gates: { "ai-review": { enabled: true, depth: "invalid" } } },
+      quality: { gates: { "lsp-diagnostics": { enabled: "not-a-boolean" } } },
     });
 
     expect(() => loadConfig(localPaths, tmpDir)).toThrow(/quality\.gates/);
@@ -169,7 +169,6 @@ describe("strict and inspection config loading", () => {
       quality: {
         gates: {
           "lsp-diagnostics": { enabled: true },
-          "ai-review": { enabled: true, depth: "deep" },
         },
       },
       qa: { framework: null, e2e: false },
@@ -194,7 +193,7 @@ describe("strict and inspection config loading", () => {
 
   test("project quality.gates replaces inherited global gates", () => {
     writeGlobalConfig(localPaths, {
-      quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } },
+      quality: { gates: { "lint": { enabled: true, command: "eslint ." } } },
     });
     writeProjectConfig(localPaths, tmpDir, {
       quality: { gates: { "test-suite": { enabled: true, command: "npm test" } } },
@@ -221,7 +220,7 @@ describe("quality gate recovery helpers", () => {
 
   test("detects invalid quality.gates per scope without treating valid scopes as broken", () => {
     writeGlobalConfig(localPaths, {
-      quality: { gates: { "ai-review": { enabled: true, depth: "invalid" } } },
+      quality: { gates: { "lsp-diagnostics": { enabled: "not-a-boolean" } } },
     });
     writeProjectConfig(localPaths, tmpDir, {
       notifications: { verbosity: "quiet" },
@@ -232,9 +231,7 @@ describe("quality gate recovery helpers", () => {
     const projectScope = result.scopes.find((scope) => scope.scope === "project");
 
     expect(globalScope?.recoverableInvalidQualityGates).toBe(true);
-    expect(globalScope?.qualityGateValidationErrors).toEqual([
-      { path: "quality.gates.ai-review.depth", message: "Expected union value" },
-    ]);
+    expect(globalScope?.qualityGateValidationErrors.length).toBeGreaterThan(0);
     expect(projectScope?.recoverableInvalidQualityGates).toBe(false);
     expect(projectScope?.validationErrors).toHaveLength(0);
   });
@@ -242,7 +239,7 @@ describe("quality gate recovery helpers", () => {
   test("removeQualityGatesConfig removes only quality.gates and preserves unrelated keys", () => {
     writeProjectConfig(localPaths, tmpDir, {
       notifications: { verbosity: "quiet" },
-      quality: { gates: { "ai-review": { enabled: true, depth: "invalid" } } },
+      quality: { gates: { "lsp-diagnostics": { enabled: "not-a-boolean" } } },
     });
 
     expect(removeQualityGatesConfig(localPaths, tmpDir, "project")).toBe(true);

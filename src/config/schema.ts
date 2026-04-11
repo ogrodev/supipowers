@@ -3,48 +3,7 @@ import type { TSchema } from "@sinclair/typebox";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { SupipowersConfig } from "../types.js";
-
-
-const LspDiagnosticsGateConfigSchema = Type.Object(
-  {
-    enabled: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
-
-const AiReviewGateConfigSchema = Type.Object(
-  {
-    enabled: Type.Boolean(),
-    depth: Type.Union([Type.Literal("quick"), Type.Literal("deep")]),
-  },
-  { additionalProperties: false },
-);
-
-const TestSuiteGateConfigSchema = Type.Union([
-  Type.Object(
-    {
-      enabled: Type.Literal(false),
-      command: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      enabled: Type.Literal(true),
-      command: Type.String({ minLength: 1 }),
-    },
-    { additionalProperties: false },
-  ),
-]);
-
-export const QualityGatesSchema = Type.Object(
-  {
-    "lsp-diagnostics": Type.Optional(LspDiagnosticsGateConfigSchema),
-    "ai-review": Type.Optional(AiReviewGateConfigSchema),
-    "test-suite": Type.Optional(TestSuiteGateConfigSchema),
-  },
-  { additionalProperties: false },
-);
+import { QualityGatesSchema } from "../quality/schemas.js";
 
 export const ConfigSchema = Type.Object(
   {
