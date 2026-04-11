@@ -1,6 +1,9 @@
+import { Text } from "@oh-my-pi/pi-tui";
 import type { PlatformUI } from "./types.js";
-
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+import {
+  SPINNER_FRAMES,
+  RESET, GREEN, RED, ORANGE, WHITE, YELLOW, DIM, TEXT_COLOR,
+} from "./tui-colors.js";
 
 export type WorkflowStepStatus = "pending" | "active" | "done" | "skipped" | "failed" | "blocked";
 
@@ -12,57 +15,87 @@ export interface WorkflowStepDefinition {
 interface WorkflowStepState extends WorkflowStepDefinition {
   status: WorkflowStepStatus;
   detail?: string;
+  hidden?: boolean;
 }
 
 export interface WorkflowProgressOptions {
   title: string;
   statusKey: string;
+  statusLabel?: string;
   widgetKey?: string;
   clearStatusKeys?: string[];
   steps: WorkflowStepDefinition[];
 }
 
-function iconForStatus(status: WorkflowStepStatus, frame: number): string {
+function coloredIcon(status: WorkflowStepStatus, frame: number): string {
   switch (status) {
     case "done":
-      return "✓";
+      return `${GREEN}✓${RESET}`;
     case "active":
-      return SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-    case "skipped":
-      return "–";
+      return `${ORANGE}${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]}${RESET}`;
     case "failed":
-      return "✕";
+      return `${RED}✕${RESET}`;
     case "blocked":
-      return "!";
+      return `${YELLOW}!${RESET}`;
+    case "skipped":
+      return `${DIM}–${RESET}`;
     default:
-      return "○";
+      return `${WHITE}○${RESET}`;
   }
+}
+
+/** Repeat a character `n` times. */
+function repeat(ch: string, n: number): string {
+  return n > 0 ? ch.repeat(n) : "";
 }
 
 export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgressOptions) {
   const widgetKey = options.widgetKey ?? options.statusKey;
+  const statusLabel = options.statusLabel ?? options.title;
   const steps = options.steps.map<WorkflowStepState>((step) => ({ ...step, status: "pending" }));
   const stepsByKey = new Map(steps.map((step) => [step.key, step]));
 
   let frame = 0;
-  let statusDetail = "";
+  let statusActive = false;
   let timer: ReturnType<typeof setInterval> | null = null;
 
-  function renderWidget(): string[] {
-    const lines = [`┌─ ${options.title} ─────────────────────┐`];
-    for (const step of steps) {
+  function visibleSteps(): WorkflowStepState[] {
+    return steps.filter((step) => !step.hidden);
+  }
+
+  function renderWidgetText(): string {
+    const visible = visibleSteps();
+
+    // Build content lines — measure visible width (without ANSI codes)
+    const contentEntries: { text: string; visibleLength: number }[] = [];
+    for (const step of visible) {
       const detail = step.detail ? ` (${step.detail})` : "";
-      lines.push(`│ ${iconForStatus(step.status, frame)} ${step.label}${detail}`);
+      // Icon is 1 visible char, then space + label + detail
+      const visibleText = `${step.label}${detail}`;
+      const line = `${coloredIcon(step.status, frame)} ${TEXT_COLOR}${visibleText}${RESET}`;
+      // Visible width: icon(1) + space(1) + label + detail
+      contentEntries.push({ text: line, visibleLength: 2 + visibleText.length });
     }
-    lines.push("└───────────────────────────────────┘");
-    return lines;
+
+    const titleText = ` ${options.title} `;
+    const maxContentWidth = contentEntries.reduce((max, entry) => Math.max(max, entry.visibleLength), 0);
+    // Box inner width: at least wide enough for title or widest content + side padding
+    const innerWidth = Math.max(titleText.length + 2, maxContentWidth + 2);
+
+    const lines = [`${DIM}┌─${titleText}${repeat("─", innerWidth - titleText.length)}┐${RESET}`];
+    for (const entry of contentEntries) {
+      const padding = repeat(" ", innerWidth - entry.visibleLength);
+      lines.push(`${DIM}│${RESET} ${entry.text}${padding}${DIM}│${RESET}`);
+    }
+    lines.push(`${DIM}└${repeat("─", innerWidth + 1)}┘${RESET}`);
+    return lines.join("\n");
   }
 
   function refresh() {
     frame++;
-    ui.setWidget?.(widgetKey, renderWidget());
-    if (statusDetail) {
-      ui.setStatus?.(options.statusKey, `${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]} ${statusDetail}`);
+    ui.setWidget?.(widgetKey, () => new Text(renderWidgetText(), 0, 0));
+    if (statusActive) {
+      ui.setStatus?.(options.statusKey, `${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]} ${statusLabel}`);
     }
   }
 
@@ -95,7 +128,7 @@ export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgress
     }
 
     if (status === "active") {
-      statusDetail = detail ?? step.label;
+      statusActive = true;
       startTimer();
     }
 
@@ -121,8 +154,15 @@ export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgress
     block(stepKey: string, detail?: string) {
       setStatus(stepKey, "blocked", detail);
     },
+    /** Hide a step from the widget entirely. */
+    hide(stepKey: string) {
+      const step = getStep(stepKey);
+      if (step) {
+        step.hidden = true;
+        refresh();
+      }
+    },
     detail(text: string) {
-      statusDetail = text;
       const activeStep = steps.find((step) => step.status === "active");
       if (activeStep) {
         activeStep.detail = text;
