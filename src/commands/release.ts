@@ -2,7 +2,7 @@ import type { Platform } from "../platform/types.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
-import type { ReleaseChannel, BumpType } from "../types.js";
+import type { ReleaseChannel, BumpType, ReviewReport, ResolvedModel } from "../types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
 import { parseConventionalCommits, buildChangelogMarkdown, summarizeChanges } from "../release/changelog.js";
@@ -12,6 +12,17 @@ import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
 import { analyzeAndCommit } from "../git/commit.js";
 import { getWorkingTreeStatus } from "../git/status.js";
+import { runStructuredAgentSession } from "../quality/ai-session.js";
+import {
+  loadState as loadDocDriftState,
+  readTrackedDocs,
+  checkDocDrift,
+  DOC_FIX_PROMPT_PREFIX,
+} from "../docs/drift.js";
+import { runQualityGates } from "../quality/runner.js";
+import { REVIEW_GATE_REGISTRY } from "../quality/review-gates.js";
+import { GATE_DISPLAY_NAMES } from "../quality/registry.js";
+import { createWorkflowProgress } from "../platform/progress.js";
 
 modelRegistry.register({
   id: "release",
@@ -19,10 +30,6 @@ modelRegistry.register({
   label: "Release",
   harnessRoleHint: "slow",
 });
-
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const STATUS_KEY = "supi-release";
-const WIDGET_KEY = "supi-release";
 
 const BUMP_OPTIONS = [
   "patch — bug fixes only",
@@ -37,8 +44,7 @@ const BUMP_OPTIONS = [
  * This is the resume path: the version in package.json hasn't been tagged yet
  * AND all channels are already configured — the user staged the release
  * deliberately when they bumped the version, so no new decisions are needed.
- * Dry-run is excluded because it is exploratory by intent; the user explicitly
- * wants to preview and confirm before anything happens.
+ * Dry-run is excluded because it is exploratory by intent.
  */
 export function isInProgressRelease(opts: {
   skipBump: boolean;
@@ -48,131 +54,59 @@ export function isInProgressRelease(opts: {
   return opts.skipBump && opts.channelsWerePreConfigured && !opts.isDryRun;
 }
 
-// ── Release progress tracker ────────────────────────────────────
+const RELEASE_STEPS = [
+  { key: "working-tree", label: "Check working tree" },
+  { key: "doc-drift", label: "Check documentation drift" },
+  { key: "checks", label: "Quality checks" },
+  { key: "channels", label: "Detect channels" },
+  { key: "commits", label: "Analyze commits" },
+  { key: "version", label: "Select version" },
+  { key: "changelog", label: "Build changelog" },
+  { key: "polish", label: "Polish release notes" },
+  { key: "execute", label: "Execute release" },
+  { key: "publish", label: "Publish channels" },
+] as const;
 
-interface ReleaseStep {
-  label: string;
-  status: "pending" | "active" | "done" | "error" | "skipped";
-  detail?: string;
-}
+type ReleaseStepKey = (typeof RELEASE_STEPS)[number]["key"];
 
 function createReleaseProgress(ctx: any) {
-  const steps: ReleaseStep[] = [
-    { label: "Check working tree", status: "pending" },
-    { label: "Detect channels", status: "pending" },
-    { label: "Analyze commits", status: "pending" },
-    { label: "Select version", status: "pending" },
-    { label: "Build changelog", status: "pending" },
-    { label: "Execute release", status: "pending" },
-    { label: "Publish channels", status: "pending" },
-  ];
-
-  let frame = 0;
-  let statusDetail = "";
-  let timer: ReturnType<typeof setInterval> | null = null;
-
-  function icon(step: ReleaseStep): string {
-    switch (step.status) {
-      case "done":    return "✓";
-      case "active":  return SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-      case "error":   return "✗";
-      case "skipped": return "–";
-      default:        return "○";
-    }
-  }
-
-  function renderWidget(): string[] {
-    const lines: string[] = ["┌─ supi:release ─────────────────────┐"];
-    for (const step of steps) {
-      const mark = icon(step);
-      const detail = step.detail ? ` (${step.detail})` : "";
-      lines.push(`│ ${mark} ${step.label}${detail}`);
-    }
-    lines.push("└─────────────────────────────────────┘");
-    return lines;
-  }
-
-  function refresh() {
-    frame++;
-    ctx.ui.setWidget?.(WIDGET_KEY, renderWidget());
-    if (statusDetail) {
-      ctx.ui.setStatus?.(STATUS_KEY, `${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]} ${statusDetail}`);
-    }
-  }
-
-  function startTimer() {
-    if (!timer) {
-      timer = setInterval(refresh, 80);
-    }
-  }
-
-  function stopTimer() {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-  }
+  const progress = createWorkflowProgress(ctx.ui, {
+    title: "supi:release",
+    statusKey: "supi-release",
+    statusLabel: "Releasing...",
+    widgetKey: "supi-release",
+    steps: [...RELEASE_STEPS],
+  });
 
   return {
-    activate(stepIndex: number, detail?: string) {
-      const step = steps[stepIndex];
-      if (step) {
-        step.status = "active";
-        step.detail = detail;
-      }
-      statusDetail = detail ?? step?.label ?? "";
-      startTimer();
-      refresh();
+    activate(key: ReleaseStepKey, detail?: string) {
+      progress.activate(key, detail);
     },
-
-    complete(stepIndex: number, detail?: string) {
-      const step = steps[stepIndex];
-      if (step) {
-        step.status = "done";
-        if (detail !== undefined) step.detail = detail;
-      }
-      refresh();
+    complete(key: ReleaseStepKey, detail?: string) {
+      progress.complete(key, detail);
     },
-
-    fail(stepIndex: number, detail?: string) {
-      const step = steps[stepIndex];
-      if (step) {
-        step.status = "error";
-        if (detail !== undefined) step.detail = detail;
-      }
-      refresh();
+    fail(key: ReleaseStepKey, detail?: string) {
+      progress.fail(key, detail);
     },
-
-    skip(stepIndex: number, detail?: string) {
-      const step = steps[stepIndex];
-      if (step) {
-        step.status = "skipped";
-        if (detail !== undefined) step.detail = detail;
-      }
-      refresh();
+    skip(key: ReleaseStepKey, detail?: string) {
+      progress.skip(key, detail);
     },
-
+    detail(text: string) {
+      progress.detail(text);
+    },
     /** Build an onProgress callback for executeRelease. */
     executorProgress(): ReleaseProgressFn {
       return (step, status, detail) => {
-        // Map executor steps to sub-detail on "Execute release" (index 5)
-        // or "Publish channels" (index 6)
         const isPublish = step.startsWith("publish-");
-        const idx = isPublish ? 6 : 5;
-        if (status === "active") this.activate(idx, detail);
+        const key: ReleaseStepKey = isPublish ? "publish" : "execute";
+        if (status === "active") this.activate(key, detail);
         else if (status === "done") {
-          // Don't mark the overall step done from individual sub-steps
-          const s = steps[idx];
-          if (s) { s.detail = detail; }
-          refresh();
-        } else if (status === "error") this.fail(idx, detail);
+          progress.detail(detail ?? "");
+        } else if (status === "error") this.fail(key, detail);
       };
     },
-
     dispose() {
-      stopTimer();
-      ctx.ui.setStatus?.(STATUS_KEY, undefined);
-      ctx.ui.setWidget?.(WIDGET_KEY, undefined);
+      progress.dispose();
     },
   };
 }
@@ -210,16 +144,16 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
   void (async () => {
     try {
-      const isPolish = args?.includes("--polish") ?? false;
+      const skipPolish = args?.includes("--raw") ?? false;
       const isDryRun = args?.includes("--dry-run") ?? false;
       const config = loadConfig(platform.paths, ctx.cwd);
 
-      // 0. Check for uncommitted changes
-      progress.activate(0, "Checking working tree");
+      // ── 1. Check for uncommitted changes ────────────────────────────────
+      progress.activate("working-tree", "Checking working tree");
       let didStash = false;
       const treeStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
       if (treeStatus.dirty) {
-        progress.complete(0, `${treeStatus.files.length} files changed`);
+        progress.complete("working-tree", `${treeStatus.files.length} files changed`);
         const filePreview = treeStatus.files.slice(0, 8).join(", ");
         const extra = treeStatus.files.length > 8 ? ` (+${treeStatus.files.length - 8} more)` : "";
 
@@ -227,8 +161,8 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           `Uncommitted changes detected (${treeStatus.files.length} files)`,
           [
             "commit — commit changes with AI-generated message",
-            "stash \u2014 stash changes and continue",
-            "abort \u2014 cancel release",
+            "stash — stash changes and continue",
+            "abort — cancel release",
           ],
           { helpText: `Files: ${filePreview}${extra}` },
         );
@@ -253,26 +187,98 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
             return;
           }
           // Re-create progress after commit's widget has disposed
-          // (reactivate shows state from where we left off)
-          progress.complete(0, "Committed");
+          progress.complete("working-tree", "Committed");
         } else if (action.startsWith("stash")) {
-          progress.activate(0, "Stashing changes");
+          progress.activate("working-tree", "Stashing changes");
           const stashResult = await platform.exec("git", ["stash", "push", "-m", "supi:release auto-stash"], { cwd: ctx.cwd });
           if (stashResult.code !== 0) {
-            progress.fail(0, stashResult.stderr || "stash failed");
+            progress.fail("working-tree", stashResult.stderr || "stash failed");
             progress.dispose();
             notifyError(ctx, "git stash failed", stashResult.stderr || "Non-zero exit");
             return;
           }
           didStash = true;
-          progress.complete(0, "Stashed");
+          progress.complete("working-tree", "Stashed");
         }
       } else {
-        progress.complete(0, "Clean");
+        progress.complete("working-tree", "Clean");
       }
 
-      // 1. Ensure channels are configured (or detect + ask)
-      progress.activate(1, "Detecting channels");
+      // ── 2. Doc-drift pre-check ──────────────────────────────────────────
+      progress.activate("doc-drift", "Checking documentation drift");
+      const driftResult = await checkDocDrift(platform, ctx.cwd);
+      if (driftResult?.drifted) {
+        progress.complete("doc-drift", "Drift detected");
+        const driftAction = await ctx.ui.select(
+          "Documentation drift detected before release",
+          [
+            "Update docs — fix documentation before continuing",
+            "Continue — release without updating docs",
+          ],
+          { helpText: driftResult.summary },
+        );
+
+        if (driftAction?.startsWith("Update docs")) {
+          progress.activate("doc-drift", "Fixing documentation");
+          notifyInfo(ctx, "Updating documentation", driftResult.summary);
+          const state = loadDocDriftState(platform.paths, ctx.cwd);
+          const docs = readTrackedDocs(ctx.cwd, state.trackedFiles);
+          const fileList = state.trackedFiles.join(", ");
+          const fixPrompt = DOC_FIX_PROMPT_PREFIX + fileList + "\n\nDrift summary: " + driftResult.summary
+            + "\n\nCurrent file contents:\n" + [...docs.entries()].map(([f, c]) => `### ${f}\n\`\`\`\n${c}\n\`\`\``).join("\n\n");
+          const fixResult = await runStructuredAgentSession(
+            platform.createAgentSession.bind(platform),
+            { cwd: ctx.cwd, prompt: fixPrompt },
+          );
+          if (fixResult.status === "ok") {
+            progress.complete("doc-drift", "Fixed");
+            notifySuccess(ctx, "Documentation updated");
+          } else {
+            progress.fail("doc-drift", fixResult.error ?? "Agent session error");
+            notifyError(ctx, "Doc update failed", fixResult.error ?? "Agent session error");
+            progress.dispose();
+            return;
+          }
+        } else {
+          progress.skip("doc-drift", "Skipped by user");
+        }
+      } else {
+        progress.complete("doc-drift", "No drift");
+      }
+
+      // ── 3. Quality checks (headless) ────────────────────────────────────
+      progress.activate("checks", "Running quality gates");
+      const checksReport = await runHeadlessChecks(platform, ctx, config, resolved);
+      if (checksReport) {
+        const { summary, overallStatus } = checksReport;
+        const detail = `${summary.passed} passed, ${summary.failed} failed, ${summary.blocked} blocked`;
+        if (overallStatus === "passed") {
+          progress.complete("checks", detail);
+        } else {
+          progress.fail("checks", detail);
+          // Show which gates failed but don't block — let the user decide
+          const failedNames = checksReport.gates
+            .filter((g) => g.status === "failed" || g.status === "blocked")
+            .map((g) => GATE_DISPLAY_NAMES[g.gate] ?? g.gate);
+          const continueChoice = await ctx.ui.select(
+            `Quality checks ${overallStatus}: ${failedNames.join(", ")}`,
+            [
+              "Continue — release despite failures",
+              "Abort — fix issues first",
+            ],
+            { helpText: detail },
+          );
+          if (!continueChoice || continueChoice.startsWith("Abort")) {
+            progress.dispose();
+            return;
+          }
+        }
+      } else {
+        progress.skip("checks", "No gates configured");
+      }
+
+      // ── 4. Ensure channels are configured (or detect + ask) ─────────────
+      progress.activate("channels", "Detecting channels");
       let channels = config.release.channels;
       // Track whether channels were already set in config before any interactive
       // setup. This distinguishes "user already decided" from "just configured now",
@@ -280,17 +286,17 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       const channelsWerePreConfigured = config.release.channels.length > 0;
 
       if (channels.length === 0) {
-        progress.complete(1, "Awaiting selection");
+        progress.complete("channels", "Awaiting selection");
         channels = await setupChannels(platform, ctx);
         if (channels.length === 0) {
           progress.dispose();
           return;
         }
       }
-      progress.complete(1, channels.join(", "));
+      progress.complete("channels", channels.join(", "));
 
-      // 2. Get last tag + current version + check if bump is needed
-      progress.activate(2, "Parsing git history");
+      // ── 5. Get last tag + current version + check if bump is needed ─────
+      progress.activate("commits", "Parsing git history");
       const lastTag = await getLastTag(platform, ctx.cwd);
       const currentVersion = getCurrentVersion(ctx.cwd);
       const localTagExists = await isVersionReleased(
@@ -304,7 +310,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         ? await isTagOnRemote(platform.exec.bind(platform), ctx.cwd, currentVersion)
         : false;
 
-      // 3. Parse commits since last tag
+      // ── 6. Parse commits since last tag ─────────────────────────────────
       const sinceArg = lastTag ? `${lastTag}..HEAD` : "HEAD~50..HEAD";
       let gitLogOutput: string;
       try {
@@ -321,9 +327,9 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       const commits = parseConventionalCommits(gitLogOutput);
       const summary = summarizeChanges(commits);
       const commitCount = commits.features.length + commits.fixes.length + commits.breaking.length + commits.improvements.length + commits.maintenance.length + commits.other.length;
-      progress.complete(2, `${commitCount} commits since ${lastTag ?? "start"}`);
+      progress.complete("commits", `${commitCount} commits since ${lastTag ?? "start"}`);
 
-      // 4. Version resolution
+      // ── 7. Version resolution ───────────────────────────────────────────
       //    Three states:
       //    a) No local tag              → version is unreleased, skip bump
       //    b) Local tag, not on remote  → incomplete release, skip bump + skip tag
@@ -336,18 +342,18 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         // (a) No tag at all — version in package.json is unreleased
         nextVersion = currentVersion;
         skipBump = true;
-        progress.skip(3, `v${currentVersion} (already set, not yet released)`);
-        notifyInfo(ctx, `Using v${currentVersion}`, "Version not yet released \u2014 skipping bump");
+        progress.skip("version", `v${currentVersion} (already set, not yet released)`);
+        notifyInfo(ctx, `Using v${currentVersion}`, "Version not yet released — skipping bump");
       } else if (localTagExists && !remoteTagExists) {
         // (b) Tag exists locally but never made it to origin — resume
         nextVersion = currentVersion;
         skipBump = true;
         skipTag = true;
-        progress.skip(3, `v${currentVersion} (tag exists locally, not pushed)`);
-        notifyInfo(ctx, `Resuming v${currentVersion}`, "Tag exists locally but not on remote \u2014 will push");
+        progress.skip("version", `v${currentVersion} (tag exists locally, not pushed)`);
+        notifyInfo(ctx, `Resuming v${currentVersion}`, "Tag exists locally but not on remote — will push");
       } else {
         // (c) Fully released — ask for bump
-        progress.activate(3, "Awaiting version selection");
+        progress.activate("version", "Awaiting version selection");
         const suggested = suggestBump(commits);
         const bumpChoice = await ctx.ui.select(
           `Version bump (${summary})`,
@@ -359,50 +365,42 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           return;
         }
 
-        const bump = bumpChoice.split(" \u2014 ")[0] as BumpType;
+        const bump = bumpChoice.split(" — ")[0] as BumpType;
         nextVersion = bumpVersion(currentVersion, bump);
         skipBump = false;
-        progress.complete(3, `${currentVersion} \u2192 ${nextVersion} (${bump})`);
+        progress.complete("version", `${currentVersion} → ${nextVersion} (${bump})`);
       }
 
-      // 5. Build changelog
-      progress.activate(4, "Generating changelog");
-      const changelog = buildChangelogMarkdown(commits, nextVersion);
-      progress.complete(4, `${commitCount} entries`);
+      // ── 8. Build changelog ──────────────────────────────────────────────
+      progress.activate("changelog", "Generating changelog");
+      const rawChangelog = buildChangelogMarkdown(commits, nextVersion);
+      progress.complete("changelog", `${commitCount} entries`);
 
-      // 6. Polish mode → steer prompt to LLM, then return
-      if (isPolish) {
-        progress.skip(5, "Polish mode");
-        progress.skip(6, "Polish mode");
-        progress.dispose();
-
-        const releaseCommands = buildReleaseCommands(nextVersion, channels);
-        const prompt = buildPolishPrompt({
-          changelog,
-          version: nextVersion,
-          currentVersion,
-          channels,
-          commands: releaseCommands,
-        });
-
-        notifyInfo(ctx, "Release polish mode", `LLM will polish notes for v${nextVersion}`);
-
-        platform.sendMessage(
-          {
-            customType: "supi-release-polish",
-            content: [{ type: "text", text: prompt }],
-            display: "none",
-          },
-          { deliverAs: "steer", triggerTurn: true },
+      // ── 9. Polish release notes (default, skip with --raw) ──────────────
+      let changelog: string;
+      if (skipPolish) {
+        progress.skip("polish", "Skipped (--raw)");
+        changelog = rawChangelog;
+      } else {
+        progress.activate("polish", "Polishing release notes");
+        const polishPrompt = buildPolishPrompt({ changelog: rawChangelog, version: nextVersion });
+        const polishResult = await runStructuredAgentSession(
+          platform.createAgentSession.bind(platform),
+          { cwd: ctx.cwd, prompt: polishPrompt },
         );
-        return;
+        if (polishResult.status === "ok") {
+          changelog = polishResult.finalText;
+          progress.complete("polish", "Polished");
+        } else {
+          // Polish failed — fall back to raw changelog, don't block the release
+          changelog = rawChangelog;
+          progress.fail("polish", polishResult.error ?? "Agent error — using raw changelog");
+          notifyInfo(ctx, "Polish failed — using raw changelog", polishResult.error ?? "");
+        }
       }
 
-      // 7. Confirm via UI — skipped when resuming a staged unreleased release.
-      //    When skipBump is true the user already decided on the version; when
-      //    channels were pre-configured there's nothing left to decide. Asking
-      //    again is friction without benefit. Dry-run always asks because the
-      //    user explicitly opted into preview mode.
+      // ── 10. Confirm via UI ──────────────────────────────────────────────
+      //    Skipped when resuming a staged unreleased release.
       const isResume = isInProgressRelease({ skipBump, channelsWerePreConfigured, isDryRun });
 
       if (isResume) {
@@ -428,7 +426,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
         const confirmed = ctx.ui.confirm
           ? await ctx.ui.confirm(confirmLabel, confirmDetail)
-          : (await ctx.ui.select(confirmLabel, ["Yes \u2014 publish", "No \u2014 abort"])) === "Yes \u2014 publish";
+          : (await ctx.ui.select(confirmLabel, ["Yes — publish", "No — abort"])) === "Yes — publish";
 
         if (!confirmed) {
           progress.dispose();
@@ -437,8 +435,8 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         }
       }
 
-      // 8. Execute release
-      progress.activate(5, "Starting release execution");
+      // ── 11. Execute release ─────────────────────────────────────────────
+      progress.activate("execute", "Starting release execution");
       try {
         const result = await executeRelease({
           exec: platform.exec.bind(platform),
@@ -454,26 +452,26 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
         // Mark execution steps based on result
         if (result.tagCreated && result.pushed) {
-          progress.complete(5, "Tag + push complete");
+          progress.complete("execute", "Tag + push complete");
         } else if (result.error) {
-          progress.fail(5, result.error);
+          progress.fail("execute", result.error);
         } else {
-          progress.fail(5, `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"}`);
+          progress.fail("execute", `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"}`);
         }
 
         // Mark channel publishing
         if (result.channels.length > 0) {
           const allOk = result.channels.every((c) => c.success);
           if (allOk) {
-            progress.complete(6, result.channels.map((c) => c.channel).join(", "));
+            progress.complete("publish", result.channels.map((c) => c.channel).join(", "));
           } else {
             const failedChannels = result.channels.filter((c) => !c.success);
-            progress.fail(6, failedChannels.map((c) => `${c.channel}: ${c.error ?? "failed"}`).join("; "));
+            progress.fail("publish", failedChannels.map((c) => `${c.channel}: ${c.error ?? "failed"}`).join("; "));
           }
         } else if (result.error) {
-          progress.skip(6, "Skipped (release failed)");
+          progress.skip("publish", "Skipped (release failed)");
         } else {
-          progress.complete(6, "No channels");
+          progress.complete("publish", "No channels");
         }
 
         // Give the user a moment to see the final widget state
@@ -500,7 +498,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           notifyError(ctx, `Release v${nextVersion} failed`, detail);
         }
       } catch (err) {
-        progress.fail(5, err instanceof Error ? err.message : "Unknown error");
+        progress.fail("execute", err instanceof Error ? err.message : "Unknown error");
         await new Promise((r) => setTimeout(r, 1500));
         progress.dispose();
         notifyError(
@@ -521,6 +519,35 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       notifyError(ctx, "Release error", err instanceof Error ? err.message : String(err));
     }
   })();
+}
+
+/**
+ * Run quality gates headlessly — no UI widget of its own, results reported
+ * back to the release progress widget.
+ *
+ * Returns null when no gates are configured (caller should skip the step).
+ */
+async function runHeadlessChecks(
+  platform: Platform,
+  ctx: any,
+  config: ReturnType<typeof loadConfig>,
+  resolved: ResolvedModel,
+): Promise<ReviewReport | null> {
+  const enabledGates = Object.entries(config.quality.gates)
+    .filter(([, gate]) => gate?.enabled === true);
+
+  if (enabledGates.length === 0) {
+    return null;
+  }
+
+  return runQualityGates({
+    platform,
+    cwd: ctx.cwd,
+    gates: config.quality.gates,
+    filters: {},
+    reviewModel: resolved,
+    gateRegistry: REVIEW_GATE_REGISTRY,
+  });
 }
 
 async function getLastTag(platform: Platform, cwd: string): Promise<string | null> {
@@ -566,26 +593,4 @@ async function setupChannels(platform: Platform, ctx: any): Promise<ReleaseChann
   ctx.ui.notify(`Release channels set to: ${channels.join(", ")}`, "info");
 
   return channels;
-}
-
-function buildReleaseCommands(
-  version: string,
-  channels: ReleaseChannel[],
-): string[] {
-  const commands: string[] = [
-    `git add -A`,
-    `git commit -m "chore(release): v${version}"`,
-    `git tag -a v${version} -m "Release v${version}"`,
-    `git push origin HEAD --follow-tags`,
-  ];
-
-  for (const channel of channels) {
-    if (channel === "github") {
-      commands.push(`gh release create v${version} --title "v${version}" --notes "...changelog..."`);
-    } else if (channel === "npm") {
-      commands.push(`npm publish`);
-    }
-  }
-
-  return commands;
 }

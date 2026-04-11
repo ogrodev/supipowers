@@ -1,31 +1,14 @@
 import { buildPolishPrompt } from "../../src/release/prompt.js";
-import type { ReleaseChannel } from "../../src/types.js";
 
 describe("buildPolishPrompt", () => {
   const base = {
     changelog: "## 1.2.0\n\n### Features\n- feat: add thing\n\n### Fixes\n- fix: correct bug",
     version: "1.2.0",
-    currentVersion: "1.1.0",
-    channels: ["github", "npm"] as ReleaseChannel[],
-    commands: ["git tag v1.2.0", "git push --tags", "npm publish"],
   };
 
-  test("includes version transition in header", () => {
+  test("includes version in header", () => {
     const prompt = buildPolishPrompt(base);
-    expect(prompt).toContain("**1.2.0**");
-    expect(prompt).toContain("1.1.0");
-  });
-
-  test("includes all target channels", () => {
-    const prompt = buildPolishPrompt(base);
-    expect(prompt).toContain("- github");
-    expect(prompt).toContain("- npm");
-  });
-
-  test("single channel — only that channel appears in list", () => {
-    const prompt = buildPolishPrompt({ ...base, channels: ["github"] });
-    expect(prompt).toContain("- github");
-    expect(prompt).not.toContain("- npm");
+    expect(prompt).toContain("**v1.2.0**");
   });
 
   test("embeds raw changelog verbatim", () => {
@@ -34,32 +17,14 @@ describe("buildPolishPrompt", () => {
     expect(prompt).toContain("fix: correct bug");
   });
 
-  test("includes all commands wrapped in backticks", () => {
-    const prompt = buildPolishPrompt(base);
-    expect(prompt).toContain("`git tag v1.2.0`");
-    expect(prompt).toContain("`git push --tags`");
-    expect(prompt).toContain("`npm publish`");
-  });
-
   test("instructs not to change version numbers", () => {
     const prompt = buildPolishPrompt(base);
     expect(prompt).toMatch(/do \*\*not\*\* change version numbers/i);
   });
 
-  test("instructs not to skip commands", () => {
+  test("instructs to return only polished markdown", () => {
     const prompt = buildPolishPrompt(base);
-    expect(prompt).toMatch(/do \*\*not\*\* skip any command/i);
-  });
-
-  test("instructs to ask for user confirmation", () => {
-    const prompt = buildPolishPrompt(base);
-    expect(prompt).toMatch(/yes.*proceed|proceed.*yes/i);
-  });
-
-  test("describes abort behavior on rejection", () => {
-    const prompt = buildPolishPrompt(base);
-    expect(prompt).toMatch(/abort/i);
-    expect(prompt).toContain("No changes were made");
+    expect(prompt).toMatch(/return \*\*only\*\* the polished markdown/i);
   });
 
   test("empty changelog — shows 'no notable changes' placeholder", () => {
