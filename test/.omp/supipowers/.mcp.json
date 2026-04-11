@@ -25,10 +25,7 @@
       "enabled": true,
       "authPending": false,
       "addedAt": "2026-04-10T17:43:05.376Z",
-      "command": "node",
-      "args": [
-        "./server.js"
-      ]
+      "command": "node ./server.js"
     }
   }
 }
