@@ -1,12 +1,15 @@
 {
   "version": "1.0.0",
-  "defaultProfile": "thorough",
-  "orchestration": {
-    "maxParallelAgents": 3,
-    "maxFixRetries": 2,
-    "maxNestingDepth": 2,
-    "modelPreference": "auto",
-    "taskTimeout": 600000
+  "quality": {
+    "gates": {
+      "lsp-diagnostics": {
+        "enabled": true
+      },
+      "ai-review": {
+        "enabled": true,
+        "depth": "deep"
+      }
+    }
   },
   "lsp": {
     "setupGuide": true
@@ -16,15 +19,13 @@
   },
   "qa": {
     "framework": null,
-    "command": null,
     "e2e": false
   },
   "release": {
     "channels": [
       "github",
       "npm"
-    ],
-    "pipeline": "npm"
+    ]
   },
   "contextMode": {
     "enabled": true,
