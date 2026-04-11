@@ -7,7 +7,8 @@ import { registerConfigCommand, handleConfig } from "./commands/config.js";
 import { registerStatusCommand, handleStatus } from "./commands/status.js";
 import { registerPlanCommand, getActiveVisualSessionDir, setActiveVisualSessionDir } from "./commands/plan.js";
 import { stopVisualServer } from "./visual/stop-server.js";
-import { registerReviewCommand } from "./commands/review.js";
+import { registerChecksCommand, handleChecksCommand } from "./commands/review.js";
+import { registerAiReviewCommand, handleAiReview } from "./commands/ai-review.js";
 import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand, handleRelease } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
@@ -27,6 +28,7 @@ import { McpcClient } from "./mcp/mcpc.js";
 import { parseTags, computeActiveServers } from "./mcp/activation.js";
 import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
 import { registerPlanApprovalHook } from "./planning/approval-flow.js";
+import { registerPlanningSystemPromptHook } from "./planning/system-prompt.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -34,6 +36,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi": (platform, ctx) => handleSupi(platform, ctx),
   "supi:config": (platform, ctx) => handleConfig(platform, ctx),
   "supi:status": (platform, ctx) => handleStatus(platform, ctx),
+  "supi:review": (platform, ctx) => handleAiReview(platform, ctx),
   "supi:update": (platform, ctx) => handleUpdate(platform, ctx),
   "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
@@ -42,6 +45,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:optimize-context": (platform, ctx) => handleOptimizeContext(platform, ctx),
   "supi:commit": (platform, ctx, args) => handleCommit(platform, ctx, args),
   "supi:release": (platform, ctx, args) => handleRelease(platform, ctx, args),
+  "supi:checks": (platform, ctx, args) => handleChecksCommand(platform, ctx, args),
 };
 
 let pendingTags: string[] = [];
@@ -62,7 +66,8 @@ export function bootstrap(platform: Platform): void {
   registerConfigCommand(platform);
   registerStatusCommand(platform);
   registerPlanCommand(platform);
-  registerReviewCommand(platform);
+  registerChecksCommand(platform);
+  registerAiReviewCommand(platform);
   registerQaCommand(platform);
   registerReleaseCommand(platform);
   registerUpdateCommand(platform);
@@ -112,6 +117,10 @@ export function bootstrap(platform: Platform): void {
   const config = loadConfig(platform.paths, process.cwd());
   registerContextModeHooks(platform, config);
 
+
+  // Planning-mode prompt override — registered after context-mode so it wins
+  // when /supi:plan is active and otherwise stays dormant.
+  registerPlanningSystemPromptHook(platform);
 
   // MCP per-turn activation
   platform.on("before_agent_start", async (event, ctx) => {

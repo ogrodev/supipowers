@@ -74,7 +74,7 @@ describe("showSupiDialog", () => {
 
     expect(ctx.ui.select).toHaveBeenCalledWith(
       expect.any(String),
-      expect.arrayContaining([expect.stringContaining("Last review: 2026-04-10 (blocked)")]),
+      expect.arrayContaining([expect.stringContaining("Last checks: 2026-04-10 (blocked)")]),
       expect.anything(),
     );
   });

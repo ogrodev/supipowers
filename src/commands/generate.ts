@@ -1,105 +1,17 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
-import type { Platform, PlatformPaths } from "../platform/types.js";
+import type { Platform } from "../platform/types.js";
 import type { DocDriftState } from "../types.js";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
-
-// ── State persistence ─────────────────────────────────────────
-
-const STATE_FILENAME = "doc-drift.json";
-
-const EMPTY_STATE: DocDriftState = {
-  trackedFiles: [],
-  lastCommit: null,
-  lastRunAt: null,
-};
-
-export function statePath(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, STATE_FILENAME);
-}
-
-export function loadState(paths: PlatformPaths, cwd: string): DocDriftState {
-  const file = statePath(paths, cwd);
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf-8")) as DocDriftState;
-  } catch {
-    return { ...EMPTY_STATE, trackedFiles: [] };
-  }
-}
-
-export function saveState(paths: PlatformPaths, cwd: string, state: DocDriftState): void {
-  const file = statePath(paths, cwd);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n");
-}
-
-// ── File discovery ────────────────────────────────────────────
-
-/** Known documentation file patterns to discover via git ls-files */
-const DOC_GLOBS = ["*.md", "*.txt", "*.rst", "docs/*", "*.mdx"];
-
-export async function discoverDocFiles(
-  platform: Platform,
-  cwd: string,
-): Promise<string[]> {
-  const result = await platform.exec(
-    "git",
-    ["ls-files", "--", ...DOC_GLOBS],
-    { cwd },
-  );
-  if (result.code !== 0) return [];
-
-  const files = result.stdout
-    .split("\n")
-    .map((f) => f.trim())
-    .filter((f) => f.length > 0);
-
-  // Deduplicate (globs may overlap)
-  return [...new Set(files)].sort();
-}
-
-// ── Git helpers ───────────────────────────────────────────────
-
-async function getHeadCommit(
-  platform: Platform,
-  cwd: string,
-): Promise<string | null> {
-  const result = await platform.exec("git", ["rev-parse", "HEAD"], { cwd });
-  if (result.code !== 0) return null;
-  return result.stdout.trim() || null;
-}
-
-async function getDiffFilesSince(
-  platform: Platform,
-  cwd: string,
-  sinceCommit: string,
-): Promise<string[]> {
-  const result = await platform.exec(
-    "git",
-    ["diff", "--name-only", `${sinceCommit}..HEAD`],
-    { cwd },
-  );
-  if (result.code !== 0) return [];
-  return result.stdout
-    .split("\n")
-    .map((f) => f.trim())
-    .filter((f) => f.length > 0);
-}
-
-async function getDiffSince(
-  platform: Platform,
-  cwd: string,
-  sinceCommit: string,
-  files: string[],
-): Promise<string> {
-  const result = await platform.exec(
-    "git",
-    ["diff", `${sinceCommit}..HEAD`, "--", ...files],
-    { cwd },
-  );
-  if (result.code !== 0) return "";
-  return result.stdout;
-}
+import {
+  loadState,
+  saveState,
+  discoverDocFiles,
+  getHeadCommit,
+  getDiffFilesSince,
+  getDiffSince,
+  readTrackedDocs,
+  buildFirstRunPrompt,
+  buildSubsequentRunPrompt,
+} from "../docs/drift.js";
 
 // ── Multi-select UI ───────────────────────────────────────────
 
@@ -137,63 +49,6 @@ async function selectDocFiles(
   }
 
   return [...selected];
-}
-
-// ── Prompt builders ───────────────────────────────────────────
-
-function readTrackedDocs(cwd: string, files: string[]): Map<string, string> {
-  const docs = new Map<string, string>();
-  for (const file of files) {
-    const abs = path.join(cwd, file);
-    try {
-      docs.set(file, fs.readFileSync(abs, "utf-8"));
-    } catch {
-      // File was deleted — still include it so the LLM knows
-      docs.set(file, "[FILE DELETED]");
-    }
-  }
-  return docs;
-}
-
-const DRIFT_INSTRUCTIONS = `You are a documentation accuracy checker. Your job is to compare tracked documentation files against the current codebase and identify drift.
-
-Rules:
-1. Only flag factual inaccuracies: wrong names, missing parameters, removed features, changed behavior, outdated examples
-2. Also flag missing documentation: new commands, new features, new config options, new subcommands that are not documented at all — suggest adding new sections where appropriate
-3. Do NOT rewrite prose, improve wording, add explanations, or restructure existing content
-4. Preserve each document's existing formatting, tone, and conventions
-5. If a document is already accurate and complete, say so — do not touch it
-6. Present findings as a summary overview: describe what needs to change in plain language, do NOT produce diffs or code blocks with +/- lines
-7. Keep it concise — state the problem, the correct value, and which file needs the change`;
-
-export function buildFirstRunPrompt(docs: Map<string, string>): string {
-  const parts = [DRIFT_INSTRUCTIONS, "", "## Tracked documentation files", ""];
-  for (const [file, content] of docs) {
-    parts.push(`### ${file}`, "```", content, "```", "");
-  }
-  parts.push(
-    "Check whether any of these documents have drifted from the current codebase.",
-    "Look for both inaccuracies in existing content AND missing documentation for features that exist in code but are not documented.",
-    "Present your findings as a plain-language summary — no diffs.",
-  );
-  return parts.join("\n");
-}
-
-export function buildSubsequentRunPrompt(
-  diff: string,
-  docs: Map<string, string>,
-): string {
-  const parts = [DRIFT_INSTRUCTIONS, "", "## Code changes since last check", "```diff", diff, "```", ""];
-  parts.push("## Tracked documentation files", "");
-  for (const [file, content] of docs) {
-    parts.push(`### ${file}`, "```", content, "```", "");
-  }
-  parts.push(
-    "Based on the code changes above, determine if any tracked documentation needs updating.",
-    "Look for both inaccuracies introduced by the changes AND new features or commands that should be documented but are missing.",
-    "Present your findings as a plain-language summary — no diffs.",
-  );
-  return parts.join("\n");
 }
 
 // ── Subcommand: docs ──────────────────────────────────────────

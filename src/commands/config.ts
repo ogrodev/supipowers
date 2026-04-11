@@ -4,10 +4,13 @@ import { formatConfigErrors, inspectConfig, updateConfig } from "../config/loade
 import { checkInstallation } from "../context-mode/installer.js";
 import type { InspectionLoadResult } from "../config/schema.js";
 import type { SupipowersConfig } from "../types.js";
+import { createWorkflowProgress } from "../platform/progress.js";
 import {
   interactivelySaveGateSetup,
   setupGates,
   summarizeEnabledGates,
+  type GateSetupMode,
+  type SetupGatesProgressEvent,
 } from "../quality/setup.js";
 
 const FRAMEWORK_OPTIONS = [
@@ -66,6 +69,62 @@ function describeInspection(inspection: InspectionLoadResult, config: Supipowers
   return summarizeEnabledGates(config.quality.gates);
 }
 
+function createQualityGateSetupProgress(ctx: PlatformContext, mode: GateSetupMode) {
+  if (mode !== "ai-assisted") {
+    return null;
+  }
+
+  const progress = createWorkflowProgress(ctx.ui, {
+    title: "quality gate setup",
+    statusKey: "supi-quality-gate-setup",
+    widgetKey: "supi-quality-gate-setup",
+    steps: [
+      { key: "collect", label: "Inspect project" },
+      { key: "ai", label: "AI analysis" },
+    ],
+  });
+
+  return {
+    handle(event: SetupGatesProgressEvent) {
+      switch (event.type) {
+        case "collecting-project-facts":
+          progress.activate("collect", "Reading scripts and tools");
+          return;
+        case "baseline-ready":
+          progress.complete("collect", "baseline ready");
+          return;
+        case "ai-analysis-started":
+          progress.activate("ai", "Analyzing project checks");
+          return;
+        case "ai-analysis-completed":
+          progress.complete("ai", "proposal ready");
+          return;
+      }
+    },
+    fail(message: string) {
+      if (progress.getStatus("ai") === "active") {
+        progress.fail("ai", message);
+      } else if (progress.getStatus("collect") === "active") {
+        progress.fail("collect", message);
+      }
+    },
+    dispose() {
+      progress.dispose();
+    },
+  };
+}
+
+function buildGateSetupDialogOptions(mode: GateSetupMode) {
+  return mode === "ai-assisted"
+    ? {
+        title: "AI-assisted quality gate proposal",
+        intro: "AI analyzed your project and suggested these gates.",
+      }
+    : {
+        intro: "Detected project checks and suggested these gates.",
+      };
+}
+
 export function buildSettings(
   platform: Platform,
   ctx: PlatformContext,
@@ -84,22 +143,39 @@ export function buildSettings(
       options: ["Run deterministic setup", "Run AI-assisted setup"],
       get: () => describeInspection(inspection, config),
       set: async (cwd, value) => {
-        const mode = String(value).includes("AI-assisted") ? "ai-assisted" : "deterministic";
-        const result = await deps.setupGates(platform, cwd, deps.inspectConfig(platform.paths, cwd), {
-          mode,
-        });
+        const mode: GateSetupMode = String(value).includes("AI-assisted") ? "ai-assisted" : "deterministic";
+        const progress = createQualityGateSetupProgress(ctx, mode);
 
-        if (result.status === "invalid") {
-          ctx.ui.notify(result.errors.join("\n"), "error");
-          return null;
+        try {
+          const result = await deps.setupGates(platform, cwd, deps.inspectConfig(platform.paths, cwd), {
+            mode,
+            onProgress: (event) => progress?.handle(event),
+          });
+
+          if (result.status === "invalid") {
+            ctx.ui.notify(result.errors.join("\n"), "error");
+            return null;
+          }
+
+          if (result.status !== "proposed") {
+            return null;
+          }
+
+          progress?.dispose();
+          const saveResult = await deps.interactivelySaveGateSetup(
+            ctx,
+            paths,
+            cwd,
+            result.proposal,
+            buildGateSetupDialogOptions(mode),
+          );
+          return saveResult === "saved" ? "saved" : null;
+        } catch (error) {
+          progress?.fail((error as Error).message);
+          throw error;
+        } finally {
+          progress?.dispose();
         }
-
-        if (result.status !== "proposed") {
-          return null;
-        }
-
-        const saveResult = await deps.interactivelySaveGateSetup(ctx, paths, cwd, result.proposal);
-        return saveResult === "saved" ? "saved" : null;
       },
     },
     {

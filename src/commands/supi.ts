@@ -28,7 +28,7 @@ function formatOverviewStatus(platform: Platform, ctx: PlatformContext, deps: Su
       ? `Config error: ${formatConfigErrors(inspection).split("\n")[0]}`
       : `Gates: ${summarizeEnabledGates(config.quality.gates)}`,
     `Plans: ${plans.length}`,
-    `Last review: ${latestReport ? `${latestReport.timestamp.slice(0, 10)} (${latestReport.overallStatus})` : "none"}`,
+    `Last checks: ${latestReport ? `${latestReport.timestamp.slice(0, 10)} (${latestReport.overallStatus})` : "none"}`,
   ];
 }
 
@@ -39,7 +39,8 @@ export async function showSupiDialog(
 ): Promise<void> {
   const commands = [
     "/supi:plan     — Start collaborative planning",
-    "/supi:review   — Run quality gates",
+    "/supi:review   — Run AI code review pipeline",
+    "/supi:checks   — Run quality gates",
     "/supi:qa       — E2E product testing with Playwright",
     "/supi:fix-pr   — Fix PR review comments",
     "/supi:release  — Release automation",

@@ -39,7 +39,7 @@ function buildDashboard(
   bridge: ModelPlatformBridge,
 ): string {
   const config = loadModelConfig(paths, cwd);
-  const lines: string[] = ["\n  Model Configuration\n", `  ${"action".padEnd(20)} ${"model".padEnd(24)} ${"thinking".padEnd(10)} source`];
+  const lines: string[] = ["\n  Model Configuration\n", `  ${"action".padEnd(20)} ${"model".padEnd(32)} ${"thinking".padEnd(10)} source`];
 
   let lastCategory: "command" | "sub-agent" | null = null;
   let lastParent: string | undefined = undefined;
@@ -60,7 +60,7 @@ function buildDashboard(
     const sourceDisplay = formatSource(source);
 
     lines.push(
-      `  ${action.id.padEnd(20)} ${modelDisplay.padEnd(24)} ${thinkingDisplay.padEnd(10)} ${sourceDisplay}`,
+      `  ${action.id.padEnd(20)} ${modelDisplay.padEnd(32)} ${thinkingDisplay.padEnd(10)} ${sourceDisplay}`,
     );
 
     lastCategory = action.category;
@@ -224,8 +224,7 @@ async function selectModelFromList(
   );
 
   if (!choice) return null;
-  const slashIndex = choice.indexOf("/");
-  return slashIndex >= 0 ? choice.slice(slashIndex + 1) : choice;
+  return choice;
 }
 
 async function selectScope(ctx: any): Promise<"global" | "project" | null> {

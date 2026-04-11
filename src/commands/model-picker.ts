@@ -25,20 +25,10 @@ import {
   type GeneratedProvider,
 } from "@oh-my-pi/pi-ai";
 
-// ANSI helpers — we cannot rely on the Theme object passed by ctx.ui.custom()
-// because its shape is internal to OMP and not part of the public API.
-const RESET = "\x1b[0m";
-const BOLD = "\x1b[1m";
-const DIM = "\x1b[2m";
-const CYAN = "\x1b[36m";
-const WHITE = "\x1b[37m";
-const YELLOW = "\x1b[33m";
-const INVERSE = "\x1b[7m";
-
-const accent = (t: string) => `${CYAN}${BOLD}${t}${RESET}`;
-const muted = (t: string) => `${DIM}${t}${RESET}`;
-const bright = (t: string) => `${WHITE}${BOLD}${t}${RESET}`;
-const warn = (t: string) => `${YELLOW}${t}${RESET}`;
+import {
+  RESET, BOLD, DIM, CYAN, INVERSE,
+  accent, muted, bright, warn,
+} from "../platform/tui-colors.js";
 
 const ALL_TAB = "ALL";
 const MAX_VISIBLE = 12;
@@ -232,7 +222,7 @@ export function createModelPicker(
       // Enter → select current model
       if (matchesKey(data, "enter")) {
         if (filteredModels.length > 0) {
-          done(filteredModels[selectedIndex].id);
+          done(`${filteredModels[selectedIndex].provider}/${filteredModels[selectedIndex].id}`);
         }
         return;
       }

@@ -4,15 +4,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Platform, PlatformPaths } from "../../src/platform/types.js";
 import type { DocDriftState } from "../../src/types.js";
+import { registerGenerateCommand } from "../../src/commands/generate.js";
 import {
   buildFirstRunPrompt,
   buildSubsequentRunPrompt,
   discoverDocFiles,
   loadState,
-  registerGenerateCommand,
   saveState,
   statePath,
-} from "../../src/commands/generate.js";
+} from "../../src/docs/drift.js";
 
 // ── Fixtures ──────────────────────────────────────────────────
 
