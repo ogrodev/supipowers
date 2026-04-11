@@ -7,6 +7,7 @@ import { buildSettings } from "../../src/commands/config.js";
 import { inspectConfig, updateConfig } from "../../src/config/loader.js";
 import type { InspectionLoadResult } from "../../src/config/schema.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
+import { interactivelySaveGateSetup } from "../../src/quality/setup.js";
 
 function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
   return {
@@ -50,6 +51,10 @@ function writeProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: str
 
 function readProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: string): unknown {
   return JSON.parse(fs.readFileSync(localPaths.project(cwd, "config.json"), "utf-8"));
+}
+
+function readGlobalConfig(localPaths: ReturnType<typeof createPaths>): unknown {
+  return JSON.parse(fs.readFileSync(localPaths.global("config.json"), "utf-8"));
 }
 
 describe("buildSettings", () => {
@@ -103,6 +108,45 @@ describe("buildSettings", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith("test-suite.command: Expected string", "error");
     expect(deps.interactivelySaveGateSetup).not.toHaveBeenCalled();
     expect(readProjectConfig(localPaths, tmpDir)).toEqual(originalConfig);
+  });
+
+  test("quality gate setup prompts for save scope and can save globally", async () => {
+    const inspection: InspectionLoadResult = {
+      mergedConfig: DEFAULT_CONFIG as unknown as Record<string, unknown>,
+      effectiveConfig: DEFAULT_CONFIG,
+      parseErrors: [],
+      validationErrors: [],
+    };
+    ctx.ui.select = mock(async () => {
+      const choices = [
+        "Accept",
+        "Global (~/.omp/supipowers/config.json)",
+      ];
+      return choices[ctx.ui.select.mock.calls.length - 1] ?? null;
+    });
+
+    const deps = {
+      inspectConfig: mock(() => inspection),
+      updateConfig: mock(updateConfig),
+      setupGates: mock(async () => ({
+        status: "proposed" as const,
+        proposal: { gates: { "lsp-diagnostics": { enabled: true } } },
+      })),
+      interactivelySaveGateSetup,
+      checkInstallation: mock(async () => ({ cliInstalled: false, mcpConfigured: false, toolsAvailable: false })),
+    };
+
+    const settings = buildSettings(platform, ctx, inspection, deps as any);
+    const qualitySetting = settings.find((setting) => setting.key === "quality.gates");
+    if (!qualitySetting) throw new Error("Missing quality.gates setting");
+
+    const result = await qualitySetting.set(tmpDir, "Run deterministic setup");
+
+    expect(result).toBe("saved");
+    expect(readGlobalConfig(localPaths)).toEqual({
+      quality: { gates: { "lsp-diagnostics": { enabled: true } } },
+    });
+    expect(fs.existsSync(localPaths.project(tmpDir, "config.json"))).toBe(false);
   });
 
   test("settings no longer expose Default profile", () => {
