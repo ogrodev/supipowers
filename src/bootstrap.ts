@@ -19,6 +19,7 @@ import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { registerContextCommand, handleContext } from "./commands/context.js";
 import { registerOptimizeContextCommand, handleOptimizeContext } from "./commands/optimize-context.js";
 import { registerCommitCommand, handleCommit } from "./commands/commit.js";
+import { registerGenerateCommand } from "./commands/generate.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { loadMcpRegistry } from "./mcp/config.js";
@@ -72,6 +73,7 @@ export function bootstrap(platform: Platform): void {
   registerContextCommand(platform);
   registerOptimizeContextCommand(platform);
   registerCommitCommand(platform);
+  registerGenerateCommand(platform);
 
 
   // Register plan approval flow (agent_end hook for plan approval UI)
