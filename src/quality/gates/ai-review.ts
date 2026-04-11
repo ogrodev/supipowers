@@ -1,3 +1,4 @@
+import { stripMarkdownCodeFence } from "../../text.js";
 import { GATE_CONFIG_SCHEMAS } from "../registry.js";
 import { runStructuredAgentSession } from "../ai-session.js";
 import type {
@@ -46,19 +47,6 @@ function buildAiReviewPrompt(
   ].join("\n");
 }
 
-function normalizeJsonText(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("```")) {
-    return trimmed;
-  }
-
-  const lines = trimmed.split("\n");
-  if (lines.length >= 3 && lines[0].startsWith("```") && lines[lines.length - 1] === "```") {
-    return lines.slice(1, -1).join("\n").trim();
-  }
-
-  return trimmed;
-}
 
 function isGateIssue(value: unknown): value is GateIssue {
   return (
@@ -75,7 +63,7 @@ function isGateIssue(value: unknown): value is GateIssue {
 
 function parseAiReviewPayload(raw: string): AiReviewPayload | null {
   try {
-    const parsed = JSON.parse(normalizeJsonText(raw)) as Record<string, unknown>;
+    const parsed = JSON.parse(stripMarkdownCodeFence(raw)) as Record<string, unknown>;
 
     if (
       typeof parsed.summary !== "string" ||
