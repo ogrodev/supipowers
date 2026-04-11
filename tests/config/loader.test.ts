@@ -1,9 +1,17 @@
-// tests/config/loader.test.ts
-
+import { beforeEach, afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { loadConfig, inspectConfig, saveConfig, updateConfig, deepMerge } from "../../src/config/loader.js";
+import {
+  deepMerge,
+  inspectConfig,
+  inspectQualityGateRecovery,
+  loadConfig,
+  removeQualityGatesConfig,
+  saveConfig,
+  updateConfig,
+  writeQualityGatesConfig,
+} from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { ReviewReport } from "../../src/types.js";
 import { createPaths } from "../../src/platform/types.js";
@@ -30,7 +38,7 @@ function writeJsonFile(filePath: string, data: unknown): void {
 function writeProjectConfig(
   localPaths: ReturnType<typeof createPaths>,
   cwd: string,
-  data: unknown
+  data: unknown,
 ): void {
   writeJsonFile(localPaths.project(cwd, "config.json"), data);
 }
@@ -38,7 +46,7 @@ function writeProjectConfig(
 function writeRawProjectConfig(
   localPaths: ReturnType<typeof createPaths>,
   cwd: string,
-  raw: string
+  raw: string,
 ): void {
   const filePath = localPaths.project(cwd, "config.json");
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -47,9 +55,17 @@ function writeRawProjectConfig(
 
 function writeGlobalConfig(
   localPaths: ReturnType<typeof createPaths>,
-  data: unknown
+  data: unknown,
 ): void {
   writeJsonFile(localPaths.global("config.json"), data);
+}
+
+function readProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: string): unknown {
+  return JSON.parse(fs.readFileSync(localPaths.project(cwd, "config.json"), "utf-8"));
+}
+
+function readGlobalConfig(localPaths: ReturnType<typeof createPaths>): unknown {
+  return JSON.parse(fs.readFileSync(localPaths.global("config.json"), "utf-8"));
 }
 
 describe("deepMerge", () => {
@@ -96,17 +112,16 @@ describe("loadConfig", () => {
     expect("defaultProfile" in DEFAULT_CONFIG).toBe(false);
   });
 
-
   test("merges project config over defaults", () => {
     const configDir = path.join(tmpDir, ".omp", "supipowers");
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
-      JSON.stringify({ contextMode: { compressionThreshold: 8192 } })
+      JSON.stringify({ contextMode: { compressionThreshold: 8192 } }),
     );
     const config = loadConfig(paths, tmpDir);
     expect(config.contextMode.compressionThreshold).toBe(8192);
-    expect(config.contextMode.enabled).toBe(true); // inherited from default
+    expect(config.contextMode.enabled).toBe(true);
   });
 });
 
@@ -129,6 +144,43 @@ describe("strict and inspection config loading", () => {
     });
 
     expect(() => loadConfig(localPaths, tmpDir)).toThrow(/quality\.gates/);
+  });
+
+  test("migrates legacy profile-era config keys before validation", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      version: "1.0.0",
+      defaultProfile: "thorough",
+      orchestration: {
+        maxParallelAgents: 3,
+        maxFixRetries: 2,
+        maxNestingDepth: 2,
+        modelPreference: "auto",
+        taskTimeout: 600000,
+      },
+      qa: { framework: null, command: null, e2e: false },
+      release: { channels: ["github", "npm"], pipeline: "npm" },
+    });
+
+    const inspection = inspectConfig(localPaths, tmpDir);
+    expect(inspection.validationErrors).toHaveLength(0);
+    expect(inspection.effectiveConfig).not.toBeNull();
+
+    expect(loadConfig(localPaths, tmpDir)).toMatchObject({
+      quality: {
+        gates: {
+          "lsp-diagnostics": { enabled: true },
+          "ai-review": { enabled: true, depth: "deep" },
+        },
+      },
+      qa: { framework: null, e2e: false },
+      release: { channels: ["github", "npm"] },
+    });
+
+    const merged = inspection.mergedConfig as Record<string, unknown>;
+    expect("defaultProfile" in merged).toBe(false);
+    expect("orchestration" in merged).toBe(false);
+    expect("command" in (merged.qa as Record<string, unknown>)).toBe(false);
+    expect("pipeline" in (merged.release as Record<string, unknown>)).toBe(false);
   });
 
   test("inspection load reports malformed JSON without hiding the file", () => {
@@ -154,6 +206,75 @@ describe("strict and inspection config loading", () => {
   });
 });
 
+describe("quality gate recovery helpers", () => {
+  let tmpDir: string;
+  let localPaths: ReturnType<typeof createPaths>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-loader-recovery-test-"));
+    localPaths = createTestPaths(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("detects invalid quality.gates per scope without treating valid scopes as broken", () => {
+    writeGlobalConfig(localPaths, {
+      quality: { gates: { "ai-review": { enabled: true, depth: "invalid" } } },
+    });
+    writeProjectConfig(localPaths, tmpDir, {
+      notifications: { verbosity: "quiet" },
+    });
+
+    const result = inspectQualityGateRecovery(localPaths, tmpDir);
+    const globalScope = result.scopes.find((scope) => scope.scope === "global");
+    const projectScope = result.scopes.find((scope) => scope.scope === "project");
+
+    expect(globalScope?.recoverableInvalidQualityGates).toBe(true);
+    expect(globalScope?.qualityGateValidationErrors).toEqual([
+      { path: "quality.gates.ai-review.depth", message: "Expected union value" },
+    ]);
+    expect(projectScope?.recoverableInvalidQualityGates).toBe(false);
+    expect(projectScope?.validationErrors).toHaveLength(0);
+  });
+
+  test("removeQualityGatesConfig removes only quality.gates and preserves unrelated keys", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      notifications: { verbosity: "quiet" },
+      quality: { gates: { "ai-review": { enabled: true, depth: "invalid" } } },
+    });
+
+    expect(removeQualityGatesConfig(localPaths, tmpDir, "project")).toBe(true);
+    expect(readProjectConfig(localPaths, tmpDir)).toEqual({
+      notifications: { verbosity: "quiet" },
+    });
+  });
+
+  test("removeQualityGatesConfig drops empty quality object after cleanup", () => {
+    writeGlobalConfig(localPaths, {
+      quality: { gates: { "test-suite": { enabled: true, command: 42 } } },
+    });
+
+    expect(removeQualityGatesConfig(localPaths, tmpDir, "global")).toBe(true);
+    expect(readGlobalConfig(localPaths)).toEqual({});
+  });
+
+  test("writeQualityGatesConfig writes to the selected scope and preserves sibling keys", () => {
+    writeGlobalConfig(localPaths, {
+      notifications: { verbosity: "verbose" },
+    });
+
+    writeQualityGatesConfig(localPaths, tmpDir, "global", {
+      "test-suite": { enabled: true, command: "bun test" },
+    });
+
+    expect(readGlobalConfig(localPaths)).toEqual({
+      notifications: { verbosity: "verbose" },
+      quality: { gates: { "test-suite": { enabled: true, command: "bun test" } } },
+    });
+  });
+});
 
 describe("quality gate types", () => {
   test("ReviewReport stores aggregate statuses instead of profile boolean", () => {
@@ -167,7 +288,6 @@ describe("quality gate types", () => {
     expect(report.overallStatus).toBe("passed");
   });
 });
-
 
 describe("saveConfig / updateConfig", () => {
   let tmpDir: string;
@@ -192,12 +312,11 @@ describe("saveConfig / updateConfig", () => {
     const updated = updateConfig(paths, tmpDir, { contextMode: { compressionThreshold: 8192 } });
     expect(updated.contextMode.compressionThreshold).toBe(8192);
     expect(updated.contextMode.enabled).toBe(true);
-    // Verify it was persisted
+
     const reloaded = loadConfig(paths, tmpDir);
     expect(reloaded.contextMode.compressionThreshold).toBe(8192);
   });
 });
-
 
 describe("contextMode config", () => {
   test("DEFAULT_CONFIG includes contextMode with all fields", () => {
@@ -218,6 +337,6 @@ describe("contextMode config", () => {
       contextMode: { compressionThreshold: 8192 },
     });
     expect(config.contextMode.compressionThreshold).toBe(8192);
-    expect(config.contextMode.enabled).toBe(true); // untouched fields preserved
+    expect(config.contextMode.enabled).toBe(true);
   });
 });

@@ -1,14 +1,36 @@
 // src/config/loader.ts
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { SupipowersConfig, ReleaseChannel } from "../types.js";
+import type {
+  ConfigScope,
+  SupipowersConfig,
+  ReleaseChannel,
+  QualityGatesConfig,
+} from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import {
   collectConfigValidationErrors,
   type ConfigParseError,
+  type ConfigValidationError,
   type InspectionLoadResult,
 } from "./schema.js";
+
+export interface ScopedConfigInspection {
+  scope: ConfigScope;
+  path: string;
+  data: Record<string, unknown> | null;
+  parseError: ConfigParseError | null;
+  validationErrors: ConfigValidationError[];
+  qualityGateValidationErrors: ConfigValidationError[];
+  otherValidationErrors: ConfigValidationError[];
+  hasOwnQualityGates: boolean;
+  recoverableInvalidQualityGates: boolean;
+}
+
+export interface QualityGateRecoveryInspection {
+  scopes: ScopedConfigInspection[];
+}
 
 function getProjectConfigPath(paths: PlatformPaths, cwd: string): string {
   return paths.project(cwd, "config.json");
@@ -16,6 +38,10 @@ function getProjectConfigPath(paths: PlatformPaths, cwd: string): string {
 
 function getGlobalConfigPath(paths: PlatformPaths): string {
   return paths.global("config.json");
+}
+
+function getConfigPath(paths: PlatformPaths, cwd: string, scope: ConfigScope): string {
+  return scope === "global" ? getGlobalConfigPath(paths) : getProjectConfigPath(paths, cwd);
 }
 
 function readJsonFile(
@@ -103,22 +129,90 @@ function applyConfigOverride(
   return merged;
 }
 
-/** Migrate config from older versions to current. */
+/** Known legacy config shapes are normalized before validation. */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function normalizeReleaseChannels(
+  existingChannels: unknown,
+  pipeline: string | null,
+): ReleaseChannel[] {
+  if (Array.isArray(existingChannels)) {
+    const channels = existingChannels.filter(
+      (channel): channel is ReleaseChannel => channel === "github" || channel === "npm",
+    );
+    if (channels.length > 0) {
+      return [...new Set(channels)];
+    }
+  }
+
+  if (pipeline === "npm") return ["npm"];
+  if (pipeline === "github") return ["github"];
+  return [];
+}
+
+function legacyGatesFromProfile(
+  profileName: string | null,
+  legacyTestCommand: string | null,
+): QualityGatesConfig | null {
+  const gates: QualityGatesConfig = {};
+
+  if (profileName === "quick") {
+    gates["lsp-diagnostics"] = { enabled: true };
+    gates["ai-review"] = { enabled: true, depth: "quick" };
+  } else if (profileName === "thorough" || profileName === "full-regression") {
+    gates["lsp-diagnostics"] = { enabled: true };
+    gates["ai-review"] = { enabled: true, depth: "deep" };
+  }
+
+  if (legacyTestCommand) {
+    gates["test-suite"] = { enabled: true, command: legacyTestCommand };
+  }
+
+  return Object.keys(gates).length > 0 ? gates : null;
+}
+
+/** Migrate config from older shapes to the canonical schema. */
 function migrateConfig(config: Record<string, unknown>): Record<string, unknown> {
   const migrated = structuredClone(config) as Record<string, unknown>;
-  const release = migrated.release;
+  const legacyProfile = typeof migrated.defaultProfile === "string" ? migrated.defaultProfile : null;
+  delete migrated.defaultProfile;
+  delete migrated.orchestration;
 
-  if (release && typeof release === "object" && !Array.isArray(release) && "pipeline" in release) {
-    const rawRelease = release as Record<string, unknown>;
-    const pipeline = typeof rawRelease.pipeline === "string" ? rawRelease.pipeline : null;
-    let channels: ReleaseChannel[] = [];
+  const qa = asRecord(migrated.qa);
+  const legacyTestCommand =
+    qa && typeof qa.command === "string" && qa.command.trim().length > 0
+      ? qa.command.trim()
+      : null;
+  if (qa && "command" in qa) {
+    delete qa.command;
+    migrated.qa = qa;
+  }
 
-    if (pipeline === "npm") channels = ["npm"];
-    else if (pipeline === "github") channels = ["github"];
+  const release = asRecord(migrated.release);
+  if (release && ("pipeline" in release || "channels" in release)) {
+    const pipeline = typeof release.pipeline === "string" ? release.pipeline : null;
+    release.channels = normalizeReleaseChannels(release.channels, pipeline);
+    delete release.pipeline;
+    migrated.release = release;
+  }
 
-    delete rawRelease.pipeline;
-    rawRelease.channels = channels;
-    migrated.release = rawRelease;
+  const quality = asRecord(migrated.quality);
+  if (quality) {
+    const gates = asRecord(quality.gates);
+    if (!gates || Object.keys(gates).length === 0) {
+      const legacyGates = legacyGatesFromProfile(legacyProfile, legacyTestCommand);
+      if (legacyGates) {
+        quality.gates = legacyGates as unknown as Record<string, unknown>;
+      }
+    } else if (legacyTestCommand && !("test-suite" in gates)) {
+      gates["test-suite"] = { enabled: true, command: legacyTestCommand };
+      quality.gates = gates;
+    }
+    migrated.quality = quality;
   }
 
   migrated.version = DEFAULT_CONFIG.version;
@@ -140,11 +234,134 @@ function mergeConfigLayers(
     merged = applyConfigOverride(merged, projectData);
   }
 
-  if (merged.version !== DEFAULT_CONFIG.version) {
-    merged = migrateConfig(merged);
-  }
+  // The config schema changed without a version bump, so normalize known
+  // legacy fields on every load before strict validation runs.
+  merged = migrateConfig(merged);
 
   return merged;
+}
+
+function inspectScopeConfig(
+  paths: PlatformPaths,
+  cwd: string,
+  scope: ConfigScope,
+): ScopedConfigInspection {
+  const filePath = getConfigPath(paths, cwd, scope);
+  const readResult = readJsonFile(scope, filePath);
+
+  if (readResult.error) {
+    return {
+      scope,
+      path: filePath,
+      data: null,
+      parseError: readResult.error,
+      validationErrors: [],
+      qualityGateValidationErrors: [],
+      otherValidationErrors: [],
+      hasOwnQualityGates: false,
+      recoverableInvalidQualityGates: false,
+    };
+  }
+
+  const hasOwnQualityGates = !!readResult.data && hasOwnNestedProperty(readResult.data, "quality", "gates");
+  const mergedConfig =
+    scope === "global"
+      ? mergeConfigLayers(DEFAULT_CONFIG, readResult.data, null)
+      : mergeConfigLayers(DEFAULT_CONFIG, null, readResult.data);
+  const validationErrors = collectConfigValidationErrors(mergedConfig);
+  const qualityGateValidationErrors = hasOwnQualityGates
+    ? validationErrors.filter((error) => error.path === "quality.gates" || error.path.startsWith("quality.gates."))
+    : [];
+  const otherValidationErrors = validationErrors.filter(
+    (error) => !qualityGateValidationErrors.includes(error),
+  );
+
+  return {
+    scope,
+    path: filePath,
+    data: readResult.data,
+    parseError: null,
+    validationErrors,
+    qualityGateValidationErrors,
+    otherValidationErrors,
+    hasOwnQualityGates,
+    recoverableInvalidQualityGates:
+      hasOwnQualityGates && qualityGateValidationErrors.length > 0 && otherValidationErrors.length === 0,
+  };
+}
+
+function removeQualityGatesFromRecord(config: Record<string, unknown>): Record<string, unknown> {
+  const next = structuredClone(config) as Record<string, unknown>;
+  const quality = asRecord(next.quality);
+  if (!quality || !("gates" in quality)) {
+    return next;
+  }
+
+  delete quality.gates;
+  if (Object.keys(quality).length === 0) {
+    delete next.quality;
+  } else {
+    next.quality = quality;
+  }
+
+  return next;
+}
+
+function writeRawConfigFile(filePath: string, config: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n");
+}
+
+export function inspectQualityGateRecovery(
+  paths: PlatformPaths,
+  cwd: string,
+): QualityGateRecoveryInspection {
+  return {
+    scopes: (["global", "project"] as ConfigScope[]).map((scope) =>
+      inspectScopeConfig(paths, cwd, scope),
+    ),
+  };
+}
+
+export function writeQualityGatesConfig(
+  paths: PlatformPaths,
+  cwd: string,
+  scope: ConfigScope,
+  gates: QualityGatesConfig,
+): void {
+  const configPath = getConfigPath(paths, cwd, scope);
+  const current = readJsonFile(scope, configPath);
+  if (current.error) {
+    throw new Error(`${scope} config ${configPath}: ${current.error.message}`);
+  }
+
+  const next = current.data ? structuredClone(current.data) as Record<string, unknown> : {};
+  const quality =
+    next.quality && typeof next.quality === "object" && !Array.isArray(next.quality)
+      ? { ...(next.quality as Record<string, unknown>) }
+      : {};
+
+  quality.gates = gates;
+  next.quality = quality;
+  writeRawConfigFile(configPath, next);
+}
+
+export function removeQualityGatesConfig(
+  paths: PlatformPaths,
+  cwd: string,
+  scope: ConfigScope,
+): boolean {
+  const configPath = getConfigPath(paths, cwd, scope);
+  const current = readJsonFile(scope, configPath);
+  if (current.error) {
+    throw new Error(`${scope} config ${configPath}: ${current.error.message}`);
+  }
+  if (!current.data || !hasOwnNestedProperty(current.data, "quality", "gates")) {
+    return false;
+  }
+
+  writeRawConfigFile(configPath, removeQualityGatesFromRecord(current.data));
+  return true;
 }
 
 export function formatConfigErrors(result: InspectionLoadResult): string {
