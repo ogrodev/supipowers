@@ -5,6 +5,7 @@
 // the plan for user approval, then executes file-level staging + commit.
 
 import type { Platform } from "../platform/types.js";
+import { createWorkflowProgress } from "../platform/progress.js";
 import { VALID_COMMIT_TYPES } from "../release/commit-types.js";
 import { validateCommitMessage } from "./commit-msg.js";
 import { getWorkingTreeStatus } from "./status.js";
@@ -96,129 +97,40 @@ const DIFF_TRUNCATED_LINES = 200;
 
 // ── Commit progress tracker ────────────────────────────────
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const STATUS_KEY = "supi-commit";
-const WIDGET_KEY = "supi-commit";
+const COMMIT_STEPS = [
+  { key: "check-working-tree", label: "Check working tree" },
+  { key: "stage-changes", label: "Stage changes" },
+  { key: "read-diff", label: "Read diff" },
+  { key: "scan-conventions", label: "Scan conventions" },
+  { key: "ai-analysis", label: "AI analysis" },
+  { key: "review-plan", label: "Review plan" },
+  { key: "execute-commits", label: "Execute commits" },
+] as const;
 
-/** A named step in the commit workflow. */
-interface Step {
-  label: string;
-  status: "pending" | "active" | "done" | "skipped";
-  detail?: string;
-}
-
-/**
- * Rich progress tracker for the commit flow.
- *
- * Uses `setWidget` for a persistent multi-line panel showing all steps,
- * and `setStatus` for the current operation detail in the footer.
- */
 function createProgress(ctx: any) {
-  const steps: Step[] = [
-    { label: "Check working tree", status: "pending" },
-    { label: "Stage changes", status: "pending" },
-    { label: "Read diff", status: "pending" },
-    { label: "Scan conventions", status: "pending" },
-    { label: "AI analysis", status: "pending" },
-    { label: "Review plan", status: "pending" },
-    { label: "Execute commits", status: "pending" },
-  ];
-
-  let frame = 0;
-  let statusDetail = "";
-  let timer: ReturnType<typeof setInterval> | null = null;
-
-  function icon(step: Step): string {
-    switch (step.status) {
-      case "done":    return "✓";
-      case "active":  return SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
-      case "skipped": return "–";
-      default:        return "○";
-    }
-  }
-
-  function renderWidget(): string[] {
-    const lines: string[] = ["┌─ supi:commit ─────────────────────┐"];
-    for (const step of steps) {
-      const mark = icon(step);
-      const detail = step.detail ? ` (${step.detail})` : "";
-      lines.push(`│ ${mark} ${step.label}${detail}`);
-    }
-    lines.push("└───────────────────────────────────┘");
-    return lines;
-  }
-
-  function refresh() {
-    frame++;
-    ctx.ui.setWidget?.(WIDGET_KEY, renderWidget());
-    if (statusDetail) {
-      ctx.ui.setStatus?.(STATUS_KEY, `${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]} ${statusDetail}`);
-    }
-  }
-
-  function startTimer() {
-    if (!timer) {
-      timer = setInterval(refresh, 80);
-    }
-  }
-
-  function stopTimer() {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-  }
+  const progress = createWorkflowProgress(ctx.ui, {
+    title: "supi:commit",
+    statusKey: "supi-commit",
+    widgetKey: "supi-commit",
+    clearStatusKeys: ["supi-model"],
+    steps: [...COMMIT_STEPS],
+  });
 
   return {
-    /**
-     * Mark a step as active (in progress) with an optional status-bar detail.
-     * `stepIndex` is 0-based into the steps array.
-     */
     activate(stepIndex: number, detail?: string) {
-      const step = steps[stepIndex];
-      if (step) {
-        step.status = "active";
-        step.detail = detail;
-      }
-      statusDetail = detail ?? step?.label ?? "";
-      startTimer();
-      refresh();
+      progress.activate(COMMIT_STEPS[stepIndex]!.key, detail);
     },
-
-    /** Update the status-bar detail text without changing the step. */
     detail(text: string) {
-      statusDetail = text;
-      // Also update the current active step's detail
-      const active = steps.find((s) => s.status === "active");
-      if (active) active.detail = text;
+      progress.detail(text);
     },
-
-    /** Mark a step as completed. */
     complete(stepIndex: number, detail?: string) {
-      const step = steps[stepIndex];
-      if (step) {
-        step.status = "done";
-        if (detail !== undefined) step.detail = detail;
-      }
-      refresh();
+      progress.complete(COMMIT_STEPS[stepIndex]!.key, detail);
     },
-
-    /** Mark a step as skipped. */
     skip(stepIndex: number, detail?: string) {
-      const step = steps[stepIndex];
-      if (step) {
-        step.status = "skipped";
-        if (detail !== undefined) step.detail = detail;
-      }
-      refresh();
+      progress.skip(COMMIT_STEPS[stepIndex]!.key, detail);
     },
-
-    /** Tear down: stop animation, clear status bar and widget. */
     dispose() {
-      stopTimer();
-      ctx.ui.setStatus?.(STATUS_KEY, undefined);
-      ctx.ui.setStatus?.("supi-model", undefined);
-      ctx.ui.setWidget?.(WIDGET_KEY, undefined);
+      progress.dispose();
     },
   };
 }
