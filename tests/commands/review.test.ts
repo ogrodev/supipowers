@@ -3,8 +3,8 @@ import type { Platform } from "../../src/platform/types.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { InspectionLoadResult } from "../../src/config/schema.js";
 import type { ConfigScope, ReviewReport, SupipowersConfig } from "../../src/types.js";
-import { handleReview, registerReviewCommand } from "../../src/commands/review.js";
-import type { ReviewCommandDependencies } from "../../src/commands/review.js";
+import { buildFailureSummary, filterTestRunnerOutput, handleChecks, registerChecksCommand } from "../../src/commands/review.js";
+import type { ChecksCommandDependencies } from "../../src/commands/review.js";
 
 function createConfig(overrides: Partial<SupipowersConfig> = {}): SupipowersConfig {
   return {
@@ -105,7 +105,7 @@ function createContext() {
 function createDependencies(
   config: SupipowersConfig,
   report = createReport(),
-): ReviewCommandDependencies {
+): ChecksCommandDependencies {
   return {
     loadModelConfig: mock(() => ({ version: "1.0.0", default: null, actions: {} })),
     createModelBridge: mock(() => ({ getModelForRole: () => null, getCurrentModel: () => "unknown" })),
@@ -130,15 +130,15 @@ function createDependencies(
   };
 }
 
-describe("handleReview", () => {
+describe("handleChecks", () => {
   test("rejects mixed --only and --skip", async () => {
     const platform = createPlatform();
     const ctx = createContext();
     const deps = createDependencies(
-      createConfig({ quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } } }),
+      createConfig({ quality: { gates: { "lint": { enabled: true, command: "eslint ." } } } }),
     );
 
-    await expect(handleReview(platform, ctx, "--only ai-review --skip test-suite", deps)).rejects.toThrow(
+    await expect(handleChecks(platform, ctx, "--only lint --skip test-suite", deps)).rejects.toThrow(
       /mutually exclusive/i,
     );
   });
@@ -147,10 +147,10 @@ describe("handleReview", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const deps = createDependencies(
-      createConfig({ quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } } }),
+      createConfig({ quality: { gates: { "lint": { enabled: true, command: "eslint ." } } } }),
     );
 
-    await expect(handleReview(platform, ctx, "--only does-not-exist", deps)).rejects.toThrow(/unknown gate/i);
+    await expect(handleChecks(platform, ctx, "--only does-not-exist", deps)).rejects.toThrow(/unknown gate/i);
   });
 
   test("rejects disabled gate ids", async () => {
@@ -160,7 +160,7 @@ describe("handleReview", () => {
       createConfig({ quality: { gates: { "lsp-diagnostics": { enabled: true } } } }),
     );
 
-    await expect(handleReview(platform, ctx, "--only ai-review", deps)).rejects.toThrow(/disabled|not configured/i);
+    await expect(handleChecks(platform, ctx, "--only lint", deps)).rejects.toThrow(/disabled|not configured/i);
   });
 
   test("stops when no gates are configured", async () => {
@@ -168,7 +168,7 @@ describe("handleReview", () => {
     const ctx = createContext();
     const deps = createDependencies(createConfig({ quality: { gates: {} } }));
 
-    await expect(handleReview(platform, ctx, "", deps)).rejects.toThrow(/No quality gates configured/i);
+    await expect(handleChecks(platform, ctx, "", deps)).rejects.toThrow(/No quality gates configured/i);
   });
 
   test("stops when filters leave zero selected gates", async () => {
@@ -178,7 +178,7 @@ describe("handleReview", () => {
       createConfig({ quality: { gates: { "lsp-diagnostics": { enabled: true } } } }),
     );
 
-    await expect(handleReview(platform, ctx, "--skip lsp-diagnostics", deps)).rejects.toThrow(/no selected gates/i);
+    await expect(handleChecks(platform, ctx, "--skip lsp-diagnostics", deps)).rejects.toThrow(/no selected gates/i);
   });
 
   test("recovers invalid project quality.gates, launches setup, and resumes review", async () => {
@@ -190,7 +190,7 @@ describe("handleReview", () => {
     const deps = createDependencies(recoveredConfig);
     deps.loadConfig = mock()
       .mockImplementationOnce(() => {
-        throw new Error("quality.gates.ai-review.depth: Expected union value");
+        throw new Error("quality.gates.lint.command: Expected union value");
       })
       .mockImplementation(() => recoveredConfig);
     deps.inspectConfig = mock(() => createInspection(recoveredConfig));
@@ -201,16 +201,16 @@ describe("handleReview", () => {
           hasOwnQualityGates: true,
           recoverableInvalidQualityGates: true,
           qualityGateValidationErrors: [
-            { path: "quality.gates.ai-review.depth", message: "Expected union value" },
+            { path: "quality.gates.lint.command", message: "Expected union value" },
           ],
           validationErrors: [
-            { path: "quality.gates.ai-review.depth", message: "Expected union value" },
+            { path: "quality.gates.lint.command", message: "Expected union value" },
           ],
         }),
       ],
     }));
 
-    await handleReview(platform, ctx, "", deps);
+    await handleChecks(platform, ctx, "", deps);
 
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, "project");
     expect(deps.setupGates).toHaveBeenCalledWith(
@@ -234,7 +234,7 @@ describe("handleReview", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const recoveredConfig = createConfig({
-      quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } },
+      quality: { gates: { "lint": { enabled: true, command: "eslint ." } } },
     });
     const deps = createDependencies(recoveredConfig);
     deps.loadConfig = mock()
@@ -258,7 +258,7 @@ describe("handleReview", () => {
       ],
     }));
 
-    await handleReview(platform, ctx, "", deps);
+    await handleChecks(platform, ctx, "", deps);
 
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledTimes(1);
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, "global");
@@ -287,13 +287,13 @@ describe("handleReview", () => {
         createScopeInspection("project", {
           hasOwnQualityGates: true,
           recoverableInvalidQualityGates: true,
-          qualityGateValidationErrors: [{ path: "quality.gates.ai-review.depth", message: "Expected union value" }],
-          validationErrors: [{ path: "quality.gates.ai-review.depth", message: "Expected union value" }],
+          qualityGateValidationErrors: [{ path: "quality.gates.lint.command", message: "Expected union value" }],
+          validationErrors: [{ path: "quality.gates.lint.command", message: "Expected union value" }],
         }),
       ],
     }));
 
-    await handleReview(platform, ctx, "", deps);
+    await handleChecks(platform, ctx, "", deps);
 
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledTimes(2);
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, "global");
@@ -316,7 +316,7 @@ describe("handleReview", () => {
       ],
     }));
 
-    await expect(handleReview(platform, ctx, "", deps)).rejects.toThrow(/notifications\.verbosity/i);
+    await expect(handleChecks(platform, ctx, "", deps)).rejects.toThrow(/notifications\.verbosity/i);
     expect(deps.removeQualityGatesConfig).not.toHaveBeenCalled();
     expect(deps.setupGates).not.toHaveBeenCalled();
   });
@@ -325,10 +325,10 @@ describe("handleReview", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const deps = createDependencies(
-      createConfig({ quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } } }),
+      createConfig({ quality: { gates: { "lint": { enabled: true, command: "eslint ." } } } }),
     );
     deps.loadConfig = mock(() => {
-      throw new Error("quality.gates.ai-review.depth: Expected union value");
+      throw new Error("quality.gates.lint.command: Expected union value");
     });
     deps.inspectQualityGateRecovery = mock(() => ({
       scopes: [
@@ -336,22 +336,22 @@ describe("handleReview", () => {
           hasOwnQualityGates: true,
           recoverableInvalidQualityGates: true,
           qualityGateValidationErrors: [
-            { path: "quality.gates.ai-review.depth", message: "Expected union value" },
+            { path: "quality.gates.lint.command", message: "Expected union value" },
           ],
           validationErrors: [
-            { path: "quality.gates.ai-review.depth", message: "Expected union value" },
+            { path: "quality.gates.lint.command", message: "Expected union value" },
           ],
         }),
       ],
     }));
     deps.interactivelySaveGateSetup = mock(async () => "cancelled" as const);
 
-    await handleReview(platform, ctx, "", deps);
+    await handleChecks(platform, ctx, "", deps);
 
     expect(deps.runQualityGates).not.toHaveBeenCalled();
     expect(deps.notifyInfo).toHaveBeenLastCalledWith(
       ctx,
-      "Review cancelled",
+      "Checks cancelled",
       expect.stringContaining("setup was cancelled"),
     );
   });
@@ -364,27 +364,27 @@ describe("handleReview", () => {
         quality: {
           gates: {
             "lsp-diagnostics": { enabled: true },
-            "ai-review": { enabled: true, depth: "deep" },
+            "lint": { enabled: true, command: "eslint ." },
           },
         },
       }),
       createReport({
-        selectedGates: ["lsp-diagnostics", "ai-review"],
+        selectedGates: ["lsp-diagnostics", "lint"],
         gates: [
           { gate: "lsp-diagnostics", status: "passed", summary: "ok", issues: [] },
-          { gate: "ai-review", status: "skipped", summary: "Skipped by filter", issues: [] },
+          { gate: "lint", status: "skipped", summary: "Skipped by filter", issues: [] },
         ],
         summary: { passed: 1, failed: 0, skipped: 1, blocked: 0 },
         overallStatus: "passed",
       }),
     );
 
-    await handleReview(platform, ctx, "--skip ai-review", deps);
+    await handleChecks(platform, ctx, "--skip lint", deps);
 
     expect(deps.notifyInfo).toHaveBeenCalledWith(
       expect.anything(),
       expect.any(String),
-      expect.stringContaining("ai-review: skipped"),
+      expect.stringContaining("lint: skipped"),
     );
   });
 
@@ -395,12 +395,12 @@ describe("handleReview", () => {
       createConfig({ quality: { gates: { "lsp-diagnostics": { enabled: true } } } }),
     );
 
-    await handleReview(platform, ctx, "", deps);
+    await handleChecks(platform, ctx, "", deps);
 
     expect(deps.saveReviewReport).toHaveBeenCalled();
     expect(deps.notifyInfo).toHaveBeenCalledWith(
       expect.anything(),
-      expect.stringContaining("Review complete"),
+      expect.stringContaining("Checks complete"),
       expect.stringContaining("saved:"),
     );
   });
@@ -453,31 +453,254 @@ describe("handleReview", () => {
       });
     }) as typeof deps.runQualityGates;
 
-    await handleReview(platform, ctx, "--skip test-suite", deps);
+    await handleChecks(platform, ctx, "--skip test-suite", deps);
 
     const widgetSnapshots = ctx.ui.setWidget.mock.calls
-      .filter(([key, value]: [string, unknown]) => key === "supi-review" && Array.isArray(value))
-      .map(([, value]: [string, string[]]) => value.join("\n"));
+      .filter(([key, value]: [string, unknown]) => key === "supi-review" && typeof value === "function")
+      .map(([, factory]: [string, () => { getText(): string }]) => factory().getText());
 
     expect(widgetSnapshots.some((snapshot: string) => snapshot.includes("Load config (loaded)"))).toBe(true);
     expect(widgetSnapshots.some((snapshot: string) => snapshot.includes("Discover review scope (2 changed file(s))"))).toBe(true);
     expect(widgetSnapshots.some((snapshot: string) => snapshot.includes("LSP diagnostics (No diagnostics)"))).toBe(true);
-    expect(widgetSnapshots.some((snapshot: string) => snapshot.includes("Test suite (Skipped by filter)"))).toBe(true);
-    expect(widgetSnapshots.some((snapshot: string) => snapshot.includes("AI review (not configured)"))).toBe(true);
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith("supi-review", expect.stringContaining("Writing report"));
+    // test-suite is --skip'd and non-configured gates are hidden from the widget
+    expect(widgetSnapshots.every((snapshot: string) => !snapshot.includes("Test suite"))).toBe(true);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("supi-review", expect.stringContaining("Running checks..."));
     expect(ctx.ui.setWidget).toHaveBeenCalledWith("supi-review", undefined);
   });
 });
 
-describe("registerReviewCommand", () => {
+describe("registerChecksCommand", () => {
   test("description no longer advertises review profiles", () => {
     const platform = createPlatform();
 
-    registerReviewCommand(platform);
+    registerChecksCommand(platform);
 
     expect(platform.registerCommand).toHaveBeenCalledWith(
-      "supi:review",
+      "supi:checks",
       expect.objectContaining({ description: "Run configured quality gates" }),
     );
+  });
+});
+
+
+describe("buildFailureSummary", () => {
+  test("formats error-severity issues per gate with file locations", () => {
+    const result = buildFailureSummary([
+      {
+        gate: "typecheck",
+        status: "failed",
+        summary: "3 errors",
+        issues: [
+          { severity: "error", message: "Type 'string' is not assignable to 'number'", file: "src/foo.ts", line: 42 },
+          { severity: "error", message: "Property 'bar' does not exist", file: "src/bar.ts" },
+          { severity: "warning", message: "Unused variable", file: "src/foo.ts", line: 10 },
+        ],
+      },
+    ]);
+
+    expect(result).toContain("Typecheck (2 errors):");
+    expect(result).toContain("src/foo.ts:42");
+    expect(result).toContain("src/bar.ts");
+    expect(result).not.toContain("Unused variable");
+  });
+
+  test("shows gate summary when no error-level issues exist", () => {
+    const result = buildFailureSummary([
+      {
+        gate: "build",
+        status: "blocked",
+        summary: "Build tool not found",
+        issues: [],
+      },
+    ]);
+
+    expect(result).toBe("Build: Build tool not found");
+  });
+
+  test("formats multiple failed gates separated by blank lines", () => {
+    const result = buildFailureSummary([
+      {
+        gate: "lint",
+        status: "failed",
+        summary: "1 error",
+        issues: [{ severity: "error", message: "no-console violation" }],
+      },
+      {
+        gate: "test-suite",
+        status: "failed",
+        summary: "2 failures",
+        issues: [
+          { severity: "error", message: "test 'handles edge case' failed", file: "tests/edge.test.ts", line: 15 },
+          { severity: "error", message: "test 'validates input' failed", file: "tests/input.test.ts", line: 8 },
+        ],
+      },
+    ]);
+
+    expect(result).toContain("Lint (1 error):");
+    expect(result).toContain("Test suite (2 errors):");
+    expect(result).toContain("tests/edge.test.ts:15");
+    expect(result).toContain("\n\n");
+  });
+});
+
+describe("filterTestRunnerOutput", () => {
+  test("strips bun:test passing lines and keeps failures", () => {
+    const output = [
+      "(pass) handles edge case [0.12ms]",
+      "(pass) validates input [0.03ms]",
+      "(fail) rejects bad data [0.45ms]",
+      "  Error: expected 1 to equal 2",
+      "    at tests/foo.test.ts:42:5",
+      "(pass) serializes output [0.01ms]",
+      "",
+      "2 pass",
+      "1 fail",
+    ].join("\n");
+
+    const result = filterTestRunnerOutput(output);
+
+    expect(result).not.toContain("(pass)");
+    expect(result).toContain("(fail) rejects bad data");
+    expect(result).toContain("expected 1 to equal 2");
+    expect(result).toContain("tests/foo.test.ts:42:5");
+    expect(result).toContain("1 fail");
+  });
+
+  test("strips jest/mocha checkmark passing lines", () => {
+    const output = [
+      "  \u2713 should add numbers (3ms)",
+      "  \u2713 should subtract numbers",
+      "  \u2715 should divide by zero",
+      "    Error: division by zero",
+    ].join("\n");
+
+    const result = filterTestRunnerOutput(output);
+
+    expect(result).not.toContain("\u2713");
+    expect(result).toContain("\u2715 should divide by zero");
+    expect(result).toContain("division by zero");
+  });
+
+  test("strips pytest PASSED lines and keeps FAILED", () => {
+    const output = [
+      "test_math.py::test_add PASSED",
+      "test_math.py::test_sub PASSED",
+      "test_math.py::test_div FAILED",
+      "    assert 1 / 0",
+      "    ZeroDivisionError: division by zero",
+      "",
+      "======= 1 failed, 2 passed =======",
+    ].join("\n");
+
+    const result = filterTestRunnerOutput(output);
+
+    expect(result).not.toContain("test_add PASSED");
+    expect(result).not.toContain("test_sub PASSED");
+    expect(result).toContain("test_div FAILED");
+    expect(result).toContain("ZeroDivisionError");
+    expect(result).toContain("1 failed, 2 passed");
+  });
+
+  test("strips jest PASS file-level lines", () => {
+    const output = [
+      "PASS src/utils.test.ts",
+      "FAIL src/broken.test.ts",
+      "  \u25cf should work",
+      "    expect(true).toBe(false)",
+    ].join("\n");
+
+    const result = filterTestRunnerOutput(output);
+
+    expect(result).not.toContain("PASS src/utils.test.ts");
+    expect(result).toContain("FAIL src/broken.test.ts");
+    expect(result).toContain("expect(true).toBe(false)");
+  });
+
+  test("collapses excessive blank lines", () => {
+    const output = "line1\n\n\n\n\nline2";
+    const result = filterTestRunnerOutput(output);
+    expect(result).toBe("line1\n\nline2");
+  });
+
+  test("returns original content for non-test output", () => {
+    const output = "error TS2322: Type 'string' is not assignable to type 'number'.\n  src/foo.ts(42,5)";
+    const result = filterTestRunnerOutput(output);
+    expect(result).toBe(output);
+  });
+});
+
+describe("handleChecks fix-offer", () => {
+  test("offers to fix when gates fail and sends steer on accept", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    const failedReport = createReport({
+      gates: [
+        { gate: "typecheck", status: "failed", summary: "2 errors", issues: [
+          { severity: "error", message: "Type error in foo.ts", file: "src/foo.ts", line: 10 },
+        ]},
+        { gate: "build", status: "passed", summary: "ok", issues: [] },
+      ],
+      summary: { passed: 1, failed: 1, skipped: 0, blocked: 0 },
+      overallStatus: "failed",
+    });
+    const deps = createDependencies(
+      createConfig({ quality: { gates: { typecheck: { enabled: true, command: "tsc --noEmit" }, build: { enabled: true, command: "tsc" } } } }),
+      failedReport,
+    );
+
+    ctx.ui.select = mock(async () => "Yes, fix Typecheck");
+
+    await handleChecks(platform, ctx, "", deps);
+
+    expect(ctx.ui.select).toHaveBeenCalledWith(
+      expect.stringContaining("1 check failed"),
+      expect.arrayContaining([
+        expect.stringContaining("Yes, fix"),
+        "No, just save for later",
+      ]),
+    );
+
+    expect(platform.sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Typecheck (failed)"),
+    );
+  });
+
+  test("does not offer fix when all gates pass", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    const deps = createDependencies(
+      createConfig({ quality: { gates: { build: { enabled: true, command: "tsc" } } } }),
+      createReport({ overallStatus: "passed" }),
+    );
+
+    await handleChecks(platform, ctx, "", deps);
+
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(platform.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  test("does not send steer when user declines fix", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    const failedReport = createReport({
+      gates: [
+        { gate: "lint", status: "failed", summary: "lint errors", issues: [
+          { severity: "error", message: "no-console" },
+        ]},
+      ],
+      summary: { passed: 0, failed: 1, skipped: 0, blocked: 0 },
+      overallStatus: "failed",
+    });
+    const deps = createDependencies(
+      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      failedReport,
+    );
+
+    ctx.ui.select = mock(async () => "No, just save for later");
+
+    await handleChecks(platform, ctx, "", deps);
+
+    expect(ctx.ui.select).toHaveBeenCalled();
+    expect(platform.sendUserMessage).not.toHaveBeenCalled();
   });
 });
