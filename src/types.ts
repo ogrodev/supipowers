@@ -39,7 +39,8 @@ export interface Notification {
 }
 
 /** Canonical quality gate identifiers */
-export type GateId = "lsp-diagnostics" | "test-suite" | "ai-review";
+export type CommandGateId = "lint" | "typecheck" | "format" | "test-suite" | "build";
+export type GateId = "lsp-diagnostics" | CommandGateId;
 
 export type ConfigScope = "project" | "global";
 
@@ -81,27 +82,198 @@ export interface ReviewReport {
   overallStatus: Exclude<GateStatus, "skipped">;
 }
 
+/** AI review pipeline levels */
+export type ReviewLevel = "quick" | "deep" | "multi-agent";
+
+/** Scope selection modes for /supi:review */
+export type ReviewScopeMode = "pull-request" | "uncommitted" | "commit" | "custom";
+
+/** Structured review output status */
+export type ReviewOutputStatus = "passed" | "failed" | "blocked";
+
+/** Review finding severity */
+export type ReviewFindingSeverity = "error" | "warning" | "info";
+
+/** Prioritization tier for review findings */
+export type ReviewFindingPriority = "P0" | "P1" | "P2" | "P3";
+
+/** Validation verdict for a review finding */
+export type ReviewValidationVerdict = "confirmed" | "rejected" | "uncertain";
+
+/** Review session lifecycle status */
+export type ReviewSessionStatus = "running" | "completed" | "blocked" | "cancelled";
+
+/** File-level diff summary within a review scope */
+export interface ReviewScopeFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  diff: string;
+}
+
+/** Aggregate statistics for a review scope */
+export interface ReviewScopeStats {
+  filesChanged: number;
+  excludedFiles: number;
+  additions: number;
+  deletions: number;
+}
+
+/** Review scope selected by the command pipeline */
+export interface ReviewScope {
+  mode: ReviewScopeMode;
+  description: string;
+  diff: string;
+  files: ReviewScopeFile[];
+  stats: ReviewScopeStats;
+  baseBranch?: string;
+  commit?: string;
+  customInstructions?: string;
+}
+
+/** Per-finding validation metadata */
+export interface ReviewFindingValidation {
+  verdict: ReviewValidationVerdict;
+  reasoning: string;
+  validatedBy: string;
+  validatedAt: string;
+}
+
+/** Canonical review finding produced by AI reviewers */
+export interface ReviewFinding {
+  id: string;
+  title: string;
+  severity: ReviewFindingSeverity;
+  priority: ReviewFindingPriority;
+  confidence: number;
+  file: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  body: string;
+  suggestion: string | null;
+  agent?: string;
+  validation?: ReviewFindingValidation;
+}
+
+/** Structured output returned by review agents */
+export interface ReviewOutput {
+  findings: ReviewFinding[];
+  summary: string;
+  status: ReviewOutputStatus;
+}
+
+/** Config entry for one review agent */
+export interface ReviewAgentConfig {
+  name: string;
+  enabled: boolean;
+  data: string;
+  model: string | null;
+}
+
+/** Top-level review agent pipeline config */
+export interface ReviewAgentsConfig {
+  agents: ReviewAgentConfig[];
+}
+
+/** Loaded review agent definition from markdown frontmatter + prompt body */
+export interface ReviewAgentDefinition {
+  name: string;
+  description: string;
+  focus: string | null;
+  prompt: string;
+  filePath: string;
+}
+/** Review agent definition combined with pipeline config */
+export interface ConfiguredReviewAgent extends ReviewAgentDefinition {
+  enabled: boolean;
+  data: string;
+  model: string | null;
+}
+
+
+
+/** Persisted summary for one review iteration */
+export interface ReviewIterationSummary {
+  iteration: number;
+  findings: number;
+  status: ReviewOutputStatus;
+  file: string;
+  createdAt: string;
+}
+/** Aggregate status of an auto-fix pass */
+export type ReviewFixOutputStatus = "applied" | "partial" | "skipped" | "blocked";
+
+/** Structured result returned by the review fixer */
+export interface ReviewFixOutput {
+  fixes: ReviewFixRecord[];
+  summary: string;
+  status: ReviewFixOutputStatus;
+}
+
+
+
+/** Persisted auto-fix attempt */
+export interface ReviewFixRecord {
+  findingIds: string[];
+  file: string | null;
+  status: "applied" | "skipped" | "failed";
+  summary: string;
+}
+
+/** Paths to persisted review session artifacts */
+export interface ReviewSessionArtifacts {
+  scope: string;
+  iterationsDir: string;
+  agentsDir: string;
+  rawFindings?: string;
+  validatedFindings?: string;
+  consolidatedFindings?: string;
+}
+
+/** Persisted /supi:review session metadata */
+export interface ReviewSession {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  level: ReviewLevel;
+  status: ReviewSessionStatus;
+  scope: ReviewScope;
+  validateFindings: boolean;
+  consolidate: boolean;
+  autoFix: boolean;
+  maxIterations: number;
+  currentIteration: number;
+  iterations: ReviewIterationSummary[];
+  fixes: ReviewFixRecord[];
+  artifacts: ReviewSessionArtifacts;
+  agents: string[];
+}
+
+
 /** Config for the lsp-diagnostics gate */
 export interface LspDiagnosticsGateConfig {
   enabled: boolean;
 }
 
-/** Config for the ai-review gate */
-export interface AiReviewGateConfig {
-  enabled: boolean;
-  depth: "quick" | "deep";
-}
-
-/** Config for the test-suite gate */
-export type TestSuiteGateConfig =
+/** Shared config for command-driven gates. */
+export type CommandGateConfig =
   | { enabled: false; command?: string | null }
   | { enabled: true; command: string };
+
+export type LintGateConfig = CommandGateConfig;
+export type TypecheckGateConfig = CommandGateConfig;
+export type FormatGateConfig = CommandGateConfig;
+export type TestSuiteGateConfig = CommandGateConfig;
+export type BuildGateConfig = CommandGateConfig;
 
 /** Canonical quality gate config map */
 export interface QualityGatesConfig {
   "lsp-diagnostics"?: LspDiagnosticsGateConfig;
-  "ai-review"?: AiReviewGateConfig;
+  "lint"?: LintGateConfig;
+  "typecheck"?: TypecheckGateConfig;
+  "format"?: FormatGateConfig;
   "test-suite"?: TestSuiteGateConfig;
+  "build"?: BuildGateConfig;
 }
 
 /** Gate filter options provided by commands */
