@@ -13,7 +13,7 @@ import { discoverCommitConventions } from "./conventions.js";
 import { normalizeLineEndings } from "../text.js";
 import { notifyInfo, notifyError, notifySuccess } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
-import { resolveModelForAction, createModelBridge } from "../config/model-resolver.js";
+import { resolveAllCandidates, createModelBridge } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 
 // ── Public types ───────────────────────────────────────────
@@ -206,32 +206,41 @@ export async function analyzeAndCommit(
     });
 
     let plan: CommitPlan | null = null;
+    let agentReason: string | undefined;
 
     if (platform.capabilities.agentSessions) {
       progress.activate(4, `${fileList.length} file(s)`);
-      // Resolve the commit sub-agent model from config (falls back to session default)
       const modelCfg = loadModelConfig(platform.paths, cwd);
       const bridge = createModelBridge(platform);
-      const commitModel = resolveModelForAction("commit", modelRegistry, modelCfg, bridge);
+      const candidates = resolveAllCandidates("commit", modelRegistry, modelCfg, bridge);
 
-      // Show model override in status bar if not using the main session model
-      if (commitModel.source !== "main" && commitModel.model) {
-        const sourceLabel =
-          commitModel.source === "action" ? "configured for commit" :
-          commitModel.source === "default" ? "supipowers default" :
-          "harness role";
-        let detail = sourceLabel;
-        if (commitModel.thinkingLevel) {
-          detail += ` \u00b7 ${commitModel.thinkingLevel} thinking`;
+      for (const candidate of candidates) {
+        // Show model override in status bar if not using the main session model
+        if (candidate.source !== "main" && candidate.model) {
+          const sourceLabel =
+            candidate.source === "action" ? "configured for commit" :
+            candidate.source === "default" ? "supipowers default" :
+            "harness role";
+          let detail = sourceLabel;
+          if (candidate.thinkingLevel) {
+            detail += ` \u00b7 ${candidate.thinkingLevel} thinking`;
+          }
+          ctx.ui?.setStatus?.("supi-model", `Model: ${candidate.model} (${detail})`);
         }
-        ctx.ui?.setStatus?.("supi-model", `Model: ${commitModel.model} (${detail})`);
+
+        const agentResult = await tryAgentPlan(platform, cwd, prompt, candidate.model);
+        if (agentResult.plan) {
+          plan = validatePlanFiles(agentResult.plan, fileList);
+          progress.complete(4, `${plan.commits.length} commit(s)`);
+          break;
+        }
+
+        // Store last failure reason; try next candidate
+        agentReason = agentResult.reason;
       }
-      plan = await tryAgentPlan(platform, cwd, prompt, commitModel.model);
-      if (plan) {
-        plan = validatePlanFiles(plan, fileList);
-        progress.complete(4, `${plan.commits.length} commit(s)`);
-      } else {
-        progress.skip(4, "unavailable");
+
+      if (!plan) {
+        progress.skip(4, agentReason ?? "unavailable");
       }
     } else {
       progress.skip(4, "no agent sessions");
@@ -242,7 +251,10 @@ export async function analyzeAndCommit(
       progress.skip(5, "manual");
       progress.skip(6, "manual");
       progress.dispose();
-      return manualFallback(platform, ctx, cwd, fileList);
+      const reason = !platform.capabilities.agentSessions
+        ? "no agent sessions"
+        : agentReason;
+      return manualFallback(platform, ctx, cwd, fileList, reason);
     }
 
     // 6. Present plan for approval
@@ -276,12 +288,18 @@ export async function analyzeAndCommit(
 
 // ── Agent interaction ──────────────────────────────────────
 
+interface AgentPlanResult {
+  plan: CommitPlan | null;
+  /** Human-readable reason when plan is null */
+  reason?: string;
+}
+
 async function tryAgentPlan(
   platform: Platform,
   cwd: string,
   prompt: string,
   model?: string,
-): Promise<CommitPlan | null> {
+): Promise<AgentPlanResult> {
   let session: Awaited<ReturnType<Platform["createAgentSession"]>> | null = null;
   try {
     session = await platform.createAgentSession({ cwd, hasUI: false, ...(model ? { model } : {}) });
@@ -301,7 +319,7 @@ async function tryAgentPlan(
       .reverse()
       .find((m: any) => m.role === "assistant");
 
-    if (!lastAssistant) return null;
+    if (!lastAssistant) return { plan: null, reason: "no assistant response" };
 
     const text =
       typeof lastAssistant.content === "string"
@@ -313,9 +331,15 @@ async function tryAgentPlan(
               .join("\n")
           : "";
 
-    return parseCommitPlan(text);
-  } catch {
-    return null;
+    if (!text) return { plan: null, reason: "empty agent response" };
+
+    const plan = parseCommitPlan(text);
+    if (!plan) return { plan: null, reason: diagnoseParseFailure(text) };
+
+    return { plan };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { plan: null, reason: message };
   } finally {
     if (session) {
       try {
@@ -334,13 +358,16 @@ async function manualFallback(
   ctx: any,
   cwd: string,
   fileList: string[],
+  reason?: string,
 ): Promise<CommitResult | null> {
   const exec = platform.exec.bind(platform);
 
   notifyInfo(
     ctx,
     "AI commit unavailable",
-    "Enter a commit message manually",
+    reason
+      ? `${reason} \u2014 enter a commit message manually`
+      : "Enter a commit message manually",
   );
 
   const message = await ctx.ui.input("Commit message (empty to abort)", {
@@ -563,6 +590,47 @@ export function buildAnalysisPrompt(input: PromptInput): string {
 }
 
 // ── Plan parsing ───────────────────────────────────────────
+
+/**
+ * Produce a human-readable reason why parseCommitPlan returned null.
+ * Used for diagnostics — never shown raw to the user.
+ */
+function diagnoseParseFailure(text: string): string {
+  const fenceRe = /```json\s*\n([\s\S]*?)```/;
+  const match = fenceRe.exec(text);
+  if (!match) return "no JSON code block in response";
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(match[1]);
+  } catch {
+    return "JSON parse error in response";
+  }
+
+  if (!parsed.commits || !Array.isArray(parsed.commits)) return "missing commits array";
+  if (parsed.commits.length === 0) return "empty commits array";
+
+  for (const c of parsed.commits) {
+    if (!c.type) return "commit missing type";
+    if (!c.summary) return "commit missing summary";
+    if (!Array.isArray(c.files) || c.files.length === 0) return "commit missing files";
+    if (!(VALID_COMMIT_TYPES as readonly string[]).includes(c.type)) {
+      return `invalid commit type: ${c.type}`;
+    }
+  }
+
+  // Check for duplicate files across groups
+  const seen = new Set<string>();
+  for (const group of parsed.commits) {
+    for (const file of group.files) {
+      if (seen.has(file)) return `duplicate file across commits: ${file}`;
+      seen.add(file);
+    }
+  }
+
+  return "unknown parse failure";
+}
+
 
 /** Exported for testing */
 export function parseCommitPlan(text: string): CommitPlan | null {

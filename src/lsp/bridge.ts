@@ -44,13 +44,48 @@ function formatDiagnosticDetail(diagnostic: Diagnostic): string | undefined {
   return diagnostic.column > 0 ? `column ${diagnostic.column}` : undefined;
 }
 
-function parseLspDiagnosticsResults(raw: string): DiagnosticsResult[] | null {
+function extractJsonArray(raw: string): unknown | null {
+  const trimmed = raw.trim();
+
+  // 1. Try direct parse (no fence)
   try {
-    const parsed = JSON.parse(stripMarkdownCodeFence(raw)) as unknown;
-    return Array.isArray(parsed) && parsed.every((entry) => isDiagnosticsResult(entry)) ? parsed : null;
-  } catch {
-    return null;
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {}
+
+  // 2. Strip markdown code fence and retry
+  const stripped = stripMarkdownCodeFence(trimmed);
+  if (stripped !== trimmed) {
+    try {
+      const parsed = JSON.parse(stripped);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
   }
+
+  // 3. Extract first JSON array from prose via bracket matching
+  const start = trimmed.indexOf("[");
+  if (start === -1) return null;
+
+  let depth = 0;
+  for (let i = start; i < trimmed.length; i++) {
+    if (trimmed[i] === "[") depth++;
+    else if (trimmed[i] === "]") depth--;
+    if (depth === 0) {
+      try {
+        const parsed = JSON.parse(trimmed.slice(start, i + 1));
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+      break;
+    }
+  }
+
+  return null;
+}
+
+function parseLspDiagnosticsResults(raw: string): DiagnosticsResult[] | null {
+  const parsed = extractJsonArray(raw);
+  if (!Array.isArray(parsed)) return null;
+  return parsed.every((entry) => isDiagnosticsResult(entry)) ? parsed : null;
 }
 
 /**

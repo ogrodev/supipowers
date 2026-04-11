@@ -65,6 +65,8 @@ function createMockPlatform(overrides: Record<string, any> = {}) {
     sendMessage: mock(),
     getActiveTools: mock(() => []),
     registerMessageRenderer: mock(),
+    getCurrentModel: mock(() => "test-model"),
+    getModelForRole: mock(() => null),
     ...overrides,
   } as any;
 }

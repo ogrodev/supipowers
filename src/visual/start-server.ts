@@ -49,6 +49,10 @@ export async function startVisualServer(opts: StartServerOptions): Promise<Visua
     }
 
     stopVisualServer(opts.sessionDir);
+    // stopVisualServer may leave artifacts when kill returns a non-ESRCH error;
+    // force-clean so the caller never inherits stale state.
+    fs.rmSync(pidFile, { force: true });
+    cleanupStartupArtifacts(opts.sessionDir);
     return null;
   } catch {
     fs.rmSync(pidFile, { force: true });
