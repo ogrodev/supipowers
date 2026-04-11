@@ -6,6 +6,7 @@
       "name": "supipowers",
       "dependencies": {
         "@clack/prompts": "^0.10.0",
+        "handlebars": "^4.7.8",
       },
       "devDependencies": {
         "@oh-my-pi/pi-ai": "latest",

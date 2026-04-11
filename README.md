@@ -60,7 +60,8 @@ The installer scans for these and offers to install any that are missing. Everyt
 | ------------------------ | ------------------------------------------------------------- |
 | `/supi`                  | Interactive menu with commands and project status             |
 | `/supi:plan`             | Collaborative planning with structured task breakdown         |
-| `/supi:review`           | Run quality gates at chosen depth                             |
+| `/supi:review`           | AI code review pipeline (quick, deep, multi-agent)            |
+| `/supi:checks`           | Run deterministic quality gates                               |
 | `/supi:qa`               | E2E testing pipeline with Playwright                          |
 | `/supi:fix-pr`           | Assess and fix PR review comments                             |
 | `/supi:release`          | Version bump, release notes, publish                          |
@@ -72,19 +73,22 @@ The installer scans for these and offers to install any that are missing. Everyt
 | `/supi:config`           | Interactive settings TUI                                      |
 | `/supi:status`           | Check running sub-agents and progress                         |
 | `/supi:doctor`           | Diagnose extension health and missing dependencies            |
+| `/supi:generate`        | Documentation drift detection                                |
 | `/supi:update`           | Update supipowers to the latest version                       |
 
-Commands like `/supi`, `/supi:config`, `/supi:commit`, and `/supi:status` are TUI-only — they open native dialogs without triggering the AI session.
+Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:update`, `/supi:doctor`, `/supi:mcp`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`. `/supi:release` is mostly TUI-driven but can invoke AI for doc-drift fixes and polish mode.
 
 ## How it works
 
 **Planning.** `/supi:plan` steers the AI through planning phases (scope → decompose → estimate → verify), saves the result to `.omp/supipowers/plans/`, and presents an approval UI. On approval, tasks execute in the same session.
 
-**Quality gates.** `/supi:review` runs composable checks selected by profile. LSP diagnostics surface real type errors. AI review catches logic issues. Test gates run your actual test suite. Each gate reports issues with severity levels.
+**Quality gates.** `/supi:checks` runs deterministic quality gates. Six gates are available: `lsp-diagnostics`, `lint`, `typecheck`, `format`, `test-suite`, and `build`. Each gate can be enabled independently via `/supi:config` or `.omp/supipowers/config.json`. Gates report issues with severity levels.
+
+**AI code review.** `/supi:review` runs a programmatic AI review pipeline with configurable depth (quick, deep, or multi-agent). It uses headless agent sessions with structured JSON validation, optional finding validation against actual code, and auto-fix support.
 
 **PR fixing.** `/supi:fix-pr` fetches PR review comments, critically assesses each one, checks for ripple effects, then fixes or rejects with evidence. Bot reviewers are auto-detected and filtered out.
 
-**Context protection.** When [context-mode](https://github.com/ogrodev/context-mode) is detected, supipowers injects routing hooks that protect the agent's context window. Large outputs, file reads, and HTTP calls are automatically routed through sandboxed execution so only summaries enter the conversation.
+**Context protection.** When [context-mode](https://github.com/mksglu/context-mode) is detected, supipowers injects routing hooks that protect the agent's context window. Large outputs, file reads, and HTTP calls are automatically routed through sandboxed execution so only summaries enter the conversation.
 
 **Model assignment.** Each action can be assigned a different model and thinking level. `/supi:model` opens a TUI picker backed by OMP's model registry.
 
@@ -109,17 +113,20 @@ Commands like `/supi`, `/supi:config`, `/supi:commit`, and `/supi:status` are TU
 | MCP server management through mcpc    | ✅         | ❌               |
 | Git worktree workflow                 | ❌         | ✅               |
 
-## Quality profiles
+## Quality gates
 
-Three built-in profiles control how much `/supi:review` checks:
+`/supi:checks` runs deterministic quality gates. Each gate is independently configurable in `quality.gates` via `/supi:config` or the config JSON files:
 
-| Profile                | LSP | AI Review  | Code Quality | Tests | E2E |
-| ---------------------- | --- | ---------- | ------------ | ----- | --- |
-| `quick`                | ✓   | quick scan | —            | —     | —   |
-| `thorough` _(default)_ | ✓   | deep       | ✓            | —     | —   |
-| `full-regression`      | ✓   | deep       | ✓            | ✓     | ✓   |
+| Gate               | What it checks                  | Config type       |
+| ------------------ | ------------------------------- | ----------------- |
+| `lsp-diagnostics`  | Language server diagnostics     | enabled           |
+| `lint`             | Linter (e.g. `eslint`, `biome`) | enabled + command |
+| `typecheck`        | Type checker (e.g. `tsc`)       | enabled + command |
+| `format`           | Formatter check                 | enabled + command |
+| `test-suite`       | Test runner                     | enabled + command |
+| `build`            | Build verification              | enabled + command |
 
-Create custom profiles in `.omp/supipowers/profiles/`.
+Gates default to disabled. Enable them per-project in `.omp/supipowers/config.json` or globally in `~/.omp/supipowers/config.json`.
 
 ## Configuration
 
@@ -149,6 +156,7 @@ Supipowers ships runtime-loaded prompt skills that are also available to the age
 | `tdd`                   | Agent sessions          |
 | `verification`          | Agent sessions          |
 | `receiving-code-review` | Agent sessions          |
+| `release`               | `/supi:release`         |
 | `context-mode`          | Context window guidance |
 
 ## Development

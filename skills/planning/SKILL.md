@@ -25,15 +25,21 @@ Before asking questions, understand the current state:
 
 ### Phase 2: Ask Clarifying Questions
 
+- First determine the planning mode: problem exploration, solution ideation, assumption testing, or strategy exploration
 - One question at a time — never overwhelm with multiple questions
 - Prefer multiple choice when possible, open-ended is fine too
-- Focus on: purpose, constraints, success criteria
-- Continue until you have enough clarity to propose approaches
+- Focus on: purpose, constraints, success criteria, non-goals
+- If missing evidence blocks useful brainstorming, say so explicitly and identify the research gap
+- Continue until you have enough clarity to explore directions responsibly
 
-### Phase 3: Propose 2-3 Approaches
+### Phase 3: Brainstorm, Then Propose 2-3 Approaches
 
-- Present 2-3 different approaches with trade-offs
+- Explore a wider option set first; internally generate 5-7 directions before converging
+- Pressure-test the space with one opposite option, one simplification/removal option, and one analogy/cross-domain option
+- Name traps directly when they appear: solutioning too early, one-idea brainstorm, analysis paralysis
+- Present only the strongest 2-3 approaches with trade-offs
 - Lead with your recommended option and explain why
+- For the leading option, capture the biggest unknown and the cheapest validation step
 - Wait for the user to choose before proceeding
 
 ### Phase 4: Present Design
@@ -52,8 +58,7 @@ Once the user approves the design:
 
 - Save to `.omp/supipowers/specs/YYYY-MM-DD-<topic>-design.md`
 - Use clear, concise writing
-- Commit the design document to git
-
+- Keep the design document local; do NOT commit it to git
 ### Phase 6: Spec Review Loop
 
 After writing the design doc:
@@ -66,7 +71,7 @@ After writing the design doc:
 
 Ask the user to review the spec before proceeding:
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> "Spec written to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 
 Wait for their response. Only proceed once approved.
 
@@ -106,12 +111,16 @@ tags: [<relevant>, <tags>]
 - [ ] Step 2: Run test to verify it fails
 - [ ] Step 3: Write minimal implementation
 - [ ] Step 4: Run test to verify it passes
-- [ ] Step 5: Commit
-```
 
 ## Principles
 
+- One question at a time
+- Diverge broadly, converge tightly
+- Keep brainstorming output concise: show finalists, not every explored branch
+- Challenge assumptions when they materially change the plan
+- If evidence is missing, state the research gap instead of faking certainty
 - Each task should be completable in 2-5 minutes
 - Include test files in the files list
 - Prefer small, focused tasks over large ones
-- DRY, YAGNI, TDD, frequent commits
+- DRY, YAGNI, TDD
+- Plans and specs stay local; do not include git commit or push steps for them

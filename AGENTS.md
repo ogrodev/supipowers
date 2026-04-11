@@ -5,7 +5,8 @@
 **supipowers** is an OMP-native TypeScript extension (v0.5.0) for the [oh-my-pi](https://github.com/oh-my-pi) coding agent. It adds agentic workflows on top of OMP's `ExtensionAPI`:
 
 - `/supi:plan` — collaborative task planning with AI steering
-- `/supi:review` — composable quality-gate code review
+- `/supi:review` — programmatic AI review pipeline (quick, deep, multi-agent)
+- `/supi:checks` — deterministic quality gates
 - `/supi:qa` — structured QA pipeline
 - `/supi:release` — release automation
 
@@ -26,9 +27,10 @@ OMP Runtime
     │
     ├── src/config/           ← three-layer config loading (defaults → global → project)
     ├── src/storage/          ← markdown/JSON persistence (.omp/supipowers/)
-    ├── src/quality/          ← composable gate runner (lsp-diagnostics, ai-review, …)
+    ├── src/quality/          ← composable check runner (lsp-diagnostics, lint, typecheck, test-suite, build)
+    ├── src/review/           ← AI review pipeline (scope, runners, validation, fixing, consolidation)
     ├── src/lsp/              ← LSP availability detection via platform.getActiveTools()
-    ├── src/planning/          ← plan approval UI flow (agent_end hook)
+    ├── src/planning/         ← plan approval UI flow (agent_end hook)
     └── src/notifications/    ← notification rendering and emission
 ```
 
@@ -40,8 +42,16 @@ OMP Runtime
 4. Present approval UI via `ctx.ui.custom()` — user approves, edits, or rejects
 5. On approval, execute tasks in the same session via steer messages
 
-**`/supi:plan` and `/supi:review`** use `platform.sendMessage({ deliverAs: 'steer' })` to steer the active AI session — no subprocess.
+**Data flow for `/supi:review`:**
 
+1. Select a review scope (PR-style, uncommitted, commit, or custom)
+2. Resolve review level (quick / deep / multi-agent) and run headless `createAgentSession()` reviewers
+3. Optionally validate findings against actual code, consolidate multi-agent output, and apply safe auto-fixes
+4. Persist the session to `.omp/supipowers/reviews/` and optionally rerun the same review in a loop after fixes
+
+**`/supi:plan`** uses `platform.sendMessage({ deliverAs: 'steer' })` to steer the active AI session.
+**`/supi:review`** uses headless `createAgentSession()` runs with structured JSON validation at every step.
+**`/supi:checks`** remains deterministic and runs configured gates without AI orchestration.
 ---
 
 ## Key Directories
@@ -53,13 +63,14 @@ supipowers/
 │   ├── types.ts              # ALL shared types — single source of truth
 │   ├── commands/             # One file per slash command
 │   ├── planning/             # Plan approval UI flow (agent_end hook)
+│   ├── review/               # AI review pipeline modules and default review-agent assets
 │   ├── config/               # loader.ts (3-layer merge), defaults.ts (profiles)
-│   ├── storage/              # plans.ts (markdown + YAML frontmatter)
-│   ├── quality/              # gate-runner.ts (composable review gates)
+│   ├── storage/              # plan/report/review session persistence
+│   ├── quality/              # deterministic quality gates
 │   ├── lsp/                  # detector.ts
 │   └── notifications/        # renderer.ts
 ├── tests/                    # Mirrors src/ structure — tests/<module>/<unit>.test.ts
-├── skills/                   # OMP skills loaded by plan/review/qa commands
+├── skills/                   # OMP skills used by steer-based commands or manual prompting
 │   ├── planning/SKILL.md
 │   ├── code-review/SKILL.md
 │   ├── debugging/SKILL.md
@@ -73,21 +84,28 @@ supipowers/
 └── .omp/supipowers/          # Runtime data (gitignored)
     ├── config.json           # Project-level config override
     ├── plans/                # Saved plan markdown files
-```
+    ├── review-agents/        # User-configurable AI review agents + config.yml
+    └── reviews/              # Persisted /supi:review sessions
 
 ---
 
 ## Important Files
 
-| File                                                       | Purpose                                                                                                                                  |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`                                             | Extension entry point — `export default function supipowers(api: ExtensionAPI)`                                                           |
-| `src/types.ts`                                             | Canonical types: `PlanTask`, `Plan`, `SupipowersConfig`, `Profile`, `TaskComplexity`, etc. — add types here only |
-| `src/config/defaults.ts`                                   | `DEFAULT_CONFIG` and `BUILTIN_PROFILES` (quick / thorough / full-regression)                                                             |
-| `src/planning/approval-flow.ts`                            | Plan approval UI flow (agent_end hook)                                                                           |
-| `.omp/supipowers/specs/2026-03-10-supipowers-v2-design.md` | Authoritative v2 design spec; read before any architectural change                                                                       |
-| `package.json`                                             | `omp.extensions` field registers `./src/index.ts` with the OMP runtime                                                                   |
-| `tsconfig.json` / `tsconfig.build.json`                    | Base config (includes tests) vs. build config (excludes tests)                                                                           |
+|File|Purpose|
+|---|---|
+|`src/index.ts`|Extension entry point — `export default function supipowers(api: ExtensionAPI)`|
+|`src/types.ts`|Canonical types: plans, checks, review pipeline sessions/findings, models, etc. — add shared types here only|
+|`src/commands/ai-review.ts`|`/supi:review` TUI pipeline orchestrator|
+|`src/commands/review.ts`|`/supi:checks` deterministic quality-gate command|
+|`src/review/agent-loader.ts`|Seeds/loads `.omp/supipowers/review-agents/` config + markdown agent definitions|
+|`src/review/multi-agent-runner.ts`|Parallel multi-agent review execution with per-agent model overrides|
+|`src/storage/review-sessions.ts`|Review session persistence under `.omp/supipowers/reviews/`|
+|`src/config/defaults.ts`|`DEFAULT_CONFIG` and `BUILTIN_PROFILES` (quick / thorough / full-regression)|
+|`src/planning/approval-flow.ts`|Plan approval UI flow (agent_end hook)|
+|`.omp/supipowers/review-agents/config.yml`|Project-local review-agent pipeline config materialized on first `/supi:review` run|
+|`.omp/supipowers/specs/2026-03-10-supipowers-v2-design.md`|Authoritative v2 design spec; read before any architectural change|
+|`package.json`|`omp.extensions` field registers `./src/index.ts` with the OMP runtime|
+|`tsconfig.json` / `tsconfig.build.json`|Base config (includes tests) vs. build config (excludes tests)|
 
 ---
 
@@ -251,10 +269,10 @@ No coverage thresholds are configured. There is no CI pipeline; tests must be ru
 
 ## Skills
 
-Skills are OMP-consumed markdown prompt files in `skills/`. They are loaded at runtime by command handlers (not bundled at build time). When adding or modifying a command that steers the AI, update the corresponding skill:
+Skills are OMP-consumed markdown prompt files in `skills/`. Steer-based commands load them at runtime; the programmatic `/supi:review` pipeline instead uses versioned review-agent templates under `src/review/default-agents/` and materializes them into `.omp/supipowers/review-agents/` on demand.
 
-| Skill       | Path                          | Used by            |
-| ----------- | ----------------------------- | ------------------ |
-| Planning    | `skills/planning/SKILL.md`    | `/supi:plan`       |
-| Code review | `skills/code-review/SKILL.md` | `/supi:review`     |
-| QA strategy | `skills/qa-strategy/SKILL.md` | `/supi:qa`         |
+| Skill       | Path                          | Used by                                   |
+| ----------- | ----------------------------- | ----------------------------------------- |
+| Planning    | `skills/planning/SKILL.md`    | `/supi:plan`                              |
+| Code review | `skills/code-review/SKILL.md` | Manual prompting / reusable review guidance |
+| QA strategy | `skills/qa-strategy/SKILL.md` | `/supi:qa`                                |
