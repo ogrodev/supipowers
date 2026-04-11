@@ -12,12 +12,29 @@ import type {
   ReviewReport,
 } from "../types.js";
 import { CANONICAL_GATE_ORDER, type GateRegistry } from "./registry.js";
+import { collectLspDiagnostics } from "../lsp/bridge.js";
 
 interface ReviewScope {
   changedFiles: string[];
   scopeFiles: string[];
   fileScope: GateExecutionContext["fileScope"];
 }
+
+export type ReviewRunEvent =
+  | {
+      type: "scope-discovered";
+      changedFiles: number;
+      scopeFiles: number;
+      fileScope: GateExecutionContext["fileScope"];
+    }
+  | { type: "gate-started"; gateId: GateId }
+  | { type: "gate-skipped"; gateId: GateId; reason: string }
+  | {
+      type: "gate-completed";
+      gateId: GateId;
+      status: GateResult["status"];
+      summary: string;
+    };
 
 export interface RunQualityGatesInput {
   platform: Pick<Platform, "exec" | "getActiveTools" | "createAgentSession">;
@@ -28,9 +45,10 @@ export interface RunQualityGatesInput {
   gateRegistry?: GateRegistry;
   getLspDiagnostics?: GateExecutionContext["getLspDiagnostics"];
   now?: () => Date;
+  onEvent?: (event: ReviewRunEvent) => void;
 }
 
-function isGateEnabled(gateId: GateId, config: QualityGatesConfig[GateId] | undefined): boolean {
+function isGateEnabled(config: QualityGatesConfig[GateId] | undefined): boolean {
   if (!config) {
     return false;
   }
@@ -100,7 +118,7 @@ export async function discoverReviewScope(
 
 function selectConfiguredGates(gates: QualityGatesConfig, filters: GateFilters): GateId[] {
   const enabledGates = CANONICAL_GATE_ORDER.filter((gateId) =>
-    isGateEnabled(gateId, gates[gateId]),
+    isGateEnabled(gates[gateId]),
   );
 
   if (filters.only && filters.only.length > 0) {
@@ -125,32 +143,42 @@ function createGateExecutionContext(
   input: RunQualityGatesInput,
   scope: ReviewScope,
 ): GateExecutionContext {
+  const exec = input.platform.exec.bind(input.platform);
+  const createAgentSession = input.platform.createAgentSession.bind(input.platform);
+  const activeTools = input.platform.getActiveTools();
+  const reviewModel = {
+    model: input.reviewModel.model,
+    thinkingLevel: input.reviewModel.thinkingLevel,
+  };
+
   return {
     cwd: input.cwd,
     changedFiles: scope.changedFiles,
     scopeFiles: scope.scopeFiles,
     fileScope: scope.fileScope,
-    exec: input.platform.exec.bind(input.platform),
-    execShell: createExecShell(input.platform.exec.bind(input.platform)),
+    exec,
+    execShell: createExecShell(exec),
     getLspDiagnostics:
       input.getLspDiagnostics ??
-      (async () => {
-        throw new Error("LSP diagnostics integration is not configured");
-      }),
-    createAgentSession: input.platform.createAgentSession.bind(input.platform),
-    activeTools: input.platform.getActiveTools(),
-    reviewModel: {
-      model: input.reviewModel.model,
-      thinkingLevel: input.reviewModel.thinkingLevel,
-    },
+      ((scopeFiles, fileScope) =>
+        collectLspDiagnostics({
+          cwd: input.cwd,
+          scopeFiles,
+          fileScope,
+          createAgentSession,
+          reviewModel,
+        })),
+    createAgentSession,
+    activeTools,
+    reviewModel,
   };
 }
 
-function createSkippedGateResult(gate: GateId): GateResult {
+function createSkippedGateResult(gate: GateId, reason = "Skipped by filter"): GateResult {
   return {
     gate,
     status: "skipped",
-    summary: "Skipped by filter",
+    summary: reason,
     issues: [],
   };
 }
@@ -197,6 +225,12 @@ export function computeOverallStatus(summary: GateSummary): ReviewReport["overal
 export async function runQualityGates(input: RunQualityGatesInput): Promise<ReviewReport> {
   const selectedGates = selectConfiguredGates(input.gates, input.filters);
   const scope = await discoverReviewScope(input.platform.exec.bind(input.platform), input.cwd);
+  input.onEvent?.({
+    type: "scope-discovered",
+    changedFiles: scope.changedFiles.length,
+    scopeFiles: scope.scopeFiles.length,
+    fileScope: scope.fileScope,
+  });
   const context = createGateExecutionContext(input, scope);
   const skipped = new Set(input.filters.skip ?? []);
   const registry = input.gateRegistry ?? {};
@@ -204,11 +238,20 @@ export async function runQualityGates(input: RunQualityGatesInput): Promise<Revi
 
   for (const gateId of selectedGates) {
     if (skipped.has(gateId)) {
+      input.onEvent?.({ type: "gate-skipped", gateId, reason: "Skipped by filter" });
       gates.push(createSkippedGateResult(gateId));
       continue;
     }
 
-    gates.push(await runConfiguredGate(gateId, registry, context, input.gates));
+    input.onEvent?.({ type: "gate-started", gateId });
+    const result = await runConfiguredGate(gateId, registry, context, input.gates);
+    input.onEvent?.({
+      type: "gate-completed",
+      gateId,
+      status: result.status,
+      summary: result.summary,
+    });
+    gates.push(result);
   }
 
   const summary = summarizeGateStatuses(gates);
