@@ -190,3 +190,142 @@ export async function loadReviewAgents(paths: PlatformPaths, cwd: string): Promi
     agents,
   };
 }
+
+// ── Global Agent Support ────────────────────────────────────
+
+export function getGlobalReviewAgentsDir(paths: PlatformPaths): string {
+  return paths.global(REVIEW_AGENTS_DIR);
+}
+
+export function getGlobalReviewAgentsConfigPath(paths: PlatformPaths): string {
+  return path.join(getGlobalReviewAgentsDir(paths), CONFIG_FILE);
+}
+
+export function ensureGlobalDefaultReviewAgents(paths: PlatformPaths): void {
+  const agentsDir = getGlobalReviewAgentsDir(paths);
+  fs.mkdirSync(agentsDir, { recursive: true });
+
+  for (const [fileName, content] of Object.entries(DEFAULT_AGENT_TEMPLATES)) {
+    writeIfMissing(path.join(agentsDir, fileName), content);
+  }
+
+  writeIfMissing(getGlobalReviewAgentsConfigPath(paths), buildDefaultConfigText());
+}
+
+export async function loadGlobalReviewAgentsConfig(paths: PlatformPaths): Promise<ReviewAgentsConfig> {
+  ensureGlobalDefaultReviewAgents(paths);
+  return validateReviewAgentsConfig(await importYamlFile(getGlobalReviewAgentsConfigPath(paths)));
+}
+
+export async function loadGlobalReviewAgents(paths: PlatformPaths): Promise<LoadedReviewAgents> {
+  const agentsDir = getGlobalReviewAgentsDir(paths);
+  const configPath = getGlobalReviewAgentsConfigPath(paths);
+  const config = await loadGlobalReviewAgentsConfig(paths);
+
+  const agents = config.agents
+    .filter((agent) => agent.enabled)
+    .map((agent) => {
+      const filePath = path.join(agentsDir, agent.data);
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`Configured review agent file does not exist: ${filePath}`);
+      }
+
+      const definition = parseReviewAgentMarkdown(fs.readFileSync(filePath, "utf-8"), filePath);
+      if (definition.name !== agent.name) {
+        throw new Error(
+          `Configured agent name "${agent.name}" does not match frontmatter name "${definition.name}" in ${filePath}.`,
+        );
+      }
+
+      return {
+        ...definition,
+        enabled: agent.enabled,
+        data: agent.data,
+        model: agent.model,
+        scope: "global" as const,
+      } satisfies ConfiguredReviewAgent;
+    });
+
+  return {
+    agentsDir,
+    configPath,
+    config,
+    agents,
+  };
+}
+
+// ── Merged Loading (Global + Project) ──────────────────────
+
+export async function loadMergedReviewAgents(
+  paths: PlatformPaths,
+  cwd: string,
+): Promise<LoadedReviewAgents> {
+  const globalResult = await loadGlobalReviewAgents(paths);
+  const projectResult = await loadReviewAgents(paths, cwd);
+
+  // Tag project agents with scope
+  const projectAgents = projectResult.agents.map((agent) => ({
+    ...agent,
+    scope: "project" as const,
+  }));
+
+  // Project agents override global agents with the same name
+  const projectNames = new Set(projectAgents.map((a) => a.name));
+  const uniqueGlobalAgents = globalResult.agents.filter((a) => !projectNames.has(a.name));
+
+  return {
+    agentsDir: projectResult.agentsDir,
+    configPath: projectResult.configPath,
+    config: projectResult.config,
+    agents: [...uniqueGlobalAgents, ...projectAgents],
+  };
+}
+
+// ── Write Helpers ──────────────────────────────────────────
+
+export function writeAgentFile(
+  agentsDir: string,
+  name: string,
+  frontmatter: { name: string; description: string; focus: string | null },
+  promptBody: string,
+): string {
+  const fileName = `${name}.md`;
+  const filePath = path.join(agentsDir, fileName);
+  const focusLine = frontmatter.focus ? `\nfocus: ${frontmatter.focus}` : "";
+  const content = `---\nname: ${frontmatter.name}\ndescription: ${frontmatter.description}${focusLine}\n---\n\n${promptBody}\n`;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
+  return fileName;
+}
+
+export async function addAgentToConfig(
+  configPath: string,
+  agent: ReviewAgentConfig,
+): Promise<void> {
+  let config: ReviewAgentsConfig;
+  try {
+    config = validateReviewAgentsConfig(await importYamlFile(configPath));
+  } catch {
+    config = { agents: [] };
+  }
+
+  // Idempotent: replace if name exists, append otherwise
+  const idx = config.agents.findIndex((a) => a.name === agent.name);
+  if (idx >= 0) {
+    config.agents[idx] = agent;
+  } else {
+    config.agents.push(agent);
+  }
+
+  const text = [
+    "agents:",
+    ...config.agents.flatMap((a) => [
+      `  - name: ${a.name}`,
+      `    enabled: ${a.enabled}`,
+      `    data: ${a.data}`,
+      `    model: ${a.model ?? "null"}`,
+    ]),
+    "",
+  ].join("\n");
+  fs.writeFileSync(configPath, text);
+}
