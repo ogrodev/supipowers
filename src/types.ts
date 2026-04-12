@@ -188,6 +188,7 @@ export interface ConfiguredReviewAgent extends ReviewAgentDefinition {
   enabled: boolean;
   data: string;
   model: string | null;
+  scope?: "global" | "project";
 }
 
 
