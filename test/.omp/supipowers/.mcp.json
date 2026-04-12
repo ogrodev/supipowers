@@ -11,7 +11,7 @@
       "antiTriggers": [],
       "enabled": true,
       "authPending": false,
-      "addedAt": "2026-04-11T23:35:26.463Z",
+      "addedAt": "2026-04-12T00:56:26.714Z",
       "url": "https://mcp.figma.com"
     },
     "local-db": {
@@ -24,7 +24,7 @@
       "antiTriggers": [],
       "enabled": true,
       "authPending": false,
-      "addedAt": "2026-04-11T23:35:26.465Z",
+      "addedAt": "2026-04-12T00:56:26.716Z",
       "command": "node",
       "args": [
         "./server.js"
