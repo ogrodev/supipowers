@@ -181,7 +181,7 @@ async function runModelTUI(platform: Platform, ctx: any): Promise<void> {
   }
 }
 
-async function selectModelFromList(
+export async function selectModelFromList(
   ctx: any,
   currentModel?: string,
 ): Promise<string | null> {

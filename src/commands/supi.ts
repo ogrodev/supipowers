@@ -40,6 +40,7 @@ export async function showSupiDialog(
   const commands = [
     "/supi:plan     — Start collaborative planning",
     "/supi:review   — Run AI code review pipeline",
+    "/supi:agents  — List and manage review agents",
     "/supi:checks   — Run quality gates",
     "/supi:qa       — E2E product testing with Playwright",
     "/supi:fix-pr   — Fix PR review comments",
