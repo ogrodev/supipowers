@@ -5,15 +5,24 @@ description: Guides collaborative brainstorming, design, and planning — from i
 
 # Planning Skill
 
-Guide the user through a complete planning flow: brainstorm → design → spec → review → plan. This skill is loaded by `/supi:plan`.
+Guide the user through a complete planning flow: brainstorm → design → spec → review → plan. Loaded by `/supi:plan`.
 
-<HARD-GATE>
-Do NOT write any code, scaffold any project, or take any implementation action until you have presented a design and the user has approved it. This applies to EVERY project regardless of perceived simplicity.
-</HARD-GATE>
+You **MUST NOT** write code or scaffold until the user approves the design.
+
+## Quick Reference
+
+| Aspect | Detail |
+|--------|--------|
+| Scope | Single feature or decomposed sub-project |
+| Input | User's initial request + repo state (files, docs, commits) |
+| Output | Design doc at `.omp/supipowers/specs/YYYY-MM-DD-<topic>-design.md`, implementation plan |
+| Phases | Explore → Clarify → Brainstorm → Design & Save → Review Loop → User Gate → Plan |
+| Task size | 2–5 minutes each, checkbox syntax |
+| Specs | Local only — never commit to git |
 
 ## Process
 
-Follow these phases in order. Do not skip or combine them.
+Follow phases in order. Do not skip or combine them.
 
 ### Phase 1: Explore Project Context
 
@@ -21,72 +30,102 @@ Before asking questions, understand the current state:
 
 - Check files, docs, recent commits
 - Understand existing architecture and patterns
-- If the request covers multiple independent subsystems, flag it immediately and help decompose into sub-projects
+- If the request covers multiple independent subsystems, flag it and help decompose into sub-projects
 
 ### Phase 2: Ask Clarifying Questions
 
-- First determine the planning mode: problem exploration, solution ideation, assumption testing, or strategy exploration
-- One question at a time — never overwhelm with multiple questions
-- Prefer multiple choice when possible, open-ended is fine too
+Determine the planning mode: problem exploration, solution ideation, assumption testing, or strategy exploration.
+
+- One question at a time — never batch multiple questions
+- Prefer multiple choice when possible; open-ended is fine too
 - Focus on: purpose, constraints, success criteria, non-goals
-- If missing evidence blocks useful brainstorming, say so explicitly and identify the research gap
-- Continue until you have enough clarity to explore directions responsibly
+- If missing evidence blocks brainstorming, name the research gap explicitly
+- Continue until purpose, constraints, success criteria, and non-goals are each addressed
 
-### Phase 3: Brainstorm, Then Propose 2-3 Approaches
+**Example — good vs. bad clarifying question:**
 
-- Explore a wider option set first; internally generate 5-7 directions before converging
-- Pressure-test the space with one opposite option, one simplification/removal option, and one analogy/cross-domain option
-- Name traps directly when they appear: solutioning too early, one-idea brainstorm, analysis paralysis
-- Present only the strongest 2-3 approaches with trade-offs
+```
+BAD (open-ended, unbounded):
+"What kind of authentication do you want?"
+
+GOOD (multiple choice, scoped):
+"For auth, which fits best?
+ a) Session-based (server-rendered, simple)
+ b) JWT (stateless, API-first)
+ c) OAuth provider only (GitHub/Google, no local accounts)
+ d) Something else — describe briefly"
+```
+
+### Phase 3: Brainstorm, Then Propose 2–3 Approaches
+
+- Internally generate 5–7 directions before converging
+- Pressure-test with: one opposite option, one simplification/removal, one cross-domain analogy
+- Name traps when they appear: solutioning too early, one-idea brainstorm, analysis paralysis
+- Present only the strongest 2–3 approaches with trade-offs
 - Lead with your recommended option and explain why
 - For the leading option, capture the biggest unknown and the cheapest validation step
 - Wait for the user to choose before proceeding
 
-### Phase 4: Present Design
+**Example — brainstorm output format:**
+
+```
+### Approaches
+
+**A) Event-sourced (recommended)**
+- How: Append-only event log, projections for read models
+- Pro: Full audit trail, temporal queries
+- Con: Higher upfront complexity, eventual consistency
+- Biggest unknown: Event schema evolution strategy
+- Cheapest validation: Spike a single aggregate with 3 events
+
+**B) Traditional CRUD + audit table
+- How: Mutable rows, trigger-based audit log
+- Pro: Familiar, immediate consistency
+- Con: Audit coverage depends on discipline, no temporal queries
+
+**C) Hybrid — CRUD with event log for critical paths
+- How: Standard CRUD; event-source only billing and permissions
+- Pro: Complexity only where value is highest
+- Con: Two persistence patterns to maintain
+```
+
+### Phase 4: Present Design & Save
 
 Once aligned on approach:
 
-- Scale each section to its complexity (a few sentences if straightforward, up to 200-300 words if nuanced)
-- Cover: architecture, components, data flow, error handling, testing
+- Cover: architecture, components, data flow, error handling, testing strategy
+- Scale sections by integration points: ≤2 integration points → 2–3 sentences; 3+ → up to 300 words
 - Ask after each section whether it looks right so far
-- Apply YAGNI ruthlessly — remove unnecessary features
+- Apply YAGNI — cut features that aren't required now
 - Design for isolation: smaller units with clear boundaries
+- Prefer DRY, TDD
 
-### Phase 5: Write Design Doc
+Once approved, save to `.omp/supipowers/specs/YYYY-MM-DD-<topic>-design.md`. Keep local — do not commit to git.
 
-Once the user approves the design:
-
-- Save to `.omp/supipowers/specs/YYYY-MM-DD-<topic>-design.md`
-- Use clear, concise writing
-- Keep the design document local; do NOT commit it to git
-### Phase 6: Spec Review Loop
-
-After writing the design doc:
+### Phase 5: Spec Review Loop
 
 1. Dispatch a spec-document-reviewer sub-agent to verify completeness
 2. If **Issues Found**: fix the issues, re-dispatch the reviewer
-3. Repeat until **Approved** (max 5 iterations, then surface to human)
+3. Repeat until **Approved** (max 5 iterations; after 5, present remaining issues to user and ask whether to proceed or continue fixing)
 
-### Phase 7: User Review Gate
+### Phase 6: User Review Gate
 
-Ask the user to review the spec before proceeding:
+> "Spec written to `<path>`. Please review it and let me know if you want changes before we write the implementation plan."
 
-> "Spec written to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+Wait for approval. Only proceed once approved.
 
-Wait for their response. Only proceed once approved.
+### Phase 7: Create Implementation Plan
 
-### Phase 8: Create Implementation Plan
-
-Break into bite-sized tasks (2-5 minutes each). Each task must have:
+Break into tasks of 2–5 minutes each. Each task must have:
 
 - Name
-- **files**: Exact paths the agent will touch
-- **criteria**: Acceptance criteria (testable)
+- **files**: exact paths the agent will touch (include test files)
+- **criteria**: acceptance criteria (testable)
 - **complexity**: `small` | `medium` | `large`
 
-Include exact code in the plan, not vague descriptions. Use checkbox syntax (`- [ ]`) for tracking steps.
+Steps use checkbox syntax (`- [ ]`). Include function signatures or pseudocode — not vague descriptions, not full implementations.
 
-## Plan Structure
+**Plan template:**
 
 ```
 ---
@@ -103,7 +142,7 @@ tags: [<relevant>, <tags>]
 ## Tasks
 
 ### 1. <Task name>
-- **files**: src/path/to/file.ts
+- **files**: src/path/to/file.ts, src/path/to/file.test.ts
 - **criteria**: <what success looks like>
 - **complexity**: small
 
@@ -111,16 +150,25 @@ tags: [<relevant>, <tags>]
 - [ ] Step 2: Run test to verify it fails
 - [ ] Step 3: Write minimal implementation
 - [ ] Step 4: Run test to verify it passes
+```
 
-## Principles
+## MUST DO / MUST NOT DO
 
-- One question at a time
-- Diverge broadly, converge tightly
-- Keep brainstorming output concise: show finalists, not every explored branch
-- Challenge assumptions when they materially change the plan
-- If evidence is missing, state the research gap instead of faking certainty
-- Each task should be completable in 2-5 minutes
-- Include test files in the files list
-- Prefer small, focused tasks over large ones
-- DRY, YAGNI, TDD
-- Plans and specs stay local; do not include git commit or push steps for them
+| MUST DO | MUST NOT DO |
+|---------|-------------|
+| One question at a time in Phase 2 | Write code before design approval |
+| Present 2–3 approaches with trade-offs | Skip brainstorming for "obvious" solutions |
+| Wait for user approval at each gate | Combine or skip phases |
+| Include test files in task file lists | Include git commit/push steps for specs |
+| Name research gaps instead of guessing | Present every explored branch (show finalists only) |
+
+## Final Checklist
+
+- [ ] All phases followed in order
+- [ ] Purpose, constraints, success criteria, and non-goals addressed in Phase 2
+- [ ] 2–3 approaches presented with trade-offs before design
+- [ ] Design doc saved to `.omp/supipowers/specs/` (not committed)
+- [ ] Spec review loop completed (sub-agent approved or user overrode)
+- [ ] User approved spec before implementation plan
+- [ ] Every task has files, criteria, complexity, and checkbox steps
+- [ ] Task steps reference signatures/pseudocode, not vague descriptions

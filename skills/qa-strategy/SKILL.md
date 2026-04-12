@@ -5,15 +5,20 @@ description: E2E QA strategy — flow-based product testing with disciplined tri
 
 # E2E QA Strategy
 
-Test the product the way a user uses it. Every test simulates a real user flow — navigating, clicking, filling forms, waiting for responses. If a human wouldn't do it, don't test it here.
+Test the product the way a user uses it. Every test simulates a real user flow — navigating, clicking, filling forms, waiting for responses.
 
 **This is NOT unit or integration testing.** This pipeline tests complete user journeys through the running application.
 
-## Iron Law
+## Quick Reference
 
-**EVERY FAILURE GETS A VERDICT BEFORE THE NEXT TEST RUNS.**
-
-Don't accumulate failures to analyze later. Triage each failure immediately: real bug, flaky test, or stale assertion? Unclassified failures are useless data.
+| Aspect | Detail |
+|--------|--------|
+| **Scope** | End-to-end Playwright tests against a running app |
+| **Input** | Running app URL, optional prior test results for regression comparison |
+| **Output** | Test files (one flow per file), triage verdicts for every failure, regression report |
+| **Core rule** | Every failure gets a verdict before the next test runs |
+| **Priority** | Critical/High flows first; stop adding flows when context reaches ~80% capacity |
+| **Independence** | Each test is self-contained — no shared state, no execution order dependency |
 
 ## Flow Prioritization
 
@@ -24,7 +29,7 @@ Don't accumulate failures to analyze later. Triage each failure immediately: rea
 | **Medium** | Secondary features | Settings, profile, notifications |
 | **Low** | Polish | Theme toggle, tooltips, animations |
 
-Test critical and high flows first. Skip low flows when hitting the token budget. A session that thoroughly tests 5 critical flows beats one that superficially touches 20.
+A session that thoroughly tests 5 critical flows beats one that superficially touches 20.
 
 ## Flow Discovery
 
@@ -36,7 +41,7 @@ Before writing tests, understand what the product does:
 4. **Find auth boundaries** — public vs protected; test both sides
 5. **Check CRUD operations** — create, read, update, delete for core entities
 
-Compare against the previous matrix (if any) to detect new, removed, and changed flows.
+If prior test results exist, compare to detect new, removed, and changed flows.
 
 ## Playwright Discipline
 
@@ -66,11 +71,9 @@ await expect(page.getByText('Loading...')).not.toBeVisible();
 // BAD — arbitrary delay, flaky by design
 await page.waitForTimeout(3000);
 
-// BAD — unreliable for SPAs
+// BAD — unreliable for SPAs (sockets stay open; resolves before dynamic content loads)
 await page.waitForLoadState('networkidle');
 ```
-
-`waitForTimeout` is never acceptable. `networkidle` is equally unreliable — SPAs keep sockets open, so it either hangs or resolves before dynamic content loads. Wait for the specific element or response that proves the page is ready.
 
 ### One Flow Per File
 
@@ -83,55 +86,74 @@ test.describe('Checkout flow', () => {
 });
 ```
 
-Each test is independent — no shared state, no execution order dependency.
-
 ## Failure Triage
 
-When a test fails, classify it immediately:
+When a test fails, classify it **immediately** — before running the next test.
 
 | Verdict | Meaning | Action |
 |---------|---------|--------|
-| **Bug** | App behavior is wrong | Record regression. Do not fix the test. |
+| **Bug** | App behavior is wrong | Record as regression. Do not change the test assertion — the test is correct, the app is broken. |
 | **Stale assertion** | App changed intentionally | Update the test to match new behavior. |
-| **Flaky** | Non-deterministic failure | Fix the locator or wait condition. Re-run. |
-| **Test error** | Test code is wrong | Fix and re-run. Does not count as a retry. |
+| **Flaky** | Non-deterministic failure (evidence of randomness required) | Fix the locator or wait condition. Re-run once. |
+| **Test error** | Test code itself is wrong | Fix the test code and re-run. |
 
 ### Triage Process
 
 1. **Read the error.** What element wasn't found? What URL didn't match? What assertion failed?
-2. **Check if the app changed.** Did a route move? Did a button get renamed? Is there a new loading state?
-3. **Distinguish bug from change.** Intentional app change → update test. Unintentional breakage → regression.
-4. **Don't retry blindly.** If you can't explain why a test failed, investigating beats retrying.
+2. **Check if the app changed.** Did a route move? Did a button get renamed? New loading state?
+3. **Distinguish bug from change.** Intentional change → update test. Unintentional breakage → regression.
+4. **Don't retry blindly.** If you can't explain why a test failed, investigate before retrying.
+
+### Example: Classifying a Real Failure
+
+```
+Error: expect(getByRole('heading', { name: 'Dashboard' })).toBeVisible()
+  → Timeout 5000ms exceeded.
+  → Call log: waiting for getByRole('heading', { name: 'Dashboard' })
+```
+
+| Step | Finding |
+|------|---------|
+| Read error | Heading "Dashboard" not found after login |
+| Check app | Route `/dashboard` now redirects to `/home`; heading changed to "Home" |
+| Verdict | **Stale assertion** — intentional redesign |
+| Action | Update test: navigate to `/home`, assert "Home" heading |
 
 ## Regression Analysis
 
 A regression is a flow that **was passing** and now **fails**.
 
+Regressions are the pipeline's highest-priority output.
+
 For each regression, record:
-- Which flow broke
-- What the previous status was
-- What the current error is
-- Whether it's a real bug or an intentional change
 
-**Regressions are the highest-priority output of the pipeline.** A session that finds zero regressions in a stable app is successful. A session that misclassifies a regression as a flaky test has failed.
+| Field | Value |
+|-------|-------|
+| **Flow** | Which user flow broke |
+| **Previous status** | Last known passing state |
+| **Current error** | Error message and failing assertion |
+| **Classification** | Real bug or intentional change |
 
-## Red Flags — STOP and Investigate
+## Session Checklist
 
-- Accumulating failures without triaging each one
-- Retrying a test without understanding why it failed
-- Testing internal state (stores, localStorage, cookies) instead of what the user sees
-- Tests that depend on execution order or shared state
-- Using `waitForTimeout` or `networkidle` instead of explicit conditions
-- Spending the token budget on low-priority flows while critical flows remain untested
-- Classifying a regression as "flaky" without evidence of non-determinism
-- Ignoring error states — test what happens when the API errors, the network is slow, or input is invalid
+Before finishing, verify every item:
 
-## Quality Signals
+| Check | Pass | Fail |
+|-------|------|------|
+| Every failure has a verdict | ✓ | Failures left unclassified |
+| Critical flows tested before lower-priority | ✓ | Random or low-priority-first ordering |
+| Regressions recorded with all fields | ✓ | Vague "some tests failed" |
+| Tests are independent and resilient | ✓ | Tests depend on execution order or shared state |
+| Context spent on high-value flows | ✓ | Low-priority flows tested while critical flows skipped |
+| Error states tested (API errors, bad input) | ✓ | Only happy paths covered |
 
-| Good Session | Bad Session |
-|-------------|-------------|
-| Every failure has a verdict | Failures accumulated without triage |
-| Critical flows tested first | Random flow ordering |
-| Regressions clearly identified | "Some tests failed" |
-| Tests are independent and resilient | Tests depend on execution order |
-| Token budget spent on high-value flows | Budget wasted on low-priority flows |
+## MUST / MUST NOT
+
+| MUST | MUST NOT |
+|------|----------|
+| Triage every failure before proceeding | Accumulate failures to analyze later |
+| Use resilient locators (role, label, text, testid) | Use CSS selectors or DOM position |
+| Wait for explicit conditions (element, response) | Use `waitForTimeout` or `networkidle` |
+| Test what the user sees | Test internal state (stores, localStorage, cookies) |
+| Provide evidence before classifying a failure as "flaky" | Classify regressions as flaky without proof of non-determinism |
+| Test error states and edge cases | Only test happy paths |

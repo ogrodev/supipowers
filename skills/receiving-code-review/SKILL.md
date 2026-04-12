@@ -5,50 +5,50 @@ description: Receiving code review feedback — verify before implementing, tech
 
 # Receiving Code Review
 
-## Core Principle
+Code review requires technical evaluation, not emotional performance. Verify before implementing. Technical correctness over social comfort.
 
-Code review requires technical evaluation, not emotional performance.
-Verify before implementing. Ask before assuming. Technical correctness over social comfort.
+## Quick Reference
+
+| Aspect | Detail |
+|--------|--------|
+| **Input** | Review comments (inline or summary), PR diff, full codebase access |
+| **Output** | Per-comment response (acknowledgment, pushback, or question) + code changes with tests |
+| **Core loop** | Read → Understand → Verify → Evaluate → Respond → Implement |
+| **Key rule** | Every suggestion is a hypothesis — verify it against the codebase before acting |
 
 ## The Response Pattern
 
-1. **READ:** Complete feedback without reacting.
-2. **UNDERSTAND:** Restate the requirement in your own words, or ask for clarification.
-3. **VERIFY:** Check against codebase reality.
-4. **EVALUATE:** Is this technically sound for THIS codebase?
-5. **RESPOND:** Technical acknowledgment or reasoned pushback.
-6. **IMPLEMENT:** One item at a time, test each change.
+1. **Read** the complete feedback without reacting.
+2. **Understand** — restate the requirement, or ask for clarification.
+3. **Verify** — does the issue actually exist? Does the cited pattern match what's in the code?
+4. **Evaluate** — does the suggestion match established patterns? Break existing callers? Warrant its scope?
+5. **Respond** — technical acknowledgment or reasoned pushback.
+6. **Implement** — one item at a time, test each change.
 
-## Forbidden Responses
+## Acceptable vs Forbidden Responses
 
-Never use performative agreement:
-- "You're absolutely right!"
-- "Great point!"
-- "Excellent catch!"
-- "Thanks for catching that!"
+| Forbidden (performative agreement) | Acceptable (technical acknowledgment) |
+|------------------------------------|---------------------------------------|
+| "You're absolutely right!" | "Fixed. [description of what changed]" |
+| "Great point!" / "Excellent catch!" | "Good catch — [issue]. Fixed in [location]." |
+| Any empty praise before acting | "I disagree because [technical reason]. Here's why: ..." |
 
-Instead: restate requirements, ask clarifying questions, take action.
-
-Acceptable responses:
-- "Fixed. [description of what changed]"
-- "Good catch — [issue]. Fixed in [location]."
-- "I disagree because [technical reason]. Here's why: ..."
-
-## Handling Unclear Feedback
-
-If ANY item is unclear, stop and ask for clarification before implementing anything.
-Items may be related — clarify all unclear items before starting work.
+If ANY item is unclear, stop and ask for clarification before implementing. Review items may have dependencies — implementing one may invalidate another. Clarify all unclear items before starting work.
 
 ## Source-Specific Handling
 
-**From your human partner:** Trusted. Implement after understanding.
+| Source | Trust level | Approach |
+|--------|------------|----------|
+| Human partner | High trust | Implement after understanding. Still verify complex or cross-cutting changes against codebase. |
+| External reviewer | Verify first | Check technically. Look for breaking changes. Confirm the reviewer has full context. |
 
-**From external reviewers:** Verify technically. Check for breaking changes. Question whether the reviewer understands the full context.
+## When to Push Back
 
-## YAGNI Check
-
-For suggested "professional features" — grep the codebase for actual usage.
-If unused, suggest removal instead of implementing.
+Push back when feedback would:
+- Introduce bugs or break existing behavior
+- Add unnecessary complexity (YAGNI — grep codebase for actual usage before implementing suggested features)
+- Contradict established codebase patterns
+- Solve a problem that doesn't exist
 
 ## Implementation Order
 
@@ -58,30 +58,37 @@ If unused, suggest removal instead of implementing.
 4. Complex fixes (may need discussion)
 5. Test each change before moving to the next
 
-## When to Push Back
+## Example: Full Review Cycle
 
-Push back when feedback would:
-- Introduce bugs or break existing behavior
-- Add unnecessary complexity (YAGNI violation)
-- Contradict the codebase's established patterns
-- Solve a problem that doesn't exist
+**Review comment:** _"This should use a builder pattern instead of direct construction for `SessionConfig`."_
 
-Use technical reasoning, not defensiveness.
+**Wrong response:**
+> "Great suggestion! Refactoring to builder pattern now."
 
-## Common Mistakes
+Implements builder pattern without checking whether it fits. Ships unnecessary abstraction.
 
-| Mistake | Fix |
-|---------|-----|
-| Agree immediately | Verify against codebase first |
-| Implement all at once | One at a time, test each |
-| Skip unclear items | Ask first, implement second |
-| Performative gratitude | Technical acknowledgment only |
-| Defensive pushback | Reasoned technical argument |
-| Trust without verifying | Check codebase reality |
-| Implement suggested feature | YAGNI check — is it actually needed? |
+**Correct response:**
 
-## The Bottom Line
+1. **Verify**: grep codebase for `SessionConfig` construction sites — find 2 call sites, both pass 3 fields.
+2. **Evaluate**: builder pattern adds complexity for 2 simple call sites. No optional fields, no conditional construction. YAGNI.
+3. **Respond**:
+   > "`SessionConfig` has 2 call sites, both passing the same 3 required fields. A builder adds indirection without benefit here. If construction grows more complex, I'll revisit. Keeping direct construction — thoughts?"
+4. **Outcome**: pushback accepted. No unnecessary abstraction shipped.
 
-External feedback = suggestions to evaluate, not orders to follow.
-Verify. Question. Then implement.
-No performative agreement. Technical rigor always.
+## MUST DO / MUST NOT DO
+
+| MUST DO | MUST NOT DO |
+|---------|-------------|
+| Verify every suggestion against actual codebase state | Agree performatively then implement blindly |
+| Restate requirements before implementing | Skip unclear items and guess intent |
+| Push back with technical evidence | Push back with defensiveness or emotion |
+| Implement and test one item at a time | Batch-implement all feedback untested |
+| Treat partner feedback as high-trust, not infallible | Treat any source as unconditionally trusted |
+
+## Final Checklist
+
+- [ ] Every comment has a response: acknowledgment, question, or reasoned pushback
+- [ ] No performative agreement — every response contains technical content
+- [ ] Unclear items clarified before any implementation started
+- [ ] Each change tested before moving to the next
+- [ ] Pushbacks cite codebase evidence, not opinion
