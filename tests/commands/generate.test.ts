@@ -6,8 +6,7 @@ import type { Platform, PlatformPaths } from "../../src/platform/types.js";
 import type { DocDriftState } from "../../src/types.js";
 import { registerGenerateCommand } from "../../src/commands/generate.js";
 import {
-  buildFirstRunPrompt,
-  buildSubsequentRunPrompt,
+  checkDocDrift,
   discoverDocFiles,
   loadState,
   saveState,
@@ -163,45 +162,6 @@ describe("discoverDocFiles", () => {
   });
 });
 
-// ── Prompt builders ───────────────────────────────────────────
-
-describe("buildFirstRunPrompt", () => {
-  test("includes drift instructions and doc contents", () => {
-    const docs = new Map([
-      ["README.md", "# My Project\nSome description"],
-      ["docs/api.md", "## API Reference"],
-    ]);
-    const prompt = buildFirstRunPrompt(docs);
-    expect(prompt).toContain("Only flag factual inaccuracies");
-    expect(prompt).toContain("missing documentation");
-    expect(prompt).toContain("no diffs");
-    expect(prompt).toContain("### README.md");
-    expect(prompt).toContain("# My Project");
-    expect(prompt).toContain("### docs/api.md");
-    expect(prompt).toContain("## API Reference");
-    expect(prompt).toContain("have drifted from the current codebase");
-  });
-
-  test("handles deleted files", () => {
-    const docs = new Map([["gone.md", "[FILE DELETED]"]]);
-    const prompt = buildFirstRunPrompt(docs);
-    expect(prompt).toContain("[FILE DELETED]");
-  });
-});
-
-describe("buildSubsequentRunPrompt", () => {
-  test("includes diff and doc contents", () => {
-    const diff = "--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-old\n+new";
-    const docs = new Map([["README.md", "description"]]);
-    const prompt = buildSubsequentRunPrompt(diff, docs);
-    expect(prompt).toContain("```diff");
-    expect(prompt).toContain(diff);
-    expect(prompt).toContain("### README.md");
-    expect(prompt).toContain("description");
-    expect(prompt).toContain("determine if any tracked documentation needs updating");
-  });
-});
-
 // ── Command registration ──────────────────────────────────────
 
 describe("registerGenerateCommand", () => {
@@ -283,16 +243,14 @@ describe("getArgumentCompletions", () => {
 // ── Docs flow integration ─────────────────────────────────────
 
 describe("docs flow", () => {
-  test("first run: discovers files, shows select, saves state, sends steer", async () => {
+  test("first run: discovers files, shows select, saves state, steers main thread", async () => {
     const exec = mock(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "ls-files") {
         return { code: 0, stdout: "README.md\ndocs/setup.md\n", stderr: "" };
       }
-      if (cmd === "git" && args[0] === "rev-parse") {
-        return { code: 0, stdout: "deadbeef\n", stderr: "" };
-      }
       return { code: 0, stdout: "", stderr: "" };
     });
+
     const platform = createPlatform({ exec } as any);
     registerGenerateCommand(platform);
     const call = (platform.registerCommand as any).mock.calls[0];
@@ -313,22 +271,19 @@ describe("docs flow", () => {
       },
     });
 
-    // Write README.md so readTrackedDocs can read it
-    fs.writeFileSync(path.join(tmpDir, "README.md"), "# Hello");
-
     await handler("docs", ctx);
 
-    // State should be saved
+    // State should be saved with null lastCommit (deferred until fix starts)
     const state = loadState(platform.paths, tmpDir);
     expect(state.trackedFiles).toEqual(["README.md"]);
-    expect(state.lastCommit).toBe("deadbeef");
+    expect(state.lastCommit).toBeNull();
     expect(state.lastRunAt).not.toBeNull();
 
-    // Should have sent steer message
+    // Should steer main thread to audit and fix docs directly
     expect(platform.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         customType: "supi-generate-docs",
-        content: [{ type: "text", text: expect.stringContaining("# Hello") }],
+        content: [{ type: "text", text: expect.stringContaining("fix it directly") }],
       }),
       { deliverAs: "steer", triggerTurn: true },
     );
@@ -363,7 +318,7 @@ describe("docs flow", () => {
     expect(platform.sendMessage).not.toHaveBeenCalled();
   });
 
-  test("subsequent run with changes sends diff-based steer", async () => {
+  test("subsequent run with changes sends findings-based steer", async () => {
     const paths = createPaths();
     saveState(paths, tmpDir, {
       trackedFiles: ["README.md"],
@@ -371,13 +326,9 @@ describe("docs flow", () => {
       lastRunAt: "2026-04-01T00:00:00Z",
     });
 
-    const diffContent = "--- a/src/app.ts\n+++ b/src/app.ts\n-old\n+new";
     const exec = mock(async (cmd: string, args: string[]) => {
       if (cmd === "git" && args[0] === "diff" && args[1] === "--name-only") {
         return { code: 0, stdout: "src/app.ts\n", stderr: "" };
-      }
-      if (cmd === "git" && args[0] === "diff" && args[1] === "abc123..HEAD") {
-        return { code: 0, stdout: diffContent, stderr: "" };
       }
       if (cmd === "git" && args[0] === "rev-parse") {
         return { code: 0, stdout: "def456\n", stderr: "" };
@@ -385,7 +336,25 @@ describe("docs flow", () => {
       return { code: 0, stdout: "", stderr: "" };
     });
 
-    const platform = createPlatform({ exec, paths } as any);
+    // Mock createAgentSession to return drift findings
+    const mockSession = {
+      prompt: mock(async () => {}),
+      state: {
+        messages: [
+          {
+            role: "assistant",
+            content: JSON.stringify({
+              findings: [{ file: "README.md", description: "Outdated API example", severity: "error", relatedFiles: ["src/app.ts"] }],
+              status: "drifted",
+            }),
+          },
+        ],
+      },
+      dispose: mock(async () => {}),
+    };
+    const createAgentSession = mock(async () => mockSession);
+
+    const platform = createPlatform({ exec, paths, createAgentSession } as any);
     registerGenerateCommand(platform);
     const call = (platform.registerCommand as any).mock.calls[0];
     const handler = call[1].handler;
@@ -396,18 +365,18 @@ describe("docs flow", () => {
     const ctx = createContext();
     await handler("docs", ctx);
 
-    // Should send steer with diff
+    // Should send steer with finding descriptions
     expect(platform.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         customType: "supi-generate-docs",
-        content: [{ type: "text", text: expect.stringContaining(diffContent) }],
+        content: [{ type: "text", text: expect.stringContaining("Outdated API example") }],
       }),
       { deliverAs: "steer", triggerTurn: true },
     );
 
     // State should be updated
     const state = loadState(paths, tmpDir);
-    expect(state.lastCommit).toBe("def456");
+    expect(state.lastCommit).not.toBe("abc123");
   });
 
   test("requires interactive mode", async () => {

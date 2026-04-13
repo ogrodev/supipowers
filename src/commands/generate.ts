@@ -1,16 +1,12 @@
 import type { Platform } from "../platform/types.js";
-import type { DocDriftState } from "../types.js";
+import type { DriftCheckResult } from "../types.js";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
 import {
   loadState,
   saveState,
   discoverDocFiles,
   getHeadCommit,
-  getDiffFilesSince,
-  getDiffSince,
-  readTrackedDocs,
-  buildFirstRunPrompt,
-  buildSubsequentRunPrompt,
+  checkDocDrift,
 } from "../docs/drift.js";
 
 // ── Multi-select UI ───────────────────────────────────────────
@@ -62,75 +58,53 @@ async function handleDocs(platform: Platform, ctx: any): Promise<void> {
   const cwd = ctx.cwd;
   const { paths } = platform;
   const state = loadState(paths, cwd);
-  const isFirstRun = state.trackedFiles.length === 0;
 
-  if (isFirstRun) {
-    await handleFirstRun(platform, ctx, cwd);
-  } else {
-    await handleSubsequentRun(platform, ctx, cwd, state);
-  }
-}
+  // First run: discover and select files, then steer main thread for full audit
+  if (state.trackedFiles.length === 0) {
+    const discovered = await discoverDocFiles(platform, cwd);
+    if (discovered.length === 0) {
+      notifyWarning(ctx, "No documentation files found in this repository");
+      return;
+    }
 
-async function handleFirstRun(
-  platform: Platform,
-  ctx: any,
-  cwd: string,
-): Promise<void> {
-  const { paths } = platform;
+    const selected = await selectDocFiles(ctx, discovered);
+    if (selected.length === 0) {
+      notifyInfo(ctx, "No files selected \u2014 doc tracking not set up");
+      return;
+    }
 
-  // Discover doc files
-  const discovered = await discoverDocFiles(platform, cwd);
-  if (discovered.length === 0) {
-    notifyWarning(ctx, "No documentation files found in this repository");
-    return;
-  }
+    // Persist tracked files but leave lastCommit null \u2014 updated after fix starts
+    saveState(paths, cwd, {
+      trackedFiles: selected,
+      lastCommit: null,
+      lastRunAt: new Date().toISOString(),
+    });
 
-  // Let user select which files to track
-  const selected = await selectDocFiles(ctx, discovered);
-  if (selected.length === 0) {
-    notifyInfo(ctx, "No files selected — doc tracking not set up");
-    return;
-  }
-
-  // Read selected docs and build initial drift-check prompt
-  const docs = readTrackedDocs(cwd, selected);
-  const prompt = buildFirstRunPrompt(docs);
-
-  // Save state with selected files and current commit
-  const head = await getHeadCommit(platform, cwd);
-  saveState(paths, cwd, {
-    trackedFiles: selected,
-    lastCommit: head,
-    lastRunAt: new Date().toISOString(),
-  });
-
-  notifyInfo(ctx, "Doc drift check started", `Tracking ${selected.length} file(s)`);
-
-  platform.sendMessage(
-    {
-      customType: "supi-generate-docs",
-      content: [{ type: "text", text: prompt }],
-      display: "none",
-    },
-    { deliverAs: "steer", triggerTurn: true },
-  );
-}
-
-async function handleSubsequentRun(
-  platform: Platform,
-  ctx: any,
-  cwd: string,
-  state: DocDriftState,
-): Promise<void> {
-  const { paths } = platform;
-
-  if (!state.lastCommit) {
-    // State exists but no commit recorded — treat as first run with known files
-    notifyWarning(ctx, "No previous commit recorded — running full check");
-    const docs = readTrackedDocs(cwd, state.trackedFiles);
-    const prompt = buildFirstRunPrompt(docs);
-    const head = await getHeadCommit(platform, cwd);
-    saveState(paths, cwd, { ...state, lastCommit: head, lastRunAt: new Date().toISOString() });
+    // Steer the main thread to audit and fix docs directly
+    const docList = selected.map((f) => `- \`${f}\``).join("\n");
+    const prompt = [
+      `Check these documentation files for accuracy against the current codebase:`,
+      ``,
+      docList,
+      ``,
+      `<critical>`,
+      `You MUST read skill://create-readme before assessing documentation quality.`,
+      `</critical>`,
+      ``,
+      `Read each documentation file and compare against the current codebase. Look for:`,
+      `1. **Factual inaccuracies**: wrong names, missing parameters, removed features, changed behavior, outdated examples`,
+      `2. **Missing documentation**: new commands, features, config options that exist in code but not in docs`,
+      `3. **Structural gaps**: important sections that should exist based on the codebase but don't`,
+      ``,
+      `For each issue found, fix it directly in the documentation file. Do NOT output JSON or a report \u2014 just fix the files.`,
+      `If documentation is accurate, say so and make no changes.`,
+      ``,
+      `Rules:`,
+      `- Only fix factual inaccuracies and add missing sections for undocumented features`,
+      `- Do NOT rewrite prose, improve wording, or restructure existing content`,
+      `- Preserve each document's existing formatting, tone, and conventions`,
+    ].join("\n");
+    notifyInfo(ctx, "Starting full documentation audit", `${selected.length} file(s) selected`);
 
     platform.sendMessage(
       {
@@ -143,38 +117,52 @@ async function handleSubsequentRun(
     return;
   }
 
-  // Check what changed since last commit
-  const changedFiles = await getDiffFilesSince(platform, cwd, state.lastCommit);
-  if (changedFiles.length === 0) {
-    notifyInfo(ctx, "No changes since last check");
+  // Subsequent run: headless sub-agent drift check
+  const result = await checkDocDrift(platform, cwd);
+
+  if (!result || !result.drifted) {
+    notifyInfo(ctx, "Docs are up to date", result?.summary ?? "No changes since last check");
     return;
   }
 
-  // Get the actual diff for non-doc code changes (context for the LLM)
-  const diff = await getDiffSince(platform, cwd, state.lastCommit, changedFiles);
-  if (!diff) {
-    notifyInfo(ctx, "No meaningful diff since last check");
-    return;
-  }
+  // Build lightweight steer summary from findings
+  const steer = buildSteerSummary(result);
+  notifyInfo(ctx, "Documentation drift detected", `${result.findings.length} finding(s)`);
 
-  // Read current content of tracked docs
-  const docs = readTrackedDocs(cwd, state.trackedFiles);
-  const prompt = buildSubsequentRunPrompt(diff, docs);
-
-  // Update state
+  // Update state only now \u2014 user has seen findings and we\u2019re about to fix.
   const head = await getHeadCommit(platform, cwd);
-  saveState(paths, cwd, { ...state, lastCommit: head, lastRunAt: new Date().toISOString() });
-
-  notifyInfo(ctx, "Checking docs for drift", `${changedFiles.length} file(s) changed since last check`);
+  const currentState = loadState(paths, cwd);
+  saveState(paths, cwd, { ...currentState, lastCommit: head, lastRunAt: new Date().toISOString() });
 
   platform.sendMessage(
     {
       customType: "supi-generate-docs",
-      content: [{ type: "text", text: prompt }],
+      content: [{ type: "text", text: steer }],
       display: "none",
     },
     { deliverAs: "steer", triggerTurn: true },
   );
+}
+
+function buildSteerSummary(result: DriftCheckResult): string {
+  const lines: string[] = ["Documentation drift detected. Please fix the following issues:", ""];
+
+  const byFile = new Map<string, typeof result.findings>();
+  for (const f of result.findings) {
+    if (!byFile.has(f.file)) byFile.set(f.file, []);
+    byFile.get(f.file)!.push(f);
+  }
+
+  for (const [file, findings] of byFile) {
+    lines.push(`### \`${file}\``);
+    for (const f of findings) {
+      lines.push(`- [${f.severity}] ${f.description}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("Read each file, apply the fixes, and write the corrected content.");
+  return lines.join("\n");
 }
 
 // ── Command registration ──────────────────────────────────────
