@@ -2,13 +2,17 @@
 
 ## Project Overview
 
-**supipowers** is an OMP-native TypeScript extension (v0.5.0) for the [oh-my-pi](https://github.com/oh-my-pi) coding agent. It adds agentic workflows on top of OMP's `ExtensionAPI`:
+**supipowers** is an OMP-native TypeScript extension for the [oh-my-pi](https://github.com/oh-my-pi) coding agent. It adds agentic workflows on top of OMP's `ExtensionAPI`:
 
 - `/supi:plan` — collaborative task planning with AI steering
 - `/supi:review` — programmatic AI review pipeline (quick, deep, multi-agent)
 - `/supi:checks` — deterministic quality gates
 - `/supi:qa` — structured QA pipeline
 - `/supi:release` — release automation
+- `/supi:fix-pr` — PR review comment assessment and fixing
+- `/supi:commit` — AI-powered commit with conventional messages
+- `/supi:generate` — documentation drift detection
+- `/supi:agents` — manage review agents
 
 It is **not** a web application. It runs as a plugin inside the OMP runtime, registered via the `omp.extensions` field in `package.json`.
 
@@ -21,17 +25,29 @@ The system is a **command-dispatch pipeline** with no state machine:
 ```
 OMP Runtime
     │
-    ├── src/index.ts          ← extension entry point; registers all slash commands
+    ├── src/index.ts          ← extension entry point; creates platform adapter
+    ├── src/bootstrap.ts      ← registers all slash commands and hooks
     │
     ├── src/commands/         ← one file per slash command
     │
     ├── src/config/           ← three-layer config loading (defaults → global → project)
+    ├── src/platform/         ← platform abstraction (OMP adapter, types, progress, TUI colors)
     ├── src/storage/          ← markdown/JSON persistence (.omp/supipowers/)
     ├── src/quality/          ← composable check runner (lsp-diagnostics, lint, typecheck, test-suite, build)
     ├── src/review/           ← AI review pipeline (scope, runners, validation, fixing, consolidation)
-    ├── src/lsp/              ← LSP availability detection via platform.getActiveTools()
     ├── src/planning/         ← plan approval UI flow (agent_end hook)
-    └── src/notifications/    ← notification rendering and emission
+    ├── src/notifications/    ← notification rendering and emission
+    ├── src/lsp/              ← LSP availability detection via platform.getActiveTools()
+    ├── src/mcp/              ← MCP server management (registry, activation, lifecycle)
+    ├── src/context-mode/     ← context window protection hooks
+    ├── src/release/          ← release automation logic
+    ├── src/fix-pr/           ← PR review comment fixing logic
+    ├── src/docs/             ← documentation drift detection
+    ├── src/git/              ← git operations
+    ├── src/qa/               ← QA pipeline logic
+    ├── src/visual/           ← visual companion server
+    ├── src/utils/            ← shared utilities
+    └── src/deps/             ← dependency detection
 ```
 
 **Data flow for `/supi:plan`:**
@@ -60,21 +76,40 @@ OMP Runtime
 supipowers/
 ├── src/
 │   ├── index.ts              # Extension entry point (export default supipowers(api))
+│   ├── bootstrap.ts          # Registers all slash commands and event hooks
 │   ├── types.ts              # ALL shared types — single source of truth
 │   ├── commands/             # One file per slash command
+│   ├── platform/             # Platform abstraction (OMP adapter, types, progress)
 │   ├── planning/             # Plan approval UI flow (agent_end hook)
 │   ├── review/               # AI review pipeline modules and default review-agent assets
-│   ├── config/               # loader.ts (3-layer merge), defaults.ts (profiles)
+│   ├── config/               # loader.ts (3-layer merge), defaults.ts, model config/resolver
 │   ├── storage/              # plan/report/review session persistence
 │   ├── quality/              # deterministic quality gates
 │   ├── lsp/                  # detector.ts
-│   └── notifications/        # renderer.ts
+│   ├── notifications/        # renderer.ts
+│   ├── mcp/                  # MCP server management
+│   ├── context-mode/         # context window protection hooks
+│   ├── release/              # release automation logic
+│   ├── fix-pr/               # PR review comment fixing logic
+│   ├── docs/                 # documentation drift detection
+│   ├── git/                  # git operations
+│   ├── qa/                   # QA pipeline logic
+│   ├── visual/               # visual companion server
+│   ├── utils/                # shared utilities
+│   └── deps/                 # dependency detection
 ├── tests/                    # Mirrors src/ structure — tests/<module>/<unit>.test.ts
 ├── skills/                   # OMP skills used by steer-based commands or manual prompting
 │   ├── planning/SKILL.md
 │   ├── code-review/SKILL.md
 │   ├── debugging/SKILL.md
-│   └── qa-strategy/SKILL.md
+│   ├── qa-strategy/SKILL.md
+│   ├── fix-pr/SKILL.md
+│   ├── release/SKILL.md
+│   ├── tdd/SKILL.md
+│   ├── verification/SKILL.md
+│   ├── receiving-code-review/SKILL.md
+│   ├── context-mode/SKILL.md
+│   └── creating-supi-agents/SKILL.md
 ├── bin/
 │   └── install.mjs           # Interactive CLI installer (@clack/prompts)
 ├── docs/
@@ -93,14 +128,14 @@ supipowers/
 
 |File|Purpose|
 |---|---|
-|`src/index.ts`|Extension entry point — `export default function supipowers(api: ExtensionAPI)`|
+|`src/index.ts`|Extension entry point — `export default function supipowers(api: any)`; delegates to `bootstrap()`|
 |`src/types.ts`|Canonical types: plans, checks, review pipeline sessions/findings, models, etc. — add shared types here only|
 |`src/commands/ai-review.ts`|`/supi:review` TUI pipeline orchestrator|
 |`src/commands/review.ts`|`/supi:checks` deterministic quality-gate command|
 |`src/review/agent-loader.ts`|Seeds/loads `.omp/supipowers/review-agents/` config + markdown agent definitions|
 |`src/review/multi-agent-runner.ts`|Parallel multi-agent review execution with per-agent model overrides|
 |`src/storage/review-sessions.ts`|Review session persistence under `.omp/supipowers/reviews/`|
-|`src/config/defaults.ts`|`DEFAULT_CONFIG` and `BUILTIN_PROFILES` (quick / thorough / full-regression)|
+|`src/config/defaults.ts`|`DEFAULT_CONFIG` — built-in default configuration|
 |`src/planning/approval-flow.ts`|Plan approval UI flow (agent_end hook)|
 |`.omp/supipowers/review-agents/config.yml`|Project-local review-agent pipeline config materialized on first `/supi:review` run|
 |`.omp/supipowers/specs/2026-03-10-supipowers-v2-design.md`|Authoritative v2 design spec; read before any architectural change|
@@ -204,13 +239,27 @@ Use `platform.sendMessage({ deliverAs: 'steer' })` to steer the active AI sessio
 
 ```
 tests/
-├── config/        # loader.test.ts, profiles.test.ts
+├── commands/      # command handler tests
+├── config/        # loader.test.ts, model config tests
+├── context/       # context command tests
+├── context-mode/  # context-mode hook tests
+├── deps/          # dependency detection tests
+├── discipline/    # discipline module tests
+├── docs/          # doc drift tests
+├── fix-pr/        # fix-pr tests
+├── git/           # git operation tests
 ├── integration/   # extension.test.ts (smoke test: all commands registered)
 ├── lsp/           # detector.test.ts
+├── mcp/           # MCP management tests
 ├── notifications/ # renderer.test.ts
-├── qa/            # detector.test.ts
+├── planning/      # planning module tests
+├── platform/      # platform adapter tests
+├── qa/            # QA pipeline tests
 ├── quality/       # gate-runner.test.ts
-└── storage/       # plans.test.ts
+├── release/       # release automation tests
+├── review/        # review pipeline tests
+├── storage/       # plans.test.ts, review session tests
+└── visual/        # visual companion tests
 ```
 
 `tests/` mirrors `src/` one-to-one. Place new tests at `tests/<same-path-as-src>/<module>.test.ts`.
@@ -236,17 +285,28 @@ import { describe, expect, mock, test } from "bun:test";
 
 const mockPlatform = {
   registerCommand: mock(),
+  getCommands: mock(() => []),
   on: mock(),
   sendMessage: mock(),
+  sendUserMessage: mock(),
   getActiveTools: mock(() => []),
+  registerMessageRenderer: mock(),
+  createAgentSession: mock(),
   exec: mock(),
+  paths: createPaths(),
+  capabilities: {
+    agentSessions: true,
+    compactionHooks: false,
+    customWidgets: false,
+    registerTool: false,
+  },
 } as any;
 ```
 
 **Factory helpers for typed test data:**
 
 ```typescript
-function task(id: number, parallelism: PlanTask["parallelism"]): PlanTask {
+function task(id: number): PlanTask {
   return {
     id,
     name: `task-${id}`,
@@ -254,7 +314,6 @@ function task(id: number, parallelism: PlanTask["parallelism"]): PlanTask {
     files: [],
     criteria: "",
     complexity: "small",
-    parallelism,
   };
 }
 ```
@@ -271,8 +330,16 @@ No coverage thresholds are configured. There is no CI pipeline; tests must be ru
 
 Skills are OMP-consumed markdown prompt files in `skills/`. Steer-based commands load them at runtime; the programmatic `/supi:review` pipeline instead uses versioned review-agent templates under `src/review/default-agents/` and materializes them into `.omp/supipowers/review-agents/` on demand.
 
-| Skill       | Path                          | Used by                                   |
-| ----------- | ----------------------------- | ----------------------------------------- |
-| Planning    | `skills/planning/SKILL.md`    | `/supi:plan`                              |
-| Code review | `skills/code-review/SKILL.md` | Manual prompting / reusable review guidance |
-| QA strategy | `skills/qa-strategy/SKILL.md` | `/supi:qa`                                |
+| Skill               | Path                                    | Used by                                    |
+| ------------------- | --------------------------------------- | ------------------------------------------ |
+| Planning            | `skills/planning/SKILL.md`              | `/supi:plan`                               |
+| Code review         | `skills/code-review/SKILL.md`           | Manual prompting / reusable review guidance |
+| QA strategy         | `skills/qa-strategy/SKILL.md`           | `/supi:qa`                                 |
+| Fix PR              | `skills/fix-pr/SKILL.md`                | `/supi:fix-pr`                             |
+| Debugging           | `skills/debugging/SKILL.md`             | Agent sessions                             |
+| TDD                 | `skills/tdd/SKILL.md`                   | Agent sessions                             |
+| Verification        | `skills/verification/SKILL.md`          | Agent sessions                             |
+| Receiving review    | `skills/receiving-code-review/SKILL.md` | Agent sessions                             |
+| Release             | `skills/release/SKILL.md`               | `/supi:release`                            |
+| Context mode        | `skills/context-mode/SKILL.md`          | Context window guidance                    |
+| Creating agents     | `skills/creating-supi-agents/SKILL.md`  | Agent creation guidance                    |

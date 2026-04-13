@@ -75,8 +75,9 @@ The installer scans for these and offers to install any that are missing. Everyt
 | `/supi:doctor`           | Diagnose extension health and missing dependencies            |
 | `/supi:generate`        | Documentation drift detection                                |
 | `/supi:update`           | Update supipowers to the latest version                       |
+| `/supi:agents`           | Manage review agents                                          |
 
-Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:update`, `/supi:doctor`, `/supi:mcp`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`. `/supi:release` is mostly TUI-driven but can invoke AI for doc-drift fixes and polish mode.
+Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:review`, `/supi:update`, `/supi:doctor`, `/supi:mcp`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`, `/supi:release`, `/supi:checks`, `/supi:agents`.
 
 ## How it works
 
@@ -158,6 +159,7 @@ Supipowers ships runtime-loaded prompt skills that are also available to the age
 | `receiving-code-review` | Agent sessions          |
 | `release`               | `/supi:release`         |
 | `context-mode`          | Context window guidance |
+| `creating-supi-agents`  | Agent creation guidance  |
 
 ## Development
 
