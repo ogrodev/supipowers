@@ -63,14 +63,13 @@ export interface BlockResult {
 export function routeToolCall(
   toolName: string,
   input: Record<string, unknown> | undefined,
-  status: ContextModeStatus,
+  _status: ContextModeStatus,
   options: { enforceRouting: boolean; blockHttpCommands: boolean },
 ): BlockResult | undefined {
-  if (!status.available) return undefined;
+  // Native tools are always available — no availability check needed.
 
   // Grep → block, redirect to ctx_search
   if (options.enforceRouting && toolName === "grep") {
-    if (!status.tools.ctxSearch) return undefined;
     return {
       block: true,
       reason:
@@ -81,7 +80,6 @@ export function routeToolCall(
 
   // Find/Glob → block, redirect to ctx_execute or ctx_batch_execute
   if (options.enforceRouting && toolName === "find") {
-    if (!status.tools.ctxExecute) return undefined;
     return {
       block: true,
       reason:
@@ -92,7 +90,6 @@ export function routeToolCall(
 
   // Fetch/WebFetch → block, redirect to ctx_fetch_and_index
   if (toolName === "fetch" || toolName === "web_fetch") {
-    if (!status.tools.ctxFetchAndIndex) return undefined;
     return {
       block: true,
       reason:
@@ -101,14 +98,12 @@ export function routeToolCall(
     };
   }
 
-
   // Bash routing
   if (toolName === "bash") {
     const command = input?.command;
 
     // Bash search commands → block, redirect to ctx_execute
     if (options.enforceRouting && isBashSearchCommand(command)) {
-      if (!status.tools.ctxExecute) return undefined;
       return {
         block: true,
         reason:
@@ -119,7 +114,6 @@ export function routeToolCall(
 
     // Bash HTTP commands → block, redirect to ctx_fetch_and_index
     if (options.blockHttpCommands && isHttpCommand(command)) {
-      if (!status.tools.ctxFetchAndIndex) return undefined;
       return {
         block: true,
         reason:

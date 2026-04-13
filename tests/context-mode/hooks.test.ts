@@ -16,6 +16,7 @@ function createMockPlatformWithHandlers() {
     on: mock((event: string, handler: Function) => {
       handlers.set(event, handler);
     }) as any,
+    registerTool: mock(),
   });
   return Object.assign(platform, {
     logger: { warn: mock(), error: mock(), debug: mock() },
@@ -36,6 +37,13 @@ describe("registerContextModeHooks", () => {
     expect(platform.on).toHaveBeenCalledWith("before_agent_start", expect.any(Function));
     expect(platform.on).toHaveBeenCalledWith("session_start", expect.any(Function));
     expect(platform.on).toHaveBeenCalledWith("session_shutdown", expect.any(Function));
+  });
+
+  test("registers native context-mode tools", () => {
+    const platform = createMockPlatformWithHandlers();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    // 8 native tools should be registered
+    expect(platform.registerTool).toHaveBeenCalledTimes(8);
   });
 
   test("does not register hooks when disabled", () => {
@@ -109,7 +117,7 @@ describe("registerContextModeHooks", () => {
     expect(result.reason).toContain("ctx_fetch_and_index");
   });
 
-  test("tool_call handler passes through curl when context-mode not detected", () => {
+  test("tool_call handler blocks curl since context-mode tools are always available", () => {
     const platform = createMockPlatformWithHandlers();
     platform.getActiveTools.mockReturnValue(["bash", "read"]);
     registerContextModeHooks(platform, DEFAULT_CONFIG);
@@ -123,7 +131,10 @@ describe("registerContextModeHooks", () => {
     };
 
     const result = handler(event, {});
-    expect(result).toBeUndefined();
+    // Native tools are always available — curl is always blocked
+    expect(result).toBeDefined();
+    expect(result.block).toBe(true);
+    expect(result.reason).toContain("ctx_fetch_and_index");
   });
 
   test("tool_call handler passes through non-HTTP bash commands", () => {
@@ -240,6 +251,7 @@ describe("compaction integration", () => {
         handlers.set(event, handler);
       }) as any,
       paths: testPaths,
+      registerTool: mock(),
     });
     return Object.assign(platform, {
       logger: { warn: mock(), error: mock(), debug: mock() },
@@ -394,6 +406,7 @@ describe("exported helpers", () => {
         handlers.set(event, handler);
       }) as any,
       paths: testPaths,
+      registerTool: mock(),
     });
     return Object.assign(platform, {
       logger: { warn: mock(), error: mock(), debug: mock() },
@@ -494,6 +507,7 @@ describe("error handling", () => {
         handlers.set(event, handler);
       }) as any,
       paths: testPaths,
+      registerTool: mock(),
     });
     return Object.assign(platform, {
       logger: { warn: mock(), error: mock(), debug: mock() },
@@ -623,6 +637,7 @@ describe("tool_result with MCP tool names", () => {
         handlers.set(event, handler);
       }) as any,
       paths: testPaths,
+      registerTool: mock(),
     });
     return Object.assign(platform, {
       logger: { warn: mock(), error: mock(), debug: mock() },

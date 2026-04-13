@@ -169,8 +169,8 @@ describe("isHttpCommand", () => {
     expect(isHttpCommand("fetchmail")).toBe(false);
   });
 
-// Helper: all ctx tools available
-const ALL_TOOLS: ContextModeStatus = {
+// Status is always available — native tools are always registered
+const STATUS: ContextModeStatus = {
   available: true,
   tools: {
     ctxExecute: true, ctxBatchExecute: true, ctxExecuteFile: true,
@@ -178,108 +178,85 @@ const ALL_TOOLS: ContextModeStatus = {
   },
 };
 
-const NO_TOOLS: ContextModeStatus = {
-  available: false,
-  tools: {
-    ctxExecute: false, ctxBatchExecute: false, ctxExecuteFile: false,
-    ctxIndex: false, ctxSearch: false, ctxFetchAndIndex: false,
-  },
-};
-
 const ENFORCE = { enforceRouting: true, blockHttpCommands: true };
 const NO_ENFORCE = { enforceRouting: false, blockHttpCommands: true };
 
 describe("routeToolCall", () => {
-  test("blocks Grep when ctxSearch available", () => {
-    const result = routeToolCall("grep", { pattern: "foo" }, ALL_TOOLS, ENFORCE);
+  test("blocks Grep when enforceRouting enabled", () => {
+    const result = routeToolCall("grep", { pattern: "foo" }, STATUS, ENFORCE);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.reason).toContain("ctx_search");
   });
 
-  test("allows Grep when ctxSearch not available", () => {
-    const result = routeToolCall("grep", { pattern: "foo" }, NO_TOOLS, ENFORCE);
-    expect(result).toBeUndefined();
-  });
-
   test("allows Grep when enforceRouting disabled", () => {
-    const result = routeToolCall("grep", { pattern: "foo" }, ALL_TOOLS, NO_ENFORCE);
+    const result = routeToolCall("grep", { pattern: "foo" }, STATUS, NO_ENFORCE);
     expect(result).toBeUndefined();
   });
 
   test("allows Read through (never blocked)", () => {
-    const result = routeToolCall("read", { file_path: "/foo.ts" }, ALL_TOOLS, ENFORCE);
+    const result = routeToolCall("read", { file_path: "/foo.ts" }, STATUS, ENFORCE);
     expect(result).toBeUndefined();
   });
 
   test("allows Read with scoped params", () => {
-    const result = routeToolCall("read", { file_path: "/foo.ts", offset: 10 }, ALL_TOOLS, ENFORCE);
+    const result = routeToolCall("read", { file_path: "/foo.ts", offset: 10 }, STATUS, ENFORCE);
     expect(result).toBeUndefined();
-    const result2 = routeToolCall("read", { file_path: "/foo.ts", sel: "L50-L120" }, ALL_TOOLS, ENFORCE);
+    const result2 = routeToolCall("read", { file_path: "/foo.ts", sel: "L50-L120" }, STATUS, ENFORCE);
     expect(result2).toBeUndefined();
   });
 
   test("blocks Bash search commands", () => {
-    const result = routeToolCall("bash", { command: "find . -name '*.ts'" }, ALL_TOOLS, ENFORCE);
+    const result = routeToolCall("bash", { command: "find . -name '*.ts'" }, STATUS, ENFORCE);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.reason).toContain("ctx_execute");
   });
 
   test("allows Bash git commands", () => {
-    const result = routeToolCall("bash", { command: "git log --oneline" }, ALL_TOOLS, ENFORCE);
+    const result = routeToolCall("bash", { command: "git log --oneline" }, STATUS, ENFORCE);
     expect(result).toBeUndefined();
   });
 
   test("blocks Bash HTTP commands", () => {
-    const result = routeToolCall("bash", { command: "curl https://example.com" }, ALL_TOOLS, ENFORCE);
+    const result = routeToolCall("bash", { command: "curl https://example.com" }, STATUS, ENFORCE);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.reason).toContain("ctx_fetch_and_index");
   });
 
   test("allows Bash search when enforceRouting disabled", () => {
-    const result = routeToolCall("bash", { command: "find . -name '*.ts'" }, ALL_TOOLS, NO_ENFORCE);
+    const result = routeToolCall("bash", { command: "find . -name '*.ts'" }, STATUS, NO_ENFORCE);
     expect(result).toBeUndefined();
   });
 
-  test("blocks Find/Glob when ctxExecute available", () => {
-    const result = routeToolCall("find", { pattern: "**/*.ts" }, ALL_TOOLS, ENFORCE);
+  test("blocks Find/Glob when enforceRouting enabled", () => {
+    const result = routeToolCall("find", { pattern: "**/*.ts" }, STATUS, ENFORCE);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.reason).toContain("ctx_execute");
   });
 
-  test("allows Find/Glob when ctxExecute not available", () => {
-    const result = routeToolCall("find", { pattern: "**/*.ts" }, NO_TOOLS, ENFORCE);
-    expect(result).toBeUndefined();
-  });
-
   test("allows Find/Glob when enforceRouting disabled", () => {
-    const result = routeToolCall("find", { pattern: "**/*.ts" }, ALL_TOOLS, NO_ENFORCE);
+    const result = routeToolCall("find", { pattern: "**/*.ts" }, STATUS, NO_ENFORCE);
     expect(result).toBeUndefined();
   });
 
-  test("blocks Fetch/WebFetch when ctxFetchAndIndex available", () => {
-    const result = routeToolCall("fetch", { url: "https://example.com" }, ALL_TOOLS, ENFORCE);
+  test("blocks Fetch/WebFetch", () => {
+    const result = routeToolCall("fetch", { url: "https://example.com" }, STATUS, ENFORCE);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.reason).toContain("ctx_fetch_and_index");
   });
 
   test("blocks web_fetch variant", () => {
-    const result = routeToolCall("web_fetch", { url: "https://example.com" }, ALL_TOOLS, ENFORCE);
+    const result = routeToolCall("web_fetch", { url: "https://example.com" }, STATUS, ENFORCE);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
   });
 
-  test("allows Fetch when ctxFetchAndIndex not available", () => {
-    const result = routeToolCall("fetch", { url: "https://example.com" }, NO_TOOLS, ENFORCE);
-    expect(result).toBeUndefined();
-  });
-
   test("allows unknown tools through", () => {
-    const result = routeToolCall("edit", { file_path: "/foo.ts" }, ALL_TOOLS, ENFORCE);
+    const result = routeToolCall("edit", { file_path: "/foo.ts" }, STATUS, ENFORCE);
     expect(result).toBeUndefined();
   });
 });

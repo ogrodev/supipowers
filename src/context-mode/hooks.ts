@@ -7,6 +7,8 @@ import { EventStore } from "./event-store.js";
 import { extractEvents, extractPromptEvents } from "./event-extractor.js";
 import { buildResumeSnapshot } from "./snapshot-builder.js";
 import { routeToolCall } from "./routing.js";
+import { KnowledgeStore } from "./knowledge/store.js";
+import { registerContextModeTools } from "./tools.js";
 import { createHash } from "node:crypto";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -94,6 +96,24 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
 
   _sessionIdRef = sessionId;
 
+  // Initialize knowledge store for native ctx_* tools (independent of event tracking)
+  let knowledgeStore: KnowledgeStore | null = null;
+  try {
+    const sessionsDir = platform.paths.project(sessionCwd, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const kdbPath = join(sessionsDir, "knowledge.db");
+    knowledgeStore = new KnowledgeStore(kdbPath);
+    knowledgeStore.init();
+    _knowledgeStoreRef = knowledgeStore;
+  } catch (e) {
+    (platform as any).logger?.error?.("supi-context-mode: failed to initialize knowledge store", e);
+  }
+
+  // Register native context-mode tools
+  if (knowledgeStore) {
+    registerContextModeTools(platform, knowledgeStore);
+  }
+
   platform.on("session_start", (_event, ctx) => {
     sessionCwd = resolveSessionCwd(ctx as SessionContextLike | undefined);
     sessionId = deriveSessionId(ctx as SessionContextLike | undefined);
@@ -110,6 +130,18 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   });
 
   platform.on("session_shutdown", () => {
+    // Close knowledge store
+    if (knowledgeStore) {
+      try {
+        knowledgeStore.close();
+      } catch {
+        // Best effort
+      } finally {
+        knowledgeStore = null;
+        _knowledgeStoreRef = null;
+      }
+    }
+
     if (!eventStore) {
       _eventStoreRef = null;
       _sessionIdRef = "";
@@ -284,11 +316,13 @@ export function getSessionId(): string {
 
 // Module-level refs updated by registerContextModeHooks
 let _eventStoreRef: EventStore | null = null;
+let _knowledgeStoreRef: KnowledgeStore | null = null;
 let _sessionIdRef = "";
 
 /** Reset cached state (for testing) */
 export function _resetCache(): void {
   cachedStatus = null;
   _eventStoreRef = null;
+  _knowledgeStoreRef = null;
   _sessionIdRef = "";
 }
