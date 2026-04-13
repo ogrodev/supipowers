@@ -195,6 +195,7 @@ function createReviewProgress(ctx: any) {
     statusKey: "supi-review",
     statusLabel: "Running checks...",
     widgetKey: "supi-review",
+    clearStatusKeys: ["supi-model"],
     steps: createReviewSteps(),
   });
   let activeStepKey: string | null = null;
@@ -565,12 +566,13 @@ export async function handleChecks(
   deps: ChecksCommandDependencies = CHECKS_COMMAND_DEPENDENCIES,
 ): Promise<void> {
   const reviewProgress = createReviewProgress(ctx);
+  let modelCleanup: (() => Promise<void>) | undefined;
 
   try {
     const modelCfg = deps.loadModelConfig(platform.paths, ctx.cwd);
     const bridge = deps.createModelBridge(platform);
     const resolved = deps.resolveModelForAction("checks", modelRegistry, modelCfg, bridge);
-    await deps.applyModelOverride(platform, ctx, "checks", resolved);
+    modelCleanup = await deps.applyModelOverride(platform, ctx, "checks", resolved);
 
     reviewProgress.startLoadingConfig();
 
@@ -646,6 +648,7 @@ export async function handleChecks(
     reviewProgress.failActive((error as Error).message);
     throw error;
   } finally {
+    await modelCleanup?.();
     reviewProgress.dispose();
   }
 }

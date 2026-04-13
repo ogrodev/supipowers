@@ -124,7 +124,7 @@ describe("interactivelySaveGateSetup", () => {
   });
 
   test("cancel leaves project config unchanged", async () => {
-    writeProjectConfig(localPaths, tmpDir, { notifications: { verbosity: "quiet" } });
+    writeProjectConfig(localPaths, tmpDir, { lsp: { setupGuide: false } });
     const ctx = {
       cwd: tmpDir,
       hasUI: true,
@@ -139,12 +139,12 @@ describe("interactivelySaveGateSetup", () => {
       gates: { "test-suite": { enabled: true, command: "bun test" } },
     });
 
-    expect(readProjectConfig(localPaths, tmpDir)).toEqual({ notifications: { verbosity: "quiet" } });
+    expect(readProjectConfig(localPaths, tmpDir)).toEqual({ lsp: { setupGuide: false } });
   });
 
   test("save to project replaces quality.gates but preserves unrelated project fields", async () => {
     writeProjectConfig(localPaths, tmpDir, {
-      notifications: { verbosity: "quiet" },
+      lsp: { setupGuide: false },
       quality: { gates: { "ai-review": { enabled: true, depth: "deep" } } },
     });
     const select = mock(async () => {
@@ -169,13 +169,13 @@ describe("interactivelySaveGateSetup", () => {
     });
 
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({
-      notifications: { verbosity: "quiet" },
+      lsp: { setupGuide: false },
       quality: { gates: { "test-suite": { enabled: true, command: "bun test" } } },
     });
   });
 
   test("save to global writes only the selected scope", async () => {
-    writeGlobalConfig(localPaths, { notifications: { verbosity: "verbose" } });
+    writeGlobalConfig(localPaths, { lsp: { setupGuide: false } });
     const select = mock(async () => {
       const choices = [
         "Accept",
@@ -198,7 +198,7 @@ describe("interactivelySaveGateSetup", () => {
     });
 
     expect(readGlobalConfig(localPaths)).toEqual({
-      notifications: { verbosity: "verbose" },
+      lsp: { setupGuide: false },
       quality: { gates: { "lsp-diagnostics": { enabled: true } } },
     });
     expect(fs.existsSync(localPaths.project(tmpDir, "config.json"))).toBe(false);

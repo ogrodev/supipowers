@@ -189,17 +189,9 @@ export function registerPlanCommand(platform: Platform): void {
         );
         trackingStarted = true;
 
-        platform.sendMessage(
-          {
-            customType: "supi-plan-start",
-            content: [{ type: "text", text: prompt }],
-            display: "none",
-          },
-          { deliverAs: "steer", triggerTurn: true }
-        );
+        platform.sendUserMessage(prompt);
         debugLogger.log("planning_kickoff_steer_sent", {
-          customType: "supi-plan-start",
-          deliverAs: "steer",
+          deliverAs: "sendUserMessage",
           triggerTurn: true,
         });
 

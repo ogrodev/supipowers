@@ -125,12 +125,14 @@ export function createOmpAdapter(api: any): Platform {
       };
     },
 
+    registerTool: api.registerTool ? (definition: any) => api.registerTool(definition) : undefined,
+
     paths: createPaths(".omp"),
     capabilities: {
       agentSessions: true,
       compactionHooks: true,
       customWidgets: true,
-      registerTool: false,
+      registerTool: typeof api.registerTool === "function",
     },
   };
 }

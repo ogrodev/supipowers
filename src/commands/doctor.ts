@@ -227,11 +227,8 @@ const CTX_TOOL_NAMES: Record<string, string> = {
   ctxFetchAndIndex: "ctx_fetch_and_index",
 };
 
-export function checkContextMode(activeTools: string[]): CheckResult {
-  const status = detectContextMode(activeTools);
-  if (!status.available) {
-    return { name: "Context Mode", presence: { ok: false, detail: "No supi-context-mode tools detected" } };
-  }
+export function checkContextMode(_activeTools: string[]): CheckResult {
+  const status = detectContextMode();
 
   const foundNames = Object.entries(status.tools)
     .filter(([, v]) => v)
@@ -239,7 +236,7 @@ export function checkContextMode(activeTools: string[]): CheckResult {
 
   return {
     name: "Context Mode",
-    presence: { ok: true, detail: "Tools available" },
+    presence: { ok: true, detail: "Native tools (built-in)" },
     functional: { ok: true, detail: foundNames.join(", ") },
   };
 }

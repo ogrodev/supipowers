@@ -83,7 +83,7 @@ describe("buildSettings", () => {
   });
 
   test("quality gate setup rejects invalid AI suggestions and preserves file", async () => {
-    const originalConfig = { notifications: { verbosity: "quiet" } };
+    const originalConfig = { lsp: { setupGuide: false } };
     writeProjectConfig(localPaths, tmpDir, originalConfig);
 
     const inspection = inspectConfig(localPaths, tmpDir);

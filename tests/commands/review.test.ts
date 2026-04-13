@@ -114,7 +114,7 @@ function createDependencies(
       thinkingLevel: "high" as const,
       source: "action" as const,
     })),
-    applyModelOverride: mock(async () => true),
+    applyModelOverride: mock(async () => async () => {}),
     inspectConfig: mock(() => createInspection(config)),
     inspectQualityGateRecovery: mock(() => ({ scopes: [] })),
     loadConfig: mock(() => config),
@@ -305,18 +305,18 @@ describe("handleChecks", () => {
     const ctx = createContext();
     const deps = createDependencies(createConfig());
     deps.loadConfig = mock(() => {
-      throw new Error("notifications.verbosity: Expected union value");
+      throw new Error("qa.framework: Expected union value");
     });
     deps.inspectQualityGateRecovery = mock(() => ({
       scopes: [
         createScopeInspection("project", {
-          otherValidationErrors: [{ path: "notifications.verbosity", message: "Expected union value" }],
-          validationErrors: [{ path: "notifications.verbosity", message: "Expected union value" }],
+          otherValidationErrors: [{ path: "qa.framework", message: "Expected union value" }],
+          validationErrors: [{ path: "qa.framework", message: "Expected union value" }],
         }),
       ],
     }));
 
-    await expect(handleChecks(platform, ctx, "", deps)).rejects.toThrow(/notifications\.verbosity/i);
+    await expect(handleChecks(platform, ctx, "", deps)).rejects.toThrow(/qa\.framework/i);
     expect(deps.removeQualityGatesConfig).not.toHaveBeenCalled();
     expect(deps.setupGates).not.toHaveBeenCalled();
   });

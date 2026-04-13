@@ -1,7 +1,6 @@
 import type { Platform, PlatformContext } from "../platform/types.js";
 import { DEFAULT_CONFIG } from "../config/defaults.js";
 import { formatConfigErrors, inspectConfig, updateConfig } from "../config/loader.js";
-import { checkInstallation } from "../context-mode/installer.js";
 import type { InspectionLoadResult } from "../config/schema.js";
 import type { SupipowersConfig } from "../types.js";
 import { createWorkflowProgress } from "../platform/progress.js";
@@ -46,7 +45,6 @@ export interface ConfigCommandDependencies {
   updateConfig: typeof updateConfig;
   setupGates: typeof setupGates;
   interactivelySaveGateSetup: typeof interactivelySaveGateSetup;
-  checkInstallation: typeof checkInstallation;
 }
 
 const CONFIG_COMMAND_DEPENDENCIES: ConfigCommandDependencies = {
@@ -54,7 +52,6 @@ const CONFIG_COMMAND_DEPENDENCIES: ConfigCommandDependencies = {
   updateConfig,
   setupGates,
   interactivelySaveGateSetup,
-  checkInstallation,
 };
 
 function currentConfig(inspection: InspectionLoadResult): SupipowersConfig {
@@ -190,18 +187,6 @@ export function buildSettings(
       },
     },
     {
-      label: "Notification verbosity",
-      key: "notifications.verbosity",
-      helpText: "How much detail supipowers shows in notifications",
-      type: "select",
-      options: ["quiet", "normal", "verbose"],
-      get: () => config.notifications.verbosity,
-      set: async (cwd, value) => {
-        deps.updateConfig(paths, cwd, { notifications: { verbosity: value } });
-        return String(value);
-      },
-    },
-    {
       label: "QA framework",
       key: "qa.framework",
       helpText: "Test runner used by /supi:qa",
@@ -307,26 +292,10 @@ export async function runConfigMenu(
 export function handleConfig(platform: Platform, ctx: PlatformContext): void {
   void runConfigMenu(platform, ctx, CONFIG_COMMAND_DEPENDENCIES);
 
-  void CONFIG_COMMAND_DEPENDENCIES.checkInstallation(
-    (cmd: string, args: string[]) => platform.exec(cmd, args),
-    platform.getActiveTools(),
-  )
-    .then((status) => {
-      const lines = [
-        "",
-        "Context Mode:",
-        `  CLI installed: ${status.cliInstalled ? "✓" + (status.version ? ` v${status.version}` : "") : "✗"}`,
-        `  MCP configured: ${status.mcpConfigured ? "✓" : "✗"}`,
-        `  Tools available: ${status.toolsAvailable ? "✓" : "✗"}`,
-      ];
-      if (!status.mcpConfigured && status.cliInstalled) {
-        lines.push(`  → Run \`${platform.name} mcp add context-mode\` to enable`);
-      }
-      ctx.ui.notify(lines.join("\n"), "info");
-    })
-    .catch(() => {
-      // Silently ignore — context-mode status is optional.
-    });
+  ctx.ui.notify(
+    "\nContext Mode: ✓ built-in (native tools)",
+    "info",
+  );
 }
 
 export function registerConfigCommand(platform: Platform): void {

@@ -30,6 +30,7 @@ import { parseTags, computeActiveServers } from "./mcp/activation.js";
 import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
 import { registerPlanApprovalHook } from "./planning/approval-flow.js";
 import { registerPlanningSystemPromptHook } from "./planning/system-prompt.js";
+import { registerPlanningAskTool } from "./planning/planning-ask-tool.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -86,6 +87,7 @@ export function bootstrap(platform: Platform): void {
 
   // Register plan approval flow (agent_end hook for plan approval UI)
   registerPlanApprovalHook(platform);
+  registerPlanningAskTool(platform);
 
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
@@ -156,6 +158,10 @@ export function bootstrap(platform: Platform): void {
       stopVisualServer(previousVisualDir);
       setActiveVisualSessionDir(null);
     }
+
+    // Clear leftover model-override status from a previous session.
+    // OMP's StatusLine never clears hook statuses on /new, so extensions must do it.
+    ctx.ui?.setStatus?.("supi-model", undefined);
 
     // MCP: always register mcpc_manager tool (agent needs it even with zero servers)
     if (platform.registerTool) {
