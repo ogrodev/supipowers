@@ -1,6 +1,6 @@
 {
   "name": "supipowers",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Workflow extension for OMP coding agents.",
   "type": "module",
   "scripts": {
