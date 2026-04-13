@@ -14,10 +14,8 @@ import { analyzeAndCommit } from "../git/commit.js";
 import { getWorkingTreeStatus } from "../git/status.js";
 import { runStructuredAgentSession } from "../quality/ai-session.js";
 import {
-  loadState as loadDocDriftState,
-  readTrackedDocs,
   checkDocDrift,
-  DOC_FIX_PROMPT_PREFIX,
+  buildFixPrompt,
 } from "../docs/drift.js";
 import { runQualityGates } from "../quality/runner.js";
 import { REVIEW_GATE_REGISTRY } from "../quality/review-gates.js";
@@ -222,11 +220,14 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         if (driftAction?.startsWith("Update docs")) {
           progress.activate("doc-drift", "Fixing documentation");
           notifyInfo(ctx, "Updating documentation", driftResult.summary);
-          const state = loadDocDriftState(platform.paths, ctx.cwd);
-          const docs = readTrackedDocs(ctx.cwd, state.trackedFiles);
-          const fileList = state.trackedFiles.join(", ");
-          const fixPrompt = DOC_FIX_PROMPT_PREFIX + fileList + "\n\nDrift summary: " + driftResult.summary
-            + "\n\nCurrent file contents:\n" + [...docs.entries()].map(([f, c]) => `### ${f}\n\`\`\`\n${c}\n\`\`\``).join("\n\n");
+          const fixPrompt = buildFixPrompt(driftResult.findings);
+          // Update drift state only when we commit to fixing — a hard-stop before this
+          // point lets the user re-run and repeat the check.
+          const { loadState: loadDriftState, saveState: saveDriftState, getHeadCommit } = await import("../docs/drift.js");
+          const driftHead = await getHeadCommit(platform, ctx.cwd);
+          const driftState = loadDriftState(platform.paths, ctx.cwd);
+          saveDriftState(platform.paths, ctx.cwd, { ...driftState, lastCommit: driftHead, lastRunAt: new Date().toISOString() });
+
           const fixResult = await runStructuredAgentSession(
             platform.createAgentSession.bind(platform),
             { cwd: ctx.cwd, prompt: fixPrompt },
