@@ -2,9 +2,9 @@
 
 Route high-output tool calls through sandboxed execution to protect the context window.
 
-| Scope | Tool routing rules for supi-context-mode MCP tools |
+| Scope | Tool routing rules for supi-context-mode |
 |-------|-----------------------------------------------------|
-| Trigger | Always active when supi-context-mode MCP tools are available |
+| Trigger | Always active when supi-context-mode tools are available |
 | Goal | Prevent context flooding — a single unrouted command can dump 56 KB into context |
 | Key rule | Blocked tools return errors; use sandbox equivalents instead |
 
@@ -66,7 +66,7 @@ For analysis-only reads where anchors are not needed, prefer `ctx_execute_file(p
 
 ## Subagent Routing
 
-The routing block is automatically injected into subagent prompts. Bash-type subagents are upgraded to general-purpose for MCP access. You do NOT need to manually instruct subagents about context-mode.
+The routing block is automatically injected into subagent prompts. Bash-type subagents are upgraded to general-purpose for tool access. You do NOT need to manually instruct subagents about context-mode.
 
 ## Output Constraints
 
@@ -77,9 +77,8 @@ The routing block is automatically injected into subagent prompts. Bash-type sub
 
 | Command | Action |
 |---------|--------|
-| `ctx stats` | Call `ctx_stats` MCP tool, display full output verbatim |
-| `ctx doctor` | Call `ctx_doctor` MCP tool, run returned shell command, display as checklist |
-| `ctx upgrade` | Call `ctx_upgrade` MCP tool, run returned shell command, display as checklist |
+| `ctx stats` | Call the `ctx_stats` tool, display full output verbatim |
+| `ctx purge` | Call the `ctx_purge` tool to clear all indexed content |
 
 ## Checklist
 

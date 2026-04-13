@@ -1,6 +1,6 @@
 # context-mode — MANDATORY routing rules
 
-You have context-mode MCP tools available. These rules are NOT optional — they protect your context window from flooding. A single unrouted command can dump 56 KB into context and waste the entire session.
+You have context-mode tools available. These rules are NOT optional — they protect your context window from flooding. A single unrouted command can dump 56 KB into context and waste the entire session.
 
 ## BLOCKED commands — do NOT attempt these
 
@@ -60,7 +60,7 @@ If you are reading to **analyze, explore, or summarize** → use `ctx_execute_fi
 
 ## Subagent routing
 
-When spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose so they have access to MCP tools. You do NOT need to manually instruct subagents about context-mode.
+When spawning subagents (Agent/Task tool), the routing block is automatically injected into their prompt. Bash-type subagents are upgraded to general-purpose so they have access to context-mode tools. You do NOT need to manually instruct subagents about context-mode.
 
 ## Output constraints
 
@@ -72,6 +72,5 @@ When spawning subagents (Agent/Task tool), the routing block is automatically in
 
 | Command | Action |
 |---------|--------|
-| `ctx stats` | Call the `ctx_stats` MCP tool and display the full output verbatim |
-| `ctx doctor` | Call the `ctx_doctor` MCP tool, run the returned shell command, display as checklist |
-| `ctx upgrade` | Call the `ctx_upgrade` MCP tool, run the returned shell command, display as checklist |
+| `ctx stats` | Call the `ctx_stats` tool and display the full output verbatim |
+| `ctx purge` | Call the `ctx_purge` tool to clear all indexed content |
