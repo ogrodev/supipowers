@@ -94,26 +94,6 @@ export const DEPENDENCIES: Dependency[] = [
     url: "https://github.com/apify/mcpc",
   },
   {
-    name: "supi-context-mode",
-    binary: "context-mode",
-    required: false,
-    category: "mcp",
-    description: "supi-context-mode MCP server for context window protection",
-    checkFn: async (_exec) => {
-      // supi-context-mode is installed as a platform extension (git clone), not globally.
-      // start.mjs lives at the repo root after cloning.
-      const { existsSync } = await import("node:fs");
-      const { join } = await import("node:path");
-      const { homedir } = await import("node:os");
-      const home = homedir();
-      const startMjs = join(home, ".omp", "extensions", "context-mode", "start.mjs");
-      if (existsSync(startMjs)) return { installed: true, version: "extension" };
-      return { installed: false };
-    },
-    installCmd: null, // Handled by installer (git clone + npm install + npm run build)
-    url: "https://github.com/mksglu/context-mode",
-  },
-  {
     name: "TypeScript LSP",
     binary: "typescript-language-server",
     required: false,

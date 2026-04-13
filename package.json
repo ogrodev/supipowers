@@ -26,7 +26,6 @@
     "bin/install.mjs",
     "bin/install.ts",
     "bin/local-install.sh",
-    "bin/ctx-mode-wrapper.mjs",
     "README.md",
     "LICENSE"
   ],
