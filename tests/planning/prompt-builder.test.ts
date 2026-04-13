@@ -5,10 +5,10 @@ import {
 
 describe("planning prompt builder", () => {
   describe("buildPlanningPrompt", () => {
-    test("returns topic-based prompt when topic provided", () => {
+    test("returns planning instruction when topic provided", () => {
       const prompt = buildPlanningPrompt({ topic: "auth system" });
-      expect(prompt).toContain("auth system");
-      expect(prompt).toContain("The user wants to plan");
+      expect(prompt).toContain("Begin planning");
+      expect(prompt).toContain("planning phases");
     });
 
     test("asks user what to build when no topic", () => {

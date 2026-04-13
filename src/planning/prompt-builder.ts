@@ -8,8 +8,8 @@ export interface PlanningPromptOptions {
  */
 export function buildPlanningPrompt(options: PlanningPromptOptions): string {
   return options.topic
-    ? `The user wants to plan: ${options.topic}`
-    : "Ask the user what they want to build or accomplish.";
+    ? "Begin planning. Follow the planning phases in order."
+    : "Ask the user what they want to build or accomplish."
 }
 
 /**

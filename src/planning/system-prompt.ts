@@ -99,6 +99,7 @@ function buildFullPlanningSection(options: PlanningSystemPromptOptions): string 
     "- The only allowed file writes are the approved design doc under `.omp/supipowers/specs/` and the final implementation plan under `.omp/supipowers/plans/`.",
     "- Keep planning artifacts local. Do NOT stage, commit, or push the design doc or implementation plan.",
     "- If the user asks to jump into coding early, explain that planning mode must finish first.",
+    "- When you need to ask the user a question with options, use the `planning_ask` tool instead of `ask`. It has no timeout so the user can think without pressure.",
     "",
     "## Planning Workflow",
     "",
@@ -221,6 +222,16 @@ function buildPlanningCriticalBlock(options: PlanningSystemPromptOptions): strin
       ? "You **MUST** produce a concise implementation plan and stop after saving it."
       : "You **MUST** follow the planning phases sequentially and stop after saving the implementation plan.",
     "Use tools to understand the repository, but keep all output oriented toward design and planning.",
+    "When you need to ask the user a question with options, use the `planning_ask` tool — never `ask`.",
+    "",
+    "## Plan submission",
+    "",
+    "This is NOT native OMP plan mode.",
+    "You **MUST NOT** call `exit_plan_mode` or `ExitPlanMode` — it will fail.",
+    `You **MUST NOT** write plans to \`local://PLAN.md\` — that is OMP's native plan location and will not trigger the approval flow.`,
+    `You **MUST** save the plan to \`${options.dotDirDisplay}/supipowers/plans/YYYY-MM-DD-<feature-name>.md\` using the Write tool.`,
+    "After saving, tell the user the plan path, then **stop and yield your turn**.",
+    "The approval UI appears automatically when your turn ends and a new plan file is detected in that directory.",
     "</critical>",
   ];
 
