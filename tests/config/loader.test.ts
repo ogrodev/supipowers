@@ -223,7 +223,7 @@ describe("quality gate recovery helpers", () => {
       quality: { gates: { "lsp-diagnostics": { enabled: "not-a-boolean" } } },
     });
     writeProjectConfig(localPaths, tmpDir, {
-      notifications: { verbosity: "quiet" },
+      lsp: { setupGuide: false },
     });
 
     const result = inspectQualityGateRecovery(localPaths, tmpDir);
@@ -238,13 +238,13 @@ describe("quality gate recovery helpers", () => {
 
   test("removeQualityGatesConfig removes only quality.gates and preserves unrelated keys", () => {
     writeProjectConfig(localPaths, tmpDir, {
-      notifications: { verbosity: "quiet" },
+      lsp: { setupGuide: false },
       quality: { gates: { "lsp-diagnostics": { enabled: "not-a-boolean" } } },
     });
 
     expect(removeQualityGatesConfig(localPaths, tmpDir, "project")).toBe(true);
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({
-      notifications: { verbosity: "quiet" },
+      lsp: { setupGuide: false },
     });
   });
 
@@ -259,7 +259,7 @@ describe("quality gate recovery helpers", () => {
 
   test("writeQualityGatesConfig writes to the selected scope and preserves sibling keys", () => {
     writeGlobalConfig(localPaths, {
-      notifications: { verbosity: "verbose" },
+      lsp: { setupGuide: false },
     });
 
     writeQualityGatesConfig(localPaths, tmpDir, "global", {
@@ -267,7 +267,7 @@ describe("quality gate recovery helpers", () => {
     });
 
     expect(readGlobalConfig(localPaths)).toEqual({
-      notifications: { verbosity: "verbose" },
+      lsp: { setupGuide: false },
       quality: { gates: { "test-suite": { enabled: true, command: "bun test" } } },
     });
   });

@@ -9,9 +9,6 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   lsp: {
     setupGuide: true,
   },
-  notifications: {
-    verbosity: "normal",
-  },
   qa: {
     framework: null,
     e2e: false,

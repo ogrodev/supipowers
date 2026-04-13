@@ -123,31 +123,33 @@ export function createModelBridge(platform: Platform): ModelPlatformBridge {
  * @param ctx - Command handler context (must have modelRegistry.getAvailable())
  * @param actionId - The action being configured (e.g. "plan", "review") — used in notification
  * @param resolved - The resolved model from resolveModelForAction()
- * @returns true if model was applied, false if skipped or failed
+ * @returns cleanup function — call in `finally` to clear the status bar and restore the
+ *   original model. Safe to call multiple times (idempotent). Returns a no-op if nothing
+ *   was applied.
  */
 export async function applyModelOverride(
   platform: Platform,
   ctx: any,
   actionId: string,
   resolved: ResolvedModel,
-): Promise<boolean> {
+): Promise<() => Promise<void>> {
   // Skip if resolution fell through to the main session model (nothing to change)
-  if (resolved.source === "main") return false;
+  if (resolved.source === "main") return async () => {};
 
   const modelId = resolved.model;
-  if (!modelId) return false;
+  if (!modelId) return async () => {};
 
   // Apply thinking level (independent of model switch success)
   if (resolved.thinkingLevel && platform.setThinkingLevel) {
     platform.setThinkingLevel(resolved.thinkingLevel);
   }
 
-  if (!platform.setModel) return false;
+  if (!platform.setModel) return async () => {};
 
   // Resolve string model ID to full OMP Model object via the context's model registry.
   // OMP's setModel expects a Model object (with provider, id, api, etc.), not a string.
   const available = ctx.modelRegistry?.getAvailable?.() as any[] | undefined;
-  if (!available) return false;
+  if (!available) return async () => {};
 
   const modelObj = available.find((m: any) => {
     if (!m?.id) return false;
@@ -156,7 +158,7 @@ export async function applyModelOverride(
     return modelId.includes("/") ? false : m.id === modelId;
   });
 
-  if (!modelObj) return false;
+  if (!modelObj) return async () => {};
 
   // Save current model so we can restore after the agent turn completes.
   // OMP's extension API setModel() persists to settings (calls session.setModel,
@@ -165,7 +167,7 @@ export async function applyModelOverride(
   const originalModel = ctx.model;
 
   const applied = await platform.setModel(modelObj);
-  if (!applied) return false;
+  if (!applied) return async () => {};
 
   // Show persistent model override info in the footer status bar.
   // ctx.ui.notify() is transient and gets immediately replaced by progress widgets;
@@ -182,19 +184,21 @@ export async function applyModelOverride(
   }
   ctx.ui?.setStatus?.(STATUS_KEY, `Model: ${displayName} (${detail})`);
 
-  // Register a one-shot agent_end hook to restore the original model
-  // and clear the status bar entry.
-  {
-    let restored = false;
-    platform.on("agent_end", async () => {
-      if (restored) return;
-      restored = true;
-      ctx.ui?.setStatus?.(STATUS_KEY, undefined);
-      if (originalModel) {
-        await platform.setModel!(originalModel);
-      }
-    });
-  }
+  // Cleanup: clear the status bar entry and restore the original model.
+  // Idempotent — safe to call multiple times.
+  let cleaned = false;
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    ctx.ui?.setStatus?.(STATUS_KEY, undefined);
+    if (originalModel) {
+      await platform.setModel!(originalModel);
+    }
+  };
 
-  return true;
+  // Safety net for agent-driven commands: if the caller hands off to an OMP agent
+  // session and never calls cleanup explicitly, agent_end will still clear the status.
+  platform.on("agent_end", cleanup);
+
+  return cleanup;
 }

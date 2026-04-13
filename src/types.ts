@@ -456,9 +456,6 @@ export interface SupipowersConfig {
   lsp: {
     setupGuide: boolean;
   };
-  notifications: {
-    verbosity: "quiet" | "normal" | "verbose";
-  };
   qa: {
     framework: string | null;
     e2e: boolean;

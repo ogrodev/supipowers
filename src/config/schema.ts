@@ -20,16 +20,6 @@ export const ConfigSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
-    notifications: Type.Object(
-      {
-        verbosity: Type.Union([
-          Type.Literal("quiet"),
-          Type.Literal("normal"),
-          Type.Literal("verbose"),
-        ]),
-      },
-      { additionalProperties: false },
-    ),
     qa: Type.Object(
       {
         framework: Type.Union([Type.String(), Type.Null()]),

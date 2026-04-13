@@ -177,7 +177,7 @@ describe("applyModelOverride", () => {
     const { platform, calls } = makeMockPlatform();
     const resolved = { model: "claude-sonnet-4-6", thinkingLevel: null, source: "main" as const };
     const result = await applyModelOverride(platform, {}, "test-action", resolved);
-    expect(result).toBe(false);
+    expect(typeof result).toBe("function");
     expect(calls.setModel).toHaveLength(0);
     expect(calls.setThinkingLevel).toHaveLength(0);
   });
@@ -186,7 +186,7 @@ describe("applyModelOverride", () => {
     const { platform, calls } = makeMockPlatform();
     const resolved = { model: undefined, thinkingLevel: "high" as const, source: "action" as const };
     const result = await applyModelOverride(platform, {}, "test-action", resolved);
-    expect(result).toBe(false);
+    expect(typeof result).toBe("function");
     expect(calls.setModel).toHaveLength(0);
     expect(calls.setThinkingLevel).toHaveLength(0);
   });
@@ -200,7 +200,7 @@ describe("applyModelOverride", () => {
 
     const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
-    expect(result).toBe(true);
+    expect(typeof result).toBe("function");
     expect(calls.setModel).toHaveLength(1);
     expect(calls.setModel[0]).toBe(fakeModel);
     expect(calls.setThinkingLevel).toHaveLength(1);
@@ -215,7 +215,7 @@ describe("applyModelOverride", () => {
 
     const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
-    expect(result).toBe(true);
+    expect(typeof result).toBe("function");
     expect(calls.setModel[0]).toBe(fakeModel);
   });
 
@@ -226,7 +226,7 @@ describe("applyModelOverride", () => {
 
     const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
-    expect(result).toBe(false);
+    expect(typeof result).toBe("function");
     expect(calls.setModel).toHaveLength(0);
   });
 
@@ -237,7 +237,7 @@ describe("applyModelOverride", () => {
 
     const result = await applyModelOverride(platform, ctx, "test-action", resolved);
 
-    expect(result).toBe(false);
+    expect(typeof result).toBe("function");
     // thinkingLevel should still be set
     expect(calls.setThinkingLevel).toHaveLength(1);
   });
@@ -253,7 +253,7 @@ describe("applyModelOverride", () => {
 
     const result = await applyModelOverride(platform, {}, "test-action", resolved);
 
-    expect(result).toBe(false);
+    expect(typeof result).toBe("function");
     expect(calls).toEqual(["medium"]);
   });
 
@@ -379,7 +379,7 @@ describe("applyModelOverride", () => {
     const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
 
     const result = await applyModelOverride(platform, ctx, "review", resolved);
-    expect(result).toBe(true); // succeeds without crashing
+    expect(typeof result).toBe("function");
   });
 
   test("agent_end hook clears status bar", async () => {
