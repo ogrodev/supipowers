@@ -19,3 +19,4 @@ node-compile-cache
 *.db-wal
 tsconfig.json
 tsconfig.build.json
+omp_source/
