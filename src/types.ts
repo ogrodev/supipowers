@@ -474,3 +474,18 @@ export interface DocDriftState {
   lastCommit: string | null;
   lastRunAt: string | null;
 }
+
+/** A single drift finding from a sub-agent doc review */
+export interface DriftFinding {
+  file: string;
+  description: string;
+  severity: "info" | "warning" | "error";
+  relatedFiles?: string[];
+}
+
+/** Result of a headless doc-drift check (multi-agent pipeline) */
+export interface DriftCheckResult {
+  drifted: boolean;
+  summary: string;
+  findings: DriftFinding[];
+}
