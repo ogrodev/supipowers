@@ -52,6 +52,7 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     } else {
       console.log(`[dry-run] Would git tag -a v${version}`);
     }
+    console.log(`[dry-run] Would git pull --rebase origin`);
     console.log(`[dry-run] Would git push origin HEAD --follow-tags`);
     for (const ch of channels) {
       console.log(`[dry-run] Would publish to channel: ${ch}`);
@@ -130,6 +131,15 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     }
     progress("git-tag", "done");
   }
+
+  progress("git-pull", "active", "Pulling latest from origin");
+  const gitPull = await exec("git", ["pull", "--rebase", "origin"], { cwd });
+  if (gitPull.code !== 0) {
+    const detail = gitPull.stderr || gitPull.stdout || `exit code ${gitPull.code}`;
+    progress("git-pull", "error", detail);
+    return { version, tagCreated: true, pushed: false, channels: [], error: `git pull: ${detail}` };
+  }
+  progress("git-pull", "done");
 
   progress("git-push", "active", "Pushing to origin");
   const gitPush = await exec("git", ["push", "origin", "HEAD", "--follow-tags"], { cwd });

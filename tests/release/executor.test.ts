@@ -64,8 +64,8 @@ describe("executeRelease", () => {
       expect(result.channels[0]).toEqual({ channel: "github", success: true });
       expect(result.channels[1]).toEqual({ channel: "npm", success: true });
 
-      // No build script → 4 git calls + 2 channel calls = 6 total
-      expect(mockExec).toHaveBeenCalledTimes(6);
+      // No build script → 5 git calls + 2 channel calls = 7 total
+      expect(mockExec).toHaveBeenCalledTimes(7);
 
       const calls = mockExec.mock.calls;
       expect(calls[0]).toEqual(["git", ["add", "-A"], { cwd: tmpDir }]);
@@ -77,15 +77,20 @@ describe("executeRelease", () => {
       ]);
       expect(calls[3]).toEqual([
         "git",
-        ["push", "origin", "HEAD", "--follow-tags"],
+        ["pull", "--rebase", "origin"],
         { cwd: tmpDir },
       ]);
       expect(calls[4]).toEqual([
+        "git",
+        ["push", "origin", "HEAD", "--follow-tags"],
+        { cwd: tmpDir },
+      ]);
+      expect(calls[5]).toEqual([
         "gh",
         ["release", "create", "v2.0.0", "--title", "v2.0.0", "--notes", "- feat: something"],
         { cwd: tmpDir },
       ]);
-      expect(calls[5]).toEqual(["npm", ["publish"], { cwd: tmpDir }]);
+      expect(calls[6]).toEqual(["npm", ["publish"], { cwd: tmpDir }]);
     });
   });
 
@@ -173,8 +178,8 @@ describe("executeRelease", () => {
 
   describe("git push failure", () => {
     test("returns pushed=false and skips channels when push exits non-zero", async () => {
-      // git add=0, commit=0, tag=0, push=1
-      const mockExec = failAt(3);
+      // git add=0, commit=1, tag=2, pull=3, push=4 → fail push at index 4
+      const mockExec = failAt(4);
 
       const result = await executeRelease({
         exec: mockExec,
@@ -280,8 +285,8 @@ describe("executeRelease", () => {
 
       expect(result.tagCreated).toBe(true);
       expect(result.pushed).toBe(true);
-      // skipBump skips add+commit → only 2 git calls (tag, push)
-      expect(mockExec).toHaveBeenCalledTimes(2);
+      // skipBump skips add+commit → only 3 git calls (tag, pull, push)
+      expect(mockExec).toHaveBeenCalledTimes(3);
     });
 
     test("overwrites package.json version when skipBump is false", async () => {
@@ -322,15 +327,16 @@ describe("executeRelease", () => {
       expect(result.tagCreated).toBe(true);
       expect(result.pushed).toBe(true);
 
-      // add, commit, push — no tag call
-      expect(mockExec).toHaveBeenCalledTimes(3);
+      // add, commit, pull, push — no tag call
+      expect(mockExec).toHaveBeenCalledTimes(4);
       const calls = mockExec.mock.calls;
       expect(calls[0][0]).toBe("git");
       expect(calls[0][1]).toEqual(["add", "-A"]);
       expect(calls[1][0]).toBe("git");
       expect(calls[1][1][0]).toBe("commit");
-      // No tag call — next is push
-      expect(calls[2]).toEqual(["git", ["push", "origin", "HEAD", "--follow-tags"], { cwd: tmpDir }]);
+      // No tag call — next is pull then push
+      expect(calls[2]).toEqual(["git", ["pull", "--rebase", "origin"], { cwd: tmpDir }]);
+      expect(calls[3]).toEqual(["git", ["push", "origin", "HEAD", "--follow-tags"], { cwd: tmpDir }]);
     });
 
     test("still creates tag when skipTag is false or undefined", async () => {
@@ -345,8 +351,8 @@ describe("executeRelease", () => {
         dryRun: false,
       });
 
-      // add, commit, tag, push = 4 calls
-      expect(mockExec).toHaveBeenCalledTimes(4);
+      // add, commit, tag, pull, push = 5 calls
+      expect(mockExec).toHaveBeenCalledTimes(5);
       const calls = mockExec.mock.calls;
       expect(calls[2][0]).toBe("git");
       expect(calls[2][1]).toEqual(["tag", "-a", "v1.0.0", "-m", "Release v1.0.0\n\nnotes"]);
@@ -368,9 +374,14 @@ describe("executeRelease", () => {
 
       expect(result.tagCreated).toBe(true);
       expect(result.pushed).toBe(true);
-      // Only push — add, commit, and tag all skipped
-      expect(mockExec).toHaveBeenCalledTimes(1);
+      // pull + push — add, commit, and tag all skipped
+      expect(mockExec).toHaveBeenCalledTimes(2);
       expect(mockExec.mock.calls[0]).toEqual([
+        "git",
+        ["pull", "--rebase", "origin"],
+        { cwd: tmpDir },
+      ]);
+      expect(mockExec.mock.calls[1]).toEqual([
         "git",
         ["push", "origin", "HEAD", "--follow-tags"],
         { cwd: tmpDir },
