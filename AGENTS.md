@@ -47,6 +47,8 @@ OMP Runtime
     ├── src/qa/               ← QA pipeline logic
     ├── src/visual/           ← visual companion server
     ├── src/utils/            ← shared utilities
+    ├── src/debug/            ← debug logger (SUPI_DEBUG-gated JSONL tracing)
+    ├── src/discipline/       ← discipline modules (debugging, tdd, verification, receiving-review)
     └── src/deps/             ← dependency detection
 ```
 
@@ -96,6 +98,8 @@ supipowers/
 │   ├── qa/                   # QA pipeline logic
 │   ├── visual/               # visual companion server
 │   ├── utils/                # shared utilities
+│   ├── debug/                # debug logger (SUPI_DEBUG-gated JSONL tracing)
+│   ├── discipline/           # discipline modules (debugging, tdd, verification, receiving-review)
 │   └── deps/                 # dependency detection
 ├── tests/                    # Mirrors src/ structure — tests/<module>/<unit>.test.ts
 ├── skills/                   # OMP skills used by steer-based commands or manual prompting
