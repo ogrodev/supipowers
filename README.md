@@ -60,7 +60,7 @@ The installer scans for these and offers to install any that are missing. Everyt
 | ------------------------ | ------------------------------------------------------------- |
 | `/supi`                  | Interactive menu with commands and project status             |
 | `/supi:plan`             | Collaborative planning with structured task breakdown         |
-| `/supi:review`           | AI code review pipeline (quick, deep, multi-agent)            |
+| `/supi:review`           | AI code review with validated findings docs and fix/document/discuss actions |
 | `/supi:checks`           | Run deterministic quality gates                               |
 | `/supi:qa`               | E2E testing pipeline with Playwright                          |
 | `/supi:fix-pr`           | Assess and fix PR review comments                             |
@@ -85,7 +85,7 @@ Most commands steer the AI session. These are TUI-only — they open native dial
 
 **Quality gates.** `/supi:checks` runs deterministic quality gates. Six gates are available: `lsp-diagnostics`, `lint`, `typecheck`, `format`, `test-suite`, and `build`. Each gate can be enabled independently via `/supi:config` or `.omp/supipowers/config.json`. Gates report issues with severity levels.
 
-**AI code review.** `/supi:review` runs a programmatic AI review pipeline with configurable depth (quick, deep, or multi-agent). It uses headless agent sessions with structured JSON validation, optional finding validation against actual code, and auto-fix support.
+**AI code review.** `/supi:review` runs a programmatic AI review pipeline with configurable depth (quick, deep, or multi-agent). It uses headless agent sessions with structured JSON validation, always validates findings before user action, writes the current validated findings to a session `findings.md` document, and then presents three next-step choices: `Fix now`, `Document only`, or `Discuss before fixing`.
 
 **PR fixing.** `/supi:fix-pr` fetches PR review comments, critically assesses each one, checks for ripple effects, then fixes or rejects with evidence. Bot reviewers are auto-detected and filtered out.
 

@@ -20,6 +20,10 @@
   "bin": {
     "supipowers": "bin/install.mjs"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "files": [
     "src",
     "skills",
