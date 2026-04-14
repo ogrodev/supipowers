@@ -143,6 +143,33 @@ Configuration is a three-layer deep-merge (lowest to highest priority):
 2. `~/.omp/supipowers/config.json` — global overrides
 3. `.omp/supipowers/config.json` — per-project overrides
 
+
+## Release channels
+
+Three built-in channels are available: `github` (GitHub Release via `gh` CLI), `gitlab` (GitLab Release via `glab` CLI), and `gitea` (Gitea Release via `tea` CLI). Channels are selected per-project in `release.channels`.
+
+Custom channels can be defined in `release.customChannels`:
+
+```json
+{
+  "release": {
+    "customChannels": {
+      "my-channel": {
+        "label": "My Channel",
+        "publishCommand": "./scripts/publish.sh $tag",
+        "detectCommand": "which my-tool"
+      }
+    }
+  }
+}
+```
+
+| Field            | Required | Description                                                    |
+| ---------------- | -------- | -------------------------------------------------------------- |
+| `label`          | yes      | Display name shown in the release picker                       |
+| `publishCommand` | yes      | Shell command run to publish; `$tag`, `$version`, `$changelog` are passed as environment variables |
+| `detectCommand`  | no       | Shell command to detect availability; exit 0 = available. If omitted, the channel is assumed available |
+
 ## Skills
 
 Supipowers ships runtime-loaded prompt skills that are also available to the agent during regular sessions:
@@ -171,3 +198,5 @@ bun run build        # emit to dist/
 ```
 
 Tests live in `tests/`, mirroring `src/` one-to-one. The test runner is Bun's built-in `bun:test`.
+
+Peer dependencies (`@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-ai`, `@oh-my-pi/pi-tui`, `@sinclair/typebox`) are provided by the OMP host; they are devDependencies only for type-checking during development.
