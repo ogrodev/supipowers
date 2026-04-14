@@ -7,7 +7,15 @@ import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
 import type { ChannelStatus } from "../release/channels/types.js";
 import { parseConventionalCommits, buildChangelogMarkdown, summarizeChanges } from "../release/changelog.js";
-import { getCurrentVersion, suggestBump, bumpVersion, isVersionReleased, isTagOnRemote, formatTag } from "../release/version.js";
+import {
+  getCurrentVersion,
+  suggestBump,
+  bumpVersion,
+  isVersionReleased,
+  isTagOnRemote,
+  findResumableLocalRelease,
+  formatTag,
+} from "../release/version.js";
 import { executeRelease, type ReleaseProgressFn } from "../release/executor.js";
 import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
@@ -76,6 +84,111 @@ export function buildSelectableReleaseChannelOptions(detected: ChannelStatus[]):
     .filter((channel) => channel.available)
     .map((channel) => `${channel.channel} — ${channel.detail}`);
 }
+
+interface GitHubAuthAccount {
+  host: string;
+  user: string;
+  active: boolean;
+}
+
+export function isGitHubPermissionDeniedError(detail: string | undefined): boolean {
+  if (!detail) {
+    return false;
+  }
+
+  const normalized = detail.toLowerCase();
+  return normalized.includes("github.com")
+    && normalized.includes("403")
+    && (normalized.includes("permission to") || normalized.includes("denied to"));
+}
+
+export function parseGithubAuthStatusAccounts(output: string, host = "github.com"): GitHubAuthAccount[] {
+  const accounts: GitHubAuthAccount[] = [];
+  let currentAccount: GitHubAuthAccount | null = null;
+
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const accountMatch = line.match(/^✓ Logged in to (\S+) account ([^(]+?) \(/);
+    if (accountMatch) {
+      currentAccount = {
+        host: accountMatch[1] ?? "",
+        user: (accountMatch[2] ?? "").trim(),
+        active: false,
+      };
+      if (currentAccount.host === host) {
+        accounts.push(currentAccount);
+      } else {
+        currentAccount = null;
+      }
+      continue;
+    }
+
+    if (currentAccount && line.startsWith("- Active account:")) {
+      currentAccount.active = line.endsWith("true");
+    }
+  }
+
+  return accounts;
+}
+
+export async function maybeSwitchGithubAccountForReleaseFailure(
+  platform: Pick<Platform, "exec">,
+  ctx: { cwd: string; ui: { select: (title: string, options: string[], opts?: { helpText?: string }) => Promise<string | null>; notify?: (message: string, type?: string) => void } },
+  detail: string | undefined,
+): Promise<string | null> {
+  if (!isGitHubPermissionDeniedError(detail)) {
+    return null;
+  }
+
+  const statusResult = await platform.exec("gh", ["auth", "status", "--hostname", "github.com"], { cwd: ctx.cwd });
+  if (statusResult.code !== 0) {
+    return null;
+  }
+
+  const accounts = parseGithubAuthStatusAccounts(`${statusResult.stdout}\n${statusResult.stderr}`);
+  if (accounts.length < 2) {
+    return null;
+  }
+
+  const deniedUser = detail?.match(/denied to\s+([A-Za-z0-9-]+)/i)?.[1] ?? null;
+  const options = accounts.map((account) => {
+    const suffix: string[] = [];
+    if (account.active) suffix.push("current");
+    if (deniedUser && account.user === deniedUser) suffix.push("denied here");
+    return suffix.length > 0 ? `${account.user} — ${suffix.join(", ")}` : account.user;
+  });
+
+  const choice = await ctx.ui.select(
+    "GitHub account mismatch detected",
+    options,
+    {
+      helpText: deniedUser
+        ? `GitHub denied the current release with account ${deniedUser}. Choose another authenticated GitHub account to retry the release.`
+        : "GitHub denied the current release. Choose another authenticated GitHub account to retry.",
+    },
+  );
+  if (!choice) {
+    return null;
+  }
+
+  const selectedUser = choice.split(" — ")[0] ?? choice;
+  const switchResult = await platform.exec(
+    "gh",
+    ["auth", "switch", "--hostname", "github.com", "--user", selectedUser],
+    { cwd: ctx.cwd },
+  );
+  if (switchResult.code !== 0) {
+    ctx.ui.notify?.(`GitHub account switch failed: ${switchResult.stderr || switchResult.stdout || "unknown error"}`, "error");
+    return null;
+  }
+
+  return selectedUser;
+}
+
 
 export const RELEASE_STEPS = [
   { key: "checks", label: "Quality checks" },
@@ -334,19 +447,22 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       progress.activate("commits", "Parsing git history");
       const lastTag = await getLastTag(platform, ctx.cwd);
       const currentVersion = getCurrentVersion(ctx.cwd);
+      const resumableLocalRelease = await findResumableLocalRelease(
+        platform.exec.bind(platform),
+        ctx.cwd,
+        currentVersion,
+        tagFormat,
+      );
       const localTagExists = await isVersionReleased(
         platform.exec.bind(platform),
         ctx.cwd,
         currentVersion,
         tagFormat,
       );
-      // Only check remote when local tag exists — avoids a network call when
-      // the version was never tagged at all.
       const remoteTagExists = localTagExists
         ? await isTagOnRemote(platform.exec.bind(platform), ctx.cwd, currentVersion, tagFormat)
         : false;
 
-      // ── 6. Parse commits since last tag ─────────────────────────────────
       const sinceArg = lastTag ? `${lastTag}..HEAD` : "HEAD~50..HEAD";
       let gitLogOutput: string;
       try {
@@ -365,48 +481,75 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       const commitCount = commits.features.length + commits.fixes.length + commits.breaking.length + commits.improvements.length + commits.maintenance.length + commits.other.length;
       progress.complete("commits", `${commitCount} commits since ${lastTag ?? "start"}`);
 
-      // ── 7. Version resolution ───────────────────────────────────────────
-      //    Three states:
-      //    a) No local tag              → version is unreleased, skip bump
-      //    b) Local tag, not on remote  → incomplete release, skip bump + skip tag
-      //    c) Local + remote tag        → fully released, ask for bump
-      let nextVersion: string;
-      let skipBump: boolean;
+      let nextVersion: string | null = null;
+      let skipBump: boolean | null = null;
       let skipTag = false;
 
-      if (!localTagExists && currentVersion !== "0.0.0") {
-        // (a) No tag at all — version in package.json is unreleased
-        nextVersion = currentVersion;
-        skipBump = true;
-        progress.skip("version", `${formatTag(currentVersion, tagFormat)} (already set, not yet released)`);
-        notifyInfo(ctx, `Using ${formatTag(currentVersion, tagFormat)}`, "Version not yet released \u2014 skipping bump");
-      } else if (localTagExists && !remoteTagExists) {
-        // (b) Tag exists locally but never made it to origin — resume
-        nextVersion = currentVersion;
-        skipBump = true;
-        skipTag = true;
-        progress.skip("version", `${formatTag(currentVersion, tagFormat)} (tag exists locally, not pushed)`);
-        notifyInfo(ctx, `Resuming ${formatTag(currentVersion, tagFormat)}`, "Tag exists locally but not on remote \u2014 will push");
-      } else {
-        // (c) Fully released — ask for bump
-        progress.activate("version", "Awaiting version selection");
-        const suggested = suggestBump(commits);
-        const bumpChoice = await ctx.ui.select(
-          `Version bump (${summary})`,
-          BUMP_OPTIONS,
-          { helpText: `Current: ${currentVersion} (released) | Suggested: ${suggested}` },
+      if (resumableLocalRelease) {
+        progress.activate("version", "Found local release tag");
+        const resumeChoice = await ctx.ui.select(
+          `Continue failed release ${resumableLocalRelease.tag}?`,
+          [
+            `Continue — resume ${resumableLocalRelease.tag}`,
+            "Ignore — choose version normally",
+          ],
+          {
+            helpText: [
+              `A newer local tag (${resumableLocalRelease.tag}) exists on the current HEAD but is not on origin.`,
+              `package.json still reports ${currentVersion}.`,
+              "No commits or worktree changes were detected after that local tag.",
+            ].join(" "),
+          },
         );
-        if (!bumpChoice) {
+        if (!resumeChoice) {
           progress.dispose();
           return;
         }
 
-        const bump = bumpChoice.split(" — ")[0] as BumpType;
-        nextVersion = bumpVersion(currentVersion, bump);
-        skipBump = false;
-        progress.complete("version", `${currentVersion} → ${nextVersion} (${bump})`);
+        if (resumeChoice.startsWith("Continue")) {
+          nextVersion = resumableLocalRelease.version;
+          skipBump = true;
+          skipTag = true;
+          progress.skip("version", `${resumableLocalRelease.tag} (local tag not deployed)`);
+          notifyInfo(
+            ctx,
+            `Resuming failed release ${resumableLocalRelease.tag}`,
+            "Local tag exists only on this machine — release will continue from that tagged commit.",
+          );
+        }
       }
 
+      if (nextVersion === null || skipBump === null) {
+        if (!localTagExists && currentVersion !== "0.0.0") {
+          nextVersion = currentVersion;
+          skipBump = true;
+          progress.skip("version", `${formatTag(currentVersion, tagFormat)} (already set, not yet released)`);
+          notifyInfo(ctx, `Using ${formatTag(currentVersion, tagFormat)}`, "Version not yet released — skipping bump");
+        } else if (localTagExists && !remoteTagExists) {
+          nextVersion = currentVersion;
+          skipBump = true;
+          skipTag = true;
+          progress.skip("version", `${formatTag(currentVersion, tagFormat)} (tag exists locally, not pushed)`);
+          notifyInfo(ctx, `Resuming ${formatTag(currentVersion, tagFormat)}`, "Tag exists locally but not on remote — will push");
+        } else {
+          progress.activate("version", "Awaiting version selection");
+          const suggested = suggestBump(commits);
+          const bumpChoice = await ctx.ui.select(
+            `Version bump (${summary})`,
+            BUMP_OPTIONS,
+            { helpText: `Current: ${currentVersion} (released) | Suggested: ${suggested}` },
+          );
+          if (!bumpChoice) {
+            progress.dispose();
+            return;
+          }
+
+          const bump = bumpChoice.split(" — ")[0] as BumpType;
+          nextVersion = bumpVersion(currentVersion, bump);
+          skipBump = false;
+          progress.complete("version", `${currentVersion} → ${nextVersion} (${bump})`);
+        }
+      }
       // ── 8. Build changelog ──────────────────────────────────────────────
       progress.activate("changelog", "Generating changelog");
       const rawChangelog = buildChangelogMarkdown(commits, nextVersion, tagFormat);
@@ -474,7 +617,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       // ── 11. Execute release ─────────────────────────────────────────────
       progress.activate("execute", "Starting release execution");
       try {
-        const result = await executeRelease({
+        let result = await executeRelease({
           exec: platform.exec.bind(platform),
           cwd: ctx.cwd,
           version: nextVersion,
@@ -488,7 +631,26 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           onProgress: progress.executorProgress(),
         });
 
-        // Mark execution steps based on result
+        if (!isDryRun && result.error && !result.pushed) {
+          const switchedTo = await maybeSwitchGithubAccountForReleaseFailure(platform, ctx, result.error);
+          if (switchedTo) {
+            progress.activate("execute", `Retrying with GitHub account ${switchedTo}`);
+            result = await executeRelease({
+              exec: platform.exec.bind(platform),
+              cwd: ctx.cwd,
+              version: nextVersion,
+              changelog,
+              channels,
+              dryRun: false,
+              skipBump: true,
+              skipTag: true,
+              tagFormat,
+              customChannels,
+              onProgress: progress.executorProgress(),
+            });
+          }
+        }
+
         if (result.tagCreated && result.pushed) {
           progress.complete("execute", "Tag + push complete");
         } else if (result.error) {
@@ -497,7 +659,6 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           progress.fail("execute", `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"}`);
         }
 
-        // Mark channel publishing
         if (result.channels.length > 0) {
           const allOk = result.channels.every((c) => c.success);
           if (allOk) {
@@ -512,11 +673,9 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           progress.complete("publish", "No channels");
         }
 
-        // Give the user a moment to see the final widget state
         await new Promise((r) => setTimeout(r, 1500));
         progress.dispose();
 
-        // Final notification
         const channelSummary = result.channels
           .map((c) => `${c.channel}: ${c.success ? "✓" : `✗ ${c.error ?? "failed"}`}`)
           .join(", ");
@@ -529,7 +688,6 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
             `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"} | ${channelSummary}`,
           );
         } else {
-          // Include the error detail so the user knows WHY it failed
           const detail = result.error
             ? result.error
             : `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"}`;
