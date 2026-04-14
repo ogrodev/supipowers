@@ -1,0 +1,107 @@
+# Publish to npm on version tag push.
+#
+# Tag format: Matches the default release.tagFormat ("v${version}"). If you
+# change tagFormat, update both the trigger below and RELEASE_TAG_FORMAT in the
+# verification step so the workflow can recover the published package version.
+#
+# Security:
+#   - OIDC publishing (no stored NPM_TOKEN secret)
+#   - npm provenance (Sigstore attestation linking package to this workflow)
+#   - All actions pinned by commit SHA
+#   - Minimal permissions (read contents + OIDC token)
+#   - Gated by "npm-publish" environment (configure required reviewers in GitHub)
+#
+# Prerequisites (one-time):
+#   1. npm → package settings → Configure Trusted Publishers → add:
+#        Repository:  ogrodev/supipowers
+#        Workflow:    publish.yml
+#        Environment: npm-publish
+#   2. GitHub → repo settings → Environments → create "npm-publish"
+#        (optional) add required reviewers for manual approval gate
+#
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - "v*"  # Keep in sync with RELEASE_TAG_FORMAT below
+
+# Cancel any in-flight publish for the same tag
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    environment: npm-publish
+
+    permissions:
+      contents: read
+      id-token: write   # Required for npm OIDC + provenance
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "latest"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test tests/
+
+      - name: Verify tag matches package.json version
+        env:
+          RELEASE_TAG_FORMAT: "v${version}"
+        run: |
+          TAG_RAW="${GITHUB_REF#refs/tags/}"
+          TAG_RAW="$TAG_RAW" RELEASE_TAG_FORMAT="$RELEASE_TAG_FORMAT" node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const placeholder = "${version}";
+          const tagRaw = process.env.TAG_RAW;
+          const tagFormat = process.env.RELEASE_TAG_FORMAT;
+
+          if (!tagRaw || !tagFormat) {
+            throw new Error("Missing tag verification inputs");
+          }
+
+          const placeholderIndex = tagFormat.indexOf(placeholder);
+          if (placeholderIndex === -1 || placeholderIndex !== tagFormat.lastIndexOf(placeholder)) {
+            throw new Error(`RELEASE_TAG_FORMAT must contain exactly one ${placeholder} placeholder`);
+          }
+
+          const prefix = tagFormat.slice(0, placeholderIndex);
+          const suffix = tagFormat.slice(placeholderIndex + placeholder.length);
+          if (!tagRaw.startsWith(prefix) || !tagRaw.endsWith(suffix)) {
+            console.error(`::error::Tag ${tagRaw} does not match configured release tag format ${tagFormat}`);
+            process.exit(1);
+          }
+
+          const versionEnd = suffix.length === 0 ? tagRaw.length : tagRaw.length - suffix.length;
+          const tagVersion = tagRaw.slice(prefix.length, versionEnd);
+          const pkgVersion = JSON.parse(fs.readFileSync("./package.json", "utf8")).version;
+
+          if (!tagVersion || tagVersion !== pkgVersion) {
+            console.error(`::error::Tag ${tagRaw} resolves to version ${tagVersion || "<empty>"}, but package.json is ${pkgVersion}`);
+            process.exit(1);
+          }
+          NODE
+
+      - name: Publish
+        run: npm publish --provenance --access public
