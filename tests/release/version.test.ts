@@ -1,7 +1,15 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { suggestBump, bumpVersion, getCurrentVersion, isVersionReleased, isTagOnRemote, formatTag } from "../../src/release/version.js";
+import {
+  suggestBump,
+  bumpVersion,
+  getCurrentVersion,
+  isVersionReleased,
+  isTagOnRemote,
+  findResumableLocalRelease,
+  formatTag,
+} from "../../src/release/version.js";
 import type { CategorizedCommits } from "../../src/types.js";
 
 // ---------------------------------------------------------------------------
@@ -227,6 +235,57 @@ describe("isTagOnRemote", () => {
     expect(await isTagOnRemote(exec, "/tmp", "1.0.0", "v${version}")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// findResumableLocalRelease
+// ---------------------------------------------------------------------------
+
+describe("findResumableLocalRelease", () => {
+  test("returns a future local tag that is on HEAD and missing from origin", async () => {
+    const exec = async (_cmd: string, args: string[]) => {
+      if (args[0] === "tag" && args[1] === "--merged") {
+        return { stdout: "v1.4.0\nv1.5.0\n", stderr: "", code: 0 };
+      }
+      if (args[0] === "ls-remote") {
+        expect(args).toEqual(["ls-remote", "--tags", "origin", "v1.5.0"]);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (args[0] === "rev-list") {
+        return { stdout: "abc123\n", stderr: "", code: 0 };
+      }
+      if (args[0] === "rev-parse") {
+        return { stdout: "abc123\n", stderr: "", code: 0 };
+      }
+      throw new Error(`unexpected args: ${args.join(" ")}`);
+    };
+
+    expect(await findResumableLocalRelease(exec as any, "/tmp", "1.4.0", "v${version}")).toEqual({
+      version: "1.5.0",
+      tag: "v1.5.0",
+    });
+  });
+
+  test("returns null when the future local tag is not on HEAD", async () => {
+    const exec = async (_cmd: string, args: string[]) => {
+      if (args[0] === "tag" && args[1] === "--merged") {
+        return { stdout: "v1.4.0\nv1.5.0\n", stderr: "", code: 0 };
+      }
+      if (args[0] === "ls-remote") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (args[0] === "rev-list") {
+        return { stdout: "oldtag\n", stderr: "", code: 0 };
+      }
+      if (args[0] === "rev-parse") {
+        return { stdout: "headsha\n", stderr: "", code: 0 };
+      }
+      throw new Error(`unexpected args: ${args.join(" ")}`);
+    };
+
+    expect(await findResumableLocalRelease(exec as any, "/tmp", "1.4.0", "v${version}")).toBeNull();
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // formatTag

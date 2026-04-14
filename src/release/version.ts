@@ -67,6 +67,103 @@ export function getCurrentVersion(cwd: string): string {
   }
 }
 
+interface ParsedReleaseTag {
+  tag: string;
+  version: string;
+}
+
+const SEMVER_CAPTURE = "([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractVersionFromTag(tag: string, tagFormat: string): string | null {
+  if (!tagFormat.includes("${version}")) {
+    return null;
+  }
+
+  const pattern = `^${escapeRegExp(tagFormat).replace(escapeRegExp("${version}"), SEMVER_CAPTURE)}$`;
+  const match = tag.match(new RegExp(pattern));
+  return match?.[1] ?? null;
+}
+
+function parseReleaseTag(tag: string, tagFormat: string): ParsedReleaseTag | null {
+  const version = extractVersionFromTag(tag, tagFormat) ?? extractVersionFromTag(tag, LEGACY_RELEASE_TAG_FORMAT);
+  return version ? { tag, version } : null;
+}
+
+function compareSemver(left: string, right: string): number {
+  const [leftCore] = left.split("-");
+  const [rightCore] = right.split("-");
+  const leftParts = leftCore.split(".").map(Number);
+  const rightParts = rightCore.split(".").map(Number);
+
+  for (let index = 0; index < 3; index += 1) {
+    const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+
+  if (left === right) {
+    return 0;
+  }
+
+  return left.includes("-") ? -1 : 1;
+}
+
+async function isTagAtHead(exec: ExecFn, cwd: string, tag: string): Promise<boolean> {
+  const [tagCommit, headCommit] = await Promise.all([
+    exec("git", ["rev-list", "-n", "1", tag], { cwd }),
+    exec("git", ["rev-parse", "HEAD"], { cwd }),
+  ]);
+
+  return tagCommit.code === 0
+    && headCommit.code === 0
+    && tagCommit.stdout.trim() !== ""
+    && tagCommit.stdout.trim() === headCommit.stdout.trim();
+}
+
+export async function findResumableLocalRelease(
+  exec: ExecFn,
+  cwd: string,
+  currentVersion: string,
+  tagFormat: string,
+): Promise<{ version: string; tag: string } | null> {
+  try {
+    const localTags = await exec("git", ["tag", "--merged", "HEAD"], { cwd });
+    if (localTags.code !== 0) {
+      return null;
+    }
+
+    const candidates = localTags.stdout
+      .split(/\r?\n/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .map((tag) => parseReleaseTag(tag, tagFormat))
+      .filter((candidate): candidate is ParsedReleaseTag => Boolean(candidate))
+      .filter((candidate) => compareSemver(candidate.version, currentVersion) > 0)
+      .sort((left, right) => compareSemver(right.version, left.version));
+
+    for (const candidate of candidates) {
+      const remoteTag = await exec("git", ["ls-remote", "--tags", "origin", candidate.tag], { cwd });
+      if (remoteTag.code !== 0 || remoteTag.stdout.trim() !== "") {
+        continue;
+      }
+
+      if (await isTagAtHead(exec, cwd, candidate.tag)) {
+        return { version: candidate.version, tag: candidate.tag };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+
 const LEGACY_RELEASE_TAG_FORMAT = "v${version}";
 
 function getReleaseTagCandidates(version: string, tagFormat: string): string[] {
