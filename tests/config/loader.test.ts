@@ -146,6 +146,14 @@ describe("strict and inspection config loading", () => {
     expect(() => loadConfig(localPaths, tmpDir)).toThrow(/quality\.gates/);
   });
 
+  test("strict load rejects release.tagFormat without ${version}", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      release: { channels: ["github"], tagFormat: "fixed-tag" },
+    });
+
+    expect(() => loadConfig(localPaths, tmpDir)).toThrow(/release\.tagFormat/);
+  });
+
   test("migrates legacy profile-era config keys before validation", () => {
     writeProjectConfig(localPaths, tmpDir, {
       version: "1.0.0",
@@ -172,7 +180,7 @@ describe("strict and inspection config loading", () => {
         },
       },
       qa: { framework: null, e2e: false },
-      release: { channels: ["github", "npm"] },
+      release: { channels: ["github"], tagFormat: "v${version}" },
     });
 
     const merged = inspection.mergedConfig as Record<string, unknown>;
@@ -305,6 +313,18 @@ describe("saveConfig / updateConfig", () => {
     expect(saved.version).toBe("1.0.0");
   });
 
+  test("saveConfig rejects invalid release.tagFormat", () => {
+    expect(() =>
+      saveConfig(paths, tmpDir, {
+        ...DEFAULT_CONFIG,
+        release: {
+          ...DEFAULT_CONFIG.release,
+          tagFormat: "fixed-tag",
+        },
+      }),
+    ).toThrow(/release\.tagFormat/);
+  });
+
   test("updateConfig deep-merges and persists", () => {
     const updated = updateConfig(paths, tmpDir, { contextMode: { compressionThreshold: 8192 } });
     expect(updated.contextMode.compressionThreshold).toBe(8192);
@@ -312,6 +332,12 @@ describe("saveConfig / updateConfig", () => {
 
     const reloaded = loadConfig(paths, tmpDir);
     expect(reloaded.contextMode.compressionThreshold).toBe(8192);
+  });
+
+  test("updateConfig rejects invalid release.tagFormat", () => {
+    expect(() => updateConfig(paths, tmpDir, { release: { tagFormat: "fixed-tag" } })).toThrow(
+      /release\.tagFormat/,
+    );
   });
 });
 
