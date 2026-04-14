@@ -3,10 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  loadReviewAgents,
   loadGlobalReviewAgents,
   loadMergedReviewAgents,
   writeAgentFile,
   addAgentToConfig,
+  getReviewAgentsDir,
   getGlobalReviewAgentsDir,
   getGlobalReviewAgentsConfigPath,
   ensureGlobalDefaultReviewAgents,
@@ -46,6 +48,82 @@ function writeConfigYaml(dir: string, agents: Array<{ name: string; enabled: boo
   ];
   fs.writeFileSync(path.join(dir, "config.yml"), lines.join("\n"));
 }
+
+describe("loadReviewAgents", () => {
+  let tmpDir: string;
+  let paths: PlatformPaths;
+  let projectDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-load-agents-test-"));
+    paths = createTestPaths(tmpDir);
+    projectDir = path.join(tmpDir, "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("loads default 3 agents when no config exists", async () => {
+    const result = await loadReviewAgents(paths, projectDir);
+    expect(result.agents.length).toBe(3);
+    const names = result.agents.map((a) => a.name).sort();
+    expect(names).toEqual(["correctness", "maintainability", "security"]);
+  });
+
+  test("loads all 4 project agents when custom agent is added to config", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+
+    // Write all 4 agent .md files
+    writeAgentMarkdown(agentsDir, "security.md", "security", "Security reviewer", null, "Review for security.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "correctness.md", "correctness", "Correctness reviewer", null, "Review for correctness.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "maintainability.md", "maintainability", "Maintainability reviewer", null, "Review for maintainability.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "performance-auditor.md", "performance-auditor", "Performance auditor", "latency, memory", "Review for performance issues.\n\n{output_instructions}");
+
+    // Write config with all 4 agents (matching user's exact scenario)
+    writeConfigYaml(agentsDir, [
+      { name: "security", enabled: true, data: "security.md", model: "openai-codex/gpt-5.4" },
+      { name: "correctness", enabled: true, data: "correctness.md", model: "openai-codex/gpt-5.4" },
+      { name: "maintainability", enabled: true, data: "maintainability.md", model: "openai-codex/gpt-5.4" },
+      { name: "performance-auditor", enabled: true, data: "performance-auditor.md", model: "openai-codex/gpt-5.4" },
+    ]);
+
+    const result = await loadReviewAgents(paths, projectDir);
+    expect(result.agents.length).toBe(4);
+    const names = result.agents.map((a) => a.name).sort();
+    expect(names).toEqual(["correctness", "maintainability", "performance-auditor", "security"]);
+
+    const perfAgent = result.agents.find((a) => a.name === "performance-auditor");
+    expect(perfAgent).toBeDefined();
+    expect(perfAgent!.description).toBe("Performance auditor");
+    expect(perfAgent!.focus).toBe("latency, memory");
+    expect(perfAgent!.model).toBe("openai-codex/gpt-5.4");
+  });
+
+  test("ensureDefaultReviewAgents does not overwrite existing config with 4 agents", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+
+    // Pre-create config with 4 agents
+    writeAgentMarkdown(agentsDir, "security.md", "security", "Security reviewer", null, "Review for security.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "correctness.md", "correctness", "Correctness reviewer", null, "Review for correctness.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "maintainability.md", "maintainability", "Maintainability reviewer", null, "Review for maintainability.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "performance-auditor.md", "performance-auditor", "Performance auditor", null, "Review for performance.\n\n{output_instructions}");
+    writeConfigYaml(agentsDir, [
+      { name: "security", enabled: true, data: "security.md", model: null },
+      { name: "correctness", enabled: true, data: "correctness.md", model: null },
+      { name: "maintainability", enabled: true, data: "maintainability.md", model: null },
+      { name: "performance-auditor", enabled: true, data: "performance-auditor.md", model: null },
+    ]);
+
+    // loadReviewAgents calls ensureDefaultReviewAgents internally — must not lose the 4th agent
+    const result = await loadReviewAgents(paths, projectDir);
+    expect(result.agents.length).toBe(4);
+    expect(result.agents.map((a) => a.name).sort()).toEqual([
+      "correctness", "maintainability", "performance-auditor", "security",
+    ]);
+  });
+});
 
 describe("loadGlobalReviewAgents", () => {
   let tmpDir: string;
