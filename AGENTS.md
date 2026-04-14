@@ -185,9 +185,9 @@ bunx supipowers
 | Test runner       | **bun:test** (Bun's built-in test runner)                               |
 | Build             | Plain **tsc** (`tsc -p tsconfig.build.json`)                           |
 | Linter/formatter  | **None configured** — no ESLint, Biome, or Prettier                    |
-| CI                | **None** — quality checks are fully manual                             |
+| CI                | GitHub Actions (`.github/workflows/publish.yml`) — publishes to npm on version tag push (`v*`) |
 
-Peer dependencies (`@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-tui`, `@sinclair/typebox`) are provided by the OMP host; they are devDependencies only for type-checking during development.
+Peer dependencies (`@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-ai`, `@oh-my-pi/pi-tui`, `@sinclair/typebox`) are provided by the OMP host; they are devDependencies only for type-checking during development.
 
 ---
 
