@@ -3,6 +3,7 @@ import {
   buildSelectableReleaseChannelOptions,
   findInvalidReleaseChannels,
   isInProgressRelease,
+  RELEASE_STEPS,
 } from "../../src/commands/release.js";
 import type { ChannelStatus } from "../../src/release/channels/types.js";
 
@@ -43,6 +44,17 @@ describe("isInProgressRelease", () => {
     ).toBe(true);
   });
 });
+
+describe("release workflow ordering", () => {
+  test("runs pre-release gates in the intended order", () => {
+    expect(RELEASE_STEPS.slice(0, 3).map((step) => step.key)).toEqual([
+      "checks",
+      "doc-drift",
+      "working-tree",
+    ]);
+  });
+});
+
 
 describe("release channel validation", () => {
   const detected: ChannelStatus[] = [

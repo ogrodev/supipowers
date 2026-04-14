@@ -77,10 +77,10 @@ export function buildSelectableReleaseChannelOptions(detected: ChannelStatus[]):
     .map((channel) => `${channel.channel} — ${channel.detail}`);
 }
 
-const RELEASE_STEPS = [
-  { key: "working-tree", label: "Check working tree" },
-  { key: "doc-drift", label: "Check documentation drift" },
+export const RELEASE_STEPS = [
   { key: "checks", label: "Quality checks" },
+  { key: "doc-drift", label: "Check documentation drift" },
+  { key: "working-tree", label: "Check working tree" },
   { key: "channels", label: "Detect channels" },
   { key: "commits", label: "Analyze commits" },
   { key: "version", label: "Select version" },
@@ -172,61 +172,36 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       const isDryRun = args?.includes("--dry-run") ?? false;
       const config = loadConfig(platform.paths, ctx.cwd);
       const tagFormat = config.release.tagFormat;
-
-      // ── 1. Check for uncommitted changes ────────────────────────────────
-      progress.activate("working-tree", "Checking working tree");
       let didStash = false;
-      const treeStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
-      if (treeStatus.dirty) {
-        progress.complete("working-tree", `${treeStatus.files.length} files changed`);
-        const filePreview = treeStatus.files.slice(0, 8).join(", ");
-        const extra = treeStatus.files.length > 8 ? ` (+${treeStatus.files.length - 8} more)` : "";
 
-        const action = await ctx.ui.select(
-          `Uncommitted changes detected (${treeStatus.files.length} files)`,
-          [
-            "commit — commit changes with AI-generated message",
-            "stash — stash changes and continue",
-            "abort — cancel release",
-          ],
-          { helpText: `Files: ${filePreview}${extra}` },
-        );
-
-        if (!action || action.startsWith("abort")) {
-          progress.dispose();
-          return;
-        }
-
-        if (action.startsWith("commit")) {
-          // commit.ts has its own progress widget; dispose ours temporarily
-          progress.dispose();
-          const commitResult = await analyzeAndCommit(platform, ctx);
-          if (!commitResult) {
-            notifyError(ctx, "Commit failed or cancelled", "Aborting release.");
-            return;
-          }
-          // Verify tree is now clean
-          const afterStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
-          if (afterStatus.dirty) {
-            notifyError(ctx, "Still uncommitted changes", "Not all changes were committed. Aborting release.");
-            return;
-          }
-          // Re-create progress after commit's widget has disposed
-          progress.complete("working-tree", "Committed");
-        } else if (action.startsWith("stash")) {
-          progress.activate("working-tree", "Stashing changes");
-          const stashResult = await platform.exec("git", ["stash", "push", "-m", "supi:release auto-stash"], { cwd: ctx.cwd });
-          if (stashResult.code !== 0) {
-            progress.fail("working-tree", stashResult.stderr || "stash failed");
+      // ── 1. Quality checks (headless) ────────────────────────────────────
+      progress.activate("checks", "Running quality gates");
+      const checksReport = await runHeadlessChecks(platform, ctx, config, resolved);
+      if (checksReport) {
+        const { summary, overallStatus } = checksReport;
+        const detail = `${summary.passed} passed, ${summary.failed} failed, ${summary.blocked} blocked`;
+        if (overallStatus === "passed") {
+          progress.complete("checks", detail);
+        } else {
+          progress.fail("checks", detail);
+          const failedNames = checksReport.gates
+            .filter((g) => g.status === "failed" || g.status === "blocked")
+            .map((g) => GATE_DISPLAY_NAMES[g.gate] ?? g.gate);
+          const continueChoice = await ctx.ui.select(
+            `Quality checks ${overallStatus}: ${failedNames.join(", ")}`,
+            [
+              "Continue — release despite failures",
+              "Abort — fix issues first",
+            ],
+            { helpText: detail },
+          );
+          if (!continueChoice || continueChoice.startsWith("Abort")) {
             progress.dispose();
-            notifyError(ctx, "git stash failed", stashResult.stderr || "Non-zero exit");
             return;
           }
-          didStash = true;
-          progress.complete("working-tree", "Stashed");
         }
       } else {
-        progress.complete("working-tree", "Clean");
+        progress.skip("checks", "No gates configured");
       }
 
       // ── 2. Doc-drift pre-check ──────────────────────────────────────────
@@ -247,8 +222,6 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           progress.activate("doc-drift", "Fixing documentation");
           notifyInfo(ctx, "Updating documentation", driftResult.summary);
           const fixPrompt = buildFixPrompt(driftResult.findings);
-          // Update drift state only when we commit to fixing — a hard-stop before this
-          // point lets the user re-run and repeat the check.
           const { loadState: loadDriftState, saveState: saveDriftState, getHeadCommit } = await import("../docs/drift.js");
           const driftHead = await getHeadCommit(platform, ctx.cwd);
           const driftState = loadDriftState(platform.paths, ctx.cwd);
@@ -274,35 +247,56 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         progress.complete("doc-drift", "No drift");
       }
 
-      // ── 3. Quality checks (headless) ────────────────────────────────────
-      progress.activate("checks", "Running quality gates");
-      const checksReport = await runHeadlessChecks(platform, ctx, config, resolved);
-      if (checksReport) {
-        const { summary, overallStatus } = checksReport;
-        const detail = `${summary.passed} passed, ${summary.failed} failed, ${summary.blocked} blocked`;
-        if (overallStatus === "passed") {
-          progress.complete("checks", detail);
-        } else {
-          progress.fail("checks", detail);
-          // Show which gates failed but don't block — let the user decide
-          const failedNames = checksReport.gates
-            .filter((g) => g.status === "failed" || g.status === "blocked")
-            .map((g) => GATE_DISPLAY_NAMES[g.gate] ?? g.gate);
-          const continueChoice = await ctx.ui.select(
-            `Quality checks ${overallStatus}: ${failedNames.join(", ")}`,
-            [
-              "Continue — release despite failures",
-              "Abort — fix issues first",
-            ],
-            { helpText: detail },
-          );
-          if (!continueChoice || continueChoice.startsWith("Abort")) {
-            progress.dispose();
+      // ── 3. Check for uncommitted changes after preflight side effects ─────
+      progress.activate("working-tree", "Checking working tree");
+      const treeStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
+      if (treeStatus.dirty) {
+        progress.complete("working-tree", `${treeStatus.files.length} files changed`);
+        const filePreview = treeStatus.files.slice(0, 8).join(", ");
+        const extra = treeStatus.files.length > 8 ? ` (+${treeStatus.files.length - 8} more)` : "";
+
+        const action = await ctx.ui.select(
+          `Uncommitted changes detected (${treeStatus.files.length} files)`,
+          [
+            "commit — commit changes with AI-generated message",
+            "stash — stash changes and continue",
+            "abort — cancel release",
+          ],
+          { helpText: `Files: ${filePreview}${extra}` },
+        );
+
+        if (!action || action.startsWith("abort")) {
+          progress.dispose();
+          return;
+        }
+
+        if (action.startsWith("commit")) {
+          progress.dispose();
+          const commitResult = await analyzeAndCommit(platform, ctx);
+          if (!commitResult) {
+            notifyError(ctx, "Commit failed or cancelled", "Aborting release.");
             return;
           }
+          const afterStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
+          if (afterStatus.dirty) {
+            notifyError(ctx, "Still uncommitted changes", "Not all changes were committed. Aborting release.");
+            return;
+          }
+          progress.complete("working-tree", "Committed");
+        } else if (action.startsWith("stash")) {
+          progress.activate("working-tree", "Stashing changes");
+          const stashResult = await platform.exec("git", ["stash", "push", "-m", "supi:release auto-stash"], { cwd: ctx.cwd });
+          if (stashResult.code !== 0) {
+            progress.fail("working-tree", stashResult.stderr || "stash failed");
+            progress.dispose();
+            notifyError(ctx, "git stash failed", stashResult.stderr || "Non-zero exit");
+            return;
+          }
+          didStash = true;
+          progress.complete("working-tree", "Stashed");
         }
       } else {
-        progress.skip("checks", "No gates configured");
+        progress.complete("working-tree", "Clean");
       }
 
       // ── 4. Ensure channels are configured (or detect + ask) ─────────────
