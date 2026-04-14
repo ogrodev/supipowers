@@ -10,9 +10,18 @@
     "build": "tsc -p tsconfig.build.json",
     "prepare": "git config core.hooksPath hooks || true"
   },
+  "engines": {
+    "bun": ">=1.3.10"
+  },
   "keywords": [
+    "omp",
     "omp-extension",
+    "oh-my-pi",
+    "ai-agent",
+    "coding-agent",
     "workflow",
+    "code-review",
+    "planning",
     "agent",
     "supipowers"
   ],
@@ -20,6 +29,11 @@
     "type": "git",
     "url": "https://github.com/ogrodev/supipowers.git"
   },
+  "homepage": "https://supipowers.com",
+  "bugs": {
+    "url": "https://github.com/ogrodev/supipowers/issues"
+  },
+  "author": "ogrodev",
   "license": "MIT",
   "bin": {
     "supipowers": "bin/install.mjs"
