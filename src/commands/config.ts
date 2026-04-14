@@ -25,9 +25,7 @@ const FRAMEWORK_OPTIONS = [
 
 const CHANNEL_OPTIONS = [
   { value: [] as string[], label: "not set — auto-detect on first /supi:release run" },
-  { value: ["github", "npm"], label: "both — GitHub Release + npm publish" },
   { value: ["github"], label: "github — GitHub Release with gh CLI" },
-  { value: ["npm"], label: "npm — npm publish to registry" },
 ];
 
 export interface SettingDef {
