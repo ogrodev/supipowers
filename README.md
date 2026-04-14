@@ -23,7 +23,7 @@ Run the interactive installer:
 bunx supipowers
 ```
 
-The installer detects your agent, registers the extension, and optionally sets up LSP servers, MCP tools, and the context-mode integration.
+The installer detects your agent, registers the extension, removes legacy external context-mode MCP registrations, and can install missing optional tooling such as LSP servers, `mcpc`, and Playwright CLI.
 
 > [!TIP]
 > Run `/supi:update` at any time to upgrade to the latest version, or `/supi:doctor` to check your setup.
@@ -34,16 +34,15 @@ The installer detects your agent, registers the extension, and optionally sets u
 | ----------------------------------------------------- | --------------------------------------------------------------------- |
 | [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) | The coding agent that supipowers extends                              |
 | [Bun](https://bun.sh)                                 | Runtime — required for installation and the built-in SQLite FTS index |
-| [Git](https://git-scm.com)                            | Used by the installer and context-mode setup                          |
+| [Git](https://git-scm.com)                            | Used by the installer and git-based workflows                         |
 
 ### Optional dependencies
 
-The installer scans for these and offers to install any that are missing. Everything works without them, but each one unlocks additional capabilities.
+The installer scans for these and offers to install missing tooling where it can. Everything works without them, but each one unlocks additional capabilities.
 
 | Dependency                            | What it enables                                                       |
 | ------------------------------------- | --------------------------------------------------------------------- |
 | [mcpc](https://github.com/apify/mcpc) | MCP server management via `/supi:mcp`                                 |
-| supi-context-mode                     | Context window protection — large outputs are sandboxed automatically |
 | `typescript-language-server`          | TypeScript/JS diagnostics and references in review gates              |
 | `pyright`                             | Python type checking                                                  |
 | `rust-analyzer`                       | Rust language server                                                  |
@@ -52,7 +51,8 @@ The installer scans for these and offers to install any that are missing. Everyt
 
 > [!NOTE]
 > LSP servers are language-specific — install only the ones that match your project's stack.
-> supi-context-mode is heavily inspired at [context-mode](https://github.com/mksglu/context-mode)
+> Context protection is built into supipowers. No external `context-mode` or `supi-context-mode` dependency is required.
+> The design is inspired by [context-mode](https://github.com/mksglu/context-mode).
 
 ## Commands
 
@@ -71,7 +71,7 @@ The installer scans for these and offers to install any that are missing. Everyt
 | `/supi:optimize-context` | Analyze loaded prompt/context usage and suggest reductions    |
 | `/supi:mcp`              | Manage MCP servers (connect, disconnect, migrate)             |
 | `/supi:config`           | Interactive settings TUI                                      |
-| `/supi:status`           | Check running sub-agents and progress                         |
+| `/supi:status`           | Show project plans and configuration summary                  |
 | `/supi:doctor`           | Diagnose extension health and missing dependencies            |
 | `/supi:generate`        | Documentation drift detection                                |
 | `/supi:update`           | Update supipowers to the latest version                       |
@@ -89,7 +89,7 @@ Most commands steer the AI session. These are TUI-only — they open native dial
 
 **PR fixing.** `/supi:fix-pr` fetches PR review comments, critically assesses each one, checks for ripple effects, then fixes or rejects with evidence. Bot reviewers are auto-detected and filtered out.
 
-**Context protection.** When [context-mode](https://github.com/mksglu/context-mode) is detected, supipowers injects routing hooks that protect the agent's context window. Large outputs, file reads, and HTTP calls are automatically routed through sandboxed execution so only summaries enter the conversation.
+**Context protection.** Supipowers always enables built-in context protection through native `ctx_*` tools and routing hooks. Search/find and web-fetch style operations are redirected to sandboxed execution or indexed storage, and oversized tool results are compressed before they reach the conversation.
 
 **Model assignment.** Each action can be assigned a different model and thinking level. `/supi:model` opens a TUI picker backed by OMP's model registry.
 

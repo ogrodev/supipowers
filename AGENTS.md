@@ -116,10 +116,8 @@ supipowers/
 │   └── creating-supi-agents/SKILL.md
 ├── bin/
 │   └── install.mjs           # Interactive CLI installer (@clack/prompts)
-├── docs/
-│   └── supipowers/
-│       ├── specs/            # Authoritative v2 design spec
-│       └── plans/            # Implementation plan with step-by-step tasks
+├── docs/                     # Project documentation
+│   └── supipowers/           # Supipowers-specific docs
 └── .omp/supipowers/          # Runtime data (gitignored)
     ├── config.json           # Project-level config override
     ├── plans/                # Saved plan markdown files
@@ -142,7 +140,6 @@ supipowers/
 |`src/config/defaults.ts`|`DEFAULT_CONFIG` — built-in default configuration|
 |`src/planning/approval-flow.ts`|Plan approval UI flow (agent_end hook)|
 |`.omp/supipowers/review-agents/config.yml`|Project-local review-agent pipeline config materialized on first `/supi:review` run|
-|`.omp/supipowers/specs/2026-03-10-supipowers-v2-design.md`|Authoritative v2 design spec; read before any architectural change|
 |`package.json`|`omp.extensions` field registers `./src/index.ts` with the OMP runtime|
 |`tsconfig.json` / `tsconfig.build.json`|Base config (includes tests) vs. build config (excludes tests)|
 
