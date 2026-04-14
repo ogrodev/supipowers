@@ -16,6 +16,10 @@
     "agent",
     "supipowers"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ogrodev/supipowers.git"
+  },
   "license": "MIT",
   "bin": {
     "supipowers": "bin/install.mjs"
