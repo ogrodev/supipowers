@@ -1,6 +1,9 @@
+import { formatTag } from "./version.js";
+
 export interface BuildPolishPromptOpts {
   changelog: string;
   version: string;
+  tagFormat?: string;
 }
 
 /**
@@ -20,7 +23,7 @@ export function buildPolishPrompt(opts: BuildPolishPromptOpts): string {
   return [
     "# Polish Release Notes",
     "",
-    `You are polishing changelog notes for **v${version}**.`,
+    `You are polishing changelog notes for **${formatTag(version, opts.tagFormat ?? "v${version}")}**.`,
     "",
     "## Raw Changelog",
     "",

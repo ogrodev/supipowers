@@ -9,6 +9,14 @@ type ExecFn = (
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
 
 /**
+ * Replace `${version}` in a tag format template with the actual version string.
+ * If the template contains no placeholder, it is returned as-is.
+ */
+export function formatTag(version: string, tagFormat: string): string {
+  return tagFormat.replace("${version}", version);
+}
+
+/**
  * Suggest a semver bump type based on categorized commits.
  * Breaking changes win over features; features win over everything else.
  */
@@ -59,22 +67,36 @@ export function getCurrentVersion(cwd: string): string {
   }
 }
 
+const LEGACY_RELEASE_TAG_FORMAT = "v${version}";
+
+function getReleaseTagCandidates(version: string, tagFormat: string): string[] {
+  return [...new Set([formatTag(version, tagFormat), formatTag(version, LEGACY_RELEASE_TAG_FORMAT)])];
+}
+
+async function hasMatchingReleaseTag(
+  exec: ExecFn,
+  cwd: string,
+  args: string[],
+  version: string,
+  tagFormat: string,
+): Promise<boolean> {
+  const result = await exec("git", [...args, ...getReleaseTagCandidates(version, tagFormat)], { cwd });
+  return result.code === 0 && result.stdout.trim().length > 0;
+}
 
 /**
  * Check whether a tag for the given version already exists locally.
- * Returns `true` when `v{version}` is a known git tag — meaning this
- * version has already been released and a bump is needed.
+ * Returns `true` when either the current-format tag or the legacy `v{version}`
+ * tag is already known locally, which means this version was already released.
  */
 export async function isVersionReleased(
   exec: ExecFn,
   cwd: string,
   version: string,
+  tagFormat: string,
 ): Promise<boolean> {
   try {
-    const tag = version.startsWith("v") ? version : `v${version}`;
-    const result = await exec("git", ["tag", "-l", tag], { cwd });
-    // git tag -l prints matching tags, one per line. Non-empty = exists.
-    return result.code === 0 && result.stdout.trim().length > 0;
+    return await hasMatchingReleaseTag(exec, cwd, ["tag", "-l"], version, tagFormat);
   } catch {
     return false;
   }
@@ -82,17 +104,17 @@ export async function isVersionReleased(
 
 /**
  * Check whether a tag for the given version exists on the remote (origin).
- * Returns true when `v{version}` is found via `git ls-remote --tags origin`.
+ * Returns true when either the current-format tag or the legacy `v{version}`
+ * tag is found via `git ls-remote --tags origin`.
  */
 export async function isTagOnRemote(
   exec: ExecFn,
   cwd: string,
   version: string,
+  tagFormat: string,
 ): Promise<boolean> {
   try {
-    const tag = version.startsWith("v") ? version : `v${version}`;
-    const result = await exec("git", ["ls-remote", "--tags", "origin", tag], { cwd });
-    return result.code === 0 && result.stdout.trim().length > 0;
+    return await hasMatchingReleaseTag(exec, cwd, ["ls-remote", "--tags", "origin"], version, tagFormat);
   } catch {
     return false;
   }

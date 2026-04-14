@@ -1,14 +1,11 @@
 // src/release/executor.ts — Release execution: build, version bump, git ops, channel publishing
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ReleaseChannel, ReleaseResult } from "../types.js";
+import type { CustomChannelConfig, ReleaseChannel, ReleaseResult } from "../types.js";
 import { commitStaged } from "../git/commit.js";
-
-type ExecFn = (
-  cmd: string,
-  args: string[],
-  opts?: { cwd?: string },
-) => Promise<{ stdout: string; stderr: string; code: number }>;
+import { formatTag } from "./version.js";
+import { resolveChannelHandler } from "./channels/registry.js";
+import type { ExecFn } from "./channels/types.js";
 
 /** Callback to report step progress during release execution. */
 export type ReleaseProgressFn = (step: string, status: "active" | "done" | "error", detail?: string) => void;
@@ -20,9 +17,12 @@ export interface ExecuteReleaseOptions {
   changelog: string;
   channels: ReleaseChannel[];
   dryRun: boolean;
+  tagFormat: string;
+  /** User-defined custom channel configurations */
+  customChannels?: Record<string, CustomChannelConfig>;
   /** Skip the package.json version write (version was already set locally). */
   skipBump?: boolean;
-  /** Skip creating the git tag (it already exists locally). */
+  /** Reuse/update the local git tag after the rebase step instead of creating a new one. */
   skipTag?: boolean;
   /** Optional callback for step-by-step progress reporting. */
   onProgress?: ReleaseProgressFn;
@@ -39,20 +39,22 @@ export interface ExecuteReleaseOptions {
  *   happen (all flags true) so callers can preview without side-effects.
  */
 export async function executeRelease(opts: ExecuteReleaseOptions): Promise<ReleaseResult> {
-  const { exec, cwd, version, changelog, channels, dryRun, skipBump, skipTag, onProgress } = opts;
+  const { exec, cwd, version, changelog, channels, dryRun, tagFormat, skipBump, skipTag, onProgress, customChannels = {} } = opts;
   const progress = onProgress ?? (() => {});
+  const tagName = formatTag(version, tagFormat);
+  const tagMessage = `Release ${tagName}\n\n${changelog}`;
 
   if (dryRun) {
     console.log(`[dry-run] Would build (if scripts.build exists)`);
     console.log(`[dry-run] Would bump version to ${version}`);
     console.log(`[dry-run] Would git add -A`);
-    console.log(`[dry-run] Would git commit -m "chore(release): v${version}"`);
-    if (skipTag) {
-      console.log(`[dry-run] Would skip git tag (already exists locally)`);
-    } else {
-      console.log(`[dry-run] Would git tag -a v${version}`);
-    }
+    console.log(`[dry-run] Would git commit -m "chore(release): ${tagName}"`);
     console.log(`[dry-run] Would git pull --rebase origin`);
+    if (skipTag) {
+      console.log(`[dry-run] Would refresh existing git tag ${tagName} to the rebased HEAD`);
+    } else {
+      console.log(`[dry-run] Would git tag -a ${tagName}`);
+    }
     console.log(`[dry-run] Would git push origin HEAD --follow-tags`);
     for (const ch of channels) {
       console.log(`[dry-run] Would publish to channel: ${ch}`);
@@ -108,7 +110,7 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     }
     progress("git-add", "done");
 
-    const commitMessage = `chore(release): v${version}`;
+    const commitMessage = `chore(release): ${formatTag(version, tagFormat)}`;
     progress("git-commit", "active", commitMessage);
     const commitResult = await commitStaged(exec, cwd, commitMessage);
     if (!commitResult.success) {
@@ -118,35 +120,36 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     progress("git-commit", "done");
   }
 
-  if (skipTag) {
-    progress("git-tag", "done", "Already exists");
-  } else {
-    progress("git-tag", "active", `v${version}`);
-    const tagMessage = `Release v${version}\n\n${changelog}`;
-    const gitTag = await exec("git", ["tag", "-a", `v${version}`, "-m", tagMessage], { cwd });
-    if (gitTag.code !== 0) {
-      const detail = gitTag.stderr || gitTag.stdout || `exit code ${gitTag.code}`;
-      progress("git-tag", "error", detail);
-      return { version, tagCreated: false, pushed: false, channels: [], error: `git tag: ${detail}` };
-    }
-    progress("git-tag", "done");
-  }
-
   progress("git-pull", "active", "Pulling latest from origin");
   const gitPull = await exec("git", ["pull", "--rebase", "origin"], { cwd });
   if (gitPull.code !== 0) {
     const detail = gitPull.stderr || gitPull.stdout || `exit code ${gitPull.code}`;
     progress("git-pull", "error", detail);
-    return { version, tagCreated: true, pushed: false, channels: [], error: `git pull: ${detail}` };
+    return { version, tagCreated: Boolean(skipTag), pushed: false, channels: [], error: `git pull: ${detail}` };
   }
   progress("git-pull", "done");
+
+  progress("git-tag", "active", skipTag ? `Refreshing ${tagName}` : tagName);
+  const gitTag = await exec(
+    "git",
+    skipTag
+      ? ["tag", "-a", "-f", tagName, "-m", tagMessage]
+      : ["tag", "-a", tagName, "-m", tagMessage],
+    { cwd },
+  );
+  if (gitTag.code !== 0) {
+    const detail = gitTag.stderr || gitTag.stdout || `exit code ${gitTag.code}`;
+    progress("git-tag", "error", detail);
+    return { version, tagCreated: Boolean(skipTag), pushed: false, channels: [], error: `git tag: ${detail}` };
+  }
+  progress("git-tag", "done", skipTag ? "Refreshed existing tag" : undefined);
 
   progress("git-push", "active", "Pushing to origin");
   const gitPush = await exec("git", ["push", "origin", "HEAD", "--follow-tags"], { cwd });
   if (gitPush.code !== 0) {
     const detail = gitPush.stderr || gitPush.stdout || `exit code ${gitPush.code}`;
     progress("git-push", "error", detail);
-    // Tag was created locally but push failed
+    // Tag was created or refreshed locally but push failed
     return { version, tagCreated: true, pushed: false, channels: [], error: `git push: ${detail}` };
   }
   progress("git-push", "done");
@@ -156,31 +159,28 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
 
   for (const channel of channels) {
     progress(`publish-${channel}`, "active", `Publishing to ${channel}`);
-    try {
-      let result: { code: number; stdout: string; stderr: string };
-      if (channel === "github") {
-        result = await exec(
-          "gh",
-          ["release", "create", `v${version}`, "--title", `v${version}`, "--notes", changelog],
-          { cwd },
-        );
-      } else {
-        // "npm"
-        result = await exec("npm", ["publish"], { cwd });
-      }
 
-      if (result.code !== 0) {
-        const err = result.stderr || result.stdout || `${channel} publish exited with code ${result.code}`;
-        progress(`publish-${channel}`, "error", err);
-        channelResults.push({ channel, success: false, error: err });
-      } else {
-        progress(`publish-${channel}`, "done");
-        channelResults.push({ channel, success: true });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      progress(`publish-${channel}`, "error", msg);
-      channelResults.push({ channel, success: false, error: msg });
+    const handler = resolveChannelHandler(channel, customChannels);
+    if (!handler) {
+      const err = `Unknown channel '${channel}' — no built-in handler and no custom config found`;
+      progress(`publish-${channel}`, "error", err);
+      channelResults.push({ channel, success: false, error: err });
+      continue;
+    }
+
+    const result = await handler.publish(exec, {
+      version,
+      tag: formatTag(version, tagFormat),
+      changelog,
+      cwd,
+    });
+
+    if (result.success) {
+      progress(`publish-${channel}`, "done");
+      channelResults.push({ channel, success: true });
+    } else {
+      progress(`publish-${channel}`, "error", result.error);
+      channelResults.push({ channel, success: false, error: result.error });
     }
   }
 

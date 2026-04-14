@@ -2,6 +2,7 @@
 
 import type { CategorizedCommits, CommitEntry } from "../types.js";
 import { normalizeLineEndings } from "../text.js";
+import { formatTag } from "./version.js";
 import { IMPROVEMENT_TYPES, MAINTENANCE_TYPES, type ConventionalCommitType } from "./commit-types.js";
 
 // Matches: feat(scope)!: message  or  feat!: message  or  feat(scope): message  or  feat: message
@@ -108,11 +109,12 @@ function formatEntry(entry: CommitEntry): string {
  */
 export function buildChangelogMarkdown(
   commits: CategorizedCommits,
-  version: string
+  version: string,
+  tagFormat: string = "v${version}",
 ): string {
   const lines: string[] = [];
 
-  lines.push(`## v${version}`);
+  lines.push(`## ${formatTag(version, tagFormat)}`);
   lines.push(`_${isoDate(new Date())}_`);
   lines.push("");
 
