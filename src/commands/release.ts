@@ -5,8 +5,9 @@ import { loadModelConfig } from "../config/model-config.js";
 import type { ReleaseChannel, BumpType, ReviewReport, ResolvedModel } from "../types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
+import type { ChannelStatus } from "../release/channels/types.js";
 import { parseConventionalCommits, buildChangelogMarkdown, summarizeChanges } from "../release/changelog.js";
-import { getCurrentVersion, suggestBump, bumpVersion, isVersionReleased, isTagOnRemote } from "../release/version.js";
+import { getCurrentVersion, suggestBump, bumpVersion, isVersionReleased, isTagOnRemote, formatTag } from "../release/version.js";
 import { executeRelease, type ReleaseProgressFn } from "../release/executor.js";
 import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
@@ -50,6 +51,30 @@ export function isInProgressRelease(opts: {
   isDryRun: boolean;
 }): boolean {
   return opts.skipBump && opts.channelsWerePreConfigured && !opts.isDryRun;
+}
+
+export function findInvalidReleaseChannels(
+  channels: ReleaseChannel[],
+  detected: ChannelStatus[],
+): string[] {
+  const detectedById = new Map(detected.map((status) => [status.channel, status]));
+
+  return channels.flatMap((channel) => {
+    const status = detectedById.get(channel);
+    if (!status) {
+      return [`${channel}: unknown channel`];
+    }
+    if (!status.available) {
+      return [`${channel}: unavailable (${status.detail})`];
+    }
+    return [];
+  });
+}
+
+export function buildSelectableReleaseChannelOptions(detected: ChannelStatus[]): string[] {
+  return detected
+    .filter((channel) => channel.available)
+    .map((channel) => `${channel.channel} — ${channel.detail}`);
 }
 
 const RELEASE_STEPS = [
@@ -146,6 +171,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       const skipPolish = args?.includes("--raw") ?? false;
       const isDryRun = args?.includes("--dry-run") ?? false;
       const config = loadConfig(platform.paths, ctx.cwd);
+      const tagFormat = config.release.tagFormat;
 
       // ── 1. Check for uncommitted changes ────────────────────────────────
       progress.activate("working-tree", "Checking working tree");
@@ -281,15 +307,28 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
       // ── 4. Ensure channels are configured (or detect + ask) ─────────────
       progress.activate("channels", "Detecting channels");
+      const customChannels = config.release.customChannels ?? {};
+      const detectedChannels = await detectChannels(platform.exec.bind(platform), ctx.cwd, customChannels);
       let channels = config.release.channels;
       // Track whether channels were already set in config before any interactive
       // setup. This distinguishes "user already decided" from "just configured now",
       // which determines whether we can auto-continue without a confirmation prompt.
       const channelsWerePreConfigured = config.release.channels.length > 0;
 
+      if (channelsWerePreConfigured) {
+        const invalidChannels = findInvalidReleaseChannels(channels, detectedChannels);
+        if (invalidChannels.length > 0) {
+          const detail = invalidChannels.join("; ");
+          progress.fail("channels", detail);
+          notifyError(ctx, "Release channels invalid", detail);
+          progress.dispose();
+          return;
+        }
+      }
+
       if (channels.length === 0) {
         progress.complete("channels", "Awaiting selection");
-        channels = await setupChannels(platform, ctx);
+        channels = await setupChannels(platform, ctx, detectedChannels);
         if (channels.length === 0) {
           progress.dispose();
           return;
@@ -305,11 +344,12 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         platform.exec.bind(platform),
         ctx.cwd,
         currentVersion,
+        tagFormat,
       );
       // Only check remote when local tag exists — avoids a network call when
       // the version was never tagged at all.
       const remoteTagExists = localTagExists
-        ? await isTagOnRemote(platform.exec.bind(platform), ctx.cwd, currentVersion)
+        ? await isTagOnRemote(platform.exec.bind(platform), ctx.cwd, currentVersion, tagFormat)
         : false;
 
       // ── 6. Parse commits since last tag ─────────────────────────────────
@@ -344,15 +384,15 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         // (a) No tag at all — version in package.json is unreleased
         nextVersion = currentVersion;
         skipBump = true;
-        progress.skip("version", `v${currentVersion} (already set, not yet released)`);
-        notifyInfo(ctx, `Using v${currentVersion}`, "Version not yet released — skipping bump");
+        progress.skip("version", `${formatTag(currentVersion, tagFormat)} (already set, not yet released)`);
+        notifyInfo(ctx, `Using ${formatTag(currentVersion, tagFormat)}`, "Version not yet released \u2014 skipping bump");
       } else if (localTagExists && !remoteTagExists) {
         // (b) Tag exists locally but never made it to origin — resume
         nextVersion = currentVersion;
         skipBump = true;
         skipTag = true;
-        progress.skip("version", `v${currentVersion} (tag exists locally, not pushed)`);
-        notifyInfo(ctx, `Resuming v${currentVersion}`, "Tag exists locally but not on remote — will push");
+        progress.skip("version", `${formatTag(currentVersion, tagFormat)} (tag exists locally, not pushed)`);
+        notifyInfo(ctx, `Resuming ${formatTag(currentVersion, tagFormat)}`, "Tag exists locally but not on remote \u2014 will push");
       } else {
         // (c) Fully released — ask for bump
         progress.activate("version", "Awaiting version selection");
@@ -375,7 +415,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
       // ── 8. Build changelog ──────────────────────────────────────────────
       progress.activate("changelog", "Generating changelog");
-      const rawChangelog = buildChangelogMarkdown(commits, nextVersion);
+      const rawChangelog = buildChangelogMarkdown(commits, nextVersion, tagFormat);
       progress.complete("changelog", `${commitCount} entries`);
 
       // ── 9. Polish release notes (default, skip with --raw) ──────────────
@@ -385,7 +425,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         changelog = rawChangelog;
       } else {
         progress.activate("polish", "Polishing release notes");
-        const polishPrompt = buildPolishPrompt({ changelog: rawChangelog, version: nextVersion });
+        const polishPrompt = buildPolishPrompt({ changelog: rawChangelog, version: nextVersion, tagFormat });
         const polishResult = await runStructuredAgentSession(
           platform.createAgentSession.bind(platform),
           { cwd: ctx.cwd, prompt: polishPrompt },
@@ -408,16 +448,16 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       if (isResume) {
         notifyInfo(
           ctx,
-          `Resuming release v${nextVersion}`,
+          `Resuming release ${formatTag(nextVersion, tagFormat)}`,
           "Version staged and channels configured — proceeding without confirmation",
         );
       } else {
-        const confirmLabel = isDryRun ? `[DRY RUN] Ship v${nextVersion}?` : `Ship v${nextVersion}?`;
+        const confirmLabel = isDryRun ? `[DRY RUN] Ship ${formatTag(nextVersion, tagFormat)}?` : `Ship ${formatTag(nextVersion, tagFormat)}?`;
         // When skipBump=true, currentVersion === nextVersion — avoid the
         // misleading "0.5.0 → 0.5.0" display.
         const versionLine = skipBump
-          ? `v${nextVersion} (staged, not yet released)`
-          : `${currentVersion} → ${nextVersion}`;
+          ? `${formatTag(nextVersion, tagFormat)} (staged, not yet released)`
+          : `${currentVersion} \u2192 ${nextVersion}`;
         const confirmDetail = [
           versionLine,
           `Channels: ${channels.join(", ")}`,
@@ -449,6 +489,8 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           dryRun: isDryRun,
           skipBump,
           skipTag,
+          tagFormat,
+          customChannels,
           onProgress: progress.executorProgress(),
         });
 
@@ -489,7 +531,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           const prefix = isDryRun ? "[DRY RUN] " : "";
           notifySuccess(
             ctx,
-            `${prefix}Released v${nextVersion}`,
+            `${prefix}Released ${formatTag(nextVersion, tagFormat)}`,
             `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"} | ${channelSummary}`,
           );
         } else {
@@ -497,7 +539,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           const detail = result.error
             ? result.error
             : `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"}`;
-          notifyError(ctx, `Release v${nextVersion} failed`, detail);
+          notifyError(ctx, `Release ${formatTag(nextVersion, tagFormat)} failed`, detail);
         }
       } catch (err) {
         progress.fail("execute", err instanceof Error ? err.message : "Unknown error");
@@ -563,38 +605,64 @@ async function getLastTag(platform: Platform, cwd: string): Promise<string | nul
   }
 }
 
-async function setupChannels(platform: Platform, ctx: any): Promise<ReleaseChannel[]> {
-  const detected = await detectChannels(platform.exec.bind(platform), ctx.cwd);
-  const available = detected.filter((d) => d.available);
+async function setupChannels(
+  platform: Platform,
+  ctx: any,
+  detected: ChannelStatus[],
+): Promise<ReleaseChannel[]> {
+  const availableChannels = detected.filter((channel) => channel.available);
+  const unavailableChannels = detected.filter((channel) => !channel.available);
+  const unavailableSummary = unavailableChannels
+    .map((channel) => `${channel.channel}: ${channel.detail}`)
+    .join("; ");
 
-  // Build options — offer "both" when both channels are available
-  const options: string[] = [];
-  if (available.length === 2) {
-    options.push(`both — GitHub + npm (${available.map((d) => d.detail).join(", ")})`);
+  if (availableChannels.length === 0) {
+    const detail = unavailableSummary || "No release channels are currently available.";
+    ctx.ui.notify(`No release channels are currently available. ${detail}`, "warning");
+    return [];
   }
-  for (const d of detected) {
-    options.push(`${d.channel} — ${d.available ? d.detail : `unavailable (${d.detail})`}`);
-  }
-  options.push("skip — configure later");
 
-  const choice = await ctx.ui.select(
-    "Release Setup — Select publish channels",
-    options,
-    { helpText: "Which channels should releases be published to?" },
-  );
+  const channelOptions = buildSelectableReleaseChannelOptions(detected);
+  const helpText = unavailableSummary
+    ? `Select channels one at a time. Pick Done when finished. Unavailable: ${unavailableSummary}`
+    : "Select channels one at a time. Pick Done when finished.";
 
-  if (!choice || choice.startsWith("skip")) return [];
+  // Loop-based multi-select: user picks channels one at a time, "Done" to finish
+  const selected: ReleaseChannel[] = [];
 
-  let channels: ReleaseChannel[];
-  if (choice.startsWith("both")) {
-    channels = available.map((d) => d.channel);
-  } else {
-    channels = [choice.split(" — ")[0] as ReleaseChannel];
+  while (true) {
+    const remaining = channelOptions.filter(
+      (option) => !selected.includes(option.split(" — ")[0]),
+    );
+    const options = [
+      ...remaining,
+      ...(selected.length > 0 ? [`Done — selected: ${selected.join(", ")}`] : []),
+      "skip — configure later",
+    ];
+
+    const choice = await ctx.ui.select(
+      selected.length === 0
+        ? "Release Setup — Select publish channels"
+        : `Selected: ${selected.join(", ")} — add more or Done`,
+      options,
+      { helpText },
+    );
+
+    if (!choice || choice.startsWith("skip")) {
+      if (selected.length > 0) break; // keep what was selected
+      return [];
+    }
+    if (choice.startsWith("Done")) break;
+
+    const channelId = choice.split(" — ")[0];
+    if (!selected.includes(channelId)) {
+      selected.push(channelId);
+    }
   }
 
   // Persist to config
-  updateConfig(platform.paths, ctx.cwd, { release: { channels } });
-  ctx.ui.notify(`Release channels set to: ${channels.join(", ")}`, "info");
+  updateConfig(platform.paths, ctx.cwd, { release: { channels: selected } });
+  ctx.ui.notify(`Release channels set to: ${selected.join(", ")}`, "info");
 
-  return channels;
+  return selected;
 }
