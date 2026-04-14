@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, mock, beforeEach } from "bun:test";
 import {
   startPlanTracking,
   cancelPlanTracking,
@@ -10,45 +10,45 @@ import {
 // Minimal mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("../../src/storage/plans.js", () => ({
-  listPlans: vi.fn(),
-  readPlanFile: vi.fn(),
+mock.module("../../src/storage/plans.js", () => ({
+  listPlans: mock(),
+  readPlanFile: mock(),
 }));
 
 import { listPlans, readPlanFile } from "../../src/storage/plans.js";
 
-const mockListPlans = listPlans as unknown as ReturnType<typeof vi.fn>;
-const mockReadPlanFile = readPlanFile as unknown as ReturnType<typeof vi.fn>;
+const mockListPlans = listPlans as unknown as ReturnType<typeof mock>;
+const mockReadPlanFile = readPlanFile as unknown as ReturnType<typeof mock>;
 
 type MockPlatform = {
   paths: any;
-  on: ReturnType<typeof vi.fn>;
-  sendMessage: ReturnType<typeof vi.fn>;
-  sendUserMessage: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof mock>;
+  sendMessage: ReturnType<typeof mock>;
+  sendUserMessage: ReturnType<typeof mock>;
   fireAgentEnd: (ctx: any) => Promise<void>;
 };
 
 type MockCtx = {
   hasUI: boolean;
   ui: {
-    select: ReturnType<typeof vi.fn>;
-    input: ReturnType<typeof vi.fn>;
-    setEditorText: ReturnType<typeof vi.fn>;
-    notify: ReturnType<typeof vi.fn>;
+    select: ReturnType<typeof mock>;
+    input: ReturnType<typeof mock>;
+    setEditorText: ReturnType<typeof mock>;
+    notify: ReturnType<typeof mock>;
   };
-  newSession: ReturnType<typeof vi.fn>;
-  sendUserMessage: ReturnType<typeof vi.fn>;
+  newSession: ReturnType<typeof mock>;
+  sendUserMessage: ReturnType<typeof mock>;
 };
 
 function makePlatform(overrides: Partial<MockPlatform> = {}): MockPlatform {
   let hookedHandler: ((event: any, ctx: any) => Promise<void>) | null = null;
   const platform: MockPlatform = {
     paths: { dotDirDisplay: ".omp" } as any,
-    on: vi.fn((event: string, handler: any) => {
+    on: mock((event: string, handler: any) => {
       if (event === "agent_end") hookedHandler = handler;
     }),
-    sendMessage: vi.fn(),
-    sendUserMessage: vi.fn(),
+    sendMessage: mock(),
+    sendUserMessage: mock(),
     // Helper to fire the hook manually in tests
     fireAgentEnd: async (ctx: any) => {
       if (hookedHandler) await hookedHandler({}, ctx);
@@ -62,13 +62,13 @@ function makeCtx(overrides: Partial<MockCtx> = {}): MockCtx {
   return {
     hasUI: true,
     ui: {
-      select: vi.fn(),
-      input: vi.fn(),
-      setEditorText: vi.fn(),
-      notify: vi.fn(),
+      select: mock(),
+      input: mock(),
+      setEditorText: mock(),
+      notify: mock(),
     },
-    newSession: vi.fn().mockResolvedValue({}),
-    sendUserMessage: vi.fn(),
+    newSession: mock().mockResolvedValue({}),
+    sendUserMessage: mock(),
     ...overrides,
   };
 }
@@ -79,7 +79,8 @@ function makeCtx(overrides: Partial<MockCtx> = {}): MockCtx {
 
 beforeEach(() => {
   cancelPlanTracking();
-  vi.clearAllMocks();
+  mockListPlans.mockClear();
+  mockReadPlanFile.mockClear();
 });
 
 // ---------------------------------------------------------------------------
@@ -233,8 +234,8 @@ describe("Approve and execute", () => {
     // ctx without newSession (SDK/headless)
     const ctx = {
       hasUI: true,
-      ui: { select: vi.fn(), input: vi.fn(), setEditorText: vi.fn(), notify: vi.fn() },
-      sendUserMessage: vi.fn(),
+      ui: { select: mock(), input: mock(), setEditorText: mock(), notify: mock() },
+      sendUserMessage: mock(),
       // newSession intentionally absent
     };
     ctx.ui.select.mockResolvedValue("Approve and execute");
