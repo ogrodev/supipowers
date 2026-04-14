@@ -1,14 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { isInProgressRelease } from "../../src/commands/release.js";
-
-// ---------------------------------------------------------------------------
-// isInProgressRelease — guards the confirmation bypass in handleRelease
-// The rule: when the version should not be bumped (skipBump=true) AND
-// channels are already configured in config, re-running supi:release should
-// skip the "Ship v{version}?" dialog and proceed directly to execution.
-// skipBump=true covers two cases:
-//   1. No tag at all — version in package.json is unreleased
-//   2. Tag exists locally but not on remote — incomplete release (push failed)
+import {
+  buildSelectableReleaseChannelOptions,
+  findInvalidReleaseChannels,
+  isInProgressRelease,
+} from "../../src/commands/release.js";
+import type { ChannelStatus } from "../../src/release/channels/types.js";
 
 describe("isInProgressRelease", () => {
   test("unreleased version + pre-configured channels → resume (skip confirmation)", () => {
@@ -24,7 +20,6 @@ describe("isInProgressRelease", () => {
   });
 
   test("version already released → ask for bump (fresh release flow)", () => {
-    // skipBump=false means currentVersion already has a git tag; user must pick a new version
     expect(
       isInProgressRelease({ skipBump: false, channelsWerePreConfigured: true, isDryRun: false }),
     ).toBe(false);
@@ -37,17 +32,45 @@ describe("isInProgressRelease", () => {
   });
 
   test("dry-run always shows confirmation even when resuming", () => {
-    // --dry-run is exploratory; user explicitly wants to preview and confirm
     expect(
       isInProgressRelease({ skipBump: true, channelsWerePreConfigured: true, isDryRun: true }),
     ).toBe(false);
   });
 
   test("local-only tag (push failed) + pre-configured channels → resume", () => {
-    // Tag was created locally but push failed — the release command sets
-    // skipBump=true AND skipTag=true, so isInProgressRelease triggers resume
     expect(
       isInProgressRelease({ skipBump: true, channelsWerePreConfigured: true, isDryRun: false }),
     ).toBe(true);
+  });
+});
+
+describe("release channel validation", () => {
+  const detected: ChannelStatus[] = [
+    { channel: "github", available: true, detail: "Authenticated with GitHub CLI" },
+    { channel: "gitlab", available: false, detail: "GitLab CLI not authenticated" },
+    { channel: "npm", available: true, detail: "Custom detect command succeeded" },
+  ];
+
+  test("accepts configured channels that are known and available", () => {
+    expect(findInvalidReleaseChannels(["github", "npm"], detected)).toEqual([]);
+  });
+
+  test("reports unavailable configured channels before release side effects", () => {
+    expect(findInvalidReleaseChannels(["gitlab"], detected)).toEqual([
+      "gitlab: unavailable (GitLab CLI not authenticated)",
+    ]);
+  });
+
+  test("reports unknown configured channels before release side effects", () => {
+    expect(findInvalidReleaseChannels(["missing-channel"], detected)).toEqual([
+      "missing-channel: unknown channel",
+    ]);
+  });
+
+  test("only offers available channels for interactive selection", () => {
+    expect(buildSelectableReleaseChannelOptions(detected)).toEqual([
+      "github — Authenticated with GitHub CLI",
+      "npm — Custom detect command succeeded",
+    ]);
   });
 });

@@ -193,4 +193,34 @@ describe("buildSettings", () => {
     expect(saved.qa?.framework).toBe("npm-test");
     expect(saved.qa && "command" in saved.qa).toBe(false);
   });
+
+  test("release channels setting no longer offers npm selections", async () => {
+    const inspection: InspectionLoadResult = {
+      mergedConfig: DEFAULT_CONFIG as unknown as Record<string, unknown>,
+      effectiveConfig: DEFAULT_CONFIG,
+      parseErrors: [],
+      validationErrors: [],
+    };
+    const deps = {
+      inspectConfig: mock(() => inspection),
+      updateConfig: mock(updateConfig),
+      setupGates: mock(),
+      interactivelySaveGateSetup: mock(),
+      checkInstallation: mock(async () => ({ cliInstalled: false, mcpConfigured: false, toolsAvailable: false })),
+    };
+
+    const settings = buildSettings(platform, ctx, inspection, deps as any);
+    const releaseSetting = settings.find((setting) => setting.key === "release.channels");
+    if (!releaseSetting || !releaseSetting.options) throw new Error("Missing release.channels setting");
+
+    expect(releaseSetting.options).toEqual([
+      "not set — auto-detect on first /supi:release run",
+      "github — GitHub Release with gh CLI",
+    ]);
+
+    await releaseSetting.set(tmpDir, "github — GitHub Release with gh CLI");
+
+    const saved = readProjectConfig(localPaths, tmpDir) as { release?: { channels?: string[] } };
+    expect(saved.release?.channels).toEqual(["github"]);
+  });
 });
