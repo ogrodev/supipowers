@@ -142,15 +142,14 @@ function normalizeReleaseChannels(
 ): ReleaseChannel[] {
   if (Array.isArray(existingChannels)) {
     const channels = existingChannels.filter(
-      (channel): channel is ReleaseChannel => channel === "github" || channel === "npm",
+      (channel): channel is string => typeof channel === "string" && channel.length > 0,
     );
     if (channels.length > 0) {
       return [...new Set(channels)];
     }
   }
 
-  if (pipeline === "npm") return ["npm"];
-  if (pipeline === "github") return ["github"];
+  if (typeof pipeline === "string" && pipeline.length > 0) return [pipeline];
   return [];
 }
 
@@ -189,10 +188,16 @@ function migrateConfig(config: Record<string, unknown>): Record<string, unknown>
   }
 
   const release = asRecord(migrated.release);
-  if (release && ("pipeline" in release || "channels" in release)) {
-    const pipeline = typeof release.pipeline === "string" ? release.pipeline : null;
-    release.channels = normalizeReleaseChannels(release.channels, pipeline);
-    delete release.pipeline;
+  if (release) {
+    if ("pipeline" in release || "channels" in release) {
+      const pipeline = typeof release.pipeline === "string" ? release.pipeline : null;
+      release.channels = normalizeReleaseChannels(release.channels, pipeline);
+      delete release.pipeline;
+    }
+    // Strip legacy "npm" values that may linger in saved configs
+    if (Array.isArray(release.channels)) {
+      release.channels = (release.channels as string[]).filter((c) => c !== "npm");
+    }
     migrated.release = release;
   }
 
@@ -408,8 +413,25 @@ export function loadConfig(paths: PlatformPaths, cwd: string): SupipowersConfig 
   return result.effectiveConfig;
 }
 
+function assertValidConfig(data: unknown): void {
+  const validationErrors = collectConfigValidationErrors(data);
+
+  if (validationErrors.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    validationErrors
+      .map((error) => `${error.path}: ${error.message}`)
+      .join("\n"),
+  );
+}
+
+
 /** Save project-level config. */
 export function saveConfig(paths: PlatformPaths, cwd: string, config: SupipowersConfig): void {
+  assertValidConfig(config);
+
   const configPath = getProjectConfigPath(paths, cwd);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
@@ -426,15 +448,7 @@ export function updateConfig(
     structuredClone(current) as unknown as Record<string, unknown>,
     updates,
   );
-  const validationErrors = collectConfigValidationErrors(updated);
-
-  if (validationErrors.length > 0) {
-    throw new Error(
-      validationErrors
-        .map((error) => `${error.path}: ${error.message}`)
-        .join("\n"),
-    );
-  }
+  assertValidConfig(updated);
 
   saveConfig(paths, cwd, updated as unknown as SupipowersConfig);
   return updated as unknown as SupipowersConfig;

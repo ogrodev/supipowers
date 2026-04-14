@@ -5,6 +5,8 @@ import { Value } from "@sinclair/typebox/value";
 import type { SupipowersConfig } from "../types.js";
 import { QualityGatesSchema } from "../quality/schemas.js";
 
+const TAG_FORMAT_PATTERN = "^(?:(?!\\$\\{version\\}).)*\\$\\{version\\}(?:(?!\\$\\{version\\}).)*$";
+
 export const ConfigSchema = Type.Object(
   {
     version: Type.String(),
@@ -29,8 +31,17 @@ export const ConfigSchema = Type.Object(
     ),
     release: Type.Object(
       {
-        channels: Type.Array(
-          Type.Union([Type.Literal("github"), Type.Literal("npm")]),
+        channels: Type.Array(Type.String()),
+        tagFormat: Type.String({ pattern: TAG_FORMAT_PATTERN }),
+        customChannels: Type.Optional(
+          Type.Record(
+            Type.String(),
+            Type.Object({
+              label: Type.String(),
+              publishCommand: Type.String(),
+              detectCommand: Type.Optional(Type.String()),
+            }),
+          ),
         ),
       },
       { additionalProperties: false },

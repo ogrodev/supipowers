@@ -15,6 +15,8 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   },
   release: {
     channels: [],
+    tagFormat: "v${version}",
+    customChannels: {},
   },
   contextMode: {
     enabled: true,
