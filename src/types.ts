@@ -103,6 +103,12 @@ export type ReviewValidationVerdict = "confirmed" | "rejected" | "uncertain";
 /** Review session lifecycle status */
 export type ReviewSessionStatus = "running" | "completed" | "blocked" | "cancelled";
 
+/** User decision after reviewing consolidated/current findings */
+export type ReviewPostConsolidationAction =
+  | "fix-now"
+  | "document-only"
+  | "discuss-before-fixing";
+
 /** File-level diff summary within a review scope */
 export interface ReviewScopeFile {
   path: string;
@@ -229,6 +235,7 @@ export interface ReviewSessionArtifacts {
   rawFindings?: string;
   validatedFindings?: string;
   consolidatedFindings?: string;
+  findingsReport?: string;
 }
 
 /** Persisted /supi:review session metadata */
@@ -241,7 +248,7 @@ export interface ReviewSession {
   scope: ReviewScope;
   validateFindings: boolean;
   consolidate: boolean;
-  autoFix: boolean;
+  postConsolidationAction: ReviewPostConsolidationAction | null;
   maxIterations: number;
   currentIteration: number;
   iterations: ReviewIterationSummary[];
@@ -343,8 +350,18 @@ export type SetupGatesResult =
 /** Semantic version bump type */
 export type BumpType = "major" | "minor" | "patch";
 
-/** Release channel target */
-export type ReleaseChannel = "github" | "npm";
+/** Release channel target (built-in IDs or user-defined custom channel IDs) */
+export type ReleaseChannel = string;
+
+/** User-defined custom release channel configuration */
+export interface CustomChannelConfig {
+  /** Display name shown in the channel selection UI */
+  label: string;
+  /** Shell command template with ${tag}, ${version}, ${changelog} placeholders */
+  publishCommand: string;
+  /** Shell command to detect availability — exit code 0 means available. When omitted, always available. */
+  detectCommand?: string;
+}
 
 /** A single parsed commit entry */
 export interface CommitEntry {
@@ -462,6 +479,10 @@ export interface SupipowersConfig {
   };
   release: {
     channels: ReleaseChannel[];
+    /** Tag format template. Use ${version} as placeholder. Default: "v${version}" */
+    tagFormat: string;
+    /** User-defined custom release channels keyed by channel ID */
+    customChannels: Record<string, CustomChannelConfig>;
   };
   contextMode: ContextModeConfig;
   mcp: McpManagementConfig;

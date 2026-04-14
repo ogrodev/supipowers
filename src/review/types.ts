@@ -11,13 +11,13 @@ import type {
   ReviewFixRecord,
   ReviewIterationSummary,
   ReviewOutput,
+  ReviewPostConsolidationAction,
   ReviewScope,
   ReviewScopeFile,
   ReviewScopeStats,
   ReviewSession,
   ReviewSessionArtifacts,
 } from "../types.js";
-
 export type {
   ConfiguredReviewAgent,
   ReviewAgentConfig,
@@ -28,13 +28,13 @@ export type {
   ReviewFixRecord,
   ReviewIterationSummary,
   ReviewOutput,
+  ReviewPostConsolidationAction,
   ReviewScope,
   ReviewScopeFile,
   ReviewScopeStats,
   ReviewSession,
   ReviewSessionArtifacts,
 } from "../types.js";
-
 export const REVIEW_LEVELS = ["quick", "deep", "multi-agent"] as const;
 export const REVIEW_SCOPE_MODES = ["pull-request", "uncommitted", "commit", "custom"] as const;
 export const REVIEW_OUTPUT_STATUSES = ["passed", "failed", "blocked"] as const;
@@ -42,6 +42,7 @@ export const REVIEW_FINDING_SEVERITIES = ["error", "warning", "info"] as const;
 export const REVIEW_FINDING_PRIORITIES = ["P0", "P1", "P2", "P3"] as const;
 export const REVIEW_VALIDATION_VERDICTS = ["confirmed", "rejected", "uncertain"] as const;
 export const REVIEW_SESSION_STATUSES = ["running", "completed", "blocked", "cancelled"] as const;
+export const REVIEW_POST_CONSOLIDATION_ACTIONS = ["fix-now", "document-only", "discuss-before-fixing"] as const;
 export const REVIEW_FIX_STATUSES = ["applied", "skipped", "failed"] as const;
 
 export const ReviewScopeFileSchema = Type.Object(
@@ -182,6 +183,7 @@ export const ReviewSessionArtifactsSchema = Type.Object(
     rawFindings: Type.Optional(Type.String({ minLength: 1 })),
     validatedFindings: Type.Optional(Type.String({ minLength: 1 })),
     consolidatedFindings: Type.Optional(Type.String({ minLength: 1 })),
+    findingsReport: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
 );
@@ -196,7 +198,10 @@ export const ReviewSessionSchema = Type.Object(
     scope: ReviewScopeSchema,
     validateFindings: Type.Boolean(),
     consolidate: Type.Boolean(),
-    autoFix: Type.Boolean(),
+    postConsolidationAction: Type.Union([
+      Type.Union(REVIEW_POST_CONSOLIDATION_ACTIONS.map((value) => Type.Literal(value))),
+      Type.Null(),
+    ]),
     maxIterations: Type.Number({ minimum: 0 }),
     currentIteration: Type.Number({ minimum: 0 }),
     iterations: Type.Array(ReviewIterationSummarySchema),
