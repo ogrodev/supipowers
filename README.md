@@ -23,7 +23,7 @@ Run the interactive installer:
 bunx supipowers
 ```
 
-The installer detects your agent, registers the extension, removes legacy external context-mode MCP registrations, and can install missing optional tooling such as LSP servers, `mcpc`, and Playwright CLI.
+The installer detects Pi (`~/.pi`) and OMP (`~/.omp`) — when both are present it offers a multiselect to install to one or both. It registers the extension, removes legacy external context-mode MCP registrations from `agent/mcp.json` and cleans up the old `settings/mcp.json` if present, and can install missing optional tooling such as LSP servers, `mcpc`, and Playwright CLI.
 
 > [!TIP]
 > Run `/supi:update` at any time to upgrade to the latest version, or `/supi:doctor` to check your setup.
@@ -158,6 +158,15 @@ Configuration is a three-layer deep-merge (lowest to highest priority):
 ## Release channels
 
 Three built-in channels are available: `github` (GitHub Release via `gh` CLI), `gitlab` (GitLab Release via `glab` CLI), and `gitea` (Gitea Release via `tea` CLI). Channels are selected per-project in `release.channels`.
+
+Release notes are generated from conventional commits scoped to the paths listed in `package.json`'s `files` field — commits touching files outside those paths are excluded.
+
+`/supi:release` accepts two optional flags:
+
+| Flag | Effect |
+| ----------- | ------ |
+| `--raw` | Skip AI polish of release notes; use raw conventional-commit output |
+| `--dry-run` | Run the full release flow without publishing |
 
 Custom channels can be defined in `release.customChannels`:
 
