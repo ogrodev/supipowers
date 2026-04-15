@@ -29,9 +29,9 @@ const DEFAULT_AGENT_TEMPLATES: Record<string, string> = {
 };
 
 const DEFAULT_REVIEW_AGENTS_CONFIG: ReviewAgentConfig[] = [
-  { name: "security", enabled: true, data: "security.md", model: null },
-  { name: "correctness", enabled: true, data: "correctness.md", model: null },
-  { name: "maintainability", enabled: true, data: "maintainability.md", model: null },
+  { name: "security", enabled: true, data: "security.md", model: null, thinkingLevel: "low" },
+  { name: "correctness", enabled: true, data: "correctness.md", model: null, thinkingLevel: "low" },
+  { name: "maintainability", enabled: true, data: "maintainability.md", model: null, thinkingLevel: "low" },
 ];
 
 export interface LoadedReviewAgents {
@@ -41,17 +41,37 @@ export interface LoadedReviewAgents {
   agents: ConfiguredReviewAgent[];
 }
 
-function buildDefaultConfigText(): string {
+const CONFIG_HEADER = [
+  "# Review Agents Configuration",
+  "#",
+  "# Options:",
+  "#   name:          string   - agent identifier (kebab-case)",
+  "#   enabled:       boolean  - true | false",
+  "#   data:          string   - markdown file name in the agents directory",
+  "#   model:         string   - model id (e.g. \"anthropic/claude-sonnet-4-20250514\") or null to inherit",
+  "#   thinkingLevel: string   - off | minimal | low | medium | high | xhigh | null to inherit",
+  "#",
+].join("\n");
+
+function serializeConfigYaml(agents: ReviewAgentConfig[]): string {
   return [
+    CONFIG_HEADER,
+    "",
     "agents:",
-    ...DEFAULT_REVIEW_AGENTS_CONFIG.flatMap((agent) => [
-      `  - name: ${agent.name}`,
-      `    enabled: ${agent.enabled}`,
-      `    data: ${agent.data}`,
-      "    model: null",
+    ...agents.flatMap((a, i) => [
+      ...(i > 0 ? [""] : []),
+      `  - name: ${a.name}`,
+      `    enabled: ${a.enabled}`,
+      `    data: ${a.data}`,
+      `    model: ${a.model ?? "null"}`,
+      `    thinkingLevel: ${a.thinkingLevel ?? "null"}`,
     ]),
     "",
   ].join("\n");
+}
+
+function buildDefaultConfigText(): string {
+  return serializeConfigYaml(DEFAULT_REVIEW_AGENTS_CONFIG);
 }
 
 function writeIfMissing(filePath: string, content: string): void {
@@ -60,6 +80,51 @@ function writeIfMissing(filePath: string, content: string): void {
   }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content);
+}
+
+/**
+ * Migrate pre-existing config.yml files:
+ *  - adds the comment header if missing
+ *  - backfills thinkingLevel on agents that lack it
+ */
+function migrateConfigIfNeeded(configPath: string): void {
+  if (!fs.existsSync(configPath)) return;
+
+  const raw = fs.readFileSync(configPath, "utf-8");
+  if (raw.startsWith("# Review Agents Configuration")) return;
+
+  // Parse the bare YAML by hand — we only need name/enabled/data/model/thinkingLevel.
+  // The file is small and always has the same shape.
+  const agents: ReviewAgentConfig[] = [];
+  let current: Partial<ReviewAgentConfig> | null = null;
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- name:")) {
+      if (current?.name) agents.push(current as ReviewAgentConfig);
+      current = { name: trimmed.slice("- name:".length).trim() };
+    } else if (current && trimmed.startsWith("enabled:")) {
+      current.enabled = trimmed.slice("enabled:".length).trim() === "true";
+    } else if (current && trimmed.startsWith("data:")) {
+      current.data = trimmed.slice("data:".length).trim();
+    } else if (current && trimmed.startsWith("model:")) {
+      const val = trimmed.slice("model:".length).trim();
+      current.model = val === "null" ? null : val;
+    } else if (current && trimmed.startsWith("thinkingLevel:")) {
+      const val = trimmed.slice("thinkingLevel:".length).trim();
+      current.thinkingLevel = val === "null" ? null : (val as any);
+    }
+  }
+  if (current?.name) agents.push(current as ReviewAgentConfig);
+
+  // Backfill thinkingLevel for agents that didn't have it
+  for (const agent of agents) {
+    if (agent.thinkingLevel === undefined) {
+      agent.thinkingLevel = null;
+    }
+  }
+
+  fs.writeFileSync(configPath, serializeConfigYaml(agents));
 }
 
 function validateReviewAgentsConfig(data: unknown): ReviewAgentsConfig {
@@ -145,6 +210,7 @@ export function ensureDefaultReviewAgents(paths: PlatformPaths, cwd: string): vo
 
   // Default agent markdown files are installed globally only.
   writeIfMissing(getReviewAgentsConfigPath(paths, cwd), buildDefaultConfigText());
+  migrateConfigIfNeeded(getReviewAgentsConfigPath(paths, cwd));
 }
 
 export async function loadReviewAgentsConfig(paths: PlatformPaths, cwd: string): Promise<ReviewAgentsConfig> {
@@ -183,6 +249,7 @@ export async function loadReviewAgents(paths: PlatformPaths, cwd: string): Promi
         enabled: agent.enabled,
         data: agent.data,
         model: agent.model,
+        thinkingLevel: agent.thinkingLevel ?? null,
       } satisfies ConfiguredReviewAgent;
     });
 
@@ -213,6 +280,7 @@ export function ensureGlobalDefaultReviewAgents(paths: PlatformPaths): void {
   }
 
   writeIfMissing(getGlobalReviewAgentsConfigPath(paths), buildDefaultConfigText());
+  migrateConfigIfNeeded(getGlobalReviewAgentsConfigPath(paths));
 }
 
 export async function loadGlobalReviewAgentsConfig(paths: PlatformPaths): Promise<ReviewAgentsConfig> {
@@ -245,6 +313,7 @@ export async function loadGlobalReviewAgents(paths: PlatformPaths): Promise<Load
         enabled: agent.enabled,
         data: agent.data,
         model: agent.model,
+        thinkingLevel: agent.thinkingLevel ?? null,
         scope: "global" as const,
       } satisfies ConfiguredReviewAgent;
     });
@@ -321,15 +390,5 @@ export async function addAgentToConfig(
     config.agents.push(agent);
   }
 
-  const text = [
-    "agents:",
-    ...config.agents.flatMap((a) => [
-      `  - name: ${a.name}`,
-      `    enabled: ${a.enabled}`,
-      `    data: ${a.data}`,
-      `    model: ${a.model ?? "null"}`,
-    ]),
-    "",
-  ].join("\n");
-  fs.writeFileSync(configPath, text);
+  fs.writeFileSync(configPath, serializeConfigYaml(config.agents));
 }
