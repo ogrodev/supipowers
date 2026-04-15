@@ -35,7 +35,7 @@ function writeAgentMarkdown(dir: string, fileName: string, name: string, descrip
   fs.writeFileSync(path.join(dir, fileName), content);
 }
 
-function writeConfigYaml(dir: string, agents: Array<{ name: string; enabled: boolean; data: string; model: string | null }>): void {
+function writeConfigYaml(dir: string, agents: Array<{ name: string; enabled: boolean; data: string; model: string | null; thinkingLevel?: string | null }>): void {
   fs.mkdirSync(dir, { recursive: true });
   const lines = [
     "agents:",
@@ -44,6 +44,7 @@ function writeConfigYaml(dir: string, agents: Array<{ name: string; enabled: boo
       `    enabled: ${a.enabled}`,
       `    data: ${a.data}`,
       `    model: ${a.model ?? "null"}`,
+      ...(a.thinkingLevel !== undefined ? [`    thinkingLevel: ${a.thinkingLevel ?? "null"}`] : []),
     ]),
     "",
   ];
@@ -339,6 +340,7 @@ describe("addAgentToConfig", () => {
       enabled: true,
       data: "perf.md",
       model: "anthropic/claude-sonnet-4-20250514",
+      thinkingLevel: null,
     });
 
     const content = fs.readFileSync(configPath, "utf-8");
@@ -359,6 +361,7 @@ describe("addAgentToConfig", () => {
       enabled: false,
       data: "security-v2.md",
       model: "openai/gpt-4o",
+      thinkingLevel: null,
     });
 
     const content = fs.readFileSync(configPath, "utf-8");
@@ -367,5 +370,184 @@ describe("addAgentToConfig", () => {
     expect(matches?.length).toBe(1);
     expect(content).toContain("data: security-v2.md");
     expect(content).toContain("enabled: false");
+  });
+
+  describe("thinkingLevel support", () => {
+    test("serializes thinkingLevel in config YAML", async () => {
+      const configPath = path.join(tmpDir, "config.yml");
+      writeConfigYaml(tmpDir, [
+        { name: "security", enabled: true, data: "security.md", model: null },
+      ]);
+
+      await addAgentToConfig(configPath, {
+        name: "perf",
+        enabled: true,
+        data: "perf.md",
+        model: null,
+        thinkingLevel: "high",
+      });
+
+      const content = fs.readFileSync(configPath, "utf-8");
+      expect(content).toContain("thinkingLevel: high");
+    });
+
+    test("serializes null thinkingLevel as 'null'", async () => {
+      const configPath = path.join(tmpDir, "config.yml");
+      writeConfigYaml(tmpDir, []);
+
+      await addAgentToConfig(configPath, {
+        name: "test-agent",
+        enabled: true,
+        data: "test.md",
+        model: null,
+        thinkingLevel: null,
+      });
+
+      const content = fs.readFileSync(configPath, "utf-8");
+      expect(content).toContain("thinkingLevel: null");
+    });
+  });
+});
+
+describe("thinkingLevel backward compatibility", () => {
+  let tmpDir: string;
+  let paths: PlatformPaths;
+  let projectDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-thinking-compat-test-"));
+    paths = createTestPaths(tmpDir);
+    projectDir = path.join(tmpDir, "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("config without thinkingLevel field loads successfully", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    writeConfigYaml(agentsDir, [
+      { name: "a1", enabled: true, data: "a1.md", model: null },
+      { name: "a2", enabled: true, data: "a2.md", model: "openai/gpt-4o" },
+    ]);
+    writeAgentMarkdown(agentsDir, "a1.md", "a1", "Agent one", null, "Do things.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "a2.md", "a2", "Agent two", "perf", "Do other things.\n\n{output_instructions}");
+
+    const result = await loadReviewAgents(paths, projectDir);
+    const a1 = result.agents.find((a) => a.name === "a1");
+    const a2 = result.agents.find((a) => a.name === "a2");
+    expect(a1).toBeDefined();
+    expect(a2).toBeDefined();
+    expect(a1!.thinkingLevel).toBeNull();
+    expect(a2!.thinkingLevel).toBeNull();
+  });
+
+  test("config with thinkingLevel values loads correctly", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    fs.mkdirSync(agentsDir, { recursive: true });
+    const configContent = [
+      "agents:",
+      "  - name: a1",
+      "    enabled: true",
+      "    data: a1.md",
+      "    model: null",
+      "    thinkingLevel: high",
+      "  - name: a2",
+      "    enabled: true",
+      "    data: a2.md",
+      "    model: null",
+      "    thinkingLevel: null",
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(agentsDir, "config.yml"), configContent);
+    writeAgentMarkdown(agentsDir, "a1.md", "a1", "Agent one", null, "Do things.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "a2.md", "a2", "Agent two", null, "Do other things.\n\n{output_instructions}");
+
+    const result = await loadReviewAgents(paths, projectDir);
+    const a1 = result.agents.find((a) => a.name === "a1");
+    const a2 = result.agents.find((a) => a.name === "a2");
+    expect(a1).toBeDefined();
+    expect(a2).toBeDefined();
+    expect(a1!.thinkingLevel).toBe("high");
+    expect(a2!.thinkingLevel).toBeNull();
+  });
+
+  test("buildDefaultConfigText includes thinkingLevel and comment header", async () => {
+    const result = await loadReviewAgents(paths, projectDir);
+    expect(result.agents.length).toBeGreaterThan(0);
+
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    const configContent = fs.readFileSync(path.join(agentsDir, "config.yml"), "utf-8");
+    expect(configContent).toContain("thinkingLevel: low");
+    expect(configContent).toContain("# Review Agents Configuration");
+    expect(configContent).toContain("#   thinkingLevel: string");
+  });
+
+  test("migrates pre-existing config without header or thinkingLevel", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    fs.mkdirSync(agentsDir, { recursive: true });
+
+    // Write a legacy config without comment header or thinkingLevel field
+    const legacyConfig = [
+      "agents:",
+      "  - name: sec",
+      "    enabled: true",
+      "    data: sec.md",
+      "    model: null",
+      "  - name: perf",
+      "    enabled: true",
+      "    data: perf.md",
+      "    model: openai/gpt-4o",
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(agentsDir, "config.yml"), legacyConfig);
+    writeAgentMarkdown(agentsDir, "sec.md", "sec", "Security", null, "Review.\n\n{output_instructions}");
+    writeAgentMarkdown(agentsDir, "perf.md", "perf", "Performance", null, "Review.\n\n{output_instructions}");
+
+    // Loading triggers the migration
+    const result = await loadReviewAgents(paths, projectDir);
+
+    // Verify agents loaded with thinkingLevel backfilled to null
+    const sec = result.agents.find((a) => a.name === "sec");
+    const perf = result.agents.find((a) => a.name === "perf");
+    expect(sec).toBeDefined();
+    expect(perf).toBeDefined();
+    expect(sec!.thinkingLevel).toBeNull();
+    expect(perf!.thinkingLevel).toBeNull();
+    expect(perf!.model).toBe("openai/gpt-4o");
+
+    // Verify the file was rewritten with header and thinkingLevel
+    const migrated = fs.readFileSync(path.join(agentsDir, "config.yml"), "utf-8");
+    expect(migrated).toStartWith("# Review Agents Configuration");
+    expect(migrated).toContain("thinkingLevel: null");
+    expect(migrated).toContain("model: openai/gpt-4o");
+  });
+
+  test("does not rewrite config that already has header", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    fs.mkdirSync(agentsDir, { recursive: true });
+
+    // Write a config that already has the header
+    const modernConfig = [
+      "# Review Agents Configuration",
+      "#",
+      "",
+      "agents:",
+      "  - name: sec",
+      "    enabled: true",
+      "    data: sec.md",
+      "    model: null",
+      "    thinkingLevel: high",
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(agentsDir, "config.yml"), modernConfig);
+    writeAgentMarkdown(agentsDir, "sec.md", "sec", "Security", null, "Review.\n\n{output_instructions}");
+
+    await loadReviewAgents(paths, projectDir);
+
+    // File should be unchanged — migration skipped
+    const content = fs.readFileSync(path.join(agentsDir, "config.yml"), "utf-8");
+    expect(content).toBe(modernConfig);
   });
 });
