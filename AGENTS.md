@@ -33,7 +33,7 @@ OMP Runtime
     ├── src/config/           ← three-layer config loading (defaults → global → project)
     ├── src/platform/         ← platform abstraction (OMP adapter, types, progress, TUI colors)
     ├── src/storage/          ← markdown/JSON persistence (.omp/supipowers/)
-    ├── src/quality/          ← composable check runner (lsp-diagnostics, lint, typecheck, test-suite, build)
+    ├── src/quality/          ← composable check runner (lsp-diagnostics, lint, typecheck, test-suite, build, format)
     ├── src/review/           ← AI review pipeline (scope, runners, validation, fixing, consolidation)
     ├── src/planning/         ← plan approval UI flow (agent_end hook)
     ├── src/notifications/    ← notification rendering and emission
