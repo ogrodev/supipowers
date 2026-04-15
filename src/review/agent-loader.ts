@@ -143,14 +143,12 @@ export function ensureDefaultReviewAgents(paths: PlatformPaths, cwd: string): vo
   const agentsDir = getReviewAgentsDir(paths, cwd);
   fs.mkdirSync(agentsDir, { recursive: true });
 
-  for (const [fileName, content] of Object.entries(DEFAULT_AGENT_TEMPLATES)) {
-    writeIfMissing(path.join(agentsDir, fileName), content);
-  }
-
+  // Default agent markdown files are installed globally only.
   writeIfMissing(getReviewAgentsConfigPath(paths, cwd), buildDefaultConfigText());
 }
 
 export async function loadReviewAgentsConfig(paths: PlatformPaths, cwd: string): Promise<ReviewAgentsConfig> {
+  ensureGlobalDefaultReviewAgents(paths);
   ensureDefaultReviewAgents(paths, cwd);
   return validateReviewAgentsConfig(await importYamlFile(getReviewAgentsConfigPath(paths, cwd)));
 }
@@ -158,20 +156,25 @@ export async function loadReviewAgentsConfig(paths: PlatformPaths, cwd: string):
 export async function loadReviewAgents(paths: PlatformPaths, cwd: string): Promise<LoadedReviewAgents> {
   const agentsDir = getReviewAgentsDir(paths, cwd);
   const configPath = getReviewAgentsConfigPath(paths, cwd);
+  const globalAgentsDir = getGlobalReviewAgentsDir(paths);
   const config = await loadReviewAgentsConfig(paths, cwd);
 
   const agents = config.agents
     .filter((agent) => agent.enabled)
     .map((agent) => {
-      const filePath = path.join(agentsDir, agent.data);
+      const projectFilePath = path.join(agentsDir, agent.data);
+      const globalFilePath = path.join(globalAgentsDir, agent.data);
+      const filePath = fs.existsSync(projectFilePath) ? projectFilePath : globalFilePath;
       if (!fs.existsSync(filePath)) {
-        throw new Error(`Configured review agent file does not exist: ${filePath}`);
+        throw new Error(
+          `Configured review agent file does not exist in project or global scope: ${agent.data}`
+        );
       }
 
       const definition = parseReviewAgentMarkdown(fs.readFileSync(filePath, "utf-8"), filePath);
       if (definition.name !== agent.name) {
         throw new Error(
-          `Configured agent name \"${agent.name}\" does not match frontmatter name \"${definition.name}\" in ${filePath}.`,
+          `Configured agent name "${agent.name}" does not match frontmatter name "${definition.name}" in ${filePath}.`,
         );
       }
 
@@ -263,15 +266,16 @@ export async function loadMergedReviewAgents(
   const globalResult = await loadGlobalReviewAgents(paths);
   const projectResult = await loadReviewAgents(paths, cwd);
 
+  // Project config is authoritative: any agent named in the project config
+  // (enabled or disabled) shadows the global version with the same name.
+  const projectConfigNames = new Set(projectResult.config.agents.map((a) => a.name));
+  const uniqueGlobalAgents = globalResult.agents.filter((a) => !projectConfigNames.has(a.name));
+
   // Tag project agents with scope
   const projectAgents = projectResult.agents.map((agent) => ({
     ...agent,
     scope: "project" as const,
   }));
-
-  // Project agents override global agents with the same name
-  const projectNames = new Set(projectAgents.map((a) => a.name));
-  const uniqueGlobalAgents = globalResult.agents.filter((a) => !projectNames.has(a.name));
 
   return {
     agentsDir: projectResult.agentsDir,

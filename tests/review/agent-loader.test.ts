@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   loadReviewAgents,
+  loadReviewAgentsConfig,
   loadGlobalReviewAgents,
   loadMergedReviewAgents,
   writeAgentFile,
@@ -70,6 +71,16 @@ describe("loadReviewAgents", () => {
     expect(result.agents.length).toBe(3);
     const names = result.agents.map((a) => a.name).sort();
     expect(names).toEqual(["correctness", "maintainability", "security"]);
+
+    const projectAgentsDir = getReviewAgentsDir(paths, projectDir);
+    expect(fs.existsSync(path.join(projectAgentsDir, "security.md"))).toBe(false);
+    expect(fs.existsSync(path.join(projectAgentsDir, "correctness.md"))).toBe(false);
+    expect(fs.existsSync(path.join(projectAgentsDir, "maintainability.md"))).toBe(false);
+
+    const globalAgentsDir = getGlobalReviewAgentsDir(paths);
+    expect(fs.existsSync(path.join(globalAgentsDir, "security.md"))).toBe(true);
+    expect(fs.existsSync(path.join(globalAgentsDir, "correctness.md"))).toBe(true);
+    expect(fs.existsSync(path.join(globalAgentsDir, "maintainability.md"))).toBe(true);
   });
 
   test("loads all 4 project agents when custom agent is added to config", async () => {
@@ -122,6 +133,19 @@ describe("loadReviewAgents", () => {
     expect(result.agents.map((a) => a.name).sort()).toEqual([
       "correctness", "maintainability", "performance-auditor", "security",
     ]);
+  });
+
+  test("creates project config without creating local default markdown files", async () => {
+    const config = await loadReviewAgentsConfig(paths, projectDir);
+    expect(config.agents.map((agent) => agent.name).sort()).toEqual([
+      "correctness", "maintainability", "security",
+    ]);
+
+    const projectAgentsDir = getReviewAgentsDir(paths, projectDir);
+    expect(fs.existsSync(path.join(projectAgentsDir, "config.yml"))).toBe(true);
+    expect(fs.existsSync(path.join(projectAgentsDir, "security.md"))).toBe(false);
+    expect(fs.existsSync(path.join(projectAgentsDir, "correctness.md"))).toBe(false);
+    expect(fs.existsSync(path.join(projectAgentsDir, "maintainability.md"))).toBe(false);
   });
 });
 
@@ -217,6 +241,34 @@ describe("loadMergedReviewAgents", () => {
     const securityAgents = result.agents.filter((a) => a.name === "security");
     expect(securityAgents.length).toBe(1);
     expect(securityAgents[0].scope).toBe("project");
+  });
+
+  test("project-disabled agent shadows globally-enabled agent", async () => {
+    // Global has "security" agent enabled
+    const globalDir = getGlobalReviewAgentsDir(paths);
+    writeAgentMarkdown(globalDir, "security.md", "security", "Global security", null, "Global security prompt.\n\n{output_instructions}");
+    writeConfigYaml(globalDir, [
+      { name: "security", enabled: true, data: "security.md", model: null },
+    ]);
+
+    // Project disables "security" explicitly
+    const projectAgentsDir = getReviewAgentsDir(paths, projectDir);
+    writeAgentMarkdown(projectAgentsDir, "security.md", "security", "Project security", null, "Project security prompt.\n\n{output_instructions}");
+    writeConfigYaml(projectAgentsDir, [
+      { name: "security", enabled: false, data: "security.md", model: null },
+      { name: "correctness", enabled: true, data: "correctness.md", model: null },
+      { name: "maintainability", enabled: true, data: "maintainability.md", model: null },
+    ]);
+
+    const result = await loadMergedReviewAgents(paths, projectDir);
+
+    // "security" must not appear — disabled in project config shadows global
+    const securityAgents = result.agents.filter((a) => a.name === "security");
+    expect(securityAgents.length).toBe(0);
+
+    // Other project agents still present
+    expect(result.agents.map((a) => a.name)).toContain("correctness");
+    expect(result.agents.map((a) => a.name)).toContain("maintainability");
   });
 });
 
