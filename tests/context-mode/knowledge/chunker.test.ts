@@ -167,4 +167,38 @@ describe("chunkMarkdown", () => {
     expect(codeChunk!.body).toContain("Y".repeat(1000));
     expect(codeChunk!.body).toContain("Z".repeat(1000));
   });
+
+  test("oversized section with no paragraph boundaries → force-split at line boundaries", () => {
+    // Build a section with many short lines totaling >4KB but no blank-line paragraph separators
+    const lines = Array.from({ length: 200 }, (_, i) => `line-${i}: ${'x'.repeat(30)}`);
+    const input = `# Dense\n${lines.join('\n')}`;
+    const result = chunkMarkdown(input, "s");
+    expect(result.length).toBeGreaterThan(1);
+    for (const chunk of result) {
+      expect(chunk.body.length).toBeLessThanOrEqual(4096);
+    }
+  });
+
+  test("oversized section with no newlines at all → force-split at character boundary", () => {
+    // Single continuous string with no line breaks — must still be capped
+    const blob = 'A'.repeat(20000);
+    const input = `# Blob\n${blob}`;
+    const result = chunkMarkdown(input, "s");
+    expect(result.length).toBeGreaterThan(1);
+    for (const chunk of result) {
+      expect(chunk.body.length).toBeLessThanOrEqual(4096);
+    }
+    // All content is preserved
+    const total = result.reduce((sum, c) => sum + c.body.length, 0);
+    expect(total).toBe(20000);
+  });
+
+  test("no headings + oversized text → multiple capped chunks", () => {
+    const blob = Array.from({ length: 500 }, (_, i) => `entry-${i}: ${'data'.repeat(10)}`).join('\n');
+    const result = chunkMarkdown(blob, "log");
+    expect(result.length).toBeGreaterThan(1);
+    for (const chunk of result) {
+      expect(chunk.body.length).toBeLessThanOrEqual(4096);
+    }
+  });
 });

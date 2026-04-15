@@ -140,15 +140,16 @@ function classifyContent(body: string): "code" | "prose" {
 
 /**
  * Split oversized body at paragraph boundaries (\n\n), never breaking inside code fences.
- * Returns parts each ≤ MAX_CHUNK_SIZE (best effort — a single paragraph exceeding the limit is kept whole).
+ * Hard-caps every part at MAX_CHUNK_SIZE — if no paragraph boundary fits, force-splits at
+ * line boundaries (or raw character offset as last resort).
  */
 function splitOversized(body: string): string[] {
   // Identify paragraph boundaries that are outside code fences
   const splitPoints = findSafeSplitPoints(body);
 
   if (splitPoints.length === 0) {
-    // No safe split points — return as single part
-    return [body];
+    // No safe split points — force-split at line or character boundaries
+    return hardSplit(body);
   }
 
   const parts: string[] = [];
@@ -193,6 +194,44 @@ function splitOversized(body: string): string[] {
     }
   }
 
+  // Hard-cap: any part still exceeding MAX_CHUNK_SIZE gets force-split
+  return parts.flatMap(hardSplit);
+}
+
+/**
+ * Force-split text into parts of at most MAX_CHUNK_SIZE.
+ * Prefers splitting at line boundaries; falls back to raw character offset.
+ */
+function hardSplit(text: string): string[] {
+  if (text.length <= MAX_CHUNK_SIZE) return [text];
+
+  const parts: string[] = [];
+  const lines = text.split("\n");
+  let current = "";
+
+  for (const line of lines) {
+    // If a single line exceeds the limit, chop it at character boundaries
+    if (line.length > MAX_CHUNK_SIZE) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      for (let i = 0; i < line.length; i += MAX_CHUNK_SIZE) {
+        parts.push(line.slice(i, i + MAX_CHUNK_SIZE));
+      }
+      continue;
+    }
+
+    const sep = current ? "\n" : "";
+    if (current.length + sep.length + line.length > MAX_CHUNK_SIZE) {
+      if (current) parts.push(current);
+      current = line;
+    } else {
+      current = current + sep + line;
+    }
+  }
+
+  if (current) parts.push(current);
   return parts;
 }
 

@@ -15,6 +15,25 @@ import { fetchAndIndex } from "./web/fetcher.js";
 /** Threshold (bytes) above which intent-driven filtering kicks in. */
 const INTENT_THRESHOLD = 5 * 1024;
 
+/**
+ * Hard cap on tool response text. Prevents oversized responses from
+ * exceeding model API limits (10MB). Leaves generous headroom.
+ */
+const MAX_RESPONSE_SIZE = 100 * 1024; // 100KB
+
+/** Truncate tool response text to MAX_RESPONSE_SIZE with a follow-up hint. */
+function capResponseSize(text: string): string {
+  if (text.length <= MAX_RESPONSE_SIZE) return text;
+  const truncated = text.slice(0, MAX_RESPONSE_SIZE);
+  // Cut at last newline to avoid mid-line truncation
+  const lastNewline = truncated.lastIndexOf("\n");
+  const clean = lastNewline > MAX_RESPONSE_SIZE * 0.8 ? truncated.slice(0, lastNewline) : truncated;
+  return (
+    clean +
+    `\n\n[... output truncated at ${(MAX_RESPONSE_SIZE / 1024).toFixed(0)}KB. Use ctx_search(queries) for targeted follow-up.]`
+  );
+}
+
 /** Per-session, in-memory stats. Reset on session restart. */
 interface ToolStats {
   calls: Record<string, number>;
@@ -171,7 +190,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       output = maybeFilterByIntent(output, intent, source, store);
 
       trackCall("ctx_execute", output.length);
-      return { content: [{ type: "text", text: output }] };
+      return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
   });
 
@@ -212,7 +231,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       output = maybeFilterByIntent(output, intent, source, store);
 
       trackCall("ctx_execute_file", output.length);
-      return { content: [{ type: "text", text: output }] };
+      return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
   });
 
@@ -285,7 +304,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       }
 
       trackCall("ctx_batch_execute", text.length);
-      return { content: [{ type: "text", text }] };
+      return { content: [{ type: "text", text: capResponseSize(text) }] };
     },
   });
 
@@ -349,7 +368,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       const output = formatSearchResults(results);
 
       trackCall("ctx_search", output.length);
-      return { content: [{ type: "text", text: output }] };
+      return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
   });
 
@@ -381,7 +400,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       }
 
       trackCall("ctx_fetch_and_index", output.length);
-      return { content: [{ type: "text", text: output }] };
+      return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
   });
 
