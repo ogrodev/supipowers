@@ -2,6 +2,7 @@ import type { Platform } from "../platform/types.js";
 import { createDebugLogger } from "../debug/logger.js";
 import { getPlanningDebugLogger, getPlanningPromptOptions, isPlanningActive } from "./approval-flow.js";
 import { buildPlanWriterPrompt } from "./plan-writer-prompt.js";
+import { PLAN_CONTENT_POLICY_SUMMARY, QUICK_PLAN_TASK_CONTENT_REQUIREMENT } from "./plan-content-policy.js";
 import { buildSpecReviewerPrompt } from "./spec-reviewer.js";
 
 export interface PlanningSystemPromptOptions {
@@ -162,6 +163,7 @@ function buildFullPlanningSection(options: PlanningSystemPromptOptions): string 
     "",
     "## Planning Principles",
     "",
+    `- ${PLAN_CONTENT_POLICY_SUMMARY}`,
     "- One question at a time.",
     "- Multiple-choice is preferred when it speeds decisions.",
     "- Diverge broadly, converge tightly.",
@@ -206,6 +208,7 @@ function buildQuickPlanningSection(options: PlanningSystemPromptOptions): string
     "```",
     "",
     "4. Each task must include name, files, criteria, and complexity (small/medium/large).",
+    `   - ${QUICK_PLAN_TASK_CONTENT_REQUIREMENT}`,
     "5. Save the plan under `.omp/supipowers/plans/YYYY-MM-DD-<feature-name>.md`.",
     "6. After saving, tell the user: `Plan saved to <path>. Review it and approve when ready.`",
     "7. Then stop and wait. The approval UI handles execution handoff.",

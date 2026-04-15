@@ -1,3 +1,6 @@
+import { PLAN_CODE_CONTENT_CRITICAL_CHECKS, PLAN_REVIEW_CATEGORIES } from "./plan-content-policy.js";
+
+
 /**
  * Build the prompt for dispatching a plan document reviewer sub-agent.
  * Follows the same pattern as supipowers' plan-document-reviewer-prompt.md.
@@ -17,13 +20,9 @@ export function buildPlanReviewerPrompt(
     "",
     "| Category | What to Look For |",
     "|----------|------------------|",
-    "| Completeness | TODO markers, placeholders, incomplete tasks, missing steps |",
-    "| Spec Alignment | Chunk covers relevant spec requirements, no scope creep |",
-    "| Task Decomposition | Tasks atomic, clear boundaries, steps actionable |",
-    "| File Structure | Files have clear single responsibilities, split by responsibility not layer |",
-    "| File Size | Would any new or modified file likely grow large enough to be hard to reason about? |",
-    "| Checkbox Syntax | Steps use checkbox (`- [ ]`) syntax for tracking |",
-    "| Chunk Size | Each chunk under 1000 lines |",
+    ...PLAN_REVIEW_CATEGORIES.map(
+      ({ category, detail }) => `| ${category} | ${detail} |`,
+    ),
     "",
     "## Critical",
     "",
@@ -33,7 +32,8 @@ export function buildPlanReviewerPrompt(
     "- Incomplete task definitions",
     "- Missing verification steps or expected outputs",
     "- Files planned to hold multiple responsibilities or likely to grow unwieldy",
-    "",
+    ...PLAN_CODE_CONTENT_CRITICAL_CHECKS.map((check) => `- ${check}`),
+
     "## Output Format",
     "",
     `## Plan Review — Chunk ${chunkNumber}`,

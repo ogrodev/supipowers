@@ -45,10 +45,10 @@ describe("plan writer prompt", () => {
       expect(prompt).toContain("- [ ]");
     });
 
-    test("includes exact code requirement", () => {
+    test("includes prose-first requirements", () => {
       const prompt = buildPlanWriterPrompt({ specPath, dotDirDisplay });
-      expect(prompt).toContain("exact");
-      expect(prompt).toContain("Complete code");
+      expect(prompt).toContain("Describe what each step changes");
+      expect(prompt).toContain("Do NOT include full file contents");
     });
   });
 
@@ -106,7 +106,7 @@ describe("plan writer prompt", () => {
     test("includes reviewer dispatch instructions", () => {
       const prompt = buildPlanWriterPrompt({ specPath, dotDirDisplay });
       expect(prompt).toContain("plan-document-reviewer sub-agent");
-      expect(prompt).toContain("completeness, spec alignment, task decomposition");
+      expect(prompt).toContain("code-content rules");
       expect(prompt).toContain("plan file path, the spec file path, and the chunk number");
     });
 

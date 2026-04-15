@@ -32,6 +32,13 @@ describe("plan reviewer prompt", () => {
     expect(prompt).toContain("Checkbox");
   });
 
+  test("includes code content guardrails", () => {
+    const prompt = buildPlanReviewerPrompt("/path/to/plan.md", "/path/to/spec.md", 1);
+    expect(prompt).toContain("Code Content");
+    expect(prompt).toContain("implementation rather than interface descriptions");
+  });
+
+
   test("includes output format with Approved/Issues Found", () => {
     const prompt = buildPlanReviewerPrompt("/path/to/plan.md", "/path/to/spec.md", 1);
     expect(prompt).toContain("Approved");
