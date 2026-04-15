@@ -13,6 +13,71 @@ const CONVENTIONAL_PREFIX =
 // `BREAKING CHANGE:` and `BREAKING-CHANGE:` anywhere in the message line
 const BREAKING_CHANGE_FOOTER = /BREAKING[- ]CHANGE:/;
 
+const GIT_LOG_RECORD_SEPARATOR = "\u001e";
+const GIT_LOG_FIELD_SEPARATOR = "\u001f";
+
+interface GitCommitWithFiles {
+  hash: string;
+  message: string;
+  files: string[];
+}
+
+function normalizeReleasePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function parseGitLogWithFiles(gitLog: string): GitCommitWithFiles[] {
+  return normalizeLineEndings(gitLog)
+    .split(GIT_LOG_RECORD_SEPARATOR)
+    .map((record) => record.trim())
+    .filter(Boolean)
+    .flatMap((record) => {
+      const lines = record
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      const header = lines.shift();
+      if (!header) {
+        return [];
+      }
+
+      const [hash, message] = header.split(GIT_LOG_FIELD_SEPARATOR);
+      if (!hash || !message) {
+        return [];
+      }
+
+      return [{
+        hash: hash.trim(),
+        message: message.trim(),
+        files: lines.map(normalizeReleasePath).filter(Boolean),
+      }];
+    });
+}
+
+function isPathInReleaseScope(filePath: string, releaseScope: string[]): boolean {
+  const normalizedFile = normalizeReleasePath(filePath);
+  return releaseScope.some((scopePath) => normalizedFile === scopePath || normalizedFile.startsWith(`${scopePath}/`));
+}
+
+/**
+ * Filter a `git log --format=%x1e%H%x1f%s --name-only` payload down to commits
+ * touching the published package scope, then emit `git log --oneline` text that
+ * can be parsed by `parseConventionalCommits()`.
+ */
+export function filterOnelineGitLogToPaths(gitLog: string, releaseScope: string[]): string {
+  const normalizedScope = [...new Set(releaseScope.map(normalizeReleasePath).filter(Boolean))];
+  if (normalizedScope.length === 0) {
+    return "";
+  }
+
+  return parseGitLogWithFiles(gitLog)
+    .filter((commit) => commit.files.some((file) => isPathInReleaseScope(file, normalizedScope)))
+    .map((commit) => `${commit.hash.slice(0, 7)} ${commit.message}`)
+    .join("\n");
+}
+
+
 /**
  * Parse a single `git log --oneline` line into hash + raw message.
  * Returns null for blank lines or lines too short to contain a real hash.

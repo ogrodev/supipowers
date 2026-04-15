@@ -53,18 +53,47 @@ export function bumpVersion(current: string, bump: BumpType): string {
 }
 
 /**
+ * Read the parsed package.json object from `<cwd>/package.json`. Returns null
+ * when the file is absent or invalid.
+ */
+function readPackageJson(cwd: string): { version?: string; files?: unknown } | null {
+  const pkgPath = path.join(cwd, "package.json");
+  try {
+    const raw = fs.readFileSync(pkgPath, "utf-8");
+    return JSON.parse(raw) as { version?: string; files?: unknown };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read the `version` field from `<cwd>/package.json`.
  * Returns `"0.0.0"` when the file is absent or carries no version field.
  */
 export function getCurrentVersion(cwd: string): string {
-  const pkgPath = path.join(cwd, "package.json");
-  try {
-    const raw = fs.readFileSync(pkgPath, "utf-8");
-    const pkg = JSON.parse(raw) as { version?: string };
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
+  return readPackageJson(cwd)?.version ?? "0.0.0";
+}
+
+/**
+ * Return the publishable package paths used to scope release-note commits.
+ * Returns null when the package manifest does not declare a `files` whitelist.
+ */
+export function getPublishedPackagePaths(cwd: string): string[] | null {
+  const files = readPackageJson(cwd)?.files;
+  if (!Array.isArray(files)) {
+    return null;
   }
+
+  const normalized = files
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.replace(/^\.\//, "").replace(/\/+$/, ""))
+    .filter(Boolean);
+
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return [...new Set(["package.json", ...normalized])];
 }
 
 interface ParsedReleaseTag {

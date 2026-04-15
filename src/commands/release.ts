@@ -6,9 +6,15 @@ import type { ReleaseChannel, BumpType, ReviewReport, ResolvedModel } from "../t
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
 import type { ChannelStatus } from "../release/channels/types.js";
-import { parseConventionalCommits, buildChangelogMarkdown, summarizeChanges } from "../release/changelog.js";
+import {
+  parseConventionalCommits,
+  buildChangelogMarkdown,
+  summarizeChanges,
+  filterOnelineGitLogToPaths,
+} from "../release/changelog.js";
 import {
   getCurrentVersion,
+  getPublishedPackagePaths,
   suggestBump,
   bumpVersion,
   isVersionReleased,
@@ -464,14 +470,20 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         : false;
 
       const sinceArg = lastTag ? `${lastTag}..HEAD` : "HEAD~50..HEAD";
+      const releaseScope = getPublishedPackagePaths(ctx.cwd);
+      const gitLogArgs = releaseScope
+        ? ["log", sinceArg, "--format=%x1e%H%x1f%s", "--name-only"]
+        : ["log", sinceArg, "--oneline"];
       let gitLogOutput: string;
       try {
-        const result = await platform.exec(
-          "git",
-          ["log", sinceArg, "--oneline"],
-          { cwd: ctx.cwd },
-        );
-        gitLogOutput = result.code === 0 ? result.stdout : "";
+        const result = await platform.exec("git", gitLogArgs, { cwd: ctx.cwd });
+        if (result.code !== 0) {
+          gitLogOutput = "";
+        } else if (releaseScope) {
+          gitLogOutput = filterOnelineGitLogToPaths(result.stdout, releaseScope);
+        } else {
+          gitLogOutput = result.stdout;
+        }
       } catch {
         gitLogOutput = "";
       }
