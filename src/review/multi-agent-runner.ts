@@ -88,7 +88,7 @@ async function runConfiguredAgent(
       };
     },
     model: agent.model ?? input.model,
-    thinkingLevel: input.thinkingLevel ?? null,
+    thinkingLevel: agent.thinkingLevel ?? input.thinkingLevel ?? null,
     timeoutMs: input.timeoutMs ?? 120_000,
   });
 
