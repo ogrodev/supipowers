@@ -115,7 +115,7 @@ supipowers/
 │   ├── context-mode/SKILL.md
 │   └── creating-supi-agents/SKILL.md
 ├── bin/
-│   └── install.mjs           # Interactive CLI installer (@clack/prompts)
+│   └── install.ts            # Interactive CLI installer (@clack/prompts)
 ├── docs/                     # Project documentation
 │   └── supipowers/           # Supipowers-specific docs
 └── .omp/supipowers/          # Runtime data (gitignored)
@@ -323,7 +323,7 @@ function task(id: number): PlanTask {
 
 ### Coverage
 
-No coverage thresholds are configured. There is no CI pipeline; tests must be run manually before committing.
+No coverage thresholds are configured. Tests must be run manually before committing. CI runs on version tag push via `.github/workflows/publish.yml` (npm publish only).
 
 ---
 
