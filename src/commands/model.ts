@@ -11,7 +11,7 @@ import type { ModelAction, ModelAssignment, ThinkingLevel } from "../types.js";
 import { getBundledProviders, getBundledModels, type GeneratedProvider } from "@oh-my-pi/pi-ai";
 import { createModelPicker, type AvailableModelSet } from "./model-picker.js";
 
-const THINKING_LEVELS: Array<{ label: string; value: ThinkingLevel | null }> = [
+export const THINKING_LEVELS: Array<{ label: string; value: ThinkingLevel | null }> = [
   { label: "Inherit (model default)", value: null },
   { label: "Off", value: "off" },
   { label: "Minimal", value: "minimal" },

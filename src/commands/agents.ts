@@ -8,8 +8,8 @@ import {
   getGlobalReviewAgentsDir,
   getGlobalReviewAgentsConfigPath,
 } from "../review/agent-loader.js";
-import { selectModelFromList } from "./model.js";
-import type { ConfiguredReviewAgent } from "../types.js";
+import { selectModelFromList, THINKING_LEVELS } from "./model.js";
+import type { ConfiguredReviewAgent, ThinkingLevel } from "../types.js";
 import creatingAgentsSkill from "../../skills/creating-supi-agents/SKILL.md" with { type: "text" };
 
 // ── List View ──────────────────────────────────────────────────
@@ -17,23 +17,25 @@ import creatingAgentsSkill from "../../skills/creating-supi-agents/SKILL.md" wit
 function buildAgentDashboard(agents: ConfiguredReviewAgent[]): string {
   const nameCol = 18;
   const modelCol = 24;
+  const thinkingCol = 12;
   const scopeCol = 10;
 
   const lines: string[] = [
     "\n  Review Agents\n",
-    `  ${"name".padEnd(nameCol)} ${"model".padEnd(modelCol)} ${"scope".padEnd(scopeCol)} focus`,
+    `  ${"name".padEnd(nameCol)} ${"model".padEnd(modelCol)} ${"thinking".padEnd(thinkingCol)} ${"scope".padEnd(scopeCol)} focus`,
   ];
 
   for (const agent of agents) {
     const name = agent.name.padEnd(nameCol);
-    const model = (agent.model ?? "—").padEnd(modelCol);
+    const model = (agent.model ?? "\u2014").padEnd(modelCol);
+    const thinking = (agent.thinkingLevel ?? "\u2014").padEnd(thinkingCol);
     const scope = (agent.scope ?? "project").padEnd(scopeCol);
     const focus = agent.focus
       ? agent.focus.length > 40
         ? agent.focus.slice(0, 37) + "..."
         : agent.focus
-      : "—";
-    lines.push(`  ${name} ${model} ${scope} ${focus}`);
+      : "\u2014";
+    lines.push(`  ${name} ${model} ${thinking} ${scope} ${focus}`);
   }
 
   const globalCount = agents.filter((a) => a.scope === "global").length;
@@ -95,7 +97,16 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
   const modelInput = await selectModelFromList(ctx);
   // null means "inherit default" — that's fine
 
-  // Step 4: Prompt source
+  // Step 4: Thinking level
+  const thinkingChoice = await ctx.ui.select(
+    "Thinking level",
+    THINKING_LEVELS.map((t) => t.label),
+    { helpText: "Select thinking level · Esc to cancel" },
+  );
+  if (!thinkingChoice) return;
+  const thinkingLevel: ThinkingLevel | null = THINKING_LEVELS.find((t) => t.label === thinkingChoice)?.value ?? null;
+
+  // Step 5: Prompt source
   const promptChoice = await ctx.ui.select("Agent prompt", [
     "Send a prompt",
     "Create from zero",
@@ -105,7 +116,7 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
 
   if (promptChoice === "Create from zero") {
     // Load the creating-supi-agents skill via steer
-    loadSkillAndSteer(platform, ctx, scope, agentName, modelInput);
+    loadSkillAndSteer(platform, ctx, scope, agentName, modelInput, thinkingLevel);
     return;
   }
 
@@ -119,7 +130,7 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
     return;
   }
 
-  // Step 5: Save
+  // Step 6: Save
   const agentsDir = scope === "global"
     ? getGlobalReviewAgentsDir(platform.paths)
     : getReviewAgentsDir(platform.paths, ctx.cwd);
@@ -138,6 +149,7 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
     enabled: true,
     data: fileName,
     model: modelInput,
+    thinkingLevel,
   });
 
   ctx.ui.notify(`Agent "${agentName}" created (${scope})`, "info");
@@ -151,6 +163,7 @@ function loadSkillAndSteer(
   scope: "global" | "project",
   agentName: string,
   model: string | null,
+  thinkingLevel: ThinkingLevel | null,
 ): void {
   const agentsDir = scope === "global"
     ? getGlobalReviewAgentsDir(platform.paths)
@@ -159,7 +172,7 @@ function loadSkillAndSteer(
     ? getGlobalReviewAgentsConfigPath(platform.paths)
     : getReviewAgentsConfigPath(platform.paths, ctx.cwd);
 
-  const prompt = buildSkillSteerPrompt(agentName, scope, agentsDir, configPath, model);
+  const prompt = buildSkillSteerPrompt(agentName, scope, agentsDir, configPath, model, thinkingLevel);
 
   platform.sendMessage(
     {
@@ -177,6 +190,7 @@ function buildSkillSteerPrompt(
   agentsDir: string,
   configPath: string,
   model: string | null,
+  thinkingLevel: ThinkingLevel | null,
 ): string {
   return `You are guiding the user through creating a new AI review agent for supipowers' multi-agent code review pipeline.
 
@@ -184,6 +198,7 @@ function buildSkillSteerPrompt(
 - **Name**: ${agentName}
 - **Scope**: ${scope}
 - **Model**: ${model ?? "inherit default"}
+- **Thinking Level**: ${thinkingLevel ?? "inherit default"}
 - **Target directory**: ${agentsDir}
 - **Config path**: ${configPath}
 
@@ -197,7 +212,7 @@ Once the user approves the agent design, save it:
 1. Write the markdown file to: ${agentsDir}/${agentName}.md
    - The file MUST have YAML frontmatter (name, description, focus) and a prompt body ending with {output_instructions}
 2. Update config at: ${configPath}
-   - Add entry: { name: "${agentName}", enabled: true, data: "${agentName}.md", model: ${model ? `"${model}"` : "null"} }
+   - Add entry: { name: "${agentName}", enabled: true, data: "${agentName}.md", model: ${model ? `"${model}"` : "null"}, thinkingLevel: ${thinkingLevel ? `"${thinkingLevel}"` : "null"} }
 
 Use the \`writeAgentFile\` and \`addAgentToConfig\` functions from \`src/review/agent-loader.ts\` if you have tool access, or write the files directly.
 
