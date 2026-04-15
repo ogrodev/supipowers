@@ -188,7 +188,7 @@ Supipowers ships runtime-loaded prompt skills that are also available to the age
 | Skill                   | Used by                 |
 | ----------------------- | ----------------------- |
 | `planning`              | `/supi:plan`            |
-| `code-review`           | `/supi:review`          |
+| `code-review`           | Manual prompting / reusable review guidance |
 | `qa-strategy`           | `/supi:qa`              |
 | `fix-pr`                | `/supi:fix-pr`          |
 | `debugging`             | Agent sessions          |
