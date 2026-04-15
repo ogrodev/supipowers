@@ -5,6 +5,7 @@ import {
   suggestBump,
   bumpVersion,
   getCurrentVersion,
+  getPublishedPackagePaths,
   isVersionReleased,
   isTagOnRemote,
   findResumableLocalRelease,
@@ -139,6 +140,49 @@ describe("getCurrentVersion", () => {
   test("malformed JSON returns 0.0.0", () => {
     fs.writeFileSync(path.join(tmpDir, "package.json"), "{ invalid json }");
     expect(getCurrentVersion(tmpDir)).toBe("0.0.0");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// getPublishedPackagePaths
+// ---------------------------------------------------------------------------
+
+describe("getPublishedPackagePaths", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-publish-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("returns package.json plus normalized files whitelist entries", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({
+        name: "test-pkg",
+        files: ["src", "./skills/", "README.md", "src"],
+      }),
+    );
+
+    expect(getPublishedPackagePaths(tmpDir)).toEqual([
+      "package.json",
+      "src",
+      "skills",
+      "README.md",
+    ]);
+  });
+
+  test("returns null when files whitelist is absent", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ name: "test-pkg", version: "1.0.0" }),
+    );
+
+    expect(getPublishedPackagePaths(tmpDir)).toBeNull();
   });
 });
 

@@ -4,6 +4,7 @@ import {
   parseConventionalCommits,
   buildChangelogMarkdown,
   summarizeChanges,
+  filterOnelineGitLogToPaths,
 } from "../../src/release/changelog.js";
 import type { CategorizedCommits } from "../../src/types.js";
 
@@ -228,6 +229,48 @@ describe("parseConventionalCommits", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// filterOnelineGitLogToPaths
+// ---------------------------------------------------------------------------
+
+describe("filterOnelineGitLogToPaths", () => {
+  test("drops commits that only touch local .omp files", () => {
+    const gitLog = [
+      "\u001e0123456789abcdef\u001ffeat(omp-audit): add /omp-audit command",
+      ".omp/commands/omp-audit/index.ts",
+      ".omp/omp-audit-config.json",
+      "",
+      "\u001eabcdef0123456789\u001ffix(review): guard agent-loader",
+      "src/review/agent-loader.ts",
+      "tests/review/agent-loader.test.ts",
+      "",
+      "\u001e1111111111111111\u001fdocs(readme): update install guide",
+      "README.md",
+      "",
+    ].join("\n");
+
+    expect(
+      filterOnelineGitLogToPaths(gitLog, ["package.json", "src", "skills", "README.md"]),
+    ).toBe([
+      "abcdef0 fix(review): guard agent-loader",
+      "1111111 docs(readme): update install guide",
+    ].join("\n"));
+  });
+
+  test("keeps commits when any changed file is in the publish scope", () => {
+    const gitLog = [
+      "\u001eeeeeeeeeeeeeeeee\u001frefactor(release): tighten changelog scoping",
+      ".omp/commands/omp-audit/index.ts",
+      "src/commands/release.ts",
+      "",
+    ].join("\n");
+
+    expect(filterOnelineGitLogToPaths(gitLog, ["src"]))
+      .toBe("eeeeeee refactor(release): tighten changelog scoping");
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // buildChangelogMarkdown
