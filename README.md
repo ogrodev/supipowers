@@ -87,6 +87,17 @@ Most commands steer the AI session. These are TUI-only — they open native dial
 
 **AI code review.** `/supi:review` runs a programmatic AI review pipeline with configurable depth (quick, deep, or multi-agent). It uses headless agent sessions with structured JSON validation, always validates findings before user action, writes the current validated findings to a session `findings.md` document, and then presents three next-step choices: `Fix now`, `Document only`, or `Discuss before fixing`.
 
+**Review agents.** Multi-agent review loads agents from two scopes: global and project.
+
+- Global defaults and global custom agents live under `~/.omp/supipowers/review-agents/`.
+- Project configuration lives under `.omp/supipowers/review-agents/config.yml`.
+- Default built-in agent markdown files are installed globally, not per-project.
+- Project custom agent markdown files can still live under `.omp/supipowers/review-agents/`.
+- Merge precedence is project over global: if the project config mentions an agent name, it shadows the global agent with the same name.
+- A project entry with `enabled: false` suppresses the global agent with that same name instead of falling back to the global copy.
+
+Use `/supi:agents` to inspect the merged set that will actually run.
+
 **PR fixing.** `/supi:fix-pr` fetches PR review comments, critically assesses each one, checks for ripple effects, then fixes or rejects with evidence. Bot reviewers are auto-detected and filtered out.
 
 **Context protection.** Supipowers always enables built-in context protection through native `ctx_*` tools and routing hooks. Search/find and web-fetch style operations are redirected to sandboxed execution or indexed storage, and oversized tool results are compressed before they reach the conversation.
