@@ -123,7 +123,7 @@ Break into tasks of 2–5 minutes each. Each task must have:
 - **criteria**: acceptance criteria (testable)
 - **complexity**: `small` | `medium` | `large`
 
-Steps use checkbox syntax (`- [ ]`). Include function signatures or pseudocode — not vague descriptions, not full implementations.
+Steps use checkbox syntax (`- [ ]`). Describe what each step changes in prose. Include function signatures or brief pseudocode only when they clarify a non-obvious interface or algorithm. Do NOT include full function bodies, full test bodies, or file-content dumps — the plan describes the work, the execution session writes the code.
 
 **Plan template:**
 
@@ -161,6 +161,7 @@ tags: [<relevant>, <tags>]
 | Wait for user approval at each gate | Combine or skip phases |
 | Include test files in task file lists | Include git commit/push steps for specs |
 | Name research gaps instead of guessing | Present every explored branch (show finalists only) |
+| Describe steps in prose with optional signatures | Include full function bodies, test bodies, or file contents in plans |
 
 ## Final Checklist
 
@@ -171,4 +172,5 @@ tags: [<relevant>, <tags>]
 - [ ] Spec review loop completed (sub-agent approved or user overrode)
 - [ ] User approved spec before implementation plan
 - [ ] Every task has files, criteria, complexity, and checkbox steps
-- [ ] Task steps reference signatures/pseudocode, not vague descriptions
+- [ ] Task steps describe changes in prose; signatures/pseudocode used only when they clarify non-obvious interfaces
+- [ ] No full function bodies, test bodies, or file-content dumps in the plan
