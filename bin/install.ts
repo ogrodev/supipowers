@@ -241,15 +241,10 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
       version: sourcePkg.version,
       type: sourcePkg.type,
       omp: sourcePkg.omp,
-      dependencies: {
-        // Only packages imported at runtime by src/ code:
-        // - config/schema.ts → @sinclair/typebox
-        // - commands/model.ts, model-picker.ts → @oh-my-pi/pi-ai
-        // - commands/model-picker.ts → @oh-my-pi/pi-tui
-        "@sinclair/typebox": "*",
-        "@oh-my-pi/pi-ai": "*",
-        "@oh-my-pi/pi-tui": "*",
-      },
+      // Preserve actual runtime dependencies from the published package.json.
+      // This includes handlebars (used by review/template.ts) and any future additions.
+      // Peer deps (@sinclair/typebox, @oh-my-pi/*) are provided by the OMP host.
+      dependencies: sourcePkg.dependencies ?? {},
     };
     writeFileSync(join(extDir, "package.json"), JSON.stringify(runtimePkg, null, 2));
     log(`  rewrote package.json: ${JSON.stringify(runtimePkg, null, 2)}`);
