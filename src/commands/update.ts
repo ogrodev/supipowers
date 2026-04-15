@@ -100,6 +100,23 @@ async function updateSupipowers(
     }
     cpSync(join(downloadedRoot, "package.json"), join(extDir, "package.json"));
 
+    // Install runtime dependencies (handlebars, etc.)
+    // Without this, the extension fails to load because node_modules/ was deleted above.
+    ctx.ui.notify("Installing dependencies...", "info");
+    const bunInstall = await platform.exec("bun", ["install", "--production"], { cwd: extDir });
+    if (bunInstall.code !== 0) {
+      // Fallback to npm if bun is not available (e.g. Windows without global bun)
+      const npmInstall = await platform.exec("npm", ["install", "--omit=dev"], { cwd: extDir });
+      if (npmInstall.code !== 0) {
+        ctx.ui.notify(
+          "Could not install extension dependencies.\n" +
+            "Commands may not appear. Run manually:\n" +
+            `  cd ${extDir} && bun install`,
+          "warning",
+        );
+      }
+    }
+
     // Copy skills
     const skillsSource = join(downloadedRoot, "skills");
     if (existsSync(skillsSource)) {
