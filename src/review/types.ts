@@ -17,6 +17,7 @@ import type {
   ReviewScopeStats,
   ReviewSession,
   ReviewSessionArtifacts,
+  ThinkingLevel,
 } from "../types.js";
 export type {
   ConfiguredReviewAgent,
@@ -122,6 +123,15 @@ export const ReviewAgentConfigSchema = Type.Object(
     enabled: Type.Boolean(),
     data: Type.String({ minLength: 1 }),
     model: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    thinkingLevel: Type.Optional(Type.Union([
+      Type.Literal("off"),
+      Type.Literal("minimal"),
+      Type.Literal("low"),
+      Type.Literal("medium"),
+      Type.Literal("high"),
+      Type.Literal("xhigh"),
+      Type.Null(),
+    ])),
   },
   { additionalProperties: false },
 );

@@ -174,6 +174,7 @@ export interface ReviewAgentConfig {
   enabled: boolean;
   data: string;
   model: string | null;
+  thinkingLevel: ThinkingLevel | null;
 }
 
 /** Top-level review agent pipeline config */
@@ -194,6 +195,7 @@ export interface ConfiguredReviewAgent extends ReviewAgentDefinition {
   enabled: boolean;
   data: string;
   model: string | null;
+  thinkingLevel: ThinkingLevel | null;
   scope?: "global" | "project";
 }
 
