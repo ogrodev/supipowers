@@ -171,6 +171,8 @@ describe("runAgentCreateFlow — send a prompt", () => {
     (ctx.ui.input as any).mockResolvedValueOnce("perf-review");
     // Model (selectModelFromList uses ctx.ui.custom or ctx.ui.select)
     (ctx.ui.select as any).mockResolvedValueOnce("anthropic/claude-sonnet-4-20250514");
+    // Thinking level
+    (ctx.ui.select as any).mockResolvedValueOnce("Inherit (model default)");
     // Prompt source
     (ctx.ui.select as any).mockResolvedValueOnce("Send a prompt");
     // Prompt body
@@ -246,6 +248,8 @@ describe("runAgentCreateFlow — send a prompt", () => {
     (ctx.ui.input as any).mockResolvedValueOnce("a11y");
     // Model picker
     (ctx.ui.select as any).mockResolvedValueOnce(null); // cancel model = null (inherit)
+    // Thinking level
+    (ctx.ui.select as any).mockResolvedValueOnce("Inherit (model default)");
     // Prompt source
     (ctx.ui.select as any).mockResolvedValueOnce("Create from zero");
 

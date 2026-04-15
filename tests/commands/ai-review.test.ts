@@ -168,6 +168,7 @@ function createDependencies(options: {
           enabled: true,
           data: "project",
           model: null,
+          thinkingLevel: null,
         },
       ]
     : [];
