@@ -98,7 +98,27 @@ async function updateSupipowers(
     if (existsSync(binSource)) {
       cpSync(binSource, join(extDir, "bin"), { recursive: true });
     }
-    cpSync(join(downloadedRoot, "package.json"), join(extDir, "package.json"));
+    // skills/ must live inside the extension dir — src/commands/agents.ts
+    // uses a static `import from "../../skills/..."` resolved relative to src/.
+    const skillsDirSource = join(downloadedRoot, "skills");
+    if (existsSync(skillsDirSource)) {
+      cpSync(skillsDirSource, join(extDir, "skills"), { recursive: true });
+    }
+
+    // Rewrite package.json: merge runtime deps + peer deps so Bun on Windows
+    // can resolve all imports from the extension's own node_modules.
+    const sourcePkg = JSON.parse(readFileSync(join(downloadedRoot, "package.json"), "utf8"));
+    const runtimePkg = {
+      name: sourcePkg.name,
+      version: sourcePkg.version,
+      type: sourcePkg.type,
+      omp: sourcePkg.omp,
+      dependencies: {
+        ...(sourcePkg.dependencies ?? {}),
+        ...(sourcePkg.peerDependencies ?? {}),
+      },
+    };
+    writeFileSync(join(extDir, "package.json"), JSON.stringify(runtimePkg, null, 2));
 
     // Install runtime dependencies (handlebars, etc.)
     // Without this, the extension fails to load because node_modules/ was deleted above.

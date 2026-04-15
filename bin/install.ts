@@ -229,6 +229,12 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
     cpSync(join(packageRoot, "src"), join(extDir, "src"), { recursive: true });
     cpSync(join(packageRoot, "bin"), join(extDir, "bin"), { recursive: true });
     cpSync(join(packageRoot, "package.json"), join(extDir, "package.json"));
+    // skills/ must live inside the extension dir — src/commands/agents.ts
+    // uses a static `import from "../../skills/..."` resolved relative to src/.
+    const skillsSrc = join(packageRoot, "skills");
+    if (existsSync(skillsSrc)) {
+      cpSync(skillsSrc, join(extDir, "skills"), { recursive: true });
+    }
     log(`  files copied to ${extDir}`);
 
     // Rewrite package.json for the installed extension.
@@ -241,10 +247,14 @@ function installToPlatform(platformDir: string, packageRoot: string): string {
       version: sourcePkg.version,
       type: sourcePkg.type,
       omp: sourcePkg.omp,
-      // Preserve actual runtime dependencies from the published package.json.
-      // This includes handlebars (used by review/template.ts) and any future additions.
-      // Peer deps (@sinclair/typebox, @oh-my-pi/*) are provided by the OMP host.
-      dependencies: sourcePkg.dependencies ?? {},
+      dependencies: {
+        // Runtime deps from the published package.json (handlebars, etc.)
+        ...(sourcePkg.dependencies ?? {}),
+        // Peer deps that OMP provides at its global level. On macOS Bun resolves
+        // these from the global install, but on Windows the extension's own
+        // node_modules must contain them or Bun's import fails.
+        ...(sourcePkg.peerDependencies ?? {}),
+      },
     };
     writeFileSync(join(extDir, "package.json"), JSON.stringify(runtimePkg, null, 2));
     log(`  rewrote package.json: ${JSON.stringify(runtimePkg, null, 2)}`);
