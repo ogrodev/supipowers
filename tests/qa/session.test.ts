@@ -1,18 +1,34 @@
-
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+import { createPaths } from "../../src/platform/types.js";
+import { DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
 import {
-  createNewE2eSession,
   advanceE2ePhase,
-  getNextE2ePhase,
+  createNewE2eSession,
   getE2ePhaseStatusLine,
+  getNextE2ePhase,
 } from "../../src/qa/session.js";
 import type { E2eSessionLedger } from "../../src/qa/types.js";
-import { DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
-import { createPaths } from "../../src/platform/types.js";
+import type { WorkspaceTarget } from "../../src/types.js";
 
 const paths = createPaths(".omp");
+
+function target(name: string, relativeDir = "."): WorkspaceTarget {
+  return {
+    id: name,
+    name,
+    kind: relativeDir === "." ? "root" : "workspace",
+    repoRoot: "/repo",
+    packageDir: relativeDir === "." ? "/repo" : `/repo/${relativeDir}`,
+    manifestPath: relativeDir === "." ? "/repo/package.json" : `/repo/${relativeDir}/package.json`,
+    relativeDir,
+    version: "1.0.0",
+    private: false,
+    packageManager: "bun",
+  };
+}
 
 describe("E2E QA session lifecycle", () => {
   let tmpDir: string;
@@ -41,6 +57,20 @@ describe("E2E QA session lifecycle", () => {
   test("createNewE2eSession persists ledger and creates subdirs", () => {
     const ledger = createNewE2eSession(paths, tmpDir, DEFAULT_E2E_QA_CONFIG);
     const sessionDir = path.join(tmpDir, ".omp", "supipowers", "qa-sessions", ledger.id);
+    expect(fs.existsSync(path.join(sessionDir, "ledger.json"))).toBe(true);
+    expect(fs.existsSync(path.join(sessionDir, "tests"))).toBe(true);
+    expect(fs.existsSync(path.join(sessionDir, "screenshots"))).toBe(true);
+  });
+
+  test("workspace sessions create subdirs under the workspace state tree", () => {
+    const workspaceTarget = {
+      ...target("@repo/web", "packages/web"),
+      repoRoot: tmpDir,
+      packageDir: path.join(tmpDir, "packages/web"),
+      manifestPath: path.join(tmpDir, "packages/web/package.json"),
+    };
+    const ledger = createNewE2eSession(paths, tmpDir, DEFAULT_E2E_QA_CONFIG, workspaceTarget);
+    const sessionDir = path.join(tmpDir, ".omp", "supipowers", "workspaces", "packages", "web", "qa-sessions", ledger.id);
     expect(fs.existsSync(path.join(sessionDir, "ledger.json"))).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "tests"))).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "screenshots"))).toBe(true);

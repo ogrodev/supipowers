@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -22,6 +22,7 @@ describe("detectAppType", () => {
     const result = detectAppType(tmpDir);
     expect(result.type).toBe("nextjs-app");
     expect(result.port).toBe(3000);
+    expect(result.isLikelyApp).toBe(true);
   });
 
   test("Next.js Pages Router — next.config.js + pages/ dir, no app/", () => {
@@ -60,6 +61,7 @@ describe("detectAppType", () => {
     const result = detectAppType(tmpDir);
     expect(result.type).toBe("vite");
     expect(result.port).toBe(5173);
+    expect(result.isLikelyApp).toBe(true);
   });
 
   test("Angular — angular.json present", () => {
@@ -69,6 +71,7 @@ describe("detectAppType", () => {
     expect(result.type).toBe("generic");
     expect(result.devCommand).toBe("npm start");
     expect(result.port).toBe(4200);
+    expect(result.isLikelyApp).toBe(true);
   });
 
   test("Express — package.json with express in deps", () => {
@@ -79,6 +82,7 @@ describe("detectAppType", () => {
 
     const result = detectAppType(tmpDir);
     expect(result.type).toBe("express");
+    expect(result.isLikelyApp).toBe(true);
   });
 
   test("Generic fallback — empty dir", () => {
@@ -86,6 +90,18 @@ describe("detectAppType", () => {
     expect(result.type).toBe("generic");
     expect(result.devCommand).toBe("npm run dev");
     expect(result.port).toBe(3000);
+    expect(result.isLikelyApp).toBe(false);
+  });
+
+  test("library package without app scripts is not treated as a runnable app", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({ scripts: { build: "tsc -p tsconfig.json" } }),
+    );
+
+    const result = detectAppType(tmpDir);
+    expect(result.type).toBe("generic");
+    expect(result.isLikelyApp).toBe(false);
   });
 
   test("Dev command override — scripts.start present but no scripts.dev", () => {
@@ -96,6 +112,7 @@ describe("detectAppType", () => {
 
     const result = detectAppType(tmpDir);
     expect(result.devCommand).toBe("npm start");
+    expect(result.isLikelyApp).toBe(true);
   });
 
   test("Port extraction --port flag", () => {
@@ -134,5 +151,6 @@ describe("detectAppType", () => {
     expect(result.devCommand).toBe("npm run dev");
     expect(result.port).toBe(3000);
     expect(result.baseUrl).toBe("http://localhost:3000");
+    expect(result.isLikelyApp).toBe(false);
   });
 });

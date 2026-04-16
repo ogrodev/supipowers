@@ -6,6 +6,7 @@ export interface AppDetection {
   devCommand: string;
   port: number;
   baseUrl: string;
+  isLikelyApp: boolean;
 }
 
 function fileExists(cwd: string, ...segments: string[]): boolean {
@@ -32,6 +33,7 @@ export function detectAppType(cwd: string): AppDetection {
   let type = "generic";
   let devCommand = "npm run dev";
   let port = 3000;
+  let isLikelyApp = false;
 
   const hasNextConfig =
     fileExists(cwd, "next.config.js") ||
@@ -41,7 +43,6 @@ export function detectAppType(cwd: string): AppDetection {
   const hasNextPagesDir = dirExists(cwd, "pages") || dirExists(cwd, "src", "pages");
 
   if (hasNextConfig || hasNextAppDir || hasNextPagesDir) {
-    // Default nextjs-app; only switch to pages if pages dir exists and app dir does not
     if (hasNextAppDir) {
       type = "nextjs-app";
     } else if (hasNextPagesDir) {
@@ -50,6 +51,7 @@ export function detectAppType(cwd: string): AppDetection {
       type = "nextjs-app";
     }
     port = 3000;
+    isLikelyApp = true;
   } else if (
     fileExists(cwd, "vite.config.ts") ||
     fileExists(cwd, "vite.config.js") ||
@@ -57,36 +59,40 @@ export function detectAppType(cwd: string): AppDetection {
   ) {
     type = "vite";
     port = 5173;
+    isLikelyApp = true;
   } else if (fileExists(cwd, "angular.json")) {
     type = "generic";
     devCommand = "npm start";
     port = 4200;
+    isLikelyApp = true;
   } else if (fileExists(cwd, "package.json")) {
     try {
       const raw = fs.readFileSync(path.join(cwd, "package.json"), "utf8");
       if (raw.includes('"express"')) {
         type = "express";
         port = 3000;
+        isLikelyApp = true;
       }
     } catch {
       // proceed with defaults
     }
   }
 
-  // Override devCommand from package.json scripts
   const pkgPath = path.join(cwd, "package.json");
   const pkg = readJson(pkgPath);
   if (pkg) {
     const scripts = pkg.scripts as Record<string, string> | undefined;
     if (scripts?.dev) {
       devCommand = "npm run dev";
+      isLikelyApp = true;
     } else if (scripts?.start) {
       devCommand = "npm start";
+      isLikelyApp = true;
     } else if (scripts?.serve) {
       devCommand = "npm run serve";
+      isLikelyApp = true;
     }
 
-    // Extract port from dev script text
     const scriptText = scripts?.dev ?? scripts?.start ?? "";
     if (scriptText) {
       const portMatch = scriptText.match(/(?:--port|PORT=)\s*(\d+)/);
@@ -98,5 +104,5 @@ export function detectAppType(cwd: string): AppDetection {
 
   const baseUrl = `http://localhost:${port}`;
 
-  return { type, devCommand, port, baseUrl };
+  return { type, devCommand, port, baseUrl, isLikelyApp };
 }

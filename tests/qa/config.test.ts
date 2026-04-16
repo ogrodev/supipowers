@@ -1,11 +1,27 @@
-
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
-import { loadE2eQaConfig, saveE2eQaConfig, DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
+import * as path from "node:path";
 import { createPaths } from "../../src/platform/types.js";
+import { DEFAULT_E2E_QA_CONFIG, loadE2eQaConfig, saveE2eQaConfig } from "../../src/qa/config.js";
+import type { WorkspaceTarget } from "../../src/types.js";
 
 const paths = createPaths(".omp");
+
+function target(name: string, relativeDir = "."): WorkspaceTarget {
+  return {
+    id: name,
+    name,
+    kind: relativeDir === "." ? "root" : "workspace",
+    repoRoot: "/repo",
+    packageDir: relativeDir === "." ? "/repo" : `/repo/${relativeDir}`,
+    manifestPath: relativeDir === "." ? "/repo/package.json" : `/repo/${relativeDir}/package.json`,
+    relativeDir,
+    version: "1.0.0",
+    private: false,
+    packageManager: "bun",
+  };
+}
 
 describe("E2E QA config", () => {
   let tmpDir: string;
@@ -46,6 +62,22 @@ describe("E2E QA config", () => {
     saveE2eQaConfig(paths, tmpDir, DEFAULT_E2E_QA_CONFIG);
     const configPath = path.join(tmpDir, ".omp", "supipowers", "e2e-qa.json");
     expect(fs.existsSync(configPath)).toBe(true);
+  });
+
+  test("workspace targets store config under the workspace state tree", () => {
+    const workspaceTarget = {
+      ...target("@repo/web", "packages/web"),
+      repoRoot: tmpDir,
+      packageDir: path.join(tmpDir, "packages/web"),
+      manifestPath: path.join(tmpDir, "packages/web/package.json"),
+    };
+
+    saveE2eQaConfig(paths, tmpDir, DEFAULT_E2E_QA_CONFIG, workspaceTarget);
+
+    const configPath = path.join(tmpDir, ".omp", "supipowers", "workspaces", "packages", "web", "e2e-qa.json");
+    expect(fs.existsSync(configPath)).toBe(true);
+    expect(loadE2eQaConfig(paths, tmpDir, workspaceTarget)).toEqual(DEFAULT_E2E_QA_CONFIG);
+    expect(loadE2eQaConfig(paths, tmpDir)).toBeNull();
   });
 
   test("loadE2eQaConfig returns null for invalid JSON", () => {

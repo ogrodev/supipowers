@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { E2ePhase, E2ePhaseStatus, E2eSessionLedger, E2eQaConfig } from "./types.js";
 import type { PlatformPaths } from "../platform/types.js";
-import { generateSessionId, createSession, updateSession } from "../storage/qa-sessions.js";
+import type { WorkspaceTarget } from "../types.js";
+import { createSession, generateSessionId, getSessionDir, updateSession } from "../storage/qa-sessions.js";
+import type { E2ePhase, E2ePhaseStatus, E2eQaConfig, E2eSessionLedger } from "./types.js";
 
 const PHASE_ORDER: E2ePhase[] = ["flow-discovery", "test-generation", "execution", "reporting"];
 
@@ -14,7 +15,12 @@ const PHASE_LABELS: Record<E2ePhase, string> = {
 };
 
 /** Create a new E2E QA session with all phases pending */
-export function createNewE2eSession(paths: PlatformPaths, cwd: string, config: E2eQaConfig): E2eSessionLedger {
+export function createNewE2eSession(
+  paths: PlatformPaths,
+  cwd: string,
+  config: E2eQaConfig,
+  target?: WorkspaceTarget,
+): E2eSessionLedger {
   const now = new Date().toISOString();
   const ledger: E2eSessionLedger = {
     id: generateSessionId(),
@@ -34,10 +40,9 @@ export function createNewE2eSession(paths: PlatformPaths, cwd: string, config: E
     config,
   };
 
-  // Create session with subdirectories
-  createSession(paths, cwd, ledger);
+  createSession(paths, cwd, ledger, target);
 
-  const sessionDir = paths.project(cwd, "qa-sessions", ledger.id);
+  const sessionDir = getSessionDir(paths, cwd, ledger.id, target);
   fs.mkdirSync(path.join(sessionDir, "tests"), { recursive: true });
   fs.mkdirSync(path.join(sessionDir, "screenshots"), { recursive: true });
 
@@ -51,6 +56,7 @@ export function advanceE2ePhase(
   ledger: E2eSessionLedger,
   phase: E2ePhase,
   status: E2ePhaseStatus,
+  target?: WorkspaceTarget,
 ): E2eSessionLedger {
   const now = new Date().toISOString();
   const record = { ...ledger.phases[phase] };
@@ -68,7 +74,7 @@ export function advanceE2ePhase(
     updatedAt: now,
     phases: { ...ledger.phases, [phase]: record },
   };
-  updateSession(paths, cwd, updated);
+  updateSession(paths, cwd, updated, target);
   return updated;
 }
 

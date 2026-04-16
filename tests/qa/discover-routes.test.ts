@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 import { discoverRoutes } from "../../src/qa/discover-routes";
 
 let tmpDir: string;
@@ -14,14 +14,11 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** Create a file inside tmpDir, ensuring parent dirs exist. */
 function fixture(rel: string, content = ""): void {
   const full = path.join(tmpDir, rel);
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, content, "utf-8");
 }
-
-// ─── nextjs-app ──────────────────────────────────────────
 
 describe("nextjs-app", () => {
   test("app/page.tsx resolves to '/'", () => {
@@ -70,8 +67,6 @@ describe("nextjs-app", () => {
   });
 });
 
-// ─── nextjs-pages ────────────────────────────────────────
-
 describe("nextjs-pages", () => {
   test("pages/index.tsx resolves to '/'", () => {
     fixture("pages/index.tsx", "export default function Index() {}");
@@ -107,8 +102,6 @@ describe("nextjs-pages", () => {
   });
 });
 
-// ─── form detection ──────────────────────────────────────
-
 describe("form detection", () => {
   test("file with <form → hasForm true", () => {
     fixture(
@@ -142,8 +135,6 @@ describe("form detection", () => {
   });
 });
 
-// ─── auth scan ───────────────────────────────────────────
-
 describe("auth scan", () => {
   test("src/auth.tsx detected as auth type", () => {
     fixture("src/auth.tsx", "export function AuthProvider() {}");
@@ -176,7 +167,17 @@ describe("auth scan", () => {
   });
 });
 
-// ─── empty / missing ─────────────────────────────────────
+describe("workspace roots", () => {
+  test("route discovery stays inside the selected package directory", () => {
+    fixture("packages/app/app/page.tsx", "export default function AppHome() {}");
+    fixture("packages/lib/app/page.tsx", "export default function LibHome() {}");
+
+    const routes = discoverRoutes(path.join(tmpDir, "packages/app"), "nextjs-app");
+
+    expect(routes.find((route) => route.file === "app/page.tsx")).toBeDefined();
+    expect(routes.some((route) => route.file.includes("packages/lib"))).toBe(false);
+  });
+});
 
 describe("empty / missing", () => {
   test("empty dir with nextjs-app → empty array", () => {

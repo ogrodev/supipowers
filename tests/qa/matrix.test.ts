@@ -1,18 +1,34 @@
-
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+import { createPaths } from "../../src/platform/types.js";
 import {
+  createEmptyMatrix,
+  detectRegressions,
   loadE2eMatrix,
   saveE2eMatrix,
-  createEmptyMatrix,
   updateMatrixFromResults,
-  detectRegressions,
 } from "../../src/qa/matrix.js";
 import type { E2eFlowRecord, E2eTestResult } from "../../src/qa/types.js";
-import { createPaths } from "../../src/platform/types.js";
+import type { WorkspaceTarget } from "../../src/types.js";
 
 const paths = createPaths(".omp");
+
+function target(name: string, relativeDir = "."): WorkspaceTarget {
+  return {
+    id: name,
+    name,
+    kind: relativeDir === "." ? "root" : "workspace",
+    repoRoot: "/repo",
+    packageDir: relativeDir === "." ? "/repo" : `/repo/${relativeDir}`,
+    manifestPath: relativeDir === "." ? "/repo/package.json" : `/repo/${relativeDir}/package.json`,
+    relativeDir,
+    version: "1.0.0",
+    private: false,
+    packageManager: "bun",
+  };
+}
 
 describe("E2E Matrix", () => {
   let tmpDir: string;
@@ -46,6 +62,22 @@ describe("E2E Matrix", () => {
     expect(loaded!.appType).toBe("vite");
   });
 
+  test("workspace targets isolate matrices from root state", () => {
+    const workspaceTarget = {
+      ...target("@repo/web", "packages/web"),
+      repoRoot: tmpDir,
+      packageDir: path.join(tmpDir, "packages/web"),
+      manifestPath: path.join(tmpDir, "packages/web/package.json"),
+    };
+    const matrix = createEmptyMatrix("nextjs-app");
+
+    saveE2eMatrix(paths, tmpDir, matrix, workspaceTarget);
+
+    expect(loadE2eMatrix(paths, tmpDir, workspaceTarget)).toEqual(matrix);
+    expect(loadE2eMatrix(paths, tmpDir)).toBeNull();
+    expect(fs.existsSync(path.join(tmpDir, ".omp", "supipowers", "workspaces", "packages", "web", "e2e-matrix.json"))).toBe(true);
+  });
+
   test("loadE2eMatrix returns null for invalid JSON", () => {
     const matrixDir = path.join(tmpDir, ".omp", "supipowers");
     fs.mkdirSync(matrixDir, { recursive: true });
@@ -67,8 +99,6 @@ describe("E2E Matrix", () => {
     ];
 
     const regressions = detectRegressions(flows, results);
-    // Only login is a regression (was pass, now fail)
-    // signup was already failing, dashboard still passes
     expect(regressions).toHaveLength(1);
     expect(regressions[0].flowId).toBe("login");
     expect(regressions[0].previousStatus).toBe("pass");
