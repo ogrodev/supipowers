@@ -1,12 +1,23 @@
 import fs from "fs";
-import path from "path";
-import type { BumpType, CategorizedCommits } from "../types.js";
+import type { BumpType, CategorizedCommits, ReleaseTarget } from "../types.js";
 
 type ExecFn = (
   cmd: string,
   args: string[],
   opts?: { cwd?: string },
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
+
+interface PackageManifest {
+  version?: string;
+}
+
+interface ParsedReleaseTag {
+  tag: string;
+  version: string;
+}
+
+const LEGACY_RELEASE_TAG_FORMAT = "v${version}";
+const SEMVER_CAPTURE = "([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)";
 
 /**
  * Replace `${version}` in a tag format template with the actual version string.
@@ -32,7 +43,6 @@ export function suggestBump(commits: CategorizedCommits): BumpType {
  * Returns a plain "X.Y.Z" string — never prefixed with "v".
  */
 export function bumpVersion(current: string, bump: BumpType): string {
-  // Strip pre-release / build metadata before parsing
   const core = current.split("-")[0].split("+")[0];
   const parts = core.split(".").map(Number);
 
@@ -40,8 +50,7 @@ export function bumpVersion(current: string, bump: BumpType): string {
     throw new Error(`Invalid semver string: "${current}"`);
   }
 
-  let [major, minor, patch] = parts;
-
+  const [major, minor, patch] = parts;
   switch (bump) {
     case "major":
       return `${major + 1}.0.0`;
@@ -52,56 +61,38 @@ export function bumpVersion(current: string, bump: BumpType): string {
   }
 }
 
-/**
- * Read the parsed package.json object from `<cwd>/package.json`. Returns null
- * when the file is absent or invalid.
- */
-function readPackageJson(cwd: string): { version?: string; files?: unknown } | null {
-  const pkgPath = path.join(cwd, "package.json");
+function readPackageJson(manifestPath: string): PackageManifest | null {
   try {
-    const raw = fs.readFileSync(pkgPath, "utf-8");
-    return JSON.parse(raw) as { version?: string; files?: unknown };
+    return JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as PackageManifest;
   } catch {
     return null;
   }
 }
 
 /**
- * Read the `version` field from `<cwd>/package.json`.
- * Returns `"0.0.0"` when the file is absent or carries no version field.
+ * Read the current version from the selected release target's manifest.
+ * Returns "0.0.0" when the manifest is absent or carries no version field.
  */
-export function getCurrentVersion(cwd: string): string {
-  return readPackageJson(cwd)?.version ?? "0.0.0";
+export function getCurrentVersion(target: ReleaseTarget): string {
+  return readPackageJson(target.manifestPath)?.version ?? "0.0.0";
 }
 
-/**
- * Return the publishable package paths used to scope release-note commits.
- * Returns null when the package manifest does not declare a `files` whitelist.
- */
-export function getPublishedPackagePaths(cwd: string): string[] | null {
-  const files = readPackageJson(cwd)?.files;
-  if (!Array.isArray(files)) {
-    return null;
-  }
-
-  const normalized = files
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.replace(/^\.\//, "").replace(/\/+$/, ""))
-    .filter(Boolean);
-
-  if (normalized.length === 0) {
-    return null;
-  }
-
-  return [...new Set(["package.json", ...normalized])];
+/** Return the target-specific publish scope already computed during discovery. */
+export function getPublishedPackagePaths(target: ReleaseTarget): string[] {
+  return [...target.publishScopePaths];
 }
 
-interface ParsedReleaseTag {
-  tag: string;
-  version: string;
+/** Resolve the effective tag format for a selected target. */
+export function getReleaseTagFormat(target: ReleaseTarget, rootTagFormat: string): string {
+  return target.kind === "root" ? rootTagFormat : target.defaultTagFormat;
 }
 
-const SEMVER_CAPTURE = "([0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?)";
+function getTagFormatsForTarget(target: ReleaseTarget, rootTagFormat: string): string[] {
+  const effectiveTagFormat = getReleaseTagFormat(target, rootTagFormat);
+  return target.kind === "root"
+    ? [...new Set([effectiveTagFormat, LEGACY_RELEASE_TAG_FORMAT])]
+    : [effectiveTagFormat];
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -117,9 +108,15 @@ function extractVersionFromTag(tag: string, tagFormat: string): string | null {
   return match?.[1] ?? null;
 }
 
-function parseReleaseTag(tag: string, tagFormat: string): ParsedReleaseTag | null {
-  const version = extractVersionFromTag(tag, tagFormat) ?? extractVersionFromTag(tag, LEGACY_RELEASE_TAG_FORMAT);
-  return version ? { tag, version } : null;
+function parseReleaseTag(tag: string, target: ReleaseTarget, rootTagFormat: string): ParsedReleaseTag | null {
+  for (const tagFormat of getTagFormatsForTarget(target, rootTagFormat)) {
+    const version = extractVersionFromTag(tag, tagFormat);
+    if (version) {
+      return { tag, version };
+    }
+  }
+
+  return null;
 }
 
 function compareSemver(left: string, right: string): number {
@@ -142,10 +139,10 @@ function compareSemver(left: string, right: string): number {
   return left.includes("-") ? -1 : 1;
 }
 
-async function isTagAtHead(exec: ExecFn, cwd: string, tag: string): Promise<boolean> {
+async function isTagAtHead(exec: ExecFn, repoRoot: string, tag: string): Promise<boolean> {
   const [tagCommit, headCommit] = await Promise.all([
-    exec("git", ["rev-list", "-n", "1", tag], { cwd }),
-    exec("git", ["rev-parse", "HEAD"], { cwd }),
+    exec("git", ["rev-list", "-n", "1", tag], { cwd: repoRoot }),
+    exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot }),
   ]);
 
   return tagCommit.code === 0
@@ -154,14 +151,39 @@ async function isTagAtHead(exec: ExecFn, cwd: string, tag: string): Promise<bool
     && tagCommit.stdout.trim() === headCommit.stdout.trim();
 }
 
+export async function getLatestReleaseTag(
+  exec: ExecFn,
+  target: ReleaseTarget,
+  rootTagFormat: string,
+): Promise<string | null> {
+  try {
+    const localTags = await exec("git", ["tag", "--merged", "HEAD"], { cwd: target.repoRoot });
+    if (localTags.code !== 0) {
+      return null;
+    }
+
+    const latest = localTags.stdout
+      .split(/\r?\n/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .map((tag) => parseReleaseTag(tag, target, rootTagFormat))
+      .filter((candidate): candidate is ParsedReleaseTag => Boolean(candidate))
+      .sort((left, right) => compareSemver(right.version, left.version))[0];
+
+    return latest?.tag ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function findResumableLocalRelease(
   exec: ExecFn,
-  cwd: string,
+  target: ReleaseTarget,
   currentVersion: string,
-  tagFormat: string,
+  rootTagFormat: string,
 ): Promise<{ version: string; tag: string } | null> {
   try {
-    const localTags = await exec("git", ["tag", "--merged", "HEAD"], { cwd });
+    const localTags = await exec("git", ["tag", "--merged", "HEAD"], { cwd: target.repoRoot });
     if (localTags.code !== 0) {
       return null;
     }
@@ -170,18 +192,18 @@ export async function findResumableLocalRelease(
       .split(/\r?\n/)
       .map((tag) => tag.trim())
       .filter(Boolean)
-      .map((tag) => parseReleaseTag(tag, tagFormat))
+      .map((tag) => parseReleaseTag(tag, target, rootTagFormat))
       .filter((candidate): candidate is ParsedReleaseTag => Boolean(candidate))
       .filter((candidate) => compareSemver(candidate.version, currentVersion) > 0)
       .sort((left, right) => compareSemver(right.version, left.version));
 
     for (const candidate of candidates) {
-      const remoteTag = await exec("git", ["ls-remote", "--tags", "origin", candidate.tag], { cwd });
+      const remoteTag = await exec("git", ["ls-remote", "--tags", "origin", candidate.tag], { cwd: target.repoRoot });
       if (remoteTag.code !== 0 || remoteTag.stdout.trim() !== "") {
         continue;
       }
 
-      if (await isTagAtHead(exec, cwd, candidate.tag)) {
+      if (await isTagAtHead(exec, target.repoRoot, candidate.tag)) {
         return { version: candidate.version, tag: candidate.tag };
       }
     }
@@ -192,37 +214,41 @@ export async function findResumableLocalRelease(
   }
 }
 
-
-const LEGACY_RELEASE_TAG_FORMAT = "v${version}";
-
-function getReleaseTagCandidates(version: string, tagFormat: string): string[] {
-  return [...new Set([formatTag(version, tagFormat), formatTag(version, LEGACY_RELEASE_TAG_FORMAT)])];
+function getReleaseTagCandidates(
+  target: ReleaseTarget,
+  version: string,
+  rootTagFormat: string,
+): string[] {
+  return [...new Set(getTagFormatsForTarget(target, rootTagFormat).map((tagFormat) => formatTag(version, tagFormat)))];
 }
 
 async function hasMatchingReleaseTag(
   exec: ExecFn,
-  cwd: string,
+  target: ReleaseTarget,
   args: string[],
   version: string,
-  tagFormat: string,
+  rootTagFormat: string,
 ): Promise<boolean> {
-  const result = await exec("git", [...args, ...getReleaseTagCandidates(version, tagFormat)], { cwd });
+  const result = await exec(
+    "git",
+    [...args, ...getReleaseTagCandidates(target, version, rootTagFormat)],
+    { cwd: target.repoRoot },
+  );
   return result.code === 0 && result.stdout.trim().length > 0;
 }
 
 /**
  * Check whether a tag for the given version already exists locally.
- * Returns `true` when either the current-format tag or the legacy `v{version}`
- * tag is already known locally, which means this version was already released.
+ * Root targets keep the legacy `v${version}` fallback; workspace targets do not.
  */
 export async function isVersionReleased(
   exec: ExecFn,
-  cwd: string,
+  target: ReleaseTarget,
   version: string,
-  tagFormat: string,
+  rootTagFormat: string,
 ): Promise<boolean> {
   try {
-    return await hasMatchingReleaseTag(exec, cwd, ["tag", "-l"], version, tagFormat);
+    return await hasMatchingReleaseTag(exec, target, ["tag", "-l"], version, rootTagFormat);
   } catch {
     return false;
   }
@@ -230,17 +256,16 @@ export async function isVersionReleased(
 
 /**
  * Check whether a tag for the given version exists on the remote (origin).
- * Returns true when either the current-format tag or the legacy `v{version}`
- * tag is found via `git ls-remote --tags origin`.
+ * Root targets keep the legacy `v${version}` fallback; workspace targets do not.
  */
 export async function isTagOnRemote(
   exec: ExecFn,
-  cwd: string,
+  target: ReleaseTarget,
   version: string,
-  tagFormat: string,
+  rootTagFormat: string,
 ): Promise<boolean> {
   try {
-    return await hasMatchingReleaseTag(exec, cwd, ["ls-remote", "--tags", "origin"], version, tagFormat);
+    return await hasMatchingReleaseTag(exec, target, ["ls-remote", "--tags", "origin"], version, rootTagFormat);
   } catch {
     return false;
   }

@@ -269,6 +269,38 @@ describe("filterOnelineGitLogToPaths", () => {
     expect(filterOnelineGitLogToPaths(gitLog, ["src"]))
       .toBe("eeeeeee refactor(release): tighten changelog scoping");
   });
+
+  test("treats root fallback scope '.' as repo-wide publish scope", () => {
+    const gitLog = [
+      "\u001e9999999999999999\u001ffeat(root): include repo-wide changes",
+      "src/commands/release.ts",
+      "",
+    ].join("\n");
+
+    expect(filterOnelineGitLogToPaths(gitLog, ["package.json", "."]))
+      .toBe("9999999 feat(root): include repo-wide changes");
+  });
+
+  test("excludes commits that only touch other workspace packages", () => {
+    const gitLog = [
+      "\u001e1111111111111111\u001ffeat(pkg-a): shipped api",
+      "packages/pkg-a/src/index.ts",
+      "",
+      "\u001e2222222222222222\u001ffix(pkg-b): tighten validation",
+      "packages/pkg-b/src/index.ts",
+      "",
+      "\u001e3333333333333333\u001fdocs(pkg-a): update package notes",
+      "packages/pkg-a/README.md",
+      "",
+    ].join("\n");
+
+    expect(
+      filterOnelineGitLogToPaths(gitLog, ["packages/pkg-a/package.json", "packages/pkg-a"]),
+    ).toBe([
+      "1111111 feat(pkg-a): shipped api",
+      "3333333 docs(pkg-a): update package notes",
+    ].join("\n"));
+  });
 });
 
 

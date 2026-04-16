@@ -3,6 +3,14 @@ import { gitea } from "../../../src/release/channels/gitea.js";
 
 const OK = { stdout: "Name\tSSH-URL\nmy-gitea\tssh://...", stderr: "", code: 0 };
 const FAIL = { stdout: "", stderr: "", code: 1 };
+const BASE_CONTEXT = {
+  targetName: "@repo/pkg",
+  targetId: "@repo/pkg",
+  targetPath: "packages/pkg",
+  manifestPath: "/project/packages/pkg/package.json",
+  packageManager: "bun",
+};
+
 
 describe("gitea channel handler", () => {
   describe("detect", () => {
@@ -45,6 +53,7 @@ describe("gitea channel handler", () => {
     test("calls tea release create with correct args", async () => {
       const exec = mock().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
       const result = await gitea.publish(exec, {
+        ...BASE_CONTEXT,
         version: "3.0.0",
         tag: "v3.0.0",
         changelog: "- chore: update",
@@ -62,6 +71,7 @@ describe("gitea channel handler", () => {
     test("returns error when tea release create fails", async () => {
       const exec = mock().mockResolvedValue({ stdout: "", stderr: "not found", code: 1 });
       const result = await gitea.publish(exec, {
+        ...BASE_CONTEXT,
         version: "3.0.0",
         tag: "v3.0.0",
         changelog: "",

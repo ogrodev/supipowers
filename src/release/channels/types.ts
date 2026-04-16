@@ -17,6 +17,11 @@ export interface ChannelPublishContext {
   tag: string;
   changelog: string;
   cwd: string;
+  targetName: string;
+  targetId: string;
+  targetPath: string;
+  manifestPath: string;
+  packageManager: string;
 }
 
 export interface ChannelHandler {

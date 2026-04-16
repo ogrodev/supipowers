@@ -3,6 +3,14 @@ import { github } from "../../../src/release/channels/github.js";
 
 const OK = { stdout: "", stderr: "", code: 0 };
 const FAIL = { stdout: "", stderr: "not authenticated", code: 1 };
+const BASE_CONTEXT = {
+  targetName: "@repo/pkg",
+  targetId: "@repo/pkg",
+  targetPath: "packages/pkg",
+  manifestPath: "/project/packages/pkg/package.json",
+  packageManager: "bun",
+};
+
 
 describe("github channel handler", () => {
   describe("detect", () => {
@@ -37,6 +45,7 @@ describe("github channel handler", () => {
     test("calls gh release create with correct args", async () => {
       const exec = mock().mockResolvedValue(OK);
       const result = await github.publish(exec, {
+        ...BASE_CONTEXT,
         version: "1.0.0",
         tag: "v1.0.0",
         changelog: "- feat: something",
@@ -54,6 +63,7 @@ describe("github channel handler", () => {
     test("returns error when gh release create fails", async () => {
       const exec = mock().mockResolvedValue({ stdout: "", stderr: "release exists", code: 1 });
       const result = await github.publish(exec, {
+        ...BASE_CONTEXT,
         version: "1.0.0",
         tag: "v1.0.0",
         changelog: "",
@@ -67,6 +77,7 @@ describe("github channel handler", () => {
     test("returns error when gh throws", async () => {
       const exec = mock().mockRejectedValue(new Error("network error"));
       const result = await github.publish(exec, {
+        ...BASE_CONTEXT,
         version: "1.0.0",
         tag: "v1.0.0",
         changelog: "",

@@ -29,7 +29,16 @@ export function createCustomHandler(id: string, config: CustomChannelConfig): Ch
         // their values cross the shell boundary via environment variables.
         const result = await exec("sh", ["-c", config.publishCommand], {
           cwd: ctx.cwd,
-          env: { tag: ctx.tag, version: ctx.version, changelog: ctx.changelog },
+          env: {
+            tag: ctx.tag,
+            version: ctx.version,
+            changelog: ctx.changelog,
+            targetName: ctx.targetName,
+            targetId: ctx.targetId,
+            targetPath: ctx.targetPath,
+            manifestPath: ctx.manifestPath,
+            packageManager: ctx.packageManager,
+          },
         });
         if (result.code !== 0) {
           return { success: false, error: result.stderr || result.stdout || `Custom channel '${id}' exited with code ${result.code}` };

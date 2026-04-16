@@ -3,6 +3,14 @@ import { createCustomHandler } from "../../../src/release/channels/custom.js";
 
 const OK = { stdout: "", stderr: "", code: 0 };
 const FAIL = { stdout: "", stderr: "error", code: 1 };
+const BASE_CONTEXT = {
+  targetName: "@repo/pkg",
+  targetId: "@repo/pkg",
+  targetPath: "packages/pkg",
+  manifestPath: "/project/packages/pkg/package.json",
+  packageManager: "bun",
+};
+
 
 describe("createCustomHandler", () => {
   test("creates handler with correct id and label", () => {
@@ -77,6 +85,7 @@ describe("createCustomHandler", () => {
       const exec = mock().mockResolvedValue(OK);
       const changelog = 'fixed "quotes" and $(shell) safely';
       const result = await handler.publish(exec, {
+        ...BASE_CONTEXT,
         version: "1.2.3",
         tag: "v1.2.3",
         changelog,
@@ -93,6 +102,11 @@ describe("createCustomHandler", () => {
             tag: "v1.2.3",
             version: "1.2.3",
             changelog,
+            targetName: "@repo/pkg",
+            targetId: "@repo/pkg",
+            targetPath: "packages/pkg",
+            manifestPath: "/project/packages/pkg/package.json",
+            packageManager: "bun",
           },
         },
       );
@@ -105,6 +119,7 @@ describe("createCustomHandler", () => {
       });
       const exec = mock().mockResolvedValue({ stdout: "", stderr: "denied", code: 1 });
       const result = await handler.publish(exec, {
+        ...BASE_CONTEXT,
         version: "1.0.0",
         tag: "v1.0.0",
         changelog: "",
@@ -122,6 +137,7 @@ describe("createCustomHandler", () => {
       });
       const exec = mock().mockRejectedValue(new Error("exec failed"));
       const result = await handler.publish(exec, {
+        ...BASE_CONTEXT,
         version: "1.0.0",
         tag: "v1.0.0",
         changelog: "",

@@ -57,7 +57,7 @@ function parseGitLogWithFiles(gitLog: string): GitCommitWithFiles[] {
 
 function isPathInReleaseScope(filePath: string, releaseScope: string[]): boolean {
   const normalizedFile = normalizeReleasePath(filePath);
-  return releaseScope.some((scopePath) => normalizedFile === scopePath || normalizedFile.startsWith(`${scopePath}/`));
+  return releaseScope.some((scopePath) => scopePath === "." || normalizedFile === scopePath || normalizedFile.startsWith(`${scopePath}/`));
 }
 
 /**

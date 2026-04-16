@@ -3,6 +3,14 @@ import { gitlab } from "../../../src/release/channels/gitlab.js";
 
 const OK = { stdout: "", stderr: "", code: 0 };
 const FAIL = { stdout: "", stderr: "not authenticated", code: 1 };
+const BASE_CONTEXT = {
+  targetName: "@repo/pkg",
+  targetId: "@repo/pkg",
+  targetPath: "packages/pkg",
+  manifestPath: "/project/packages/pkg/package.json",
+  packageManager: "bun",
+};
+
 
 describe("gitlab channel handler", () => {
   describe("detect", () => {
@@ -37,6 +45,7 @@ describe("gitlab channel handler", () => {
     test("calls glab release create with correct args", async () => {
       const exec = mock().mockResolvedValue(OK);
       const result = await gitlab.publish(exec, {
+        ...BASE_CONTEXT,
         version: "2.0.0",
         tag: "v2.0.0",
         changelog: "- fix: bug",
@@ -54,6 +63,7 @@ describe("gitlab channel handler", () => {
     test("returns error when glab release create fails", async () => {
       const exec = mock().mockResolvedValue({ stdout: "", stderr: "forbidden", code: 1 });
       const result = await gitlab.publish(exec, {
+        ...BASE_CONTEXT,
         version: "2.0.0",
         tag: "v2.0.0",
         changelog: "",
