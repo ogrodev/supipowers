@@ -13,8 +13,9 @@ import {
   writeQualityGatesConfig,
 } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
-import type { ReviewReport } from "../../src/types.js";
 import { createPaths } from "../../src/platform/types.js";
+import { getWorkspaceConfigPath } from "../../src/workspace/state-paths.js";
+import type { ReviewReport } from "../../src/types.js";
 
 const paths = createPaths(".omp");
 
@@ -60,12 +61,31 @@ function writeGlobalConfig(
   writeJsonFile(localPaths.global("config.json"), data);
 }
 
+function writeWorkspaceConfig(
+  localPaths: ReturnType<typeof createPaths>,
+  repoRoot: string,
+  workspaceRelativeDir: string,
+  data: unknown,
+): void {
+  writeJsonFile(getWorkspaceConfigPath(localPaths, repoRoot, workspaceRelativeDir), data);
+}
+
 function readProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: string): unknown {
   return JSON.parse(fs.readFileSync(localPaths.project(cwd, "config.json"), "utf-8"));
 }
 
 function readGlobalConfig(localPaths: ReturnType<typeof createPaths>): unknown {
   return JSON.parse(fs.readFileSync(localPaths.global("config.json"), "utf-8"));
+}
+
+function readWorkspaceConfig(
+  localPaths: ReturnType<typeof createPaths>,
+  repoRoot: string,
+  workspaceRelativeDir: string,
+): unknown {
+  return JSON.parse(
+    fs.readFileSync(getWorkspaceConfigPath(localPaths, repoRoot, workspaceRelativeDir), "utf-8"),
+  );
 }
 
 describe("deepMerge", () => {
@@ -211,6 +231,28 @@ describe("strict and inspection config loading", () => {
       "test-suite": { enabled: true, command: "npm test" },
     });
   });
+
+  test("workspace config layers on top of global and root config", () => {
+    writeGlobalConfig(localPaths, {
+      lsp: { setupGuide: false },
+    });
+    writeProjectConfig(localPaths, tmpDir, {
+      contextMode: { compressionThreshold: 8192 },
+    });
+    writeWorkspaceConfig(localPaths, tmpDir, "packages/pkg-a", {
+      contextMode: { compressionThreshold: 16384 },
+      qa: { e2e: true },
+    });
+
+    const config = loadConfig(localPaths, tmpDir, {
+      repoRoot: tmpDir,
+      workspaceRelativeDir: "packages/pkg-a",
+    });
+
+    expect(config.lsp.setupGuide).toBe(false);
+    expect(config.contextMode.compressionThreshold).toBe(16384);
+    expect(config.qa.e2e).toBe(true);
+  });
 });
 
 describe("quality gate recovery helpers", () => {
@@ -236,12 +278,26 @@ describe("quality gate recovery helpers", () => {
 
     const result = inspectQualityGateRecovery(localPaths, tmpDir);
     const globalScope = result.scopes.find((scope) => scope.scope === "global");
-    const projectScope = result.scopes.find((scope) => scope.scope === "project");
+    const rootScope = result.scopes.find((scope) => scope.scope === "root");
 
     expect(globalScope?.recoverableInvalidQualityGates).toBe(true);
     expect(globalScope?.qualityGateValidationErrors.length).toBeGreaterThan(0);
-    expect(projectScope?.recoverableInvalidQualityGates).toBe(false);
-    expect(projectScope?.validationErrors).toHaveLength(0);
+    expect(rootScope?.recoverableInvalidQualityGates).toBe(false);
+    expect(rootScope?.validationErrors).toHaveLength(0);
+  });
+
+  test("inspection adds workspace scope when a workspace target is selected", () => {
+    writeWorkspaceConfig(localPaths, tmpDir, "packages/pkg-a", {
+      quality: { gates: { "test-suite": { enabled: true, command: 42 } } },
+    });
+
+    const result = inspectQualityGateRecovery(localPaths, tmpDir, {
+      repoRoot: tmpDir,
+      workspaceRelativeDir: "packages/pkg-a",
+    });
+
+    expect(result.scopes.map((scope) => scope.scope)).toEqual(["global", "root", "workspace"]);
+    expect(result.scopes.find((scope) => scope.scope === "workspace")?.recoverableInvalidQualityGates).toBe(true);
   });
 
   test("removeQualityGatesConfig removes only quality.gates and preserves unrelated keys", () => {
@@ -250,7 +306,7 @@ describe("quality gate recovery helpers", () => {
       quality: { gates: { "lsp-diagnostics": { enabled: "not-a-boolean" } } },
     });
 
-    expect(removeQualityGatesConfig(localPaths, tmpDir, "project")).toBe(true);
+    expect(removeQualityGatesConfig(localPaths, tmpDir, "root")).toBe(true);
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({
       lsp: { setupGuide: false },
     });
@@ -279,7 +335,7 @@ describe("quality gate recovery helpers", () => {
       quality: { gates: { "test-suite": { enabled: true, command: "bun test" } } },
     });
   });
-});
+  });
 
 describe("quality gate types", () => {
   test("ReviewReport stores aggregate statuses instead of profile boolean", () => {
@@ -334,12 +390,39 @@ describe("saveConfig / updateConfig", () => {
     expect(reloaded.contextMode.compressionThreshold).toBe(8192);
   });
 
+  test("updateConfig writes only the selected workspace scope", () => {
+    const localPaths = createTestPaths(tmpDir);
+    writeGlobalConfig(localPaths, {
+      lsp: { setupGuide: false },
+    });
+    writeProjectConfig(localPaths, tmpDir, {
+      contextMode: { compressionThreshold: 8192 },
+    });
+
+    const updated = updateConfig(
+      localPaths,
+      tmpDir,
+      { qa: { e2e: true } },
+      { repoRoot: tmpDir, workspaceRelativeDir: "packages/pkg-a", scope: "workspace" },
+    );
+
+    expect(readProjectConfig(localPaths, tmpDir)).toEqual({
+      contextMode: { compressionThreshold: 8192 },
+    });
+    expect(readWorkspaceConfig(localPaths, tmpDir, "packages/pkg-a")).toEqual({
+      qa: { e2e: true },
+    });
+    expect(updated.lsp.setupGuide).toBe(false);
+    expect(updated.contextMode.compressionThreshold).toBe(8192);
+    expect(updated.qa.e2e).toBe(true);
+  });
+
   test("updateConfig rejects invalid release.tagFormat", () => {
     expect(() => updateConfig(paths, tmpDir, { release: { tagFormat: "fixed-tag" } })).toThrow(
       /release\.tagFormat/,
     );
   });
-});
+  });
 
 describe("contextMode config", () => {
   test("DEFAULT_CONFIG includes contextMode with all fields", () => {

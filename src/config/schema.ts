@@ -71,7 +71,7 @@ export const ConfigSchema = Type.Object(
 );
 
 export interface ConfigParseError {
-  source: "global" | "project";
+  source: "global" | "root" | "workspace";
   path: string;
   message: string;
 }

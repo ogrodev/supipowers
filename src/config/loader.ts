@@ -8,6 +8,10 @@ import type {
   QualityGatesConfig,
 } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
+import {
+  getRootConfigPath,
+  getWorkspaceConfigPath,
+} from "../workspace/state-paths.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import {
   collectConfigValidationErrors,
@@ -32,16 +36,63 @@ export interface QualityGateRecoveryInspection {
   scopes: ScopedConfigInspection[];
 }
 
-function getProjectConfigPath(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, "config.json");
+export interface ConfigResolutionOptions {
+  repoRoot?: string;
+  workspaceRelativeDir?: string | null;
+}
+
+export interface ConfigMutationOptions extends ConfigResolutionOptions {
+  scope?: ConfigScope;
+}
+
+interface ResolvedConfigContext {
+  repoRoot: string;
+  workspaceRelativeDir: string | null;
+}
+
+interface ResolvedConfigLayer {
+  scope: ConfigScope;
+  path: string;
+}
+
+function resolveConfigContext(cwd: string, options?: ConfigResolutionOptions): ResolvedConfigContext {
+  const repoRoot = options?.repoRoot ?? cwd;
+  const workspaceRelativeDir = options?.workspaceRelativeDir
+    && options.workspaceRelativeDir !== "."
+      ? options.workspaceRelativeDir
+      : null;
+
+  return { repoRoot, workspaceRelativeDir };
 }
 
 function getGlobalConfigPath(paths: PlatformPaths): string {
   return paths.global("config.json");
 }
 
-function getConfigPath(paths: PlatformPaths, cwd: string, scope: ConfigScope): string {
-  return scope === "global" ? getGlobalConfigPath(paths) : getProjectConfigPath(paths, cwd);
+function getConfigPath(
+  paths: PlatformPaths,
+  cwd: string,
+  scope: ConfigScope,
+  options?: ConfigResolutionOptions,
+): string {
+  const { repoRoot, workspaceRelativeDir } = resolveConfigContext(cwd, options);
+
+  switch (scope) {
+    case "global":
+      return getGlobalConfigPath(paths);
+    case "root":
+      return getRootConfigPath(paths, repoRoot);
+    case "workspace":
+      if (!workspaceRelativeDir) {
+        throw new Error("Workspace config scope requires a workspaceRelativeDir.");
+      }
+      return getWorkspaceConfigPath(paths, repoRoot, workspaceRelativeDir);
+  }
+}
+
+function getInspectionScopes(options?: ConfigResolutionOptions): ConfigScope[] {
+  const { workspaceRelativeDir } = resolveConfigContext(".", options);
+  return workspaceRelativeDir ? ["global", "root", "workspace"] : ["global", "root"];
 }
 
 function readJsonFile(
@@ -226,17 +277,14 @@ function migrateConfig(config: Record<string, unknown>): Record<string, unknown>
 
 function mergeConfigLayers(
   defaults: SupipowersConfig,
-  globalData: Record<string, unknown> | null,
-  projectData: Record<string, unknown> | null,
-): Record<string, unknown> {
+  ...layers: Array<Record<string, unknown> | null>
+ ): Record<string, unknown> {
   let merged = structuredClone(defaults) as unknown as Record<string, unknown>;
 
-  if (globalData) {
-    merged = applyConfigOverride(merged, globalData);
-  }
-
-  if (projectData) {
-    merged = applyConfigOverride(merged, projectData);
+  for (const layer of layers) {
+    if (layer) {
+      merged = applyConfigOverride(merged, layer);
+    }
   }
 
   // The config schema changed without a version bump, so normalize known
@@ -246,14 +294,33 @@ function mergeConfigLayers(
   return merged;
 }
 
+interface ResolvedConfigLayerRead extends ResolvedConfigLayer {
+  readResult: { data: Record<string, unknown> | null; error: ConfigParseError | null };
+}
+
+function readConfigLayers(
+  paths: PlatformPaths,
+  cwd: string,
+  options?: ConfigResolutionOptions,
+ ): ResolvedConfigLayerRead[] {
+  return getInspectionScopes(options).map((scope) => {
+    const filePath = getConfigPath(paths, cwd, scope, options);
+    return {
+      scope,
+      path: filePath,
+      readResult: readJsonFile(scope, filePath),
+    };
+  });
+}
+
 function inspectScopeConfig(
   paths: PlatformPaths,
   cwd: string,
   scope: ConfigScope,
-): ScopedConfigInspection {
-  const filePath = getConfigPath(paths, cwd, scope);
+  options?: ConfigResolutionOptions,
+ ): ScopedConfigInspection {
+  const filePath = getConfigPath(paths, cwd, scope, options);
   const readResult = readJsonFile(scope, filePath);
-
   if (readResult.error) {
     return {
       scope,
@@ -269,10 +336,7 @@ function inspectScopeConfig(
   }
 
   const hasOwnQualityGates = !!readResult.data && hasOwnNestedProperty(readResult.data, "quality", "gates");
-  const mergedConfig =
-    scope === "global"
-      ? mergeConfigLayers(DEFAULT_CONFIG, readResult.data, null)
-      : mergeConfigLayers(DEFAULT_CONFIG, null, readResult.data);
+  const mergedConfig = mergeConfigLayers(DEFAULT_CONFIG, readResult.data);
   const validationErrors = collectConfigValidationErrors(mergedConfig);
   const qualityGateValidationErrors = hasOwnQualityGates
     ? validationErrors.filter((error) => error.path === "quality.gates" || error.path.startsWith("quality.gates."))
@@ -294,6 +358,7 @@ function inspectScopeConfig(
       hasOwnQualityGates && qualityGateValidationErrors.length > 0 && otherValidationErrors.length === 0,
   };
 }
+
 
 function removeQualityGatesFromRecord(config: Record<string, unknown>): Record<string, unknown> {
   const next = structuredClone(config) as Record<string, unknown>;
@@ -320,10 +385,11 @@ function writeRawConfigFile(filePath: string, config: Record<string, unknown>): 
 export function inspectQualityGateRecovery(
   paths: PlatformPaths,
   cwd: string,
-): QualityGateRecoveryInspection {
+  options?: ConfigResolutionOptions,
+ ): QualityGateRecoveryInspection {
   return {
-    scopes: (["global", "project"] as ConfigScope[]).map((scope) =>
-      inspectScopeConfig(paths, cwd, scope),
+    scopes: getInspectionScopes(options).map((scope) =>
+      inspectScopeConfig(paths, cwd, scope, options),
     ),
   };
 }
@@ -333,8 +399,9 @@ export function writeQualityGatesConfig(
   cwd: string,
   scope: ConfigScope,
   gates: QualityGatesConfig,
-): void {
-  const configPath = getConfigPath(paths, cwd, scope);
+  options?: ConfigResolutionOptions,
+ ): void {
+  const configPath = getConfigPath(paths, cwd, scope, options);
   const current = readJsonFile(scope, configPath);
   if (current.error) {
     throw new Error(`${scope} config ${configPath}: ${current.error.message}`);
@@ -355,8 +422,9 @@ export function removeQualityGatesConfig(
   paths: PlatformPaths,
   cwd: string,
   scope: ConfigScope,
-): boolean {
-  const configPath = getConfigPath(paths, cwd, scope);
+  options?: ConfigResolutionOptions,
+ ): boolean {
+  const configPath = getConfigPath(paths, cwd, scope, options);
   const current = readJsonFile(scope, configPath);
   if (current.error) {
     throw new Error(`${scope} config ${configPath}: ${current.error.message}`);
@@ -382,13 +450,19 @@ export function formatConfigErrors(result: InspectionLoadResult): string {
   return messages.join("\n") || "Unknown config error";
 }
 
-export function inspectConfig(paths: PlatformPaths, cwd: string): InspectionLoadResult {
-  const globalRead = readJsonFile("global", getGlobalConfigPath(paths));
-  const projectRead = readJsonFile("project", getProjectConfigPath(paths, cwd));
-  const mergedConfig = mergeConfigLayers(DEFAULT_CONFIG, globalRead.data, projectRead.data);
-  const parseErrors = [globalRead.error, projectRead.error].filter(
-    (error): error is ConfigParseError => error !== null,
+export function inspectConfig(
+  paths: PlatformPaths,
+  cwd: string,
+  options?: ConfigResolutionOptions,
+ ): InspectionLoadResult {
+  const layers = readConfigLayers(paths, cwd, options);
+  const mergedConfig = mergeConfigLayers(
+    DEFAULT_CONFIG,
+    ...layers.map((layer) => layer.readResult.data),
   );
+  const parseErrors = layers
+    .map((layer) => layer.readResult.error)
+    .filter((error): error is ConfigParseError => error !== null);
   const validationErrors = collectConfigValidationErrors(mergedConfig);
 
   return {
@@ -402,9 +476,13 @@ export function inspectConfig(paths: PlatformPaths, cwd: string): InspectionLoad
   };
 }
 
-/** Load config with global -> project layering over defaults. */
-export function loadConfig(paths: PlatformPaths, cwd: string): SupipowersConfig {
-  const result = inspectConfig(paths, cwd);
+/** Load config with global -> root -> workspace layering over defaults. */
+export function loadConfig(
+  paths: PlatformPaths,
+  cwd: string,
+  options?: ConfigResolutionOptions,
+ ): SupipowersConfig {
+  const result = inspectConfig(paths, cwd, options);
 
   if (!result.effectiveConfig) {
     throw new Error(formatConfigErrors(result));
@@ -428,28 +506,47 @@ function assertValidConfig(data: unknown): void {
 }
 
 
-/** Save project-level config. */
-export function saveConfig(paths: PlatformPaths, cwd: string, config: SupipowersConfig): void {
+/** Save a full config document to the selected scope. */
+export function saveConfig(
+  paths: PlatformPaths,
+  cwd: string,
+  config: SupipowersConfig,
+  options?: ConfigMutationOptions,
+ ): void {
   assertValidConfig(config);
 
-  const configPath = getProjectConfigPath(paths, cwd);
+  const scope = options?.scope ?? "root";
+  const configPath = getConfigPath(paths, cwd, scope, options);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 }
 
-/** Update specific config fields (deep merge into current). */
+/** Update specific config fields in the selected raw scope. */
 export function updateConfig(
   paths: PlatformPaths,
   cwd: string,
   updates: Record<string, unknown>,
-): SupipowersConfig {
-  const current = loadConfig(paths, cwd);
-  const updated = applyConfigOverride(
-    structuredClone(current) as unknown as Record<string, unknown>,
+  options?: ConfigMutationOptions,
+ ): SupipowersConfig {
+  const scope = options?.scope ?? "root";
+  const configPath = getConfigPath(paths, cwd, scope, options);
+  const current = readJsonFile(scope, configPath);
+  if (current.error) {
+    throw new Error(`${scope} config ${configPath}: ${current.error.message}`);
+  }
+
+  const nextScopeData = applyConfigOverride(
+    current.data ? structuredClone(current.data) as Record<string, unknown> : {},
     updates,
   );
-  assertValidConfig(updated);
 
-  saveConfig(paths, cwd, updated as unknown as SupipowersConfig);
-  return updated as unknown as SupipowersConfig;
+  const layers = readConfigLayers(paths, cwd, options);
+  const mergedConfig = mergeConfigLayers(
+    DEFAULT_CONFIG,
+    ...layers.map((layer) => layer.scope === scope ? nextScopeData : layer.readResult.data),
+  );
+  assertValidConfig(mergedConfig);
+
+  writeRawConfigFile(configPath, nextScopeData);
+  return mergedConfig as unknown as SupipowersConfig;
 }
