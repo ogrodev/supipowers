@@ -61,7 +61,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.10.0",
-    "handlebars": "^4.7.8"
+    "handlebars": "^4.7.8",
+    "yaml": "^2.8.3"
   },
   "peerDependencies": {
     "@oh-my-pi/pi-coding-agent": "*",
