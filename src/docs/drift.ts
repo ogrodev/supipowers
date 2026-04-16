@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Platform, PlatformPaths } from "../platform/types.js";
-import type { DocDriftState, DriftCheckResult, DriftFinding } from "../types.js";
+import type { DocDriftState, DriftCheckResult, DriftFinding, WorkspaceTarget } from "../types.js";
 import { runStructuredAgentSession } from "../quality/ai-session.js";
+import { filterPathsForWorkspaceTarget } from "../workspace/path-mapping.js";
+import { getTargetStatePath } from "../workspace/state-paths.js";
 
 // ── State persistence ─────────────────────────────────────────
 
@@ -14,21 +16,41 @@ const EMPTY_STATE: DocDriftState = {
   lastRunAt: null,
 };
 
-export function statePath(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, STATE_FILENAME);
+export interface DocDriftScope<TTarget extends WorkspaceTarget = WorkspaceTarget> {
+  target: TTarget;
+  allTargets: TTarget[];
 }
 
-export function loadState(paths: PlatformPaths, cwd: string): DocDriftState {
-  const file = statePath(paths, cwd);
+function filterTrackedFilesToScope(
+  trackedFiles: string[],
+  scope?: DocDriftScope,
+): string[] {
+  if (!scope) {
+    return trackedFiles;
+  }
+
+  return filterPathsForWorkspaceTarget(scope.allTargets, scope.target, trackedFiles);
+}
+
+export function statePath(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): string {
+  return target ? getTargetStatePath(paths, target, STATE_FILENAME) : paths.project(cwd, STATE_FILENAME);
+}
+
+export function loadState(paths: PlatformPaths, cwd: string, scope?: DocDriftScope): DocDriftState {
+  const file = statePath(paths, cwd, scope?.target);
   try {
-    return JSON.parse(fs.readFileSync(file, "utf-8")) as DocDriftState;
+    const state = JSON.parse(fs.readFileSync(file, "utf-8")) as DocDriftState;
+    return {
+      ...state,
+      trackedFiles: filterTrackedFilesToScope(state.trackedFiles, scope),
+    };
   } catch {
     return { ...EMPTY_STATE, trackedFiles: [] };
   }
 }
 
-export function saveState(paths: PlatformPaths, cwd: string, state: DocDriftState): void {
-  const file = statePath(paths, cwd);
+export function saveState(paths: PlatformPaths, cwd: string, state: DocDriftState, target?: WorkspaceTarget): void {
+  const file = statePath(paths, cwd, target);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(state, null, 2) + "\n");
 }
@@ -77,6 +99,7 @@ export function isProjectDoc(filePath: string): boolean {
 export async function discoverDocFiles(
   platform: Platform,
   cwd: string,
+  scope?: DocDriftScope,
 ): Promise<string[]> {
   const result = await platform.exec(
     "git",
@@ -85,13 +108,16 @@ export async function discoverDocFiles(
   );
   if (result.code !== 0) return [];
 
-  const files = result.stdout
-    .split("\n")
-    .map((f) => f.trim())
-    .filter((f) => f.length > 0 && isProjectDoc(f));
+  const files = [...new Set(
+    result.stdout
+      .split("\n")
+      .map((f) => f.trim())
+      .filter((f) => f.length > 0 && isProjectDoc(f)),
+  )].sort();
 
-  // Deduplicate (globs may overlap)
-  return [...new Set(files)].sort();
+  return scope
+    ? filterPathsForWorkspaceTarget(scope.allTargets, scope.target, files).sort()
+    : files;
 }
 
 // ── Git helpers ───────────────────────────────────────────────
@@ -369,15 +395,19 @@ async function runDriftSubAgent(
 export async function checkDocDrift(
   platform: Platform,
   cwd: string,
+  scope?: DocDriftScope,
 ): Promise<DriftCheckResult | null> {
-  const state = loadState(platform.paths, cwd);
+  const state = loadState(platform.paths, cwd, scope);
   if (state.trackedFiles.length === 0) return null;
 
   let changedFiles: string[] = [];
   const isFirstRun = !state.lastCommit;
 
   if (!isFirstRun) {
-    changedFiles = await getDiffFilesSince(platform, cwd, state.lastCommit!);
+    const diffFiles = await getDiffFilesSince(platform, cwd, state.lastCommit!);
+    changedFiles = scope
+      ? filterPathsForWorkspaceTarget(scope.allTargets, scope.target, diffFiles)
+      : diffFiles;
     if (changedFiles.length === 0) return null;
   }
 

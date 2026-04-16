@@ -1,19 +1,24 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { PlatformPaths } from "../../src/platform/types.js";
+import type { Platform, PlatformPaths } from "../../src/platform/types.js";
 import type { DriftFinding } from "../../src/types.js";
 import {
   buildFixPrompt,
   buildSubAgentPrompt,
+  checkDocDrift,
+  discoverDocFiles,
   groupDocsByAffinity,
   isProjectDoc,
   loadState,
   parseDriftFindings,
   saveState,
+  statePath,
 } from "../../src/docs/drift.js";
 import type { DocDriftGroup } from "../../src/docs/drift.js";
+import { detectPackageManager } from "../../src/workspace/package-manager.js";
+import { discoverWorkspaceTargets } from "../../src/workspace/targets.js";
 
 // ── isProjectDoc ──────────────────────────────────────────────
 
@@ -91,6 +96,147 @@ function createPaths(baseDir?: string): PlatformPaths {
     agent: (...segments: string[]) => path.join(dir, ...segments),
   };
 }
+
+function createPlatform(overrides: Partial<Platform> = {}): Platform {
+  return {
+    name: "omp",
+    registerCommand: mock(),
+    getCommands: mock(() => []),
+    on: mock(),
+    exec: mock(),
+    sendMessage: mock(),
+    sendUserMessage: mock(),
+    getActiveTools: mock(() => []),
+    registerMessageRenderer: mock(),
+    createAgentSession: mock(),
+    paths: createPaths(),
+    capabilities: {
+      agentSessions: true,
+      compactionHooks: false,
+      customWidgets: false,
+      registerTool: false,
+    },
+    ...overrides,
+  } as unknown as Platform;
+}
+
+function createWorkspaceRepo(): void {
+  fs.writeFileSync(
+    path.join(tmpDir, "package.json"),
+    JSON.stringify({
+      name: "root-app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+    }, null, 2),
+  );
+  fs.mkdirSync(path.join(tmpDir, "packages", "pkg-a"), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, "packages", "pkg-b"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmpDir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", version: "1.0.0" }, null, 2),
+  );
+  fs.writeFileSync(
+    path.join(tmpDir, "packages", "pkg-b", "package.json"),
+    JSON.stringify({ name: "pkg-b", version: "1.0.0" }, null, 2),
+  );
+}
+
+describe("targeted doc drift", () => {
+  test("discoverDocFiles filters to the selected workspace target", async () => {
+    createWorkspaceRepo();
+    const platform = createPlatform({
+      exec: mock(async () => ({
+        code: 0,
+        stdout: [
+          "README.md",
+          "packages/pkg-a/README.md",
+          "packages/pkg-a/docs/setup.md",
+          "packages/pkg-b/README.md",
+        ].join("\n"),
+        stderr: "",
+      })),
+    } as any);
+
+    const targets = discoverWorkspaceTargets(tmpDir, detectPackageManager(tmpDir));
+    const pkgATarget = targets.find((target) => target.name === "pkg-a");
+    const rootTarget = targets.find((target) => target.kind === "root");
+    expect(pkgATarget).toBeDefined();
+    expect(rootTarget).toBeDefined();
+
+    const pkgADocs = await discoverDocFiles(platform, tmpDir, {
+      target: pkgATarget!,
+      allTargets: targets,
+    });
+    expect(pkgADocs).toEqual([
+      "packages/pkg-a/README.md",
+      "packages/pkg-a/docs/setup.md",
+    ]);
+
+    const rootDocs = await discoverDocFiles(platform, tmpDir, {
+      target: rootTarget!,
+      allTargets: targets,
+    });
+    expect(rootDocs).toEqual(["README.md"]);
+  });
+
+  test("checkDocDrift filters changed files to the selected workspace target", async () => {
+    createWorkspaceRepo();
+    fs.writeFileSync(path.join(tmpDir, "packages", "pkg-a", "README.md"), "# pkg-a");
+    const targets = discoverWorkspaceTargets(tmpDir, detectPackageManager(tmpDir));
+    const pkgATarget = targets.find((target) => target.name === "pkg-a");
+    expect(pkgATarget).toBeDefined();
+
+    saveState(
+      createPaths(),
+      tmpDir,
+      {
+        trackedFiles: ["packages/pkg-a/README.md"],
+        lastCommit: "abc123",
+        lastRunAt: "2026-04-13T00:00:00Z",
+      },
+      pkgATarget!,
+    );
+
+    const session = {
+      prompt: mock(async () => {}),
+      state: {
+        messages: [{ role: "assistant", content: JSON.stringify({ findings: [], status: "ok" }) }],
+      },
+      dispose: mock(async () => {}),
+    };
+
+    const platform = createPlatform({
+      exec: mock(async (cmd: string, args: string[]) => {
+        if (cmd === "git" && args[0] === "diff") {
+          return {
+            code: 0,
+            stdout: [
+              "packages/pkg-a/src/index.ts",
+              "packages/pkg-b/src/index.ts",
+              "src/root.ts",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      }),
+      createAgentSession: mock(async () => session),
+    } as any);
+
+    const result = await checkDocDrift(platform, tmpDir, {
+      target: pkgATarget!,
+      allTargets: targets,
+    });
+
+    expect(result).toEqual({ drifted: false, summary: "All documentation is up to date.", findings: [] });
+    expect(session.prompt).toHaveBeenCalled();
+    const promptCalls = (session.prompt as any).mock.calls as Array<[string]>;
+    const prompt = String(promptCalls[0]?.[0] ?? "");
+    expect(prompt).toContain("packages/pkg-a/src/index.ts");
+    expect(prompt).not.toContain("packages/pkg-b/src/index.ts");
+    expect(prompt).not.toContain("src/root.ts");
+  });
+});
 
 // ── groupDocsByAffinity ──────────────────────────────────────
 
@@ -418,4 +564,29 @@ describe("state persistence", () => {
     const loaded = loadState(paths, tmpDir);
     expect(loaded.trackedFiles).toEqual([]);
   });
+  test("workspace targets use isolated state files", () => {
+    createWorkspaceRepo();
+    const paths = createPaths();
+    const targets = discoverWorkspaceTargets(tmpDir, detectPackageManager(tmpDir));
+    const rootTarget = targets.find((target) => target.kind === "root");
+    const pkgATarget = targets.find((target) => target.name === "pkg-a");
+    expect(rootTarget).toBeDefined();
+    expect(pkgATarget).toBeDefined();
+
+    saveState(paths, tmpDir, {
+      trackedFiles: ["README.md"],
+      lastCommit: "root123",
+      lastRunAt: "2026-04-13T00:00:00Z",
+    }, rootTarget!);
+    saveState(paths, tmpDir, {
+      trackedFiles: ["packages/pkg-a/README.md"],
+      lastCommit: "pkg123",
+      lastRunAt: "2026-04-14T00:00:00Z",
+    }, pkgATarget!);
+
+    expect(statePath(paths, tmpDir, rootTarget!)).not.toBe(statePath(paths, tmpDir, pkgATarget!));
+    expect(loadState(paths, tmpDir, { target: rootTarget!, allTargets: targets }).trackedFiles).toEqual(["README.md"]);
+    expect(loadState(paths, tmpDir, { target: pkgATarget!, allTargets: targets }).trackedFiles).toEqual(["packages/pkg-a/README.md"]);
+  });
+
 });
