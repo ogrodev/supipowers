@@ -12,6 +12,8 @@ export interface FixPrPromptOptions {
   skillContent: string;
   /** Resolved model ID for sub-agent tasks (planner, fixer roles). */
   taskModel: string;
+  selectedTargetLabel: string;
+  deferredCommentsSummary: string | null;
 }
 
 function buildReplyInstructions(config: FixPrConfig): string {
@@ -49,7 +51,19 @@ function buildReplyInstructions(config: FixPrConfig): string {
 }
 
 export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): string {
-  const { prNumber, repo, comments, sessionDir, scriptsDir, config, iteration, skillContent, taskModel } = options;
+  const {
+    prNumber,
+    repo,
+    comments,
+    sessionDir,
+    scriptsDir,
+    config,
+    iteration,
+    skillContent,
+    taskModel,
+    selectedTargetLabel,
+    deferredCommentsSummary,
+  } = options;
   const { loop, reviewer } = config;
   const maxIter = loop.maxIterations;
   const delay = loop.delaySeconds;
@@ -63,8 +77,20 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
     `- Session dir: \`${sessionDir}\``,
     `- Iteration: ${iteration} of ${maxIter}`,
+    `- Selected target: ${selectedTargetLabel}`,
     `- Comment reply policy: ${config.commentPolicy}`,
     `- Reviewer: ${reviewer.type}${reviewer.triggerMethod ? ` (trigger: ${reviewer.triggerMethod})` : ""}`,
+    deferredCommentsSummary
+      ? `- Deferred comments outside this target: ${deferredCommentsSummary}`
+      : "- Deferred comments outside this target: none",
+    "",
+    "## Review Scope Rules",
+    "",
+    "- Process only the comments listed below for the selected target.",
+    deferredCommentsSummary
+      ? "- Comments outside the selected target were intentionally excluded for a separate run. Do not remediate them here."
+      : "- There are no deferred comments outside this target in this snapshot.",
+    "- After each wait-and-check cycle, keep enforcing the same target boundary. If new root or sibling-package comments appear, surface them explicitly and leave them for a separate run.",
     "",
     "## Review Comments to Process",
     "",
@@ -76,7 +102,6 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   ];
 
-  // Embedded skill
   if (skillContent) {
     sections.push(
       "## Assessment Methodology",
@@ -86,7 +111,6 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     );
   }
 
-  // Receiving review discipline
   sections.push(
     "## Review Discipline",
     "",
@@ -94,7 +118,6 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   );
 
-  // Step 1: Assess
   sections.push(
     "## Step 1: Assess Each Comment",
     "",
@@ -115,7 +138,6 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   );
 
-  // Step 2: Group
   sections.push(
     "## Step 2: Group Comments",
     "",
@@ -126,7 +148,6 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   );
 
-  // Step 3: Plan
   sections.push(
     "## Step 3: Plan Each Group",
     "",
@@ -138,7 +159,6 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   );
 
-  // Step 4: Execute
   sections.push(
     "## Step 4: Execute Fixes",
     "",
@@ -149,10 +169,8 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   );
 
-  // Step 5: Reply
   sections.push(buildReplyInstructions(config), "");
 
-  // Step 6: Push and loop
   sections.push(
     "## Step 6: Push and Check for New Comments",
     "",
@@ -177,7 +195,6 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   );
 
-  // Script paths reference
   sections.push(
     "## Script Paths",
     "",
@@ -188,11 +205,10 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     "",
   );
 
-  // Model guidance
   sections.push(
     "## Model Guidance",
     "",
-    `- **Orchestrator** (this session): handles assessment & grouping`,
+    "- **Orchestrator** (this session): handles assessment & grouping",
     `- **Planner & Fixer** (sub-agents): use model \`${taskModel}\``,
     "",
     "Sub-agents inherit the task model for planning and code changes.",

@@ -15,6 +15,8 @@ function buildDefaultPrompt() {
     iteration: 0,
     skillContent: "# Assessment Skill\nAssess each comment critically.",
     taskModel: "claude-sonnet-4-6",
+    selectedTargetLabel: "@repo/pkg — packages/pkg",
+    deferredCommentsSummary: null,
   });
 }
 
@@ -137,6 +139,8 @@ describe("buildFixPrOrchestratorPrompt", () => {
       iteration: 0,
       skillContent: "",
       taskModel: "claude-sonnet-4-6",
+      selectedTargetLabel: "@repo/pkg — packages/pkg",
+      deferredCommentsSummary: "2 comments deferred to repo root",
     });
     expect(noAnswer.toLowerCase()).toContain("do not reply");
   });
