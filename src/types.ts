@@ -42,7 +42,7 @@ export interface Notification {
 export type CommandGateId = "lint" | "typecheck" | "format" | "test-suite" | "build";
 export type GateId = "lsp-diagnostics" | CommandGateId;
 
-export type ConfigScope = "project" | "global";
+export type ConfigScope = "global" | "root" | "workspace";
 
 /** Aggregate gate execution status */
 export type GateStatus = "passed" | "failed" | "skipped" | "blocked";
@@ -196,7 +196,7 @@ export interface ConfiguredReviewAgent extends ReviewAgentDefinition {
   data: string;
   model: string | null;
   thinkingLevel: ThinkingLevel | null;
-  scope?: "global" | "project";
+  scope?: "global" | "root" | "workspace";
 }
 
 
@@ -354,6 +354,32 @@ export type BumpType = "major" | "minor" | "patch";
 
 /** Release channel target (built-in IDs or user-defined custom channel IDs) */
 export type ReleaseChannel = string;
+
+/** Supported package managers for workspace-aware execution */
+export type PackageManagerId = "bun" | "npm" | "pnpm" | "yarn";
+
+/** Workspace target kind */
+export type WorkspaceTargetKind = "root" | "workspace";
+
+/** One package target discovered in the current repository */
+export interface WorkspaceTarget {
+  id: string;
+  name: string;
+  kind: WorkspaceTargetKind;
+  repoRoot: string;
+  packageDir: string;
+  manifestPath: string;
+  relativeDir: string;
+  version: string;
+  private: boolean;
+  packageManager: PackageManagerId;
+}
+
+/** One releasable package discovered in the current repository */
+export interface ReleaseTarget extends WorkspaceTarget {
+  publishScopePaths: string[];
+  defaultTagFormat: string;
+}
 
 /** User-defined custom release channel configuration */
 export interface CustomChannelConfig {
