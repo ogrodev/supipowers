@@ -1,4 +1,5 @@
 // src/quality/runner.ts
+import path from "node:path";
 import type { ExecOptions, ExecResult, Platform } from "../platform/types.js";
 import type {
   GateDefinition,
@@ -10,9 +11,11 @@ import type {
   QualityGatesConfig,
   ResolvedModel,
   ReviewReport,
+  WorkspaceTarget,
 } from "../types.js";
-import { CANONICAL_GATE_ORDER, type GateRegistry } from "./registry.js";
 import { collectLspDiagnostics } from "../lsp/bridge.js";
+import { filterPathsForWorkspaceTarget, normalizeRepoPath } from "../workspace/path-mapping.js";
+import { CANONICAL_GATE_ORDER, type GateRegistry } from "./registry.js";
 
 interface ReviewScope {
   changedFiles: string[];
@@ -39,6 +42,8 @@ export type ReviewRunEvent =
 export interface RunQualityGatesInput {
   platform: Pick<Platform, "exec" | "getActiveTools" | "createAgentSession">;
   cwd: string;
+  target: WorkspaceTarget;
+  workspaceTargets: WorkspaceTarget[];
   gates: QualityGatesConfig;
   filters: GateFilters;
   reviewModel: ResolvedModel;
@@ -61,11 +66,11 @@ function normalizeFileList(...chunks: string[]): string[] {
 
   for (const chunk of chunks) {
     for (const line of chunk.split("\n")) {
-      const file = line.trim();
-      if (file.length === 0) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
         continue;
       }
-      seen.add(file);
+      seen.add(normalizeRepoPath(trimmed));
     }
   }
 
@@ -89,14 +94,48 @@ async function safeExec(
   }
 }
 
+export async function discoverChangedRepoFiles(
+  exec: Platform["exec"],
+  repoRoot: string,
+): Promise<string[]> {
+  const head = await safeExec(exec, "git", ["diff", "--name-only", "HEAD"], { cwd: repoRoot });
+  const cached = await safeExec(exec, "git", ["diff", "--name-only", "--cached"], { cwd: repoRoot });
+  const untracked = await safeExec(exec, "git", ["ls-files", "--others", "--exclude-standard"], {
+    cwd: repoRoot,
+  });
+
+  return normalizeFileList(head.stdout, cached.stdout, untracked.stdout);
+}
+
+async function discoverTrackedRepoFiles(
+  exec: Platform["exec"],
+  repoRoot: string,
+): Promise<string[]> {
+  const tracked = await safeExec(exec, "git", ["ls-files"], { cwd: repoRoot });
+  return normalizeFileList(tracked.stdout);
+}
+
+function mapRepoPathsToTargetPaths(
+  workspaceTargets: WorkspaceTarget[],
+  target: WorkspaceTarget,
+  repoRelativePaths: string[],
+): string[] {
+  return filterPathsForWorkspaceTarget(workspaceTargets, target, repoRelativePaths).map((repoRelativePath) =>
+    normalizeRepoPath(path.relative(target.packageDir, path.join(target.repoRoot, repoRelativePath))),
+  );
+}
+
 export async function discoverReviewScope(
   exec: Platform["exec"],
-  cwd: string,
+  repoRoot: string,
+  workspaceTargets: WorkspaceTarget[],
+  target: WorkspaceTarget,
 ): Promise<ReviewScope> {
-  const head = await safeExec(exec, "git", ["diff", "--name-only", "HEAD"], { cwd });
-  const cached = await safeExec(exec, "git", ["diff", "--name-only", "--cached"], { cwd });
-  const untracked = await safeExec(exec, "git", ["ls-files", "--others", "--exclude-standard"], { cwd });
-  const changedFiles = normalizeFileList(head.stdout, cached.stdout, untracked.stdout);
+  const changedFiles = mapRepoPathsToTargetPaths(
+    workspaceTargets,
+    target,
+    await discoverChangedRepoFiles(exec, repoRoot),
+  );
 
   if (changedFiles.length > 0) {
     return {
@@ -106,8 +145,11 @@ export async function discoverReviewScope(
     };
   }
 
-  const tracked = await safeExec(exec, "git", ["ls-files"], { cwd });
-  const scopeFiles = normalizeFileList(tracked.stdout);
+  const scopeFiles = mapRepoPathsToTargetPaths(
+    workspaceTargets,
+    target,
+    await discoverTrackedRepoFiles(exec, repoRoot),
+  );
 
   return {
     changedFiles: [],
@@ -129,7 +171,7 @@ function selectConfiguredGates(gates: QualityGatesConfig, filters: GateFilters):
   return enabledGates;
 }
 
-function createExecShell(exec: Platform["exec"]): GateExecutionContext["execShell"] {
+function createExecShell(exec: GateExecutionContext["exec"]): GateExecutionContext["execShell"] {
   return async (command: string, opts?: ExecOptions): Promise<ExecResult> => {
     if (process.platform === "win32") {
       return exec("cmd", ["/d", "/s", "/c", command], opts);
@@ -143,7 +185,8 @@ function createGateExecutionContext(
   input: RunQualityGatesInput,
   scope: ReviewScope,
 ): GateExecutionContext {
-  const exec = input.platform.exec.bind(input.platform);
+  const exec: GateExecutionContext["exec"] = (cmd, args, opts) =>
+    input.platform.exec(cmd, args, { cwd: input.cwd, ...opts });
   const createAgentSession = input.platform.createAgentSession.bind(input.platform);
   const activeTools = input.platform.getActiveTools();
   const reviewModel = {
@@ -224,7 +267,12 @@ export function computeOverallStatus(summary: GateSummary): ReviewReport["overal
 
 export async function runQualityGates(input: RunQualityGatesInput): Promise<ReviewReport> {
   const selectedGates = selectConfiguredGates(input.gates, input.filters);
-  const scope = await discoverReviewScope(input.platform.exec.bind(input.platform), input.cwd);
+  const scope = await discoverReviewScope(
+    input.platform.exec.bind(input.platform),
+    input.target.repoRoot,
+    input.workspaceTargets,
+    input.target,
+  );
   input.onEvent?.({
     type: "scope-discovered",
     changedFiles: scope.changedFiles.length,

@@ -152,18 +152,23 @@ function parseRevisedProposal(raw: string): SetupProposal {
 }
 
 function labelForScope(scope: ConfigScope): string {
-  return scope === "project"
-    ? "Project (.omp/supipowers/config.json)"
-    : "Global (~/.omp/supipowers/config.json)";
+  switch (scope) {
+    case "global":
+      return "Global (~/.omp/supipowers/config.json)";
+    case "root":
+      return "Root (.omp/supipowers/config.json)";
+    case "workspace":
+      return "Workspace (.omp/supipowers/workspaces/<target>/config.json)";
+  }
 }
 
 async function selectSaveScope(ctx: PlatformContext): Promise<ConfigScope | null> {
   const choice = await ctx.ui.select(
     "Save quality gates to",
-    [labelForScope("project"), labelForScope("global"), "Cancel"],
+    [labelForScope("root"), labelForScope("global"), "Cancel"],
     {
       initialIndex: 0,
-      helpText: "Choose whether review gates apply only to this project or all projects.",
+      helpText: "Choose whether review gates apply only to this repository root or all repositories.",
     },
   );
 
@@ -171,7 +176,7 @@ async function selectSaveScope(ctx: PlatformContext): Promise<ConfigScope | null
     return null;
   }
 
-  return choice === labelForScope("global") ? "global" : "project";
+  return choice === labelForScope("global") ? "global" : "root";
 }
 
 function buildProposalHelpText(proposal: SetupProposal, options?: GateSetupDialogOptions): string {
