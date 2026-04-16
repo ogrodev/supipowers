@@ -159,12 +159,15 @@ Configuration is a three-layer deep-merge (lowest to highest priority):
 
 Three built-in channels are available: `github` (GitHub Release via `gh` CLI), `gitlab` (GitLab Release via `glab` CLI), and `gitea` (Gitea Release via `tea` CLI). Channels are selected per-project in `release.channels`.
 
-Release notes are generated from conventional commits scoped to the paths listed in `package.json`'s `files` field — commits touching files outside those paths are excluded.
+`/supi:release` auto-detects publishable release targets at runtime. In single-package repos it keeps the classic root-package flow. In Bun, npm, pnpm, and Yarn workspaces it discovers publishable packages from workspace metadata, auto-selects the only publishable target when there is one, and otherwise opens a picker that lists all publishable packages with changed packages first. Target choice is runtime-only and is not persisted to config.
 
-`/supi:release` accepts two optional flags:
+Release notes are scoped to the selected target's publishable paths. When that target declares a `files` whitelist in its `package.json`, only commits touching those paths are included. Otherwise the changelog falls back to the target package directory plus its `package.json`. Root releases keep the configured `release.tagFormat`; workspace releases use `<package-name>@<version>` tags to avoid collisions across packages.
+
+`/supi:release` accepts three optional flags:
 
 | Flag | Effect |
 | ----------- | ------ |
+| `--target <package>` | Skip the target picker and release the named package directly |
 | `--raw` | Skip AI polish of release notes; use raw conventional-commit output |
 | `--dry-run` | Run the full release flow without publishing |
 
@@ -187,7 +190,7 @@ Custom channels can be defined in `release.customChannels`:
 | Field            | Required | Description                                                    |
 | ---------------- | -------- | -------------------------------------------------------------- |
 | `label`          | yes      | Display name shown in the release picker                       |
-| `publishCommand` | yes      | Shell command run to publish; `$tag`, `$version`, `$changelog` are passed as environment variables |
+| `publishCommand` | yes      | Shell command run to publish; `$tag`, `$version`, `$changelog`, `$targetName`, `$targetId`, `$targetPath`, `$manifestPath`, and `$packageManager` are passed as environment variables |
 | `detectCommand`  | no       | Shell command to detect availability; exit 0 = available. If omitted, the channel is assumed available |
 
 ## Skills
