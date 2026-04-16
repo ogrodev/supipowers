@@ -1,12 +1,13 @@
 import type { Platform } from "../platform/types.js";
 import {
-  loadMergedReviewAgents,
-  writeAgentFile,
   addAgentToConfig,
-  getReviewAgentsDir,
-  getReviewAgentsConfigPath,
-  getGlobalReviewAgentsDir,
   getGlobalReviewAgentsConfigPath,
+  getGlobalReviewAgentsDir,
+  getReviewAgentsConfigPath,
+  getReviewAgentsDir,
+  loadMergedReviewAgents,
+  resolveReviewAgentContext,
+  writeAgentFile,
 } from "../review/agent-loader.js";
 import { selectModelFromList, THINKING_LEVELS } from "./model.js";
 import type { ConfiguredReviewAgent, ThinkingLevel } from "../types.js";
@@ -14,34 +15,68 @@ import creatingAgentsSkill from "../../skills/creating-supi-agents/SKILL.md" wit
 
 // ── List View ──────────────────────────────────────────────────
 
-function buildAgentDashboard(agents: ConfiguredReviewAgent[]): string {
+interface AgentDashboardContext {
+  workspaceRelativeDir: string | null;
+}
+
+function formatAgentSourceScope(
+  scope: ConfiguredReviewAgent["scope"],
+  context: AgentDashboardContext,
+): string {
+  switch (scope) {
+    case "global":
+      return "global";
+    case "workspace":
+      return "workspace";
+    case "root":
+    case undefined:
+      return context.workspaceRelativeDir ? "root" : "project";
+  }
+}
+
+function buildAgentDashboard(
+  agents: ConfiguredReviewAgent[],
+  context: AgentDashboardContext,
+): string {
   const nameCol = 18;
   const modelCol = 24;
   const thinkingCol = 12;
-  const scopeCol = 10;
+  const sourceCol = 10;
 
-  const lines: string[] = [
-    "\n  Review Agents\n",
-    `  ${"name".padEnd(nameCol)} ${"model".padEnd(modelCol)} ${"thinking".padEnd(thinkingCol)} ${"scope".padEnd(scopeCol)} focus`,
-  ];
+  const lines: string[] = ["\n  Review Agents\n"];
+  if (context.workspaceRelativeDir) {
+    lines.push(`  Workspace: ${context.workspaceRelativeDir}`);
+    lines.push("  Effective precedence: workspace → root → global");
+    lines.push("");
+  }
+
+  lines.push(
+    `  ${"name".padEnd(nameCol)} ${"model".padEnd(modelCol)} ${"thinking".padEnd(thinkingCol)} ${"source".padEnd(sourceCol)} focus`,
+  );
 
   for (const agent of agents) {
     const name = agent.name.padEnd(nameCol);
-    const model = (agent.model ?? "\u2014").padEnd(modelCol);
-    const thinking = (agent.thinkingLevel ?? "\u2014").padEnd(thinkingCol);
-    const scope = (agent.scope ?? "project").padEnd(scopeCol);
+    const model = (agent.model ?? "—").padEnd(modelCol);
+    const thinking = (agent.thinkingLevel ?? "—").padEnd(thinkingCol);
+    const source = formatAgentSourceScope(agent.scope, context).padEnd(sourceCol);
     const focus = agent.focus
       ? agent.focus.length > 40
         ? agent.focus.slice(0, 37) + "..."
         : agent.focus
-      : "\u2014";
-    lines.push(`  ${name} ${model} ${thinking} ${scope} ${focus}`);
+      : "—";
+    lines.push(`  ${name} ${model} ${thinking} ${source} ${focus}`);
   }
 
-  const globalCount = agents.filter((a) => a.scope === "global").length;
-  const projectCount = agents.filter((a) => a.scope === "project" || !a.scope).length;
+  const globalCount = agents.filter((agent) => agent.scope === "global").length;
+  const rootCount = agents.filter((agent) => agent.scope === "root" || !agent.scope).length;
+  const workspaceCount = agents.filter((agent) => agent.scope === "workspace").length;
+
   lines.push("");
-  lines.push(`  ${agents.length} agent(s) (${projectCount} project, ${globalCount} global)`);
+  if (context.workspaceRelativeDir) {
+    lines.push(`  ${agents.length} agent(s) (${workspaceCount} workspace, ${rootCount} root, ${globalCount} global)`);
+  } else {
+    lines.push(`  ${agents.length} agent(s) (${rootCount} project, ${globalCount} global)`);
+  }
   lines.push("");
 
   return lines.join("\n");
@@ -50,6 +85,13 @@ function buildAgentDashboard(agents: ConfiguredReviewAgent[]): string {
 // ── Create Flow ────────────────────────────────────────────────
 
 const KEBAB_CASE_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+
+function matchesCreateScope(
+  agent: ConfiguredReviewAgent,
+  scope: "global" | "project",
+): boolean {
+  return scope === "global" ? agent.scope === "global" : agent.scope !== "global";
+}
 
 export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<void> {
   if (!ctx.hasUI) {
@@ -83,7 +125,7 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
   try {
     const existing = await loadMergedReviewAgents(platform.paths, ctx.cwd);
     const collision = existing.agents.find(
-      (a) => a.name === agentName && (a.scope ?? "project") === scope,
+      (agent) => agent.name === agentName && matchesCreateScope(agent, scope),
     );
     if (collision) {
       ctx.ui.notify(`Agent "${agentName}" already exists in ${scope} scope`, "error");
@@ -237,7 +279,10 @@ export function handleAgents(platform: Platform, ctx: any, args?: string): void 
 
 async function showAgentsDashboard(platform: Platform, ctx: any): Promise<void> {
   const result = await loadMergedReviewAgents(platform.paths, ctx.cwd);
-  const dashboard = buildAgentDashboard(result.agents);
+  const dashboardContext = resolveReviewAgentContext(ctx.cwd);
+  const dashboard = buildAgentDashboard(result.agents, {
+    workspaceRelativeDir: dashboardContext.workspaceRelativeDir,
+  });
   ctx.ui.notify(dashboard, "info");
 }
 

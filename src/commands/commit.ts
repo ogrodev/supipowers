@@ -7,6 +7,19 @@ import type { Platform } from "../platform/types.js";
 import type { PlatformContext } from "../platform/types.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { analyzeAndCommit } from "../git/commit.js";
+import { parseTargetArg } from "../workspace/selector.js";
+
+function stripTargetArg(args?: string): string | undefined {
+  if (!args) {
+    return undefined;
+  }
+
+  const stripped = args
+    .replace(/(?:^|\s)--target(?:=(?:"[^"]*"|'[^']*'|\S+)|\s+(?:"[^"]*"|'[^']*'|\S+))/g, " ")
+    .trim();
+
+  return stripped.length > 0 ? stripped : undefined;
+}
 
 modelRegistry.register({
   id: "commit",
@@ -43,7 +56,8 @@ export function handleCommit(platform: Platform, ctx: PlatformContext, args?: st
   void (async () => {
     try {
       await analyzeAndCommit(platform, ctx, {
-        userContext: args?.trim() || undefined,
+        requestedTarget: parseTargetArg(args),
+        userContext: stripTargetArg(args),
       });
     } catch (err) {
       ctx.ui.notify(`Commit error: ${(err as Error).message}`, "error");

@@ -1,8 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { Platform } from "../../src/platform/types.js";
+import type { ExecOptions, Platform } from "../../src/platform/types.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { InspectionLoadResult } from "../../src/config/schema.js";
-import type { ConfigScope, ReviewReport, SupipowersConfig } from "../../src/types.js";
+import type { ConfigScope, ReviewReport, SupipowersConfig, WorkspaceTarget } from "../../src/types.js";
 import { buildFailureSummary, filterTestRunnerOutput, handleChecks, registerChecksCommand } from "../../src/commands/review.js";
 import type { ChecksCommandDependencies } from "../../src/commands/review.js";
 
@@ -59,13 +59,53 @@ function createScopeInspection(scope: ConfigScope, overrides: Record<string, unk
   };
 }
 
-function createPlatform(): Platform {
+function createTarget(overrides: Partial<WorkspaceTarget> = {}): WorkspaceTarget {
+  const repoRoot = overrides.repoRoot ?? "/repo";
+  const relativeDir = overrides.relativeDir ?? ".";
+  const packageDir = overrides.packageDir ?? (relativeDir === "." ? repoRoot : `${repoRoot}/${relativeDir}`);
+
+  return {
+    id: overrides.id ?? (relativeDir === "." ? "root-app" : `pkg:${relativeDir}`),
+    name: overrides.name ?? (relativeDir === "." ? "root-app" : `pkg:${relativeDir}`),
+    kind: overrides.kind ?? (relativeDir === "." ? "root" : "workspace"),
+    repoRoot,
+    packageDir,
+    manifestPath: overrides.manifestPath ?? `${packageDir}/package.json`,
+    relativeDir,
+    version: overrides.version ?? "1.0.0",
+    private: overrides.private ?? false,
+    packageManager: overrides.packageManager ?? "bun",
+  };
+}
+
+function createPlatform(options?: { changedFiles?: string[]; trackedFiles?: string[] }): Platform {
+  const changedFiles = options?.changedFiles ?? [];
+  const trackedFiles = options?.trackedFiles ?? changedFiles;
+
   return {
     name: "omp",
     registerCommand: mock(),
     getCommands: mock(() => []),
     on: mock(),
-    exec: mock(),
+    exec: mock(async (cmd: string, args: string[], opts?: ExecOptions) => {
+      if (cmd === "git") {
+        const signature = args.join(" ");
+        if (signature === "diff --name-only HEAD") {
+          return { stdout: `${changedFiles.join("\n")}${changedFiles.length > 0 ? "\n" : ""}`, stderr: "", code: 0 };
+        }
+        if (signature === "diff --name-only --cached") {
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        if (signature === "ls-files --others --exclude-standard") {
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        if (signature === "ls-files") {
+          return { stdout: `${trackedFiles.join("\n")}${trackedFiles.length > 0 ? "\n" : ""}`, stderr: "", code: 0 };
+        }
+      }
+
+      throw new Error(`Unexpected exec call: ${cmd} ${args.join(" ")} @ ${opts?.cwd ?? "<none>"}`);
+    }),
     sendMessage: mock(),
     sendUserMessage: mock(),
     getActiveTools: mock(() => []),
@@ -105,6 +145,7 @@ function createContext() {
 function createDependencies(
   config: SupipowersConfig,
   report = createReport(),
+  workspaceTargets: WorkspaceTarget[] = [createTarget()],
 ): ChecksCommandDependencies {
   return {
     loadModelConfig: mock(() => ({ version: "1.0.0", default: null, actions: {} })),
@@ -126,6 +167,12 @@ function createDependencies(
     interactivelySaveGateSetup: mock(async () => "saved" as const),
     runQualityGates: mock(async () => report),
     saveReviewReport: mock(() => "/repo/.omp/supipowers/reports/review-2026-04-10.json"),
+    resolvePackageManager: mock(() => ({
+      id: "bun" as const,
+      runScript: mock(),
+      buildCommand: { command: "bun", args: ["run", "build"] },
+    })),
+    discoverWorkspaceTargets: mock(() => workspaceTargets),
     notifyInfo: mock(),
   };
 }
@@ -197,7 +244,7 @@ describe("handleChecks", () => {
     deps.inspectQualityGateRecovery = mock(() => ({
       scopes: [
         createScopeInspection("global"),
-        createScopeInspection("project", {
+        createScopeInspection("root", {
           hasOwnQualityGates: true,
           recoverableInvalidQualityGates: true,
           qualityGateValidationErrors: [
@@ -212,10 +259,15 @@ describe("handleChecks", () => {
 
     await handleChecks(platform, ctx, "", deps);
 
-    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, "project");
+    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
+      platform.paths,
+      ctx.cwd,
+      "root",
+      { repoRoot: "/repo", workspaceRelativeDir: null },
+    );
     expect(deps.setupGates).toHaveBeenCalledWith(
       platform,
-      ctx.cwd,
+      "/repo",
       expect.anything(),
       { mode: "deterministic" },
     );
@@ -226,7 +278,7 @@ describe("handleChecks", () => {
     expect(deps.notifyInfo).toHaveBeenCalledWith(
       ctx,
       "Removed invalid review config",
-      expect.stringContaining("project config"),
+      expect.stringContaining("root config"),
     );
   });
 
@@ -254,14 +306,20 @@ describe("handleChecks", () => {
             { path: "quality.gates.test-suite.command", message: "Expected string" },
           ],
         }),
-        createScopeInspection("project"),
+        createScopeInspection("root"),
       ],
     }));
 
     await handleChecks(platform, ctx, "", deps);
 
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledTimes(1);
-    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, "global");
+    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
+      platform.paths,
+      ctx.cwd,
+      "global",
+      { repoRoot: "/repo", workspaceRelativeDir: null },
+    );
+
   });
 
   test("cleans both scopes when both contain invalid quality.gates", async () => {
@@ -284,7 +342,7 @@ describe("handleChecks", () => {
           qualityGateValidationErrors: [{ path: "quality.gates", message: "Expected object" }],
           validationErrors: [{ path: "quality.gates", message: "Expected object" }],
         }),
-        createScopeInspection("project", {
+        createScopeInspection("root", {
           hasOwnQualityGates: true,
           recoverableInvalidQualityGates: true,
           qualityGateValidationErrors: [{ path: "quality.gates.lint.command", message: "Expected union value" }],
@@ -296,8 +354,18 @@ describe("handleChecks", () => {
     await handleChecks(platform, ctx, "", deps);
 
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledTimes(2);
-    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, "global");
-    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, "project");
+    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
+      platform.paths,
+      ctx.cwd,
+      "global",
+      { repoRoot: "/repo", workspaceRelativeDir: null },
+    );
+    expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
+      platform.paths,
+      ctx.cwd,
+      "root",
+      { repoRoot: "/repo", workspaceRelativeDir: null },
+    );
   });
 
   test("preserves strict failure for unrelated config errors", async () => {
@@ -309,7 +377,7 @@ describe("handleChecks", () => {
     });
     deps.inspectQualityGateRecovery = mock(() => ({
       scopes: [
-        createScopeInspection("project", {
+        createScopeInspection("root", {
           otherValidationErrors: [{ path: "qa.framework", message: "Expected union value" }],
           validationErrors: [{ path: "qa.framework", message: "Expected union value" }],
         }),
@@ -332,7 +400,7 @@ describe("handleChecks", () => {
     });
     deps.inspectQualityGateRecovery = mock(() => ({
       scopes: [
-        createScopeInspection("project", {
+        createScopeInspection("root", {
           hasOwnQualityGates: true,
           recoverableInvalidQualityGates: true,
           qualityGateValidationErrors: [
@@ -354,6 +422,72 @@ describe("handleChecks", () => {
       "Checks cancelled",
       expect.stringContaining("setup was cancelled"),
     );
+  });
+
+  test("auto-selects the single changed workspace target without prompting", async () => {
+    const platform = createPlatform({ changedFiles: ["packages/alpha/src/file.ts"] });
+    const ctx = createContext();
+    const rootTarget = createTarget();
+    const workspaceTarget = createTarget({
+      id: "@repo/alpha",
+      name: "@repo/alpha",
+      kind: "workspace",
+      relativeDir: "packages/alpha",
+      packageDir: "/repo/packages/alpha",
+    });
+    const deps = createDependencies(
+      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createReport(),
+      [rootTarget, workspaceTarget],
+    );
+
+    await handleChecks(platform, ctx, "", deps);
+
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(deps.loadConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, {
+      repoRoot: "/repo",
+      workspaceRelativeDir: "packages/alpha",
+    });
+    expect(deps.runQualityGates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/repo/packages/alpha",
+        target: workspaceTarget,
+        workspaceTargets: [rootTarget, workspaceTarget],
+      }),
+    );
+    expect(deps.saveReviewReport).toHaveBeenCalledWith(platform.paths, workspaceTarget, expect.anything());
+  });
+
+  test("passes an explicit target through to config, runner, and report storage", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    const rootTarget = createTarget();
+    const workspaceTarget = createTarget({
+      id: "@repo/beta",
+      name: "beta",
+      kind: "workspace",
+      relativeDir: "packages/beta",
+      packageDir: "/repo/packages/beta",
+    });
+    const deps = createDependencies(
+      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createReport(),
+      [rootTarget, workspaceTarget],
+    );
+
+    await handleChecks(platform, ctx, "--target beta", deps);
+
+    expect(deps.loadConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, {
+      repoRoot: "/repo",
+      workspaceRelativeDir: "packages/beta",
+    });
+    expect(deps.runQualityGates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/repo/packages/beta",
+        target: workspaceTarget,
+      }),
+    );
+    expect(deps.saveReviewReport).toHaveBeenCalledWith(platform.paths, workspaceTarget, expect.anything());
   });
 
   test("summary includes skipped gates in canonical order", async () => {
@@ -397,7 +531,11 @@ describe("handleChecks", () => {
 
     await handleChecks(platform, ctx, "", deps);
 
-    expect(deps.saveReviewReport).toHaveBeenCalled();
+    expect(deps.saveReviewReport).toHaveBeenCalledWith(
+      platform.paths,
+      createTarget(),
+      expect.anything(),
+    );
     expect(deps.notifyInfo).toHaveBeenCalledWith(
       expect.anything(),
       expect.stringContaining("Checks complete"),

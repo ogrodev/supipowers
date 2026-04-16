@@ -1,41 +1,9 @@
 import type { Platform, PlatformContext } from "../platform/types.js";
-import { DEFAULT_CONFIG } from "../config/defaults.js";
-import { formatConfigErrors, inspectConfig } from "../config/loader.js";
-import { loadLatestReport } from "../storage/reports.js";
-import { listPlans } from "../storage/plans.js";
-import { summarizeEnabledGates } from "../quality/setup.js";
-
-export interface SupiCommandDependencies {
-  inspectConfig: typeof inspectConfig;
-  loadLatestReport: typeof loadLatestReport;
-  listPlans: typeof listPlans;
-}
-
-const SUPI_COMMAND_DEPENDENCIES: SupiCommandDependencies = {
-  inspectConfig,
-  loadLatestReport,
-  listPlans,
-};
-
-function formatOverviewStatus(platform: Platform, ctx: PlatformContext, deps: SupiCommandDependencies): string[] {
-  const inspection = deps.inspectConfig(platform.paths, ctx.cwd);
-  const config = inspection.effectiveConfig ?? DEFAULT_CONFIG;
-  const latestReport = deps.loadLatestReport(platform.paths, ctx.cwd);
-  const plans = deps.listPlans(platform.paths, ctx.cwd);
-
-  return [
-    inspection.parseErrors.length > 0 || inspection.validationErrors.length > 0
-      ? `Config error: ${formatConfigErrors(inspection).split("\n")[0]}`
-      : `Gates: ${summarizeEnabledGates(config.quality.gates)}`,
-    `Plans: ${plans.length}`,
-    `Last checks: ${latestReport ? `${latestReport.timestamp.slice(0, 10)} (${latestReport.overallStatus})` : "none"}`,
-  ];
-}
+import { formatOverviewStatus } from "./status.js";
 
 export async function showSupiDialog(
   platform: Platform,
   ctx: PlatformContext,
-  deps: SupiCommandDependencies = SUPI_COMMAND_DEPENDENCIES,
 ): Promise<void> {
   const commands = [
     "/supi:plan     — Start collaborative planning",
@@ -52,7 +20,7 @@ export async function showSupiDialog(
     "/supi:context  — Show context breakdown",
     "/supi:optimize-context — Optimize context to save tokens",
   ];
-  const status = formatOverviewStatus(platform, ctx, deps);
+  const status = formatOverviewStatus(platform, ctx);
 
   const choice = await ctx.ui.select(
     "Supipowers",
@@ -70,7 +38,7 @@ export async function showSupiDialog(
 }
 
 export function handleSupi(platform: Platform, ctx: PlatformContext): void {
-  void showSupiDialog(platform, ctx, SUPI_COMMAND_DEPENDENCIES).catch((error) => {
+  void showSupiDialog(platform, ctx).catch((error) => {
     ctx.ui.notify(`Supipowers error: ${(error as Error).message}`, "error");
   });
 }

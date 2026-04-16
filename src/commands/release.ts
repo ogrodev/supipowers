@@ -1,11 +1,20 @@
+import path from "node:path";
 import type { Platform } from "../platform/types.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
-import type { ReleaseChannel, BumpType, ReviewReport, ResolvedModel } from "../types.js";
+import type { ReleaseChannel, ReleaseTarget, BumpType, ReviewReport, ResolvedModel } from "../types.js";
 import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
 import type { ChannelStatus } from "../release/channels/types.js";
+import { resolvePackageManager } from "../workspace/package-manager.js";
+import { parseTargetArg, resolveRequestedWorkspaceTarget, sortWorkspaceTargetOptions, selectWorkspaceTarget, type WorkspaceTargetOption } from "../workspace/selector.js";
+import {
+  isWorkspaceTargetLocked,
+  releaseWorkspaceTargetLock,
+  tryAcquireWorkspaceTargetLock,
+} from "../workspace/locks.js";
+import { discoverReleaseTargets, getPublishableReleaseTargets } from "../release/targets.js";
 import {
   parseConventionalCommits,
   buildChangelogMarkdown,
@@ -15,6 +24,8 @@ import {
 import {
   getCurrentVersion,
   getPublishedPackagePaths,
+  getLatestReleaseTag,
+  getReleaseTagFormat,
   suggestBump,
   bumpVersion,
   isVersionReleased,
@@ -49,6 +60,79 @@ const BUMP_OPTIONS = [
   "minor — new features, backwards compatible",
   "major — breaking changes",
 ];
+
+interface ParsedReleaseArgs {
+  skipPolish: boolean;
+  isDryRun: boolean;
+  requestedTarget: string | null;
+}
+
+export interface ReleaseTargetOption extends WorkspaceTargetOption<ReleaseTarget> {
+  lastTag: string | null;
+  summary: string;
+}
+
+function tokenizeReleaseArgs(args?: string): string[] {
+  if (!args) {
+    return [];
+  }
+
+  return (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [])
+    .map((token) => token.replace(/^['"]|['"]$/g, ""));
+}
+
+export function parseReleaseArgs(args?: string): ParsedReleaseArgs {
+  const tokens = tokenizeReleaseArgs(args);
+
+  return {
+    skipPolish: tokens.includes("--raw"),
+    isDryRun: tokens.includes("--dry-run"),
+    requestedTarget: parseTargetArg(args),
+  };
+}
+
+export function createReleaseProgressKeys(runId: string): { statusKey: string; widgetKey: string } {
+  return {
+    statusKey: `supi-release:${runId}`,
+    widgetKey: `supi-release:${runId}`,
+  };
+}
+
+export function resolveRequestedReleaseTarget(
+  targets: ReleaseTarget[],
+  requestedTarget: string | null,
+): ReleaseTarget | null {
+  return resolveRequestedWorkspaceTarget(targets, requestedTarget);
+}
+
+export function sortReleaseTargetOptions(options: ReleaseTargetOption[]): ReleaseTargetOption[] {
+  return sortWorkspaceTargetOptions(options) as ReleaseTargetOption[];
+}
+
+export function buildReleaseTargetOptionLabel(option: ReleaseTargetOption): string {
+  const releaseState = option.lastTag ?? "unreleased";
+  const changeState = option.changed
+    ? `changed — ${option.summary}`
+    : "unchanged — no publishable changes";
+
+  return `${option.target.name} — ${option.target.relativeDir} — ${releaseState} — ${changeState}`;
+}
+
+function createReleaseRunId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function tryAcquireReleaseTargetLock(targetId: string): boolean {
+  return tryAcquireWorkspaceTargetLock("release", targetId);
+}
+
+export function releaseReleaseTargetLock(targetId: string): void {
+  releaseWorkspaceTargetLock("release", targetId);
+}
+
+export function isReleaseTargetLocked(targetId: string): boolean {
+  return isWorkspaceTargetLocked("release", targetId);
+}
 
 /**
  * Returns true when re-running supi:release should skip the confirmation
@@ -211,12 +295,13 @@ export const RELEASE_STEPS = [
 
 type ReleaseStepKey = (typeof RELEASE_STEPS)[number]["key"];
 
-function createReleaseProgress(ctx: any) {
+function createReleaseProgress(ctx: any, runId: string) {
+  const progressKeys = createReleaseProgressKeys(runId);
   const progress = createWorkflowProgress(ctx.ui, {
     title: "supi:release",
-    statusKey: "supi-release",
+    statusKey: progressKeys.statusKey,
     statusLabel: "Releasing...",
-    widgetKey: "supi-release",
+    widgetKey: progressKeys.widgetKey,
     clearStatusKeys: ["supi-model"],
     steps: [...RELEASE_STEPS],
   });
@@ -254,6 +339,36 @@ function createReleaseProgress(ctx: any) {
   };
 }
 
+function buildPendingReleaseTargetOptions(targets: ReleaseTarget[]): ReleaseTargetOption[] {
+  return sortReleaseTargetOptions(
+    targets.map((target) => ({
+      target,
+      changed: false,
+      lastTag: null,
+      summary: "change analysis pending",
+    })),
+  );
+}
+
+export async function selectReleaseTarget(
+  ctx: any,
+  options: ReleaseTargetOption[],
+  requestedTarget: string | null,
+): Promise<ReleaseTarget | null> {
+  return selectWorkspaceTarget(
+    ctx,
+    options.map((option) => ({
+      ...option,
+      label: buildReleaseTargetOptionLabel(option),
+    })),
+    requestedTarget,
+    {
+      title: "Release target",
+      helpText: "Pick a publishable package to release. Target choice is runtime-only and is not persisted in config.",
+    },
+  );
+}
+
 /**
  * Register the command for autocomplete and /help listing.
  * Actual execution goes through handleRelease via the TUI dispatch.
@@ -283,19 +398,53 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
     return;
   }
 
-  const progress = createReleaseProgress(ctx);
-
   void (async () => {
+    let progress: ReturnType<typeof createReleaseProgress> | null = null;
+    let lockedTargetId: string | null = null;
     try {
-      const skipPolish = args?.includes("--raw") ?? false;
-      const isDryRun = args?.includes("--dry-run") ?? false;
+      const { skipPolish, isDryRun, requestedTarget } = parseReleaseArgs(args);
+      const packageManager = resolvePackageManager(ctx.cwd);
+      const publishableTargets = getPublishableReleaseTargets(
+        discoverReleaseTargets(ctx.cwd, packageManager.id),
+      );
+      if (publishableTargets.length === 0) {
+        notifyError(ctx, "No publishable release targets found", "Create a non-private package.json with name and version before running /supi:release.");
+        return;
+      }
+
+      const selectedTarget = await selectReleaseTarget(
+        ctx,
+        buildPendingReleaseTargetOptions(publishableTargets),
+        requestedTarget,
+      );
+      if (requestedTarget && !selectedTarget) {
+        notifyError(ctx, "Release target not found", requestedTarget);
+        return;
+      }
+      if (!selectedTarget) {
+        return;
+      }
+      if (!tryAcquireReleaseTargetLock(selectedTarget.id)) {
+        notifyError(
+          ctx,
+          "Release already in progress",
+          `${selectedTarget.name} is already being released in this session. Wait for that run to finish before retrying.`,
+        );
+        return;
+      }
+      lockedTargetId = selectedTarget.id;
+
+      progress = createReleaseProgress(ctx, createReleaseRunId());
+      progress.detail(`Target: ${selectedTarget.name} (${selectedTarget.relativeDir})`);
+
       const config = loadConfig(platform.paths, ctx.cwd);
       const tagFormat = config.release.tagFormat;
+      const effectiveTagFormat = getReleaseTagFormat(selectedTarget, tagFormat);
       let didStash = false;
 
       // ── 1. Quality checks (headless) ────────────────────────────────────
       progress.activate("checks", "Running quality gates");
-      const checksReport = await runHeadlessChecks(platform, ctx, config, resolved);
+      const checksReport = await runHeadlessChecks(platform, ctx, config, resolved, selectedTarget);
       if (checksReport) {
         const { summary, overallStatus } = checksReport;
         const detail = `${summary.passed} passed, ${summary.failed} failed, ${summary.blocked} blocked`;
@@ -451,38 +600,38 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
       // ── 5. Get last tag + current version + check if bump is needed ─────
       progress.activate("commits", "Parsing git history");
-      const lastTag = await getLastTag(platform, ctx.cwd);
-      const currentVersion = getCurrentVersion(ctx.cwd);
+      const lastTag = await getLatestReleaseTag(
+        platform.exec.bind(platform),
+        selectedTarget,
+        tagFormat,
+      );
+      const currentVersion = getCurrentVersion(selectedTarget);
       const resumableLocalRelease = await findResumableLocalRelease(
         platform.exec.bind(platform),
-        ctx.cwd,
+        selectedTarget,
         currentVersion,
         tagFormat,
       );
       const localTagExists = await isVersionReleased(
         platform.exec.bind(platform),
-        ctx.cwd,
+        selectedTarget,
         currentVersion,
         tagFormat,
       );
       const remoteTagExists = localTagExists
-        ? await isTagOnRemote(platform.exec.bind(platform), ctx.cwd, currentVersion, tagFormat)
+        ? await isTagOnRemote(platform.exec.bind(platform), selectedTarget, currentVersion, tagFormat)
         : false;
 
       const sinceArg = lastTag ? `${lastTag}..HEAD` : "HEAD~50..HEAD";
-      const releaseScope = getPublishedPackagePaths(ctx.cwd);
-      const gitLogArgs = releaseScope
-        ? ["log", sinceArg, "--format=%x1e%H%x1f%s", "--name-only"]
-        : ["log", sinceArg, "--oneline"];
+      const releaseScope = getPublishedPackagePaths(selectedTarget);
+      const gitLogArgs = ["log", sinceArg, "--format=%x1e%H%x1f%s", "--name-only"];
       let gitLogOutput: string;
       try {
         const result = await platform.exec("git", gitLogArgs, { cwd: ctx.cwd });
         if (result.code !== 0) {
           gitLogOutput = "";
-        } else if (releaseScope) {
-          gitLogOutput = filterOnelineGitLogToPaths(result.stdout, releaseScope);
         } else {
-          gitLogOutput = result.stdout;
+          gitLogOutput = filterOnelineGitLogToPaths(result.stdout, releaseScope);
         }
       } catch {
         gitLogOutput = "";
@@ -535,14 +684,14 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         if (!localTagExists && currentVersion !== "0.0.0") {
           nextVersion = currentVersion;
           skipBump = true;
-          progress.skip("version", `${formatTag(currentVersion, tagFormat)} (already set, not yet released)`);
-          notifyInfo(ctx, `Using ${formatTag(currentVersion, tagFormat)}`, "Version not yet released — skipping bump");
+          progress.skip("version", `${formatTag(currentVersion, effectiveTagFormat)} (already set, not yet released)`);
+          notifyInfo(ctx, `Using ${formatTag(currentVersion, effectiveTagFormat)}`, "Version not yet released — skipping bump");
         } else if (localTagExists && !remoteTagExists) {
           nextVersion = currentVersion;
           skipBump = true;
           skipTag = true;
-          progress.skip("version", `${formatTag(currentVersion, tagFormat)} (tag exists locally, not pushed)`);
-          notifyInfo(ctx, `Resuming ${formatTag(currentVersion, tagFormat)}`, "Tag exists locally but not on remote — will push");
+          progress.skip("version", `${formatTag(currentVersion, effectiveTagFormat)} (tag exists locally, not pushed)`);
+          notifyInfo(ctx, `Resuming ${formatTag(currentVersion, effectiveTagFormat)}`, "Tag exists locally but not on remote — will push");
         } else {
           progress.activate("version", "Awaiting version selection");
           const suggested = suggestBump(commits);
@@ -564,7 +713,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       }
       // ── 8. Build changelog ──────────────────────────────────────────────
       progress.activate("changelog", "Generating changelog");
-      const rawChangelog = buildChangelogMarkdown(commits, nextVersion, tagFormat);
+      const rawChangelog = buildChangelogMarkdown(commits, nextVersion, effectiveTagFormat);
       progress.complete("changelog", `${commitCount} entries`);
 
       // ── 9. Polish release notes (default, skip with --raw) ──────────────
@@ -574,7 +723,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         changelog = rawChangelog;
       } else {
         progress.activate("polish", "Polishing release notes");
-        const polishPrompt = buildPolishPrompt({ changelog: rawChangelog, version: nextVersion, tagFormat });
+        const polishPrompt = buildPolishPrompt({ changelog: rawChangelog, version: nextVersion, tagFormat: effectiveTagFormat });
         const polishResult = await runStructuredAgentSession(
           platform.createAgentSession.bind(platform),
           { cwd: ctx.cwd, prompt: polishPrompt },
@@ -597,15 +746,15 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       if (isResume) {
         notifyInfo(
           ctx,
-          `Resuming release ${formatTag(nextVersion, tagFormat)}`,
+          `Resuming release ${formatTag(nextVersion, effectiveTagFormat)}`,
           "Version staged and channels configured — proceeding without confirmation",
         );
       } else {
-        const confirmLabel = isDryRun ? `[DRY RUN] Ship ${formatTag(nextVersion, tagFormat)}?` : `Ship ${formatTag(nextVersion, tagFormat)}?`;
+        const confirmLabel = isDryRun ? `[DRY RUN] Ship ${formatTag(nextVersion, effectiveTagFormat)}?` : `Ship ${formatTag(nextVersion, effectiveTagFormat)}?`;
         // When skipBump=true, currentVersion === nextVersion — avoid the
         // misleading "0.5.0 → 0.5.0" display.
         const versionLine = skipBump
-          ? `${formatTag(nextVersion, tagFormat)} (staged, not yet released)`
+          ? `${formatTag(nextVersion, effectiveTagFormat)} (staged, not yet released)`
           : `${currentVersion} \u2192 ${nextVersion}`;
         const confirmDetail = [
           versionLine,
@@ -632,13 +781,14 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         let result = await executeRelease({
           exec: platform.exec.bind(platform),
           cwd: ctx.cwd,
+          target: selectedTarget,
           version: nextVersion,
           changelog,
           channels,
           dryRun: isDryRun,
           skipBump,
           skipTag,
-          tagFormat,
+          tagFormat: effectiveTagFormat,
           customChannels,
           onProgress: progress.executorProgress(),
         });
@@ -650,13 +800,14 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
             result = await executeRelease({
               exec: platform.exec.bind(platform),
               cwd: ctx.cwd,
+              target: selectedTarget,
               version: nextVersion,
               changelog,
               channels,
               dryRun: false,
               skipBump: true,
               skipTag: true,
-              tagFormat,
+              tagFormat: effectiveTagFormat,
               customChannels,
               onProgress: progress.executorProgress(),
             });
@@ -696,14 +847,14 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           const prefix = isDryRun ? "[DRY RUN] " : "";
           notifySuccess(
             ctx,
-            `${prefix}Released ${formatTag(nextVersion, tagFormat)}`,
+            `${prefix}Released ${formatTag(nextVersion, effectiveTagFormat)}`,
             `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"} | ${channelSummary}`,
           );
         } else {
           const detail = result.error
             ? result.error
             : `Tag: ${result.tagCreated ? "✓" : "✗"} | Push: ${result.pushed ? "✓" : "✗"}`;
-          notifyError(ctx, `Release ${formatTag(nextVersion, tagFormat)} failed`, detail);
+          notifyError(ctx, `Release ${formatTag(nextVersion, effectiveTagFormat)} failed`, detail);
         }
       } catch (err) {
         progress.fail("execute", err instanceof Error ? err.message : "Unknown error");
@@ -723,9 +874,12 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         }
       }
     } catch (err) {
-      progress.dispose();
+      progress?.dispose();
       notifyError(ctx, "Release error", err instanceof Error ? err.message : String(err));
     } finally {
+      if (lockedTargetId) {
+        releaseReleaseTargetLock(lockedTargetId);
+      }
       await modelCleanup();
     }
   })();
@@ -742,7 +896,8 @@ async function runHeadlessChecks(
   ctx: any,
   config: ReturnType<typeof loadConfig>,
   resolved: ResolvedModel,
-): Promise<ReviewReport | null> {
+  selectedTarget: ReleaseTarget,
+ ): Promise<ReviewReport | null> {
   const enabledGates = Object.entries(config.quality.gates)
     .filter(([, gate]) => gate?.enabled === true);
 
@@ -750,9 +905,24 @@ async function runHeadlessChecks(
     return null;
   }
 
+  const repoWideTarget = {
+    id: "repo-root",
+    name: path.basename(ctx.cwd) || "repo-root",
+    kind: "root" as const,
+    repoRoot: ctx.cwd,
+    packageDir: ctx.cwd,
+    manifestPath: path.join(ctx.cwd, "package.json"),
+    relativeDir: ".",
+    version: selectedTarget.version,
+    private: false,
+    packageManager: selectedTarget.packageManager,
+  };
+
   return runQualityGates({
     platform,
     cwd: ctx.cwd,
+    target: repoWideTarget,
+    workspaceTargets: [repoWideTarget],
     gates: config.quality.gates,
     filters: {},
     reviewModel: resolved,
@@ -760,14 +930,6 @@ async function runHeadlessChecks(
   });
 }
 
-async function getLastTag(platform: Platform, cwd: string): Promise<string | null> {
-  try {
-    const result = await platform.exec("git", ["describe", "--tags", "--abbrev=0"], { cwd });
-    return result.code === 0 ? result.stdout.trim() : null;
-  } catch {
-    return null;
-  }
-}
 
 async function setupChannels(
   platform: Platform,

@@ -1,9 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { Platform } from "../../src/platform/types.js";
-import type { InspectionLoadResult } from "../../src/config/schema.js";
-import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { showSupiDialog } from "../../src/commands/supi.js";
-import type { ReviewReport } from "../../src/types.js";
 
 function createPlatform(): Platform {
   return {
@@ -33,32 +30,9 @@ function createPlatform(): Platform {
   } as unknown as Platform;
 }
 
-function createInspection(overrides: Partial<InspectionLoadResult> = {}): InspectionLoadResult {
-  return {
-    mergedConfig: DEFAULT_CONFIG as unknown as Record<string, unknown>,
-    effectiveConfig: {
-      ...DEFAULT_CONFIG,
-      quality: { gates: { "lsp-diagnostics": { enabled: true } } },
-    },
-    parseErrors: [],
-    validationErrors: [],
-    ...overrides,
-  };
-}
-
-function createReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
-  return {
-    timestamp: "2026-04-10T00:00:00.000Z",
-    selectedGates: [],
-    gates: [],
-    summary: { passed: 1, failed: 0, skipped: 0, blocked: 1 },
-    overallStatus: "blocked",
-    ...overrides,
-  };
-}
 
 describe("showSupiDialog", () => {
-  test("shows aggregate review status", async () => {
+  test("shows command list with workspace-aware overview status", async () => {
     const platform = createPlatform();
     const ctx = {
       cwd: "/repo",
@@ -66,16 +40,15 @@ describe("showSupiDialog", () => {
       ui: { select: mock(async () => null), notify: mock() },
     } as any;
 
-    await showSupiDialog(platform, ctx, {
-      inspectConfig: mock(() => createInspection()),
-      loadLatestReport: mock(() => createReport()),
-      listPlans: mock(() => []),
-    });
+    await showSupiDialog(platform, ctx);
 
     expect(ctx.ui.select).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining([expect.stringContaining("Last checks: 2026-04-10 (blocked)")]),
-      expect.anything(),
+      "Supipowers",
+      expect.arrayContaining([
+        expect.stringContaining("/supi:plan"),
+        expect.stringContaining("Last checks: none"),
+      ]),
+      expect.objectContaining({ helpText: "Select a command to run · Esc to close" }),
     );
   });
 });

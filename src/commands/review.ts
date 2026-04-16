@@ -10,7 +10,11 @@ import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { createWorkflowProgress } from "../platform/progress.js";
-import { runQualityGates, type ReviewRunEvent } from "../quality/runner.js";
+import {
+  discoverChangedRepoFiles,
+  runQualityGates,
+  type ReviewRunEvent,
+} from "../quality/runner.js";
 import {
   interactivelySaveGateSetup,
   setupGates,
@@ -23,10 +27,19 @@ import type {
   QualityGatesConfig,
   ReviewReport,
   SupipowersConfig,
+  WorkspaceTarget,
 } from "../types.js";
 import { CANONICAL_GATE_ORDER, GATE_DISPLAY_NAMES } from "../quality/registry.js";
 import { REVIEW_GATE_REGISTRY } from "../quality/review-gates.js";
 import { saveReviewReport } from "../storage/reports.js";
+import { resolvePackageManager } from "../workspace/package-manager.js";
+import { getChangedWorkspaceTargets } from "../workspace/path-mapping.js";
+import {
+  parseTargetArg,
+  selectWorkspaceTarget,
+  sortWorkspaceTargetOptions,
+} from "../workspace/selector.js";
+import { discoverWorkspaceTargets } from "../workspace/targets.js";
 
 modelRegistry.register({
   id: "checks",
@@ -61,6 +74,8 @@ export interface ChecksCommandDependencies {
   interactivelySaveGateSetup: typeof interactivelySaveGateSetup;
   runQualityGates: typeof runQualityGates;
   saveReviewReport: typeof saveReviewReport;
+  resolvePackageManager: typeof resolvePackageManager;
+  discoverWorkspaceTargets: typeof discoverWorkspaceTargets;
   notifyInfo: typeof notifyInfo;
 }
 
@@ -77,6 +92,8 @@ const CHECKS_COMMAND_DEPENDENCIES: ChecksCommandDependencies = {
   interactivelySaveGateSetup,
   runQualityGates,
   saveReviewReport,
+  resolvePackageManager,
+  discoverWorkspaceTargets,
   notifyInfo,
 };
 
@@ -156,7 +173,7 @@ function validateGateSelection(enabledGateIds: GateId[], filters: GateFilters): 
 }
 
 function describeScope(scope: ConfigScope): string {
-  return scope === "global" ? "global" : "project";
+  return scope === "global" ? "global" : scope;
 }
 
 function buildRecoveryDetail(scopes: ConfigScope[]): string {
@@ -166,6 +183,59 @@ function buildRecoveryDetail(scopes: ConfigScope[]): string {
     "",
     "Supipowers opened quality-gate setup so you can save a fresh configuration.",
   ].join("\n");
+}
+
+function getTargetConfigOptions(target: WorkspaceTarget) {
+  return target.kind === "workspace"
+    ? { repoRoot: target.repoRoot, workspaceRelativeDir: target.relativeDir }
+    : { repoRoot: target.repoRoot, workspaceRelativeDir: null };
+}
+
+function buildChecksTargetOptionLabel(option: { target: WorkspaceTarget; changed: boolean }): string {
+  return `${option.target.name} — ${option.target.relativeDir} — ${option.changed ? "changed" : "unchanged"}`;
+}
+
+async function selectChecksTarget(
+  platform: Platform,
+  ctx: any,
+  args: string | undefined,
+  deps: ChecksCommandDependencies,
+): Promise<{ target: WorkspaceTarget; workspaceTargets: WorkspaceTarget[] } | null> {
+  const requestedTarget = parseTargetArg(args);
+  const packageManager = deps.resolvePackageManager(ctx.cwd);
+  const workspaceTargets = deps.discoverWorkspaceTargets(ctx.cwd, packageManager.id);
+
+  if (workspaceTargets.length === 0) {
+    throw new Error("No workspace targets found for checks.");
+  }
+
+  const changedRepoFiles = await discoverChangedRepoFiles(platform.exec.bind(platform), ctx.cwd);
+  const changedTargetIds = new Set(
+    getChangedWorkspaceTargets(workspaceTargets, changedRepoFiles).map((target) => target.id),
+  );
+  const options = sortWorkspaceTargetOptions(
+    workspaceTargets.map((target) => ({
+      target,
+      changed: changedTargetIds.has(target.id),
+      label: buildChecksTargetOptionLabel({
+        target,
+        changed: changedTargetIds.has(target.id),
+      }),
+    })),
+  );
+  const selectableOptions = !requestedTarget && changedTargetIds.size === 1
+    ? options.filter((option) => changedTargetIds.has(option.target.id))
+    : options;
+  const target = await selectWorkspaceTarget(ctx, selectableOptions, requestedTarget, {
+    title: "Checks target",
+    helpText: "Pick one package to run checks for. Target choice is runtime-only and is not persisted in config.",
+  });
+
+  if (requestedTarget && !target) {
+    throw new Error(`Checks target not found: ${requestedTarget}`);
+  }
+
+  return target ? { target, workspaceTargets } : null;
 }
 
 function gateStepKey(gateId: GateId): string {
@@ -350,12 +420,14 @@ async function recoverInvalidQualityGateConfig(
   ctx: any,
   deps: ChecksCommandDependencies,
   reviewProgress: ReturnType<typeof createReviewProgress>,
+  target: WorkspaceTarget,
 ): Promise<
   | { status: "unrecoverable" }
   | { status: "cancelled" }
   | { status: "recovered"; config: SupipowersConfig }
 > {
-  const recovery = deps.inspectQualityGateRecovery(platform.paths, ctx.cwd);
+  const configOptions = getTargetConfigOptions(target);
+  const recovery = deps.inspectQualityGateRecovery(platform.paths, ctx.cwd, configOptions);
   const recoverableScopes = recovery.scopes
     .filter((scope) => scope.recoverableInvalidQualityGates)
     .map((scope) => scope.scope);
@@ -374,7 +446,7 @@ async function recoverInvalidQualityGateConfig(
   reviewProgress.startRepair(`cleaning ${recoverableScopes.join(" + ")}`);
 
   for (const scope of recoverableScopes) {
-    deps.removeQualityGatesConfig(platform.paths, ctx.cwd, scope);
+    deps.removeQualityGatesConfig(platform.paths, ctx.cwd, scope, configOptions);
   }
 
   deps.notifyInfo(
@@ -385,8 +457,8 @@ async function recoverInvalidQualityGateConfig(
 
   const setupResult = await deps.setupGates(
     platform,
-    ctx.cwd,
-    deps.inspectConfig(platform.paths, ctx.cwd),
+    target.packageDir,
+    deps.inspectConfig(platform.paths, ctx.cwd, configOptions),
     { mode: "deterministic" },
   );
   if (setupResult.status !== "proposed") {
@@ -414,7 +486,7 @@ async function recoverInvalidQualityGateConfig(
     return { status: "cancelled" };
   }
 
-  const config = deps.loadConfig(platform.paths, ctx.cwd);
+  const config = deps.loadConfig(platform.paths, ctx.cwd, configOptions);
   reviewProgress.completeRepair("reconfigured");
   return {
     status: "recovered",
@@ -574,14 +646,28 @@ export async function handleChecks(
     const resolved = deps.resolveModelForAction("checks", modelRegistry, modelCfg, bridge);
     modelCleanup = await deps.applyModelOverride(platform, ctx, "checks", resolved);
 
+    const selection = await selectChecksTarget(platform, ctx, args, deps);
+    if (!selection) {
+      return;
+    }
+
+    const selectedTarget = selection.target;
+    const configOptions = getTargetConfigOptions(selectedTarget);
+
     reviewProgress.startLoadingConfig();
 
     let config: SupipowersConfig;
     try {
-      config = deps.loadConfig(platform.paths, ctx.cwd);
+      config = deps.loadConfig(platform.paths, ctx.cwd, configOptions);
       reviewProgress.completeLoadingConfig();
     } catch (error) {
-      const recovered = await recoverInvalidQualityGateConfig(platform, ctx, deps, reviewProgress);
+      const recovered = await recoverInvalidQualityGateConfig(
+        platform,
+        ctx,
+        deps,
+        reviewProgress,
+        selectedTarget,
+      );
       if (recovered.status === "unrecoverable") {
         throw error;
       }
@@ -599,7 +685,9 @@ export async function handleChecks(
     reviewProgress.startScopeDiscovery();
     const report = await deps.runQualityGates({
       platform,
-      cwd: ctx.cwd,
+      cwd: selectedTarget.packageDir,
+      target: selectedTarget,
+      workspaceTargets: selection.workspaceTargets,
       gates: config.quality.gates,
       filters,
       reviewModel: resolved,
@@ -608,7 +696,7 @@ export async function handleChecks(
     });
 
     reviewProgress.startSavingReport();
-    const reportPath = deps.saveReviewReport(platform.paths, ctx.cwd, report);
+    const reportPath = deps.saveReviewReport(platform.paths, selectedTarget, report);
     reviewProgress.completeSavingReport(report.overallStatus);
 
     // Dispose widget before showing any TUI dialogs

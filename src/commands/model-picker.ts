@@ -33,10 +33,9 @@ import {
 const ALL_TAB = "ALL";
 const MAX_VISIBLE = 12;
 
-/** Set of available (authenticated) providers and model IDs, from ctx.modelRegistry */
+/** Available (authenticated) models sourced directly from ctx.modelRegistry.getAvailable() */
 export interface AvailableModelSet {
-  providers: Set<string>;
-  modelIds: Set<string>;
+  models: Array<{ provider: string; id: string }>;
 }
 
 interface ModelItem {
@@ -48,45 +47,53 @@ interface ModelItem {
 
 
 /**
- * Build the flat model list from bundled providers.
- * @param available — if provided, marks models whose provider has auth
+ * Build the flat model list.
+ * When registry models are provided, uses them as source of truth (all authenticated).
+ * Falls back to the bundled static list when no registry data is available.
  */
 function loadAllModels(available?: AvailableModelSet): { items: ModelItem[]; configuredProviders: Set<string> } {
-  const providers = getBundledProviders();
   const items: ModelItem[] = [];
   const configuredProviders = new Set<string>();
 
-  for (const provider of providers) {
-    const name = String(provider);
-    const configured = available ? available.providers.has(name) : true;
-    if (configured) configuredProviders.add(name);
-
-    const models = getBundledModels(provider as GeneratedProvider);
-    for (const m of models) {
+  if (available && available.models.length > 0) {
+    // Registry-sourced: all returned models are authenticated — use them directly
+    for (const m of available.models) {
+      configuredProviders.add(m.provider);
       items.push({
-        provider: name,
+        provider: m.provider,
         id: m.id,
-        displayLabel: `${name}/${m.id}`,
-        configured,
+        displayLabel: `${m.provider}/${m.id}`,
+        configured: true,
       });
+    }
+  } else {
+    // Fallback: bundled static list (no registry data available)
+    for (const provider of getBundledProviders()) {
+      const name = String(provider);
+      const models = getBundledModels(provider as GeneratedProvider);
+      for (const m of models) {
+        items.push({
+          provider: name,
+          id: m.id,
+          displayLabel: `${name}/${m.id}`,
+          configured: true,
+        });
+      }
     }
   }
 
-  // Sort like OMP's native /model: provider → version desc → -latest first → date desc → alpha
+  // Sort: provider asc → version desc → -latest first → date desc → alpha
   const dateRe = /-(\d{8})$/;
   const latestRe = /-latest$/;
 
   items.sort((a, b) => {
-    // Group by provider
     const provCmp = a.provider.localeCompare(b.provider);
     if (provCmp !== 0) return provCmp;
 
-    // Version number descending (higher = newer model)
     const aVer = extractVersionNumber(a.id);
     const bVer = extractVersionNumber(b.id);
     if (aVer !== bVer) return bVer - aVer;
 
-    // Recency: models with -latest or YYYYMMDD suffix come first
     const aIsLatest = latestRe.test(a.id);
     const bIsLatest = latestRe.test(b.id);
     const aDate = a.id.match(dateRe)?.[1] ?? "";
@@ -96,7 +103,7 @@ function loadAllModels(available?: AvailableModelSet): { items: ModelItem[]; con
 
     if (aHasRecency !== bHasRecency) return aHasRecency ? -1 : 1;
     if (aIsLatest !== bIsLatest) return aIsLatest ? -1 : 1;
-    if (aDate && bDate) return bDate.localeCompare(aDate); // newest first
+    if (aDate && bDate) return bDate.localeCompare(aDate);
 
     return a.id.localeCompare(b.id);
   });

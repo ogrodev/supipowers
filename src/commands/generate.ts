@@ -1,5 +1,5 @@
 import type { Platform } from "../platform/types.js";
-import type { DriftCheckResult } from "../types.js";
+import type { DriftCheckResult, WorkspaceTarget } from "../types.js";
 import { notifyInfo, notifyError, notifyWarning } from "../notifications/renderer.js";
 import {
   loadState,
@@ -7,7 +7,16 @@ import {
   discoverDocFiles,
   getHeadCommit,
   checkDocDrift,
+  type DocDriftScope,
 } from "../docs/drift.js";
+import {
+  buildWorkspaceTargetOptionLabel,
+  parseTargetArg,
+  selectWorkspaceTarget,
+  type WorkspaceTargetOption,
+} from "../workspace/selector.js";
+import { detectPackageManager } from "../workspace/package-manager.js";
+import { discoverWorkspaceTargets } from "../workspace/targets.js";
 
 // ── Multi-select UI ───────────────────────────────────────────
 
@@ -47,43 +56,129 @@ async function selectDocFiles(
   return [...selected];
 }
 
+function tokenizeGenerateArgs(args?: string): string[] {
+  if (!args) {
+    return [];
+  }
+
+  return (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [])
+    .map((token) => token.replace(/^["']|["']$/g, ""));
+}
+
+function parseGenerateSubcommand(args?: string): string {
+  const tokens = tokenizeGenerateArgs(args);
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token || token === "--target") {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--target=")) {
+      continue;
+    }
+    return token;
+  }
+
+  return "docs";
+}
+
+function formatGenerateTarget(target: WorkspaceTarget): string {
+  return target.kind === "root"
+    ? `${target.name} (root · ${target.relativeDir})`
+    : `${target.name} (${target.relativeDir})`;
+}
+
+function buildGenerateTargetOptionLabel(option: WorkspaceTargetOption<WorkspaceTarget>): string {
+  return option.target.kind === "root"
+    ? buildWorkspaceTargetOptionLabel(option, ["root docs"])
+    : buildWorkspaceTargetOptionLabel(option, ["package docs"]);
+}
+
+async function resolveGenerateScope(
+  ctx: any,
+  args?: string,
+): Promise<DocDriftScope | null> {
+  const requestedTarget = parseTargetArg(args);
+  const packageManager = detectPackageManager(ctx.cwd);
+  const targets = discoverWorkspaceTargets(ctx.cwd, packageManager);
+
+  if (targets.length === 0) {
+    notifyError(ctx, "No documentation targets found", "Create a package.json with name and version before running /supi:generate.");
+    return null;
+  }
+
+  const selectedTarget = await selectWorkspaceTarget(
+    ctx,
+    targets.map((target) => ({
+      target,
+      changed: false,
+      label: buildGenerateTargetOptionLabel({ target, changed: false }),
+    })),
+    requestedTarget,
+    {
+      title: "Documentation target",
+      helpText: "Pick the package whose documentation should be checked. Root selects only repository-level docs.",
+    },
+  );
+
+  if (requestedTarget && !selectedTarget) {
+    notifyError(ctx, "Documentation target not found", requestedTarget);
+    return null;
+  }
+
+  if (!selectedTarget) {
+    return null;
+  }
+
+  return { target: selectedTarget, allTargets: targets };
+}
+
 // ── Subcommand: docs ──────────────────────────────────────────
 
-async function handleDocs(platform: Platform, ctx: any): Promise<void> {
+async function handleDocs(platform: Platform, ctx: any, args?: string): Promise<void> {
   if (!ctx.hasUI) {
     notifyWarning(ctx, "Doc drift check requires interactive mode");
     return;
   }
 
+  const scope = await resolveGenerateScope(ctx, args);
+  if (!scope) {
+    return;
+  }
+
   const cwd = ctx.cwd;
   const { paths } = platform;
-  const state = loadState(paths, cwd);
+  const targetSummary = formatGenerateTarget(scope.target);
+  const state = loadState(paths, cwd, scope);
 
   // First run: discover and select files, then steer main thread for full audit
   if (state.trackedFiles.length === 0) {
-    const discovered = await discoverDocFiles(platform, cwd);
+    const discovered = await discoverDocFiles(platform, cwd, scope);
     if (discovered.length === 0) {
-      notifyWarning(ctx, "No documentation files found in this repository");
+      notifyWarning(ctx, "No documentation files found for selected target", `Target: ${targetSummary}`);
       return;
     }
 
     const selected = await selectDocFiles(ctx, discovered);
     if (selected.length === 0) {
-      notifyInfo(ctx, "No files selected \u2014 doc tracking not set up");
+      notifyInfo(ctx, "No files selected — doc tracking not set up", `Target: ${targetSummary}`);
       return;
     }
 
-    // Persist tracked files but leave lastCommit null \u2014 updated after fix starts
+    // Persist tracked files but leave lastCommit null — updated after fix starts
     saveState(paths, cwd, {
       trackedFiles: selected,
       lastCommit: null,
       lastRunAt: new Date().toISOString(),
-    });
+    }, scope.target);
 
     // Steer the main thread to audit and fix docs directly
     const docList = selected.map((f) => `- \`${f}\``).join("\n");
     const prompt = [
       `Check these documentation files for accuracy against the current codebase:`,
+      ``,
+      `Target: ${targetSummary}`,
       ``,
       docList,
       ``,
@@ -96,15 +191,16 @@ async function handleDocs(platform: Platform, ctx: any): Promise<void> {
       `2. **Missing documentation**: new commands, features, config options that exist in code but not in docs`,
       `3. **Structural gaps**: important sections that should exist based on the codebase but don't`,
       ``,
-      `For each issue found, fix it directly in the documentation file. Do NOT output JSON or a report \u2014 just fix the files.`,
+      `For each issue found, fix it directly in the documentation file. Do NOT output JSON or a report — just fix the files.`,
       `If documentation is accurate, say so and make no changes.`,
       ``,
       `Rules:`,
       `- Only fix factual inaccuracies and add missing sections for undocumented features`,
       `- Do NOT rewrite prose, improve wording, or restructure existing content`,
       `- Preserve each document's existing formatting, tone, and conventions`,
+      `- Limit the review to the selected target`,
     ].join("\n");
-    notifyInfo(ctx, "Starting full documentation audit", `${selected.length} file(s) selected`);
+    notifyInfo(ctx, "Starting full documentation audit", `${selected.length} file(s) selected · Target: ${targetSummary}`);
 
     platform.sendMessage(
       {
@@ -118,21 +214,21 @@ async function handleDocs(platform: Platform, ctx: any): Promise<void> {
   }
 
   // Subsequent run: headless sub-agent drift check
-  const result = await checkDocDrift(platform, cwd);
+  const result = await checkDocDrift(platform, cwd, scope);
 
   if (!result || !result.drifted) {
-    notifyInfo(ctx, "Docs are up to date", result?.summary ?? "No changes since last check");
+    notifyInfo(ctx, "Docs are up to date", `${result?.summary ?? "No changes since last check"} · Target: ${targetSummary}`);
     return;
   }
 
   // Build lightweight steer summary from findings
-  const steer = buildSteerSummary(result);
-  notifyInfo(ctx, "Documentation drift detected", `${result.findings.length} finding(s)`);
+  const steer = buildSteerSummary(result, targetSummary);
+  notifyInfo(ctx, "Documentation drift detected", `${result.findings.length} finding(s) · Target: ${targetSummary}`);
 
-  // Update state only now \u2014 user has seen findings and we\u2019re about to fix.
+  // Update state only now — user has seen findings and we’re about to fix.
   const head = await getHeadCommit(platform, cwd);
-  const currentState = loadState(paths, cwd);
-  saveState(paths, cwd, { ...currentState, lastCommit: head, lastRunAt: new Date().toISOString() });
+  const currentState = loadState(paths, cwd, scope);
+  saveState(paths, cwd, { ...currentState, lastCommit: head, lastRunAt: new Date().toISOString() }, scope.target);
 
   platform.sendMessage(
     {
@@ -144,8 +240,11 @@ async function handleDocs(platform: Platform, ctx: any): Promise<void> {
   );
 }
 
-function buildSteerSummary(result: DriftCheckResult): string {
-  const lines: string[] = ["Documentation drift detected. Please fix the following issues:", ""];
+function buildSteerSummary(result: DriftCheckResult, targetSummary: string): string {
+  const lines: string[] = [
+    `Documentation drift detected for target ${targetSummary}. Please fix the following issues:`,
+    "",
+  ];
 
   const byFile = new Map<string, typeof result.findings>();
   for (const f of result.findings) {
@@ -182,11 +281,11 @@ export function registerGenerateCommand(platform: Platform): void {
       return matches.length > 0 ? matches : null;
     },
     async handler(args: string | undefined, ctx: any) {
-      const subcommand = args?.trim().split(/\s+/)[0] ?? "docs";
+      const subcommand = parseGenerateSubcommand(args);
 
       switch (subcommand) {
         case "docs":
-          await handleDocs(platform, ctx);
+          await handleDocs(platform, ctx, args);
           break;
         default:
           notifyError(

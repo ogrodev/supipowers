@@ -39,6 +39,27 @@ function createPlatform(localPaths: ReturnType<typeof createTestPaths>): Platfor
   } as unknown as Platform;
 }
 
+function writePackageJson(dir: string, data: Record<string, unknown>): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(data, null, 2));
+}
+
+function setupWorkspaceRepo(repoRoot: string, workspaceRelativeDir = "packages/app"): string {
+  writePackageJson(repoRoot, {
+    name: "repo-root",
+    version: "1.0.0",
+    private: true,
+    workspaces: ["packages/*"],
+  });
+  const workspaceDir = path.join(repoRoot, workspaceRelativeDir);
+  writePackageJson(workspaceDir, {
+    name: "app",
+    version: "1.0.0",
+    private: true,
+  });
+  return workspaceDir;
+}
+
 describe("registerAgentsCommand", () => {
   test("registers supi:agents command", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-agents-reg-"));
@@ -123,6 +144,67 @@ describe("handleAgents — list view", () => {
     const dashboard = notifyCall[0];
     expect(dashboard).toContain("Review Agents");
     expect(dashboard).toContain("agent(s)");
+  });
+
+  test("dashboard shows workspace provenance when cwd is inside a workspace", async () => {
+    const workspaceDir = setupWorkspaceRepo(tmpDir);
+    ctx.cwd = workspaceDir;
+
+    const globalAgentsDir = path.join(tmpDir, "global-config", ".omp", "supipowers", "review-agents");
+    fs.mkdirSync(globalAgentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(globalAgentsDir, "perf.md"),
+      "---\nname: perf\ndescription: Global perf\n---\n\nGlobal perf prompt.\n\n{output_instructions}\n",
+    );
+    fs.writeFileSync(
+      path.join(globalAgentsDir, "config.yml"),
+      [
+        "agents:",
+        "  - name: perf",
+        "    enabled: true",
+        "    data: perf.md",
+        "    model: null",
+        "    thinkingLevel: null",
+        "",
+      ].join("\n"),
+    );
+
+    const workspaceAgentsDir = path.join(
+      tmpDir,
+      ".omp",
+      "supipowers",
+      "workspaces",
+      "packages",
+      "app",
+      "review-agents",
+    );
+    fs.mkdirSync(workspaceAgentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceAgentsDir, "ux.md"),
+      "---\nname: ux\ndescription: Workspace UX\n---\n\nWorkspace UX prompt.\n\n{output_instructions}\n",
+    );
+    fs.writeFileSync(
+      path.join(workspaceAgentsDir, "config.yml"),
+      [
+        "agents:",
+        "  - name: ux",
+        "    enabled: true",
+        "    data: ux.md",
+        "    model: openai/gpt-4o",
+        "    thinkingLevel: null",
+        "",
+      ].join("\n"),
+    );
+
+    handleAgents(platform, ctx);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const dashboard = (ctx.ui.notify as any).mock.calls[0][0];
+    expect(dashboard).toContain("Workspace: packages/app");
+    expect(dashboard).toContain("Effective precedence: workspace → root → global");
+    expect(dashboard).toContain("workspace");
+    expect(dashboard).toContain("root");
+    expect(dashboard).toContain("global");
   });
 
   test("with 'create' arg delegates to create flow", async () => {

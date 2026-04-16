@@ -1,8 +1,23 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Platform } from "../../src/platform/types.js";
-import type { InspectionLoadResult } from "../../src/config/schema.js";
-import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
-import { showStatusDialog } from "../../src/commands/status.js";
+import { formatOverviewStatus, showStatusDialog } from "../../src/commands/status.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function createTempRepo(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "supipowers-status-"));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function createPlatform(): Platform {
   return {
@@ -19,9 +34,9 @@ function createPlatform(): Platform {
     paths: {
       dotDir: ".omp",
       dotDirDisplay: ".omp",
-      project: (_cwd: string, ...segments: string[]) => segments.join("/"),
-      global: (...segments: string[]) => segments.join("/"),
-      agent: (...segments: string[]) => segments.join("/"),
+      project: (cwd: string, ...segments: string[]) => path.join(cwd, ".omp", "supipowers", ...segments),
+      global: (...segments: string[]) => path.join(os.tmpdir(), "supipowers-global-test", ...segments),
+      agent: (...segments: string[]) => path.join(os.tmpdir(), "supipowers-agent-test", ...segments),
     },
     capabilities: {
       agentSessions: true,
@@ -32,69 +47,150 @@ function createPlatform(): Platform {
   } as unknown as Platform;
 }
 
-function createInspection(overrides: Partial<InspectionLoadResult> = {}): InspectionLoadResult {
+function createContext(cwd: string) {
   return {
-    mergedConfig: DEFAULT_CONFIG as unknown as Record<string, unknown>,
-    effectiveConfig: {
-      ...DEFAULT_CONFIG,
-      quality: { gates: { "lsp-diagnostics": { enabled: true } } },
+    cwd,
+    hasUI: true,
+    ui: { select: mock(async () => null), notify: mock() },
+  } as any;
+}
+
+function writeJson(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + "\n");
+}
+
+function writeText(filePath: string, value: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, value);
+}
+
+function repoStatePath(repoRoot: string, ...segments: string[]): string {
+  return path.join(repoRoot, ".omp", "supipowers", ...segments);
+}
+
+function workspaceStatePath(repoRoot: string, workspaceRelativeDir: string, ...segments: string[]): string {
+  return repoStatePath(repoRoot, "workspaces", ...workspaceRelativeDir.split("/"), ...segments);
+}
+
+function writeReviewReport(filePath: string, overallStatus: "passed" | "failed" | "blocked"): void {
+  writeJson(filePath, {
+    timestamp: "2026-04-16T10:15:00.000Z",
+    selectedGates: ["lsp-diagnostics"],
+    gates: [
+      {
+        gate: "lsp-diagnostics",
+        status: overallStatus === "passed" ? "passed" : "failed",
+        summary: "done",
+        issues: [],
+      },
+    ],
+    summary: {
+      passed: overallStatus === "passed" ? 1 : 0,
+      failed: overallStatus === "passed" ? 0 : 1,
+      skipped: 0,
+      blocked: overallStatus === "blocked" ? 1 : 0,
     },
-    parseErrors: [],
-    validationErrors: [],
-    ...overrides,
-  };
+    overallStatus,
+  });
+}
+
+function getSelectOptions(ctx: ReturnType<typeof createContext>): string[] {
+  return (ctx.ui.select as ReturnType<typeof mock>).mock.calls[0]?.[1] as string[];
 }
 
 describe("showStatusDialog", () => {
-  test("shows enabled gates instead of profile", async () => {
-    const platform = createPlatform();
-    const ctx = {
-      cwd: "/repo",
-      hasUI: true,
-      ui: { select: mock(async () => null), notify: mock() },
-    } as any;
-
-    await showStatusDialog(platform, ctx, {
-      inspectConfig: mock(() => createInspection()),
-      listPlans: mock(() => []),
+  test("surfaces root config inspection errors instead of throwing", async () => {
+    const repoRoot = createTempRepo();
+    writeJson(path.join(repoRoot, "package.json"), {
+      name: "single-app",
+      version: "1.0.0",
     });
+    writeText(repoStatePath(repoRoot, "config.json"), "{\n");
 
-    expect(ctx.ui.select).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining([expect.stringContaining("Gates:")]),
-      expect.anything(),
+    const platform = createPlatform();
+    const ctx = createContext(repoRoot);
+
+    await showStatusDialog(platform, ctx);
+
+    expect(getSelectOptions(ctx)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Config error: root config"),
+      ]),
     );
   });
 
-  test("surfaces config inspection errors instead of throwing", async () => {
-    const platform = createPlatform();
-    const ctx = {
-      cwd: "/repo",
-      hasUI: true,
-      ui: { select: mock(async () => null), notify: mock() },
-    } as any;
-
-    await showStatusDialog(platform, ctx, {
-      inspectConfig: mock(() =>
-        createInspection({
-          mergedConfig: {},
-          effectiveConfig: null,
-          parseErrors: [
-            {
-              source: "project",
-              path: ".omp/supipowers/config.json",
-              message: "Unexpected token",
-            },
-          ],
-        }),
-      ),
-      listPlans: mock(() => []),
+  test("keeps single-package status compact", async () => {
+    const repoRoot = createTempRepo();
+    writeJson(path.join(repoRoot, "package.json"), {
+      name: "single-app",
+      version: "1.0.0",
     });
+    writeText(repoStatePath(repoRoot, "plans", "plan-a.md"), "# plan\n");
+    writeReviewReport(repoStatePath(repoRoot, "reports", "review-2026-04-16.json"), "passed");
 
-    expect(ctx.ui.select).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.arrayContaining([expect.stringContaining("Config error")]),
-      expect.anything(),
+    const platform = createPlatform();
+    const ctx = createContext(repoRoot);
+
+    await showStatusDialog(platform, ctx);
+
+    const options = getSelectOptions(ctx);
+    expect(options).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Gates:"),
+        "Plans: 1",
+        "  · plan-a.md",
+        "Last checks: 2026-04-16 (passed)",
+      ]),
     );
+    expect(options).not.toEqual(expect.arrayContaining([expect.stringContaining("Packages:")]));
+    expect(options).not.toEqual(expect.arrayContaining([expect.stringContaining("(root)")]));
+  });
+
+  test("shows package-aware aggregate status for monorepos", async () => {
+    const repoRoot = createTempRepo();
+    writeJson(path.join(repoRoot, "package.json"), {
+      name: "root-app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+    });
+    writeJson(path.join(repoRoot, "packages", "api", "package.json"), {
+      name: "api",
+      version: "1.0.0",
+    });
+    writeJson(path.join(repoRoot, "packages", "web", "package.json"), {
+      name: "web",
+      version: "1.0.0",
+    });
+    writeText(repoStatePath(repoRoot, "plans", "root-plan.md"), "# root plan\n");
+    writeReviewReport(
+      workspaceStatePath(repoRoot, "packages/api", "reports", "review-2026-04-16.json"),
+      "passed",
+    );
+
+    const platform = createPlatform();
+    const ctx = createContext(repoRoot);
+
+    await showStatusDialog(platform, ctx);
+
+    const options = getSelectOptions(ctx);
+    expect(options).toEqual(
+      expect.arrayContaining([
+        "Packages: 3 targets · 2 workspaces",
+        "Artifacts: 1 with plans · 1 with reports",
+        "root-app (root)",
+        "api (packages/api)",
+        "web (packages/web)",
+        "    · root-plan.md",
+        "  Last checks: 2026-04-16 (passed)",
+      ]),
+    );
+
+    expect(formatOverviewStatus(platform, ctx)).toEqual([
+      "Packages: 3 targets · 2 workspaces",
+      "Config issues: none",
+      "Plans: root: 1",
+      "Last checks: api: 2026-04-16 (passed)",
+    ]);
   });
 });

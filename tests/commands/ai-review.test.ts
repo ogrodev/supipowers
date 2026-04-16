@@ -1,13 +1,18 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, mock, test } from "bun:test";
-import type { Platform } from "../../src/platform/types.js";
 import { runAiReviewSessionForTest } from "../../src/commands/ai-review.js";
 import type { AiReviewCommandDependencies } from "../../src/commands/ai-review.js";
+import { loadCommitScope, loadUncommittedScope } from "../../src/review/scope.js";
+import type { Platform } from "../../src/platform/types.js";
 import type {
   ConfiguredReviewAgent,
   ReviewFixOutput,
   ReviewOutput,
   ReviewScope,
   ReviewSession,
+  WorkspaceTarget,
 } from "../../src/types.js";
 
 const BASE_SCOPE: ReviewScope = {
@@ -89,9 +94,9 @@ function createPlatform(events: string[] = []): Platform {
     paths: {
       dotDir: ".omp",
       dotDirDisplay: ".omp",
-      project: (_cwd: string, ...segments: string[]) => segments.join("/"),
-      global: (...segments: string[]) => segments.join("/"),
-      agent: (...segments: string[]) => segments.join("/"),
+      project: (cwd: string, ...segments: string[]) => join(cwd, ".omp", "supipowers", ...segments),
+      global: (...segments: string[]) => join("/global", ...segments),
+      agent: (...segments: string[]) => join("/agent", ...segments),
     },
     capabilities: {
       agentSessions: true,
@@ -103,6 +108,7 @@ function createPlatform(events: string[] = []): Platform {
 }
 
 function createContext(options: {
+  cwd?: string;
   selectResponses?: Array<string | null>;
   customResult?: string | null;
   includeCustom?: boolean;
@@ -125,11 +131,54 @@ function createContext(options: {
   }
 
   return {
-    cwd: "/repo",
+    cwd: options.cwd ?? "/repo",
     hasUI: true,
     ui,
     modelRegistry: { getAvailable: () => [] },
   } as any;
+}
+
+function createWorkspaceTarget(repoRoot: string, name: string, relativeDir: string, kind: "root" | "workspace"): WorkspaceTarget {
+  return {
+    id: name,
+    name,
+    kind,
+    repoRoot,
+    packageDir: kind === "root" ? repoRoot : join(repoRoot, relativeDir),
+    manifestPath: kind === "root" ? join(repoRoot, "package.json") : join(repoRoot, relativeDir, "package.json"),
+    relativeDir,
+    version: "1.0.0",
+    private: false,
+    packageManager: "bun",
+  };
+}
+
+function createMonorepoFixture(): { repoRoot: string; cleanup(): void } {
+  const repoRoot = mkdtempSync(join(tmpdir(), "supi-ai-review-"));
+  mkdirSync(join(repoRoot, "packages", "api"), { recursive: true });
+  mkdirSync(join(repoRoot, "packages", "web"), { recursive: true });
+  writeFileSync(join(repoRoot, "package.json"), JSON.stringify({
+    name: "workspace-root",
+    version: "1.0.0",
+    private: true,
+    packageManager: "bun@1.2.0",
+    workspaces: ["packages/*"],
+  }, null, 2));
+  writeFileSync(join(repoRoot, "packages", "api", "package.json"), JSON.stringify({
+    name: "api",
+    version: "1.0.0",
+  }, null, 2));
+  writeFileSync(join(repoRoot, "packages", "web", "package.json"), JSON.stringify({
+    name: "web",
+    version: "1.0.0",
+  }, null, 2));
+
+  return {
+    repoRoot,
+    cleanup() {
+      rmSync(repoRoot, { recursive: true, force: true });
+    },
+  };
 }
 
 function createDependencies(options: {
@@ -142,12 +191,16 @@ function createDependencies(options: {
   updates?: ReviewSession[];
   artifacts?: string[];
   artifactContents?: Array<{ path: string; content: unknown }>;
+  artifactPaths?: string[];
+  selectedTargets?: Array<WorkspaceTarget | null>;
 } = {}): AiReviewCommandDependencies {
   const events = options.events ?? [];
   const sessions = options.sessions ?? [];
   const updates = options.updates ?? [];
   const artifacts = options.artifacts ?? [];
   const artifactContents = options.artifactContents ?? [];
+  const artifactPaths = options.artifactPaths ?? [];
+  const selectedTargets = options.selectedTargets ?? [];
   const reviewOutput = options.reviewOutput ?? OUTPUT_WITH_FINDINGS;
   const validationOutput = options.validationOutput ?? {
     ...reviewOutput,
@@ -173,6 +226,23 @@ function createDependencies(options: {
       ]
     : [];
 
+  function buildArtifactPath(cwd: string, sessionId: string, relativePath: string, target?: WorkspaceTarget | null): string {
+    if (!target || target.kind === "root") {
+      return join(cwd, ".omp", "supipowers", "reviews", sessionId, relativePath);
+    }
+
+    return join(
+      target.repoRoot,
+      ".omp",
+      "supipowers",
+      "workspaces",
+      ...target.relativeDir.split("/"),
+      "reviews",
+      sessionId,
+      relativePath,
+    );
+  }
+
   return {
     loadModelConfig: mock(() => ({ version: "1.0.0", default: null, actions: {} })),
     createModelBridge: mock(() => ({ getModelForRole: () => null, getCurrentModel: () => "unknown" })),
@@ -194,19 +264,24 @@ function createDependencies(options: {
     })),
     consolidateReviewOutputs: mock(() => consolidatedOutput),
     runAutoFix: mock(async () => ({ output: FIX_OUTPUT })),
-    createReviewSession: mock((_paths, _cwd, session) => {
+    createReviewSession: mock((_paths, _cwd, session, target) => {
       events.push(`createReviewSession:${session.id}`);
       sessions.push(cloneSession(session));
+      selectedTargets.push(target ?? null);
     }),
-    updateReviewSession: mock((_paths, _cwd, session) => {
+    updateReviewSession: mock((_paths, _cwd, session, target) => {
       events.push(`updateReviewSession:${session.id}`);
       updates.push(cloneSession(session));
+      selectedTargets.push(target ?? null);
     }),
-    writeReviewArtifact: mock((_paths, _cwd, sessionId, relativePath, content) => {
+    writeReviewArtifact: mock((_paths, cwd, sessionId, relativePath, content, target) => {
       events.push(`writeReviewArtifact:${sessionId}:${relativePath}`);
       artifacts.push(relativePath);
       artifactContents.push({ path: relativePath, content });
-      return `/repo/.omp/supipowers/reviews/${sessionId}/${relativePath}`;
+      const artifactPath = buildArtifactPath(cwd, sessionId, relativePath, target ?? null);
+      artifactPaths.push(artifactPath);
+      selectedTargets.push(target ?? null);
+      return artifactPath;
     }),
     generateReviewSessionId: mock(() => "review-test-session"),
     notifyInfo: mock(),
@@ -228,7 +303,143 @@ function getRenderedWidgetTexts(ctx: any): string[] {
     .map((component: any) => component.getText());
 }
 
+describe("package-aware review scope", () => {
+  test("filters uncommitted diffs to the selected package", async () => {
+    const repoRoot = "/repo";
+    const rootTarget = createWorkspaceTarget(repoRoot, "workspace-root", ".", "root");
+    const apiTarget = createWorkspaceTarget(repoRoot, "api", "packages/api", "workspace");
+    const webTarget = createWorkspaceTarget(repoRoot, "web", "packages/web", "workspace");
+    const platform = {
+      exec: mock(async (_cmd: string, args: string[]) => {
+        if (args[0] === "diff" && args.includes("--cached")) {
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        if (args[0] === "diff") {
+          return {
+            stdout: [
+              "diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts",
+              "--- a/packages/api/src/index.ts",
+              "+++ b/packages/api/src/index.ts",
+              "@@ -1 +1 @@",
+              "+export const api = true;",
+              "diff --git a/packages/web/src/index.ts b/packages/web/src/index.ts",
+              "--- a/packages/web/src/index.ts",
+              "+++ b/packages/web/src/index.ts",
+              "@@ -1 +1 @@",
+              "+export const web = true;",
+            ].join("\n"),
+            stderr: "",
+            code: 0,
+          };
+        }
+        return { stdout: "", stderr: "", code: 0 };
+      }),
+    } as Pick<Platform, "exec">;
+
+    const scope = await loadUncommittedScope(platform, repoRoot, {
+      target: apiTarget,
+      targets: [rootTarget, apiTarget, webTarget],
+    });
+
+    expect(scope.description).toContain("for api (packages/api)");
+    expect(scope.files.map((file) => file.path)).toEqual(["packages/api/src/index.ts"]);
+    expect(scope.diff).toContain("packages/api/src/index.ts");
+    expect(scope.diff).not.toContain("packages/web/src/index.ts");
+  });
+
+  test("fails clearly when a selected package has no files in the requested commit", async () => {
+    const repoRoot = "/repo";
+    const rootTarget = createWorkspaceTarget(repoRoot, "workspace-root", ".", "root");
+    const apiTarget = createWorkspaceTarget(repoRoot, "api", "packages/api", "workspace");
+    const webTarget = createWorkspaceTarget(repoRoot, "web", "packages/web", "workspace");
+    const platform = {
+      exec: mock(async () => ({
+        stdout: [
+          "diff --git a/packages/web/src/index.ts b/packages/web/src/index.ts",
+          "--- a/packages/web/src/index.ts",
+          "+++ b/packages/web/src/index.ts",
+          "@@ -1 +1 @@",
+          "+export const web = true;",
+        ].join("\n"),
+        stderr: "",
+        code: 0,
+      })),
+    } as Pick<Platform, "exec">;
+
+    await expect(loadCommitScope(platform, repoRoot, "abc123", {
+      target: apiTarget,
+      targets: [rootTarget, apiTarget, webTarget],
+    })).rejects.toThrow("No reviewable files remain after filtering commit changes for api (packages/api).");
+  });
+});
+
+
 describe("runAiReviewSessionForTest", () => {
+  test("selects a package target and isolates review session artifacts per workspace", async () => {
+    const fixture = createMonorepoFixture();
+    try {
+      const platform = createPlatform();
+      const apiCtx = createContext({
+        cwd: fixture.repoRoot,
+        includeCustom: false,
+        selectResponses: ["Quick — fast high-signal review"],
+      });
+      const webCtx = createContext({
+        cwd: fixture.repoRoot,
+        includeCustom: false,
+        selectResponses: ["Quick — fast high-signal review"],
+      });
+
+      const apiArtifactPaths: string[] = [];
+      const apiSelectedTargets: Array<WorkspaceTarget | null> = [];
+      const apiDeps = createDependencies({
+        reviewOutput: OUTPUT_WITHOUT_FINDINGS,
+        artifactPaths: apiArtifactPaths,
+        selectedTargets: apiSelectedTargets,
+      });
+      await runAiReviewSessionForTest(platform, apiCtx, apiDeps, "--target api");
+
+      const webArtifactPaths: string[] = [];
+      const webSelectedTargets: Array<WorkspaceTarget | null> = [];
+      const webDeps = createDependencies({
+        reviewOutput: OUTPUT_WITHOUT_FINDINGS,
+        artifactPaths: webArtifactPaths,
+        selectedTargets: webSelectedTargets,
+      });
+      await runAiReviewSessionForTest(platform, webCtx, webDeps, "--target web");
+
+      expect(apiDeps.selectReviewScope).toHaveBeenCalledWith(
+        platform,
+        apiCtx,
+        expect.objectContaining({
+          target: expect.objectContaining({ name: "api", relativeDir: "packages/api" }),
+        }),
+      );
+      expect(webDeps.selectReviewScope).toHaveBeenCalledWith(
+        platform,
+        webCtx,
+        expect.objectContaining({
+          target: expect.objectContaining({ name: "web", relativeDir: "packages/web" }),
+        }),
+      );
+      expect(apiSelectedTargets.some((target) => target?.relativeDir === "packages/api")).toBeTrue();
+      expect(webSelectedTargets.some((target) => target?.relativeDir === "packages/web")).toBeTrue();
+
+      const apiReportPath = apiArtifactPaths.find((artifactPath) => artifactPath.endsWith(join("review-test-session", "findings.md")));
+      const webReportPath = webArtifactPaths.find((artifactPath) => artifactPath.endsWith(join("review-test-session", "findings.md")));
+      expect(apiReportPath).toContain(join(".omp", "supipowers", "workspaces", "packages", "api", "reviews", "review-test-session", "findings.md"));
+      expect(webReportPath).toContain(join(".omp", "supipowers", "workspaces", "packages", "web", "reviews", "review-test-session", "findings.md"));
+      expect(apiReportPath).not.toEqual(webReportPath);
+      expect(apiDeps.notifyInfo).toHaveBeenCalledWith(
+        apiCtx,
+        "AI review complete: passed",
+        expect.stringContaining("target: api (packages/api)"),
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   test("always validates findings, writes findings.md, and Fix now continues into auto-fix", async () => {
     const platform = createPlatform();
     const ctx = createContext({

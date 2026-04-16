@@ -194,12 +194,11 @@ export async function selectModelFromList(
       const models = ctx.modelRegistry?.getAvailable?.() ?? [];
       if (models.length > 0) {
         available = {
-          providers: new Set(models.map((m: any) => String(m.provider))),
-          modelIds: new Set(models.map((m: any) => `${m.provider}/${m.id}`)),
+          models: models.map((m: any) => ({ provider: String(m.provider), id: m.id })),
         };
       }
     } catch {
-      // Fall through — picker will show all models unfiltered
+      // Fall through — picker will show bundled list unfiltered
     }
     return ctx.ui.custom((tui: any, theme: any, kb: any, done: any) =>
       createModelPicker(tui, theme, kb, done, available),
@@ -207,12 +206,23 @@ export async function selectModelFromList(
   }
 
   // Fallback: flat select list for non-OMP platforms
-  const providers = getBundledProviders();
+  // Prefer live registry models; fall back to bundled list when unavailable
   const allModels: string[] = [];
-  for (const provider of providers.sort()) {
-    const models = getBundledModels(provider as GeneratedProvider);
-    for (const m of models) {
-      allModels.push(`${provider}/${m.id}`);
+  try {
+    const registryModels = ctx.modelRegistry?.getAvailable?.() ?? [];
+    for (const m of registryModels) {
+      allModels.push(`${m.provider}/${m.id}`);
+    }
+  } catch {
+    // ignore
+  }
+  if (allModels.length === 0) {
+    const providers = getBundledProviders();
+    for (const provider of providers.sort()) {
+      const models = getBundledModels(provider as GeneratedProvider);
+      for (const m of models) {
+        allModels.push(`${provider}/${m.id}`);
+      }
     }
   }
   allModels.sort();

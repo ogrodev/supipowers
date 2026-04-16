@@ -1,14 +1,25 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
+  buildReleaseTargetOptionLabel,
   buildSelectableReleaseChannelOptions,
+  createReleaseProgressKeys,
   findInvalidReleaseChannels,
   isGitHubPermissionDeniedError,
   isInProgressRelease,
+  isReleaseTargetLocked,
   maybeSwitchGithubAccountForReleaseFailure,
   parseGithubAuthStatusAccounts,
+  parseReleaseArgs,
   RELEASE_STEPS,
+  releaseReleaseTargetLock,
+  resolveRequestedReleaseTarget,
+  selectReleaseTarget,
+  sortReleaseTargetOptions,
+  tryAcquireReleaseTargetLock,
+  type ReleaseTargetOption,
 } from "../../src/commands/release.js";
 import type { ChannelStatus } from "../../src/release/channels/types.js";
+import type { ReleaseTarget } from "../../src/types.js";
 
 describe("isInProgressRelease", () => {
   test("unreleased version + pre-configured channels → resume (skip confirmation)", () => {
@@ -55,6 +66,123 @@ describe("release workflow ordering", () => {
       "doc-drift",
       "working-tree",
     ]);
+  });
+});
+
+function target(name: string, relativeDir = "."): ReleaseTarget {
+  return {
+    id: name,
+    name,
+    kind: relativeDir === "." ? "root" : "workspace",
+    repoRoot: "/repo",
+    packageDir: relativeDir === "." ? "/repo" : `/repo/${relativeDir}`,
+    manifestPath: relativeDir === "." ? "/repo/package.json" : `/repo/${relativeDir}/package.json`,
+    relativeDir,
+    version: "1.0.0",
+    private: false,
+    publishScopePaths: relativeDir === "." ? ["package.json", "."] : [`${relativeDir}/package.json`, relativeDir],
+    packageManager: "bun",
+    defaultTagFormat: relativeDir === "." ? "v${version}" : `${name}@\${version}`,
+  };
+}
+
+describe("release target selection", () => {
+  test("parses --raw, --dry-run, and --target flags", () => {
+    expect(parseReleaseArgs("--raw --dry-run --target @repo/pkg")).toEqual({
+      skipPolish: true,
+      isDryRun: true,
+      requestedTarget: "@repo/pkg",
+    });
+    expect(parseReleaseArgs("--target=@repo/cli")).toEqual({
+      skipPolish: false,
+      isDryRun: false,
+      requestedTarget: "@repo/cli",
+    });
+  });
+
+  test("resolves an explicit --target by package name", () => {
+    const targets = [target("root"), target("@repo/pkg", "packages/pkg")];
+    expect(resolveRequestedReleaseTarget(targets, "@repo/pkg")?.relativeDir).toBe("packages/pkg");
+  });
+
+  test("orders changed packages before unchanged packages", () => {
+    const options: ReleaseTargetOption[] = [
+      { target: target("@repo/unchanged", "packages/unchanged"), changed: false, lastTag: "@repo/unchanged@1.0.0", summary: "no changes found" },
+      { target: target("@repo/changed", "packages/changed"), changed: true, lastTag: "@repo/changed@1.0.0", summary: "2 fixes" },
+      { target: target("@repo/another-changed", "packages/another"), changed: true, lastTag: null, summary: "1 feature" },
+    ];
+
+    expect(sortReleaseTargetOptions(options).map((option) => option.target.name)).toEqual([
+      "@repo/another-changed",
+      "@repo/changed",
+      "@repo/unchanged",
+    ]);
+  });
+
+  test("formats target picker labels with name, path, release tag, and change state", () => {
+    expect(
+      buildReleaseTargetOptionLabel({
+        target: target("@repo/pkg", "packages/pkg"),
+        changed: true,
+        lastTag: "@repo/pkg@1.0.0",
+        summary: "1 feature, 2 fixes",
+      }),
+    ).toBe("@repo/pkg — packages/pkg — @repo/pkg@1.0.0 — changed — 1 feature, 2 fixes");
+  });
+
+  test("skips the picker for classic repos with a single publishable target", async () => {
+    const ctx = {
+      ui: { select: mock(async () => null) },
+    } as any;
+
+    const selected = await selectReleaseTarget(
+      ctx,
+      [{ target: target("root"), changed: false, lastTag: null, summary: "change analysis pending" }],
+      null,
+    );
+
+    expect(selected?.name).toBe("root");
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+  });
+
+  test("bypasses the picker when --target is provided", async () => {
+    const ctx = {
+      ui: { select: mock(async () => { throw new Error("picker should be bypassed"); }) },
+    } as any;
+
+    const selected = await selectReleaseTarget(
+      ctx,
+      [
+        { target: target("root"), changed: false, lastTag: null, summary: "change analysis pending" },
+        { target: target("@repo/pkg", "packages/pkg"), changed: true, lastTag: null, summary: "1 fix" },
+      ],
+      "@repo/pkg",
+    );
+
+    expect(selected?.relativeDir).toBe("packages/pkg");
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+  });
+
+  test("creates run-specific progress keys so concurrent releases do not collide", () => {
+    expect(createReleaseProgressKeys("run-1")).toEqual({
+      statusKey: "supi-release:run-1",
+      widgetKey: "supi-release:run-1",
+    });
+  });
+});
+
+describe("release target locks", () => {
+  test("rejects concurrent releases for the same target until the lock is released", () => {
+    releaseReleaseTargetLock("@repo/pkg");
+    expect(tryAcquireReleaseTargetLock("@repo/pkg")).toBe(true);
+    expect(isReleaseTargetLocked("@repo/pkg")).toBe(true);
+    expect(tryAcquireReleaseTargetLock("@repo/pkg")).toBe(false);
+
+    releaseReleaseTargetLock("@repo/pkg");
+    expect(isReleaseTargetLocked("@repo/pkg")).toBe(false);
+    expect(tryAcquireReleaseTargetLock("@repo/pkg")).toBe(true);
+
+    releaseReleaseTargetLock("@repo/pkg");
   });
 });
 

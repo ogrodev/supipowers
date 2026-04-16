@@ -1,3 +1,4 @@
+import path from "node:path";
 import { matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable } from "@oh-my-pi/pi-tui";
 import type { Platform } from "../platform/types.js";
 import { createWorkflowProgress } from "../platform/progress.js";
@@ -5,7 +6,7 @@ import { notifyInfo } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { createModelBridge, resolveModelForAction } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
-import { selectReviewScope } from "../review/scope.js";
+import { selectReviewScope, type ReviewWorkspaceSelection } from "../review/scope.js";
 import { loadMergedReviewAgents } from "../review/agent-loader.js";
 import { runQuickReview, runDeepReview } from "../review/runner.js";
 import { runMultiAgentReview, type MultiAgentAgentResult } from "../review/multi-agent-runner.js";
@@ -19,6 +20,15 @@ import {
   writeReviewArtifact,
 } from "../storage/review-sessions.js";
 import { accent, bright, muted } from "../platform/tui-colors.js";
+import { resolvePackageManager } from "../workspace/package-manager.js";
+import {
+  buildWorkspaceTargetOptionLabel,
+  parseTargetArg,
+  selectWorkspaceTarget,
+  type WorkspaceTargetOption,
+} from "../workspace/selector.js";
+import { getTargetStatePath } from "../workspace/state-paths.js";
+import { discoverWorkspaceTargets } from "../workspace/targets.js";
 import type {
   ConfiguredReviewAgent,
   ReviewFinding,
@@ -27,6 +37,7 @@ import type {
   ReviewPostConsolidationAction,
   ReviewScope,
   ReviewSession,
+  WorkspaceTarget,
 } from "../types.js";
 
 modelRegistry.register({
@@ -79,6 +90,61 @@ interface ReviewResultsSummary {
   lines: string[];
   helpText: string;
 }
+
+interface ParsedAiReviewArgs {
+  requestedTarget: string | null;
+}
+
+interface ReviewTargetChoice extends ReviewWorkspaceSelection {}
+
+function parseAiReviewArgs(args?: string): ParsedAiReviewArgs {
+  return {
+    requestedTarget: parseTargetArg(args),
+  };
+}
+
+function buildReviewTargetSummary(target: WorkspaceTarget): string {
+  return `${target.name} (${target.relativeDir})`;
+}
+
+async function selectReviewTarget(ctx: any, requestedTarget: string | null): Promise<ReviewTargetChoice | null> {
+  const packageManager = resolvePackageManager(ctx.cwd);
+  const discoveredTargets = discoverWorkspaceTargets(ctx.cwd, packageManager.id);
+  const targets = discoveredTargets.length > 0
+    ? discoveredTargets
+    : [{
+        id: "root",
+        name: path.basename(ctx.cwd) || "root",
+        kind: "root",
+        repoRoot: ctx.cwd,
+        packageDir: ctx.cwd,
+        manifestPath: path.join(ctx.cwd, "package.json"),
+        relativeDir: ".",
+        version: "0.0.0",
+        private: true,
+        packageManager: packageManager.id,
+      } satisfies WorkspaceTarget];
+  const selectedTarget = await selectWorkspaceTarget(
+    ctx,
+    targets.map((target) => ({
+      target,
+      changed: false,
+      label: buildWorkspaceTargetOptionLabel({ target, changed: false } satisfies WorkspaceTargetOption),
+    })),
+    requestedTarget,
+    {
+      title: "Review target",
+      helpText: "Pick one package or the root scope for this review run.",
+    },
+  );
+
+  if (requestedTarget && !selectedTarget) {
+    throw new Error(`Review target not found: ${requestedTarget}`);
+  }
+
+  return selectedTarget ? { target: selectedTarget, targets } : null;
+}
+
 
 function formatFindingLocation(finding: ReviewFinding): string {
   if (!finding.file) {
@@ -384,8 +450,9 @@ function buildDiscussionPrompt(
   ctx: any,
   session: ReviewSession,
   summary: ReviewResultsSummary,
+  selectedTarget: WorkspaceTarget | null,
 ): string {
-  const sessionDir = buildSavedSessionPath(platform, ctx, session);
+  const sessionDir = buildSavedSessionPath(platform, ctx, session, selectedTarget);
   const artifactLines = [
     `- session: ${sessionDir}/session.json`,
     `- scope: ${sessionDir}/${session.artifacts.scope}`,
@@ -435,8 +502,15 @@ function buildPostConsolidationDetail(action: ReviewPostConsolidationAction): st
   }
 }
 
-function buildSavedSessionPath(platform: Platform, ctx: any, session: ReviewSession): string {
-  return platform.paths.project(ctx.cwd, "reviews", session.id);
+function buildSavedSessionPath(
+  platform: Platform,
+  ctx: any,
+  session: ReviewSession,
+  selectedTarget: WorkspaceTarget | null,
+): string {
+  return selectedTarget
+    ? getTargetStatePath(platform.paths, selectedTarget, "reviews", session.id)
+    : platform.paths.project(ctx.cwd, "reviews", session.id);
 }
 
 function buildActionLabel(action: ReviewPostConsolidationAction | null): string {
@@ -714,9 +788,14 @@ async function selectMaxIterations(ctx: any, defaultValue = 3): Promise<number |
   return parsed;
 }
 
-function buildCompletionDetail(session: ReviewSession, output: ReviewOutput): string {
+function buildCompletionDetail(
+  session: ReviewSession,
+  output: ReviewOutput,
+  selectedTarget: WorkspaceTarget | null,
+ ): string {
   return [
     `session: ${session.id}`,
+    ...(selectedTarget ? [`target: ${buildReviewTargetSummary(selectedTarget)}`] : []),
     `status: ${output.status}`,
     `findings: ${output.findings.length}`,
     `iterations: ${session.currentIteration}`,
@@ -730,6 +809,7 @@ function writeFindingsReport(
   ctx: any,
   session: ReviewSession,
   output: ReviewOutput,
+  selectedTarget: WorkspaceTarget | null,
   options: { preFixSnapshot?: boolean } = {},
 ): string {
   const artifactPath = deps.writeReviewArtifact(
@@ -738,6 +818,7 @@ function writeFindingsReport(
     session.id,
     FINDINGS_REPORT_FILE,
     buildReviewFindingsMarkdown(output, session, options),
+    selectedTarget,
   );
   session.artifacts.findingsReport = FINDINGS_REPORT_FILE;
   return artifactPath;
@@ -750,13 +831,14 @@ function persistIteration(
   session: ReviewSession,
   iteration: number,
   output: ReviewOutput,
+  selectedTarget: WorkspaceTarget | null,
   extra: Record<string, unknown> = {},
 ): void {
   const relativePath = `${ITERATIONS_DIR}/${iteration}.json`;
   deps.writeReviewArtifact(platform.paths, ctx.cwd, session.id, relativePath, {
     output,
     ...extra,
-  });
+  }, selectedTarget);
   session.iterations.push({
     iteration,
     findings: output.findings.length,
@@ -829,13 +911,21 @@ async function runAiReviewSession(
   platform: Platform,
   ctx: any,
   deps: AiReviewCommandDependencies = AI_REVIEW_COMMAND_DEPENDENCIES,
+  args?: string,
 ): Promise<void> {
   if (!ctx.hasUI) {
     ctx.ui.notify("/supi:review requires interactive mode.", "warning");
     return;
   }
 
-  const scope = await deps.selectReviewScope(platform, ctx);
+  const { requestedTarget } = parseAiReviewArgs(args);
+  const selectedReviewTarget = await selectReviewTarget(ctx, requestedTarget);
+  if (!selectedReviewTarget) {
+    return;
+  }
+  const reviewTarget = selectedReviewTarget;
+
+  const scope = await deps.selectReviewScope(platform, ctx, reviewTarget);
   if (!scope) {
     return;
   }
@@ -863,8 +953,8 @@ async function runAiReviewSession(
     scope,
     agents,
   );
-  deps.createReviewSession(platform.paths, ctx.cwd, session);
-  deps.writeReviewArtifact(platform.paths, ctx.cwd, session.id, session.artifacts.scope, scope);
+  deps.createReviewSession(platform.paths, ctx.cwd, session, reviewTarget.target);
+  deps.writeReviewArtifact(platform.paths, ctx.cwd, session.id, session.artifacts.scope, scope, reviewTarget.target);
 
   const progress = createAiReviewProgress(ctx, level, agents);
   progress.completeScope(scope);
@@ -872,14 +962,20 @@ async function runAiReviewSession(
   function saveSession(status: ReviewSession["status"]): void {
     progress.startSave();
     session.status = status;
-    deps.updateReviewSession(platform.paths, ctx.cwd, session);
+    deps.updateReviewSession(platform.paths, ctx.cwd, session, reviewTarget.target);
     progress.completeSave(status);
   }
 
-
   try {
     const initialRun = await runReviewPass(platform, ctx, deps, scope, level, agents, progress, resolvedModel);
-    deps.writeReviewArtifact(platform.paths, ctx.cwd, session.id, RAW_FINDINGS_FILE, initialRun.rawOutput);
+    deps.writeReviewArtifact(
+      platform.paths,
+      ctx.cwd,
+      session.id,
+      RAW_FINDINGS_FILE,
+      initialRun.rawOutput,
+      reviewTarget.target,
+    );
     session.artifacts.rawFindings = RAW_FINDINGS_FILE;
     for (const agentResult of initialRun.agentResults) {
       deps.writeReviewArtifact(
@@ -888,6 +984,7 @@ async function runAiReviewSession(
         session.id,
         `${AGENTS_DIR}/${agentResult.agent.name}.json`,
         agentResult,
+        reviewTarget.target,
       );
     }
 
@@ -906,7 +1003,14 @@ async function runAiReviewSession(
       });
       const validatedOutput = preserveBlockedReviewStatus(validation.output, currentOutput.status);
       currentOutput = prepareReviewOutputForFollowUp(validatedOutput, currentOutput.status);
-      deps.writeReviewArtifact(platform.paths, ctx.cwd, session.id, VALIDATED_FINDINGS_FILE, validatedOutput);
+      deps.writeReviewArtifact(
+        platform.paths,
+        ctx.cwd,
+        session.id,
+        VALIDATED_FINDINGS_FILE,
+        validatedOutput,
+        reviewTarget.target,
+      );
       session.artifacts.validatedFindings = VALIDATED_FINDINGS_FILE;
       progress.completeValidate(validatedOutput);
     } else {
@@ -921,7 +1025,14 @@ async function runAiReviewSession(
         deps.consolidateReviewOutputs([currentOutput]),
         currentOutput.status,
       );
-      deps.writeReviewArtifact(platform.paths, ctx.cwd, session.id, CONSOLIDATED_FINDINGS_FILE, currentOutput);
+      deps.writeReviewArtifact(
+        platform.paths,
+        ctx.cwd,
+        session.id,
+        CONSOLIDATED_FINDINGS_FILE,
+        currentOutput,
+        reviewTarget.target,
+      );
       session.artifacts.consolidatedFindings = CONSOLIDATED_FINDINGS_FILE;
       progress.completeConsolidate(currentOutput);
     } else {
@@ -929,13 +1040,28 @@ async function runAiReviewSession(
       progress.skipConsolidate(level === "multi-agent" ? "no findings" : "single-agent");
     }
 
-    persistIteration(deps, platform, ctx, session, 1, currentOutput);
-    let findingsReportPath = writeFindingsReport(deps, platform, ctx, session, currentOutput);
+    persistIteration(deps, platform, ctx, session, 1, currentOutput, reviewTarget.target);
+    let findingsReportPath = writeFindingsReport(
+      deps,
+      platform,
+      ctx,
+      session,
+      currentOutput,
+      reviewTarget.target,
+    );
     let findingsReportIsPreFixSnapshot = false;
 
     async function cancelSession(): Promise<void> {
       if (findingsReportIsPreFixSnapshot) {
-        findingsReportPath = writeFindingsReport(deps, platform, ctx, session, currentOutput, { preFixSnapshot: true });
+        findingsReportPath = writeFindingsReport(
+          deps,
+          platform,
+          ctx,
+          session,
+          currentOutput,
+          reviewTarget.target,
+          { preFixSnapshot: true },
+        );
       }
       saveSession("cancelled");
     }
@@ -963,7 +1089,7 @@ async function runAiReviewSession(
         deps.notifyInfo(
           ctx,
           "AI review documented without fixes",
-          `session: ${session.id} | findings: ${currentOutput.findings.length} | report: ${findingsReportPath}`,
+          `${buildCompletionDetail(session, currentOutput, reviewTarget.target)} | report: ${findingsReportPath}`,
         );
         return;
       }
@@ -975,9 +1101,11 @@ async function runAiReviewSession(
         deps.notifyInfo(
           ctx,
           "AI review saved for discussion",
-          `session: ${session.id} | findings: ${currentOutput.findings.length} | report: ${findingsReportPath}`,
+          `${buildCompletionDetail(session, currentOutput, reviewTarget.target)} | report: ${findingsReportPath}`,
         );
-        platform.sendUserMessage(buildDiscussionPrompt(platform, ctx, session, reviewResultsSummary));
+        platform.sendUserMessage(
+          buildDiscussionPrompt(platform, ctx, session, reviewResultsSummary, reviewTarget.target),
+        );
         return;
       }
 
@@ -1038,8 +1166,24 @@ async function runAiReviewSession(
           }
 
           const delta = compareReviewOutputs(previousOutput, rerunOutput);
-          persistIteration(deps, platform, ctx, session, iteration, rerunOutput, { delta });
-          findingsReportPath = writeFindingsReport(deps, platform, ctx, session, rerunOutput);
+          persistIteration(
+            deps,
+            platform,
+            ctx,
+            session,
+            iteration,
+            rerunOutput,
+            reviewTarget.target,
+            { delta },
+          );
+          findingsReportPath = writeFindingsReport(
+            deps,
+            platform,
+            ctx,
+            session,
+            rerunOutput,
+            reviewTarget.target,
+          );
           findingsReportIsPreFixSnapshot = false;
           progress.completeRerun(iteration, session.maxIterations);
 
@@ -1070,18 +1214,26 @@ async function runAiReviewSession(
     }
 
     if (findingsReportIsPreFixSnapshot) {
-      findingsReportPath = writeFindingsReport(deps, platform, ctx, session, currentOutput, { preFixSnapshot: true });
+      findingsReportPath = writeFindingsReport(
+        deps,
+        platform,
+        ctx,
+        session,
+        currentOutput,
+        reviewTarget.target,
+        { preFixSnapshot: true },
+      );
     }
 
     saveSession(currentOutput.status === "blocked" ? "blocked" : "completed");
     deps.notifyInfo(
       ctx,
       `AI review complete: ${findingsReportIsPreFixSnapshot ? "post-fix verification pending" : currentOutput.status}`,
-      `${buildCompletionDetail(session, currentOutput)} | report: ${findingsReportIsPreFixSnapshot ? `${findingsReportPath} (pre-fix snapshot)` : findingsReportPath}`,
+      `${buildCompletionDetail(session, currentOutput, reviewTarget.target)} | report: ${findingsReportIsPreFixSnapshot ? `${findingsReportPath} (pre-fix snapshot)` : findingsReportPath}`,
     );
   } catch (error) {
     session.status = "blocked";
-    deps.updateReviewSession(platform.paths, ctx.cwd, session);
+    deps.updateReviewSession(platform.paths, ctx.cwd, session, reviewTarget.target);
     progress.failActive((error as Error).message);
     throw error;
   } finally {
@@ -1089,8 +1241,8 @@ async function runAiReviewSession(
   }
 }
 
-export function handleAiReview(platform: Platform, ctx: any): void {
-  void runAiReviewSession(platform, ctx, AI_REVIEW_COMMAND_DEPENDENCIES).catch((error) => {
+export function handleAiReview(platform: Platform, ctx: any, args?: string): void {
+  void runAiReviewSession(platform, ctx, AI_REVIEW_COMMAND_DEPENDENCIES, args).catch((error) => {
     ctx.ui.notify(`AI review failed: ${(error as Error).message}`, "error");
   });
 }
@@ -1099,15 +1251,16 @@ export async function runAiReviewSessionForTest(
   platform: Platform,
   ctx: any,
   deps: AiReviewCommandDependencies,
+  args?: string,
 ): Promise<void> {
-  await runAiReviewSession(platform, ctx, deps);
+  await runAiReviewSession(platform, ctx, deps, args);
 }
 
 export function registerAiReviewCommand(platform: Platform): void {
   platform.registerCommand("supi:review", {
     description: "Run the AI code review pipeline",
-    async handler(_args: string | undefined, ctx: any) {
-      handleAiReview(platform, ctx);
+    async handler(args: string | undefined, ctx: any) {
+      handleAiReview(platform, ctx, args);
     },
   });
 }

@@ -6,12 +6,13 @@ import type { Platform, PlatformPaths } from "../../src/platform/types.js";
 import type { DocDriftState } from "../../src/types.js";
 import { registerGenerateCommand } from "../../src/commands/generate.js";
 import {
-  checkDocDrift,
   discoverDocFiles,
   loadState,
   saveState,
   statePath,
 } from "../../src/docs/drift.js";
+import { detectPackageManager } from "../../src/workspace/package-manager.js";
+import { discoverWorkspaceTargets } from "../../src/workspace/targets.js";
 
 // ── Fixtures ──────────────────────────────────────────────────
 
@@ -19,6 +20,10 @@ let tmpDir: string;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-gen-test-"));
+  fs.writeFileSync(
+    path.join(tmpDir, "package.json"),
+    JSON.stringify({ name: "root-app", version: "1.0.0" }, null, 2),
+  );
 });
 
 afterEach(() => {
@@ -72,6 +77,27 @@ function createContext(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   } as any;
+}
+
+function createWorkspaceRepo(): void {
+  fs.writeFileSync(
+    path.join(tmpDir, "package.json"),
+    JSON.stringify({
+      name: "root-app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+    }, null, 2),
+  );
+  fs.mkdirSync(path.join(tmpDir, "packages", "pkg-a"), { recursive: true });
+  fs.mkdirSync(path.join(tmpDir, "packages", "pkg-b"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmpDir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", version: "1.0.0" }, null, 2),
+  );
+  fs.writeFileSync(
+    path.join(tmpDir, "packages", "pkg-b", "package.json"),
+    JSON.stringify({ name: "pkg-b", version: "1.0.0" }, null, 2),
+  );
 }
 
 // ── State persistence ─────────────────────────────────────────
@@ -286,6 +312,76 @@ describe("docs flow", () => {
         content: [{ type: "text", text: expect.stringContaining("fix it directly") }],
       }),
       { deliverAs: "steer", triggerTurn: true },
+    );
+  });
+
+  test("first run with --target scopes docs and state to one workspace package", async () => {
+    createWorkspaceRepo();
+    const exec = mock(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "ls-files") {
+        return {
+          code: 0,
+          stdout: [
+            "README.md",
+            "packages/pkg-a/README.md",
+            "packages/pkg-a/docs/setup.md",
+            "packages/pkg-b/README.md",
+          ].join("\n"),
+          stderr: "",
+        };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+
+    const platform = createPlatform({ exec } as any);
+    registerGenerateCommand(platform);
+    const handler = (platform.registerCommand as any).mock.calls[0][1].handler;
+
+    let selectCount = 0;
+    const ctx = createContext({
+      ui: {
+        notify: mock(),
+        select: mock(async (_title: string, options: string[]) => {
+          selectCount += 1;
+          if (selectCount === 1) {
+            expect(options).toEqual([
+              "○ packages/pkg-a/README.md",
+              "○ packages/pkg-a/docs/setup.md",
+              "─── Add manually ───",
+              "─── Done ───",
+            ]);
+            return "○ packages/pkg-a/README.md";
+          }
+
+          return "─── Done ───";
+        }),
+        input: mock(),
+        confirm: mock(),
+      },
+    });
+
+    await handler("docs --target pkg-a", ctx);
+
+    const targets = discoverWorkspaceTargets(tmpDir, detectPackageManager(tmpDir));
+    const pkgATarget = targets.find((target) => target.name === "pkg-a");
+    expect(pkgATarget).toBeDefined();
+
+    const state = loadState(platform.paths, tmpDir, {
+      target: pkgATarget!,
+      allTargets: targets,
+    });
+    expect(state.trackedFiles).toEqual(["packages/pkg-a/README.md"]);
+    expect(fs.existsSync(statePath(platform.paths, tmpDir, pkgATarget!))).toBe(true);
+    expect(fs.existsSync(statePath(platform.paths, tmpDir))).toBe(false);
+    expect(platform.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: [{ type: "text", text: expect.stringContaining("Target: pkg-a (packages/pkg-a)") }],
+      }),
+      { deliverAs: "steer", triggerTurn: true },
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("pkg-a (packages/pkg-a)"),
+      "info",
     );
   });
 
