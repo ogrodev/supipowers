@@ -1,10 +1,10 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createPaths } from "../../src/platform/types.js";
 import { loadLatestReport, saveReviewReport } from "../../src/storage/reports.js";
-import type { ReviewReport } from "../../src/types.js";
+import type { ReviewReport, WorkspaceTarget } from "../../src/types.js";
 
 function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
   return {
@@ -15,6 +15,25 @@ function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
     global: (...segments: string[]) =>
       path.join(rootDir, "global-config", ".omp", "supipowers", ...segments),
     agent: (...segments: string[]) => path.join(rootDir, "agent", ...segments),
+  };
+}
+
+function createTarget(overrides: Partial<WorkspaceTarget> = {}): WorkspaceTarget {
+  const repoRoot = overrides.repoRoot ?? "/repo";
+  const relativeDir = overrides.relativeDir ?? ".";
+  const packageDir = overrides.packageDir ?? (relativeDir === "." ? repoRoot : `${repoRoot}/${relativeDir}`);
+
+  return {
+    id: overrides.id ?? (relativeDir === "." ? "root-app" : `pkg:${relativeDir}`),
+    name: overrides.name ?? (relativeDir === "." ? "root-app" : `pkg:${relativeDir}`),
+    kind: overrides.kind ?? (relativeDir === "." ? "root" : "workspace"),
+    repoRoot,
+    packageDir,
+    manifestPath: overrides.manifestPath ?? `${packageDir}/package.json`,
+    relativeDir,
+    version: overrides.version ?? "1.0.0",
+    private: overrides.private ?? false,
+    packageManager: overrides.packageManager ?? "bun",
   };
 }
 
@@ -39,10 +58,21 @@ function createReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
 describe("review report storage", () => {
   let tmpDir: string;
   let localPaths: ReturnType<typeof createPaths>;
+  let rootTarget: WorkspaceTarget;
+  let workspaceTarget: WorkspaceTarget;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-reports-test-"));
     localPaths = createTestPaths(tmpDir);
+    rootTarget = createTarget({ repoRoot: tmpDir });
+    workspaceTarget = createTarget({
+      repoRoot: tmpDir,
+      id: "@repo/pkg",
+      name: "@repo/pkg",
+      kind: "workspace",
+      relativeDir: "packages/pkg",
+      packageDir: path.join(tmpDir, "packages/pkg"),
+    });
   });
 
   afterEach(() => {
@@ -52,9 +82,22 @@ describe("review report storage", () => {
   test("saves and reloads review reports", () => {
     const report = createReport();
 
-    saveReviewReport(localPaths, tmpDir, report);
+    saveReviewReport(localPaths, rootTarget, report);
 
-    expect(loadLatestReport(localPaths, tmpDir)).toEqual(report);
+    expect(loadLatestReport(localPaths, rootTarget)).toEqual(report);
+  });
+
+  test("isolates workspace reports from root reports", () => {
+    const rootReport = createReport({ timestamp: "2026-04-10T00:00:00.000Z" });
+    const workspaceReport = createReport({ timestamp: "2026-04-11T00:00:00.000Z" });
+
+    const rootPath = saveReviewReport(localPaths, rootTarget, rootReport);
+    const workspacePath = saveReviewReport(localPaths, workspaceTarget, workspaceReport);
+
+    expect(rootPath).toContain(path.join(".omp", "supipowers", "reports"));
+    expect(workspacePath).toContain(path.join(".omp", "supipowers", "workspaces", "packages", "pkg", "reports"));
+    expect(loadLatestReport(localPaths, rootTarget)).toEqual(rootReport);
+    expect(loadLatestReport(localPaths, workspaceTarget)).toEqual(workspaceReport);
   });
 
   test("loadLatestReport ignores legacy profile-shaped report files", () => {
@@ -70,6 +113,6 @@ describe("review report storage", () => {
       }),
     );
 
-    expect(loadLatestReport(localPaths, tmpDir)).toBeNull();
+    expect(loadLatestReport(localPaths, rootTarget)).toBeNull();
   });
 });

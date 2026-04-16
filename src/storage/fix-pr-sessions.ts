@@ -2,15 +2,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FixPrSessionLedger } from "../fix-pr/types.js";
 import type { PlatformPaths } from "../platform/types.js";
+import type { WorkspaceTarget } from "../types.js";
+import { getTargetStatePath } from "../workspace/state-paths.js";
 
 const SESSIONS_DIR = "fix-pr-sessions";
 
-function getBaseDir(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, SESSIONS_DIR);
+function getBaseDir(paths: PlatformPaths, target: WorkspaceTarget): string {
+  return getTargetStatePath(paths, target, SESSIONS_DIR);
 }
 
-export function getSessionDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
-  return path.join(getBaseDir(paths, cwd), sessionId);
+export function getSessionDir(paths: PlatformPaths, target: WorkspaceTarget, sessionId: string): string {
+  return path.join(getBaseDir(paths, target), sessionId);
 }
 
 export function generateFixPrSessionId(): string {
@@ -21,14 +23,14 @@ export function generateFixPrSessionId(): string {
   return `fpr-${date}-${time}-${rand}`;
 }
 
-export function createFixPrSession(paths: PlatformPaths, cwd: string, ledger: FixPrSessionLedger): void {
-  const sessionDir = getSessionDir(paths, cwd, ledger.id);
+export function createFixPrSession(paths: PlatformPaths, target: WorkspaceTarget, ledger: FixPrSessionLedger): void {
+  const sessionDir = getSessionDir(paths, target, ledger.id);
   fs.mkdirSync(path.join(sessionDir, "snapshots"), { recursive: true });
   fs.writeFileSync(path.join(sessionDir, "ledger.json"), JSON.stringify(ledger, null, 2));
 }
 
-export function loadFixPrSession(paths: PlatformPaths, cwd: string, sessionId: string): FixPrSessionLedger | null {
-  const ledgerPath = path.join(getSessionDir(paths, cwd, sessionId), "ledger.json");
+export function loadFixPrSession(paths: PlatformPaths, target: WorkspaceTarget, sessionId: string): FixPrSessionLedger | null {
+  const ledgerPath = path.join(getSessionDir(paths, target, sessionId), "ledger.json");
   if (!fs.existsSync(ledgerPath)) return null;
   try {
     return JSON.parse(fs.readFileSync(ledgerPath, "utf-8")) as FixPrSessionLedger;
@@ -37,14 +39,14 @@ export function loadFixPrSession(paths: PlatformPaths, cwd: string, sessionId: s
   }
 }
 
-export function updateFixPrSession(paths: PlatformPaths, cwd: string, ledger: FixPrSessionLedger): void {
-  const ledgerPath = path.join(getSessionDir(paths, cwd, ledger.id), "ledger.json");
+export function updateFixPrSession(paths: PlatformPaths, target: WorkspaceTarget, ledger: FixPrSessionLedger): void {
+  const ledgerPath = path.join(getSessionDir(paths, target, ledger.id), "ledger.json");
   ledger.updatedAt = new Date().toISOString();
   fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
 }
 
-export function findActiveFixPrSession(paths: PlatformPaths, cwd: string): FixPrSessionLedger | null {
-  const baseDir = getBaseDir(paths, cwd);
+export function findActiveFixPrSession(paths: PlatformPaths, target: WorkspaceTarget): FixPrSessionLedger | null {
+  const baseDir = getBaseDir(paths, target);
   if (!fs.existsSync(baseDir)) return null;
 
   const dirs = fs.readdirSync(baseDir)
@@ -53,7 +55,7 @@ export function findActiveFixPrSession(paths: PlatformPaths, cwd: string): FixPr
     .reverse();
 
   for (const dir of dirs) {
-    const ledger = loadFixPrSession(paths, cwd, dir);
+    const ledger = loadFixPrSession(paths, target, dir);
     if (ledger && ledger.status === "running") return ledger;
   }
   return null;

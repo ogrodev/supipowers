@@ -1,10 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { GateResult, GateStatus, ReviewReport } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
+import type { GateResult, GateStatus, ReviewReport, WorkspaceTarget } from "../types.js";
+import { getTargetStatePath } from "../workspace/state-paths.js";
 
-function getReportsDir(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, "reports");
+function getReportsDir(paths: PlatformPaths, target: WorkspaceTarget): string {
+  return getTargetStatePath(paths, target, "reports");
 }
 
 function isGateStatus(value: unknown): value is GateStatus {
@@ -43,8 +44,8 @@ function isReviewReport(value: unknown): value is ReviewReport {
 }
 
 /** Save a review report */
-export function saveReviewReport(paths: PlatformPaths, cwd: string, report: ReviewReport): string {
-  const dir = getReportsDir(paths, cwd);
+export function saveReviewReport(paths: PlatformPaths, target: WorkspaceTarget, report: ReviewReport): string {
+  const dir = getReportsDir(paths, target);
   fs.mkdirSync(dir, { recursive: true });
   const filename = `review-${report.timestamp.slice(0, 10)}.json`;
   const filePath = path.join(dir, filename);
@@ -53,8 +54,8 @@ export function saveReviewReport(paths: PlatformPaths, cwd: string, report: Revi
 }
 
 /** Load the latest review report */
-export function loadLatestReport(paths: PlatformPaths, cwd: string): ReviewReport | null {
-  const dir = getReportsDir(paths, cwd);
+export function loadLatestReport(paths: PlatformPaths, target: WorkspaceTarget): ReviewReport | null {
+  const dir = getReportsDir(paths, target);
   if (!fs.existsSync(dir)) return null;
 
   const files = fs

@@ -1,14 +1,20 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { E2eSessionLedger } from "../qa/types.js";
 import type { PlatformPaths } from "../platform/types.js";
+import type { WorkspaceTarget } from "../types.js";
+import { getTargetStatePath } from "../workspace/state-paths.js";
+import type { E2eSessionLedger } from "../qa/types.js";
 
-function getSessionsDir(paths: PlatformPaths, cwd: string): string {
+function getSessionsDir(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): string {
+  if (target) {
+    return getTargetStatePath(paths, target, "qa-sessions");
+  }
+
   return paths.project(cwd, "qa-sessions");
 }
 
-export function getSessionDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
-  return path.join(getSessionsDir(paths, cwd), sessionId);
+export function getSessionDir(paths: PlatformPaths, cwd: string, sessionId: string, target?: WorkspaceTarget): string {
+  return path.join(getSessionsDir(paths, cwd, target), sessionId);
 }
 
 /** Generate a unique QA session ID */
@@ -21,8 +27,8 @@ export function generateSessionId(): string {
 }
 
 /** Create a new QA session */
-export function createSession(paths: PlatformPaths, cwd: string, ledger: E2eSessionLedger): void {
-  const sessionDir = getSessionDir(paths, cwd, ledger.id);
+export function createSession(paths: PlatformPaths, cwd: string, ledger: E2eSessionLedger, target?: WorkspaceTarget): void {
+  const sessionDir = getSessionDir(paths, cwd, ledger.id, target);
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.writeFileSync(
     path.join(sessionDir, "ledger.json"),
@@ -31,8 +37,8 @@ export function createSession(paths: PlatformPaths, cwd: string, ledger: E2eSess
 }
 
 /** Load a QA session ledger */
-export function loadSession(paths: PlatformPaths, cwd: string, sessionId: string): E2eSessionLedger | null {
-  const filePath = path.join(getSessionDir(paths, cwd, sessionId), "ledger.json");
+export function loadSession(paths: PlatformPaths, cwd: string, sessionId: string, target?: WorkspaceTarget): E2eSessionLedger | null {
+  const filePath = path.join(getSessionDir(paths, cwd, sessionId, target), "ledger.json");
   if (!fs.existsSync(filePath)) return null;
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -42,14 +48,14 @@ export function loadSession(paths: PlatformPaths, cwd: string, sessionId: string
 }
 
 /** Update a QA session ledger */
-export function updateSession(paths: PlatformPaths, cwd: string, ledger: E2eSessionLedger): void {
-  const filePath = path.join(getSessionDir(paths, cwd, ledger.id), "ledger.json");
+export function updateSession(paths: PlatformPaths, cwd: string, ledger: E2eSessionLedger, target?: WorkspaceTarget): void {
+  const filePath = path.join(getSessionDir(paths, cwd, ledger.id, target), "ledger.json");
   fs.writeFileSync(filePath, JSON.stringify(ledger, null, 2) + "\n");
 }
 
 /** List all QA sessions, newest first */
-export function listSessions(paths: PlatformPaths, cwd: string): string[] {
-  const dir = getSessionsDir(paths, cwd);
+export function listSessions(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): string[] {
+  const dir = getSessionsDir(paths, cwd, target);
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
@@ -59,9 +65,9 @@ export function listSessions(paths: PlatformPaths, cwd: string): string[] {
 }
 
 /** Find the latest session with incomplete phases */
-export function findActiveSession(paths: PlatformPaths, cwd: string): E2eSessionLedger | null {
-  for (const sessionId of listSessions(paths, cwd)) {
-    const ledger = loadSession(paths, cwd, sessionId);
+export function findActiveSession(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): E2eSessionLedger | null {
+  for (const sessionId of listSessions(paths, cwd, target)) {
+    const ledger = loadSession(paths, cwd, sessionId, target);
     if (!ledger) continue;
     const allCompleted = Object.values(ledger.phases).every(
       (p) => p.status === "completed",
@@ -72,9 +78,9 @@ export function findActiveSession(paths: PlatformPaths, cwd: string): E2eSession
 }
 
 /** Find the latest session with failed test results */
-export function findSessionWithFailures(paths: PlatformPaths, cwd: string): E2eSessionLedger | null {
-  for (const sessionId of listSessions(paths, cwd)) {
-    const ledger = loadSession(paths, cwd, sessionId);
+export function findSessionWithFailures(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): E2eSessionLedger | null {
+  for (const sessionId of listSessions(paths, cwd, target)) {
+    const ledger = loadSession(paths, cwd, sessionId, target);
     if (!ledger) continue;
     if (ledger.results.some((r) => r.status === "fail")) return ledger;
   }

@@ -1,22 +1,38 @@
-
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+import { createPaths } from "../../src/platform/types.js";
+import { DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
+import type { E2eSessionLedger } from "../../src/qa/types.js";
 import {
-  generateSessionId,
   createSession,
-  loadSession,
-  updateSession,
-  listSessions,
   findActiveSession,
   findSessionWithFailures,
+  generateSessionId,
   getSessionDir,
+  listSessions,
+  loadSession,
+  updateSession,
 } from "../../src/storage/qa-sessions.js";
-import type { E2eSessionLedger } from "../../src/qa/types.js";
-import { DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
-import { createPaths } from "../../src/platform/types.js";
+import type { WorkspaceTarget } from "../../src/types.js";
 
 const paths = createPaths(".omp");
+
+function target(name: string, relativeDir = "."): WorkspaceTarget {
+  return {
+    id: name,
+    name,
+    kind: relativeDir === "." ? "root" : "workspace",
+    repoRoot: "/repo",
+    packageDir: relativeDir === "." ? "/repo" : `/repo/${relativeDir}`,
+    manifestPath: relativeDir === "." ? "/repo/package.json" : `/repo/${relativeDir}/package.json`,
+    relativeDir,
+    version: "1.0.0",
+    private: false,
+    packageManager: "bun",
+  };
+}
 
 function makeLedger(overrides: Partial<E2eSessionLedger> = {}): E2eSessionLedger {
   return {
@@ -65,6 +81,24 @@ describe("qa-sessions storage", () => {
     createSession(paths, tmpDir, ledger);
     const loaded = loadSession(paths, tmpDir, ledger.id);
     expect(loaded).toEqual(ledger);
+  });
+
+  test("workspace targets isolate ledgers from root sessions", () => {
+    const workspaceTarget = {
+      ...target("@repo/web", "packages/web"),
+      repoRoot: tmpDir,
+      packageDir: path.join(tmpDir, "packages/web"),
+      manifestPath: path.join(tmpDir, "packages/web/package.json"),
+    };
+    const ledger = makeLedger();
+
+    createSession(paths, tmpDir, ledger, workspaceTarget);
+
+    expect(loadSession(paths, tmpDir, ledger.id, workspaceTarget)).toEqual(ledger);
+    expect(loadSession(paths, tmpDir, ledger.id)).toBeNull();
+    expect(getSessionDir(paths, tmpDir, ledger.id, workspaceTarget)).toBe(
+      path.join(tmpDir, ".omp", "supipowers", "workspaces", "packages", "web", "qa-sessions", ledger.id),
+    );
   });
 
   test("loadSession returns null for missing session", () => {
@@ -147,7 +181,7 @@ describe("qa-sessions storage", () => {
     expect(findSessionWithFailures(paths, tmpDir)).toBeNull();
   });
 
-  test("getSessionDir returns correct path", () => {
+  test("getSessionDir returns correct root path", () => {
     const dir = getSessionDir(paths, tmpDir, "qa-20260311-120000-abcd");
     expect(dir).toBe(path.join(tmpDir, ".omp", "supipowers", "qa-sessions", "qa-20260311-120000-abcd"));
   });
