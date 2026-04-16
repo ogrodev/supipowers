@@ -5,8 +5,19 @@
 // the plan for user approval, then executes file-level staging + commit.
 
 import type { Platform } from "../platform/types.js";
+import type { WorkspaceTarget } from "../types.js";
 import { createWorkflowProgress } from "../platform/progress.js";
 import { VALID_COMMIT_TYPES } from "../release/commit-types.js";
+import { resolvePackageManager } from "../workspace/package-manager.js";
+import {
+  buildWorkspaceTargetOptionLabel,
+  resolveRequestedWorkspaceTarget,
+  selectWorkspaceTarget,
+  sortWorkspaceTargetOptions,
+  type WorkspaceTargetOption,
+} from "../workspace/selector.js";
+import { discoverWorkspaceTargets } from "../workspace/targets.js";
+import { filterPathsForWorkspaceTarget, getChangedWorkspaceTargets } from "../workspace/path-mapping.js";
 import { validateCommitMessage } from "./commit-msg.js";
 import { getWorkingTreeStatus } from "./status.js";
 import { discoverCommitConventions } from "./conventions.js";
@@ -38,6 +49,8 @@ export interface CommitResult {
 export interface CommitOptions {
   /** Optional user hint forwarded to the agent (e.g. "fixing the auth bug") */
   userContext?: string;
+  /** Optional workspace target id or package name from --target. */
+  requestedTarget?: string | null;
 }
 
 // ── Shared commit primitive ─────────────────────────────────
@@ -135,6 +148,159 @@ function createProgress(ctx: any) {
   };
 }
 
+// ── Commit target selection ──────────────────────────────────
+
+interface CommitTargetContext {
+  target: WorkspaceTarget;
+  fileList: string[];
+  scopeHint: string | null;
+  targetLabel: string;
+  agentCwd: string;
+}
+
+function buildDiffArgs(baseArgs: string[], fileList: string[]): string[] {
+  return fileList.length > 0 ? [...baseArgs, "--", ...fileList] : baseArgs;
+}
+
+function formatTargetSummary(target: WorkspaceTarget): string {
+  return `${target.name} (${target.relativeDir})`;
+}
+
+function buildCommitTargetOptionLabel(
+  targets: WorkspaceTarget[],
+  option: WorkspaceTargetOption<WorkspaceTarget>,
+  changedFiles: string[],
+): string {
+  const fileCount = filterPathsForWorkspaceTarget(targets, option.target, changedFiles).length;
+  return buildWorkspaceTargetOptionLabel(option, [`${fileCount} file(s) changed`]);
+}
+
+function deriveCommitScopeHint(target: WorkspaceTarget): string | null {
+  if (target.kind !== "workspace") {
+    return null;
+  }
+
+  const normalized = target.name
+    .replace(/^@[^/]+\//, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+async function resolveCommitTargetContext(
+  platform: Platform,
+  ctx: any,
+  cwd: string,
+  status: Awaited<ReturnType<typeof getWorkingTreeStatus>>,
+  requestedTarget: string | null | undefined,
+  progress: ReturnType<typeof createProgress>,
+): Promise<CommitTargetContext | null> {
+  const exec = platform.exec.bind(platform);
+  const packageManager = resolvePackageManager(cwd);
+  const targets = discoverWorkspaceTargets(cwd, packageManager.id);
+  const requested = requestedTarget ? resolveRequestedWorkspaceTarget(targets, requestedTarget) : null;
+
+  if (requestedTarget && !requested) {
+    notifyError(ctx, "Commit target not found", requestedTarget);
+    return null;
+  }
+
+  if (status.stagedFiles.length === 0) {
+    const changedTargets = getChangedWorkspaceTargets(targets, status.files);
+    if (changedTargets.length === 0) {
+      notifyError(ctx, "No commit targets found", "Could not map the current changes to a workspace target.");
+      return null;
+    }
+
+    if (requested && !changedTargets.some((target) => target.id === requested.id)) {
+      notifyError(ctx, "Commit target has no changes", `${formatTargetSummary(requested)} has no tracked changes to stage.`);
+      return null;
+    }
+    const options = sortWorkspaceTargetOptions(
+      changedTargets.map((target) => ({
+        target,
+        changed: true,
+        label: buildCommitTargetOptionLabel(targets, { target, changed: true }, status.files),
+      })),
+    );
+
+    const selectedTarget = requested ?? await selectWorkspaceTarget(ctx, options, null, {
+      title: "Commit target",
+      helpText: "Pick one target to stage and commit. This wave supports one target per invocation.",
+    });
+
+    if (!selectedTarget) {
+      notifyInfo(ctx, "Commit cancelled", "No target selected");
+      return null;
+    }
+
+    const targetFiles = filterPathsForWorkspaceTarget(targets, selectedTarget, status.files);
+    if (targetFiles.length === 0) {
+      notifyInfo(ctx, "Nothing to commit", `${formatTargetSummary(selectedTarget)} has no changes to stage`);
+      return null;
+    }
+
+    progress.activate(1, `${selectedTarget.name} · ${targetFiles.length} file(s)`);
+    const addResult = await exec("git", ["add", "-A", "--", ...targetFiles], { cwd });
+    if (addResult.code !== 0) {
+      notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
+      return null;
+    }
+    progress.complete(1, `${selectedTarget.name} · ${targetFiles.length} file(s)`);
+  } else {
+    progress.activate(1, `${status.stagedFiles.length} staged`);
+    progress.complete(1, `${status.stagedFiles.length} staged`);
+  }
+
+  const stagedFilesResult = await exec("git", ["diff", "--cached", "--name-only"], { cwd });
+  if (stagedFilesResult.code !== 0) {
+    notifyError(ctx, "git diff failed", stagedFilesResult.stderr || "Could not read staged files");
+    return null;
+  }
+
+  const stagedFiles = normalizeLineEndings(stagedFilesResult.stdout).trim().split("\n").filter(Boolean);
+  if (stagedFiles.length === 0) {
+    notifyInfo(ctx, "Nothing to commit", "No changes after staging");
+    return null;
+  }
+
+  const stagedTargets = getChangedWorkspaceTargets(targets, stagedFiles);
+  if (stagedTargets.length === 0) {
+    notifyError(ctx, "Commit target detection failed", "Could not map staged changes to a workspace target.");
+    return null;
+  }
+
+  if (stagedTargets.length > 1) {
+    notifyError(
+      ctx,
+      "Mixed-package staged changes are not supported yet",
+      `Staged changes span multiple targets: ${stagedTargets.map(formatTargetSummary).join(", ")}. Commit one target at a time in this wave.`,
+    );
+    return null;
+  }
+
+  const target = stagedTargets[0]!;
+  if (requested && target.id !== requested.id) {
+    notifyError(
+      ctx,
+      "Requested target does not match staged changes",
+      `Staged changes belong to ${formatTargetSummary(target)}. Unstage the current index or commit that target first.`,
+    );
+    return null;
+  }
+
+  const fileList = filterPathsForWorkspaceTarget(targets, target, stagedFiles);
+  return {
+    target,
+    fileList,
+    scopeHint: deriveCommitScopeHint(target),
+    targetLabel: `${target.name} — ${target.relativeDir}`,
+    agentCwd: target.packageDir,
+  };
+}
+
 // ── Main entry point ───────────────────────────────────────
 
 /**
@@ -163,33 +329,27 @@ export async function analyzeAndCommit(
     }
     progress.complete(0, `${status.files.length} file(s)`);
 
-    // 2. Stage everything (match OMP behavior: include untracked)
-    progress.activate(1, `${status.files.length} file(s)`);
-    const addResult = await exec("git", ["add", "-A"], { cwd });
-    if (addResult.code !== 0) {
-      progress.dispose();
-      notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
+    const targetContext = await resolveCommitTargetContext(
+      platform,
+      ctx,
+      cwd,
+      status,
+      options.requestedTarget,
+      progress,
+    );
+    if (!targetContext) {
       return null;
     }
-    progress.complete(1, `${status.files.length} file(s)`);
 
     // 3. Gather diff information
-    progress.activate(2);
-    const [diffResult, statResult, filesResult] = await Promise.all([
-      exec("git", ["diff", "--cached"], { cwd }),
-      exec("git", ["diff", "--cached", "--stat"], { cwd }),
-      exec("git", ["diff", "--cached", "--name-only"], { cwd }),
+    progress.activate(2, targetContext.target.name);
+    const [diffResult, statResult] = await Promise.all([
+      exec("git", buildDiffArgs(["diff", "--cached"], targetContext.fileList), { cwd }),
+      exec("git", buildDiffArgs(["diff", "--cached", "--stat"], targetContext.fileList), { cwd }),
     ]);
 
-    const fileList = normalizeLineEndings(filesResult.stdout).trim().split("\n").filter(Boolean);
-    if (fileList.length === 0) {
-      progress.complete(2, "empty");
-      progress.dispose();
-      notifyInfo(ctx, "Nothing to commit", "No changes after staging");
-      await exec("git", ["reset", "HEAD"], { cwd });
-      return null;
-    }
-    progress.complete(2, `${fileList.length} file(s)`);
+    const fileList = targetContext.fileList;
+    progress.complete(2, `${targetContext.target.name} · ${fileList.length} file(s)`);
 
     // 4. Discover conventions
     progress.activate(3);
@@ -203,6 +363,8 @@ export async function analyzeAndCommit(
       fileList,
       conventions: conventions.guidelines,
       userContext: options.userContext,
+      scopeHint: targetContext.scopeHint,
+      targetLabel: targetContext.targetLabel,
     });
 
     let plan: CommitPlan | null = null;
@@ -223,12 +385,12 @@ export async function analyzeAndCommit(
             "harness role";
           let detail = sourceLabel;
           if (candidate.thinkingLevel) {
-            detail += ` \u00b7 ${candidate.thinkingLevel} thinking`;
+            detail += ` · ${candidate.thinkingLevel} thinking`;
           }
           ctx.ui?.setStatus?.("supi-model", `Model: ${candidate.model} (${detail})`);
         }
 
-        const agentResult = await tryAgentPlan(platform, cwd, prompt, candidate.model);
+        const agentResult = await tryAgentPlan(platform, targetContext.agentCwd, prompt, candidate.model);
         if (agentResult.plan) {
           plan = validatePlanFiles(agentResult.plan, fileList);
           progress.complete(4, `${plan.commits.length} commit(s)`);
@@ -262,11 +424,11 @@ export async function analyzeAndCommit(
     const planDisplay = formatPlanForDisplay(plan);
     notifyInfo(ctx, "Commit plan ready", "\n" + planDisplay);
     const commitLabel = plan.commits.length === 1
-      ? `commit \u2014 ${formatCommitHeader(plan.commits[0])}`
-      : `commit \u2014 apply ${plan.commits.length} commits`;
+      ? `commit — ${formatCommitHeader(plan.commits[0])}`
+      : `commit — apply ${plan.commits.length} commits`;
     const action = await ctx.ui.select("Proceed?", [
       commitLabel,
-      "abort \u2014 cancel",
+      "abort — cancel",
     ]);
 
     if (!action || action.startsWith("abort")) {
@@ -516,11 +678,13 @@ interface PromptInput {
   fileList: string[];
   conventions: string;
   userContext?: string;
+  scopeHint?: string | null;
+  targetLabel?: string;
 }
 
 /** Exported for testing */
 export function buildAnalysisPrompt(input: PromptInput): string {
-  const { diff, stat, fileList, conventions, userContext } = input;
+  const { diff, stat, fileList, conventions, userContext, scopeHint, targetLabel } = input;
   const normalizedDiff = normalizeLineEndings(diff);
 
   const parts: string[] = [
@@ -541,6 +705,18 @@ export function buildAnalysisPrompt(input: PromptInput): string {
   if (userContext) {
     parts.push(`**Developer context:** ${userContext}`, "");
   }
+  if (targetLabel) {
+    parts.push(`**Selected target:** ${targetLabel}`, "");
+  }
+
+  if (scopeHint) {
+    parts.push(
+      `**Suggested conventional-commit scope:** ${scopeHint}`,
+      "- Prefer this scope unless the diff clearly indicates a narrower area.",
+      "",
+    );
+  }
+
 
   // Diff content — truncate for large diffs
   const diffBytes = Buffer.byteLength(normalizedDiff, "utf8");
