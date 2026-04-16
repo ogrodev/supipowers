@@ -1,5 +1,7 @@
 import type { Platform, PlatformContext } from "../platform/types.js";
-import type { ReviewScope, ReviewScopeFile, ReviewScopeStats } from "../types.js";
+import type { ReviewScope, ReviewScopeFile, ReviewScopeStats, WorkspaceTarget } from "../types.js";
+import { filterGitLogOnelineToWorkspaceTarget } from "../workspace/git-scope.js";
+import { findWorkspaceTargetForPath } from "../workspace/path-mapping.js";
 
 interface ExcludedReviewScopeFile {
   path: string;
@@ -12,6 +14,11 @@ export interface ParsedReviewDiff {
   files: ReviewScopeFile[];
   excluded: ExcludedReviewScopeFile[];
   stats: ReviewScopeStats;
+}
+
+export interface ReviewWorkspaceSelection {
+  target: WorkspaceTarget;
+  targets: WorkspaceTarget[];
 }
 
 export const EXCLUDED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
@@ -200,6 +207,51 @@ function ensureReviewableScope(scope: ReviewScope, message: string): ReviewScope
   return scope;
 }
 
+function buildTargetLabel(selection: ReviewWorkspaceSelection): string {
+  return `${selection.target.name} (${selection.target.relativeDir})`;
+}
+
+function appendTargetContext(description: string, selection?: ReviewWorkspaceSelection | null): string {
+  return selection ? `${description} for ${buildTargetLabel(selection)}` : description;
+}
+
+function buildEmptyScopeMessage(baseMessage: string, selection?: ReviewWorkspaceSelection | null): string {
+  return selection
+    ? `${baseMessage} for ${buildTargetLabel(selection)}.`
+    : `${baseMessage}.`;
+}
+
+function ensureTargetScopeHasDiff(
+  diff: string,
+  emptyScopeMessage: string,
+  selection?: ReviewWorkspaceSelection | null,
+): void {
+  if (selection && !diff.trim()) {
+    throw new Error(emptyScopeMessage);
+  }
+}
+
+function filterDiffToWorkspaceTarget(diffOutput: string, selection?: ReviewWorkspaceSelection | null): string {
+  if (!selection || !diffOutput.trim()) {
+    return diffOutput;
+  }
+
+  return diffOutput
+    .split(/^diff --git /m)
+    .filter(Boolean)
+    .map((chunk) => `diff --git ${chunk}`)
+    .filter((chunk) => {
+      const headerMatch = chunk.match(/^diff --git a\/(.+?) b\/(.+)/m);
+      const repoRelativePath = headerMatch?.[2]?.trim();
+      if (!repoRelativePath) {
+        return false;
+      }
+
+      return findWorkspaceTargetForPath(selection.targets, repoRelativePath)?.id === selection.target.id;
+    })
+    .join("\n");
+}
+
 export async function listReviewBaseBranches(platform: Pick<Platform, "exec">, cwd: string): Promise<string[]> {
   const output = await execGit(platform, cwd, ["branch", "--all", "--format=%(refname:short)"]);
   return [...new Set(
@@ -220,9 +272,18 @@ export async function listRecentReviewCommits(
   platform: Pick<Platform, "exec">,
   cwd: string,
   count = 20,
+  selection?: ReviewWorkspaceSelection | null,
 ): Promise<string[]> {
-  const output = await execGit(platform, cwd, ["log", "--oneline", `-${count}`]);
-  return output
+  if (!selection) {
+    const output = await execGit(platform, cwd, ["log", "--oneline", `-${count}`]);
+    return output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  const output = await execGit(platform, cwd, ["log", `-${count}`, "--format=%H%x1f%s%x1e", "--name-only"]);
+  return filterGitLogOnelineToWorkspaceTarget(output, selection.targets, selection.target)
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
@@ -233,63 +294,120 @@ export async function loadPullRequestScope(
   cwd: string,
   baseBranch: string,
   currentBranch?: string,
+  selection?: ReviewWorkspaceSelection | null,
 ): Promise<ReviewScope> {
   const branch = currentBranch ?? await getCurrentReviewBranch(platform, cwd);
-  const diff = await execGit(platform, cwd, ["diff", "--no-ext-diff", "--binary", `${baseBranch}...${branch}`]);
+  const rawDiff = await execGit(platform, cwd, ["diff", "--no-ext-diff", "--binary", `${baseBranch}...${branch}`]);
+  const diff = filterDiffToWorkspaceTarget(rawDiff, selection);
+  ensureTargetScopeHasDiff(
+    diff,
+    buildEmptyScopeMessage("No reviewable files remain after filtering PR-style changes", selection),
+    selection,
+  );
   const scope = createScope(
     "pull-request",
-    `Reviewing changes between ${baseBranch} and ${branch}`,
+    appendTargetContext(`Reviewing changes between ${baseBranch} and ${branch}`, selection),
     diff,
     { baseBranch },
   );
-  return ensureReviewableScope(scope, "No reviewable files remain after filtering PR-style changes.");
+  return ensureReviewableScope(
+    scope,
+    buildEmptyScopeMessage("No reviewable files remain after filtering PR-style changes", selection),
+  );
 }
 
-export async function loadUncommittedScope(platform: Pick<Platform, "exec">, cwd: string): Promise<ReviewScope> {
+export async function loadUncommittedScope(
+  platform: Pick<Platform, "exec">,
+  cwd: string,
+  selection?: ReviewWorkspaceSelection | null,
+): Promise<ReviewScope> {
   const [unstaged, staged, untracked] = await Promise.all([
     execGit(platform, cwd, ["diff", "--no-ext-diff", "--binary"]),
     execGit(platform, cwd, ["diff", "--cached", "--no-ext-diff", "--binary"]),
     buildUntrackedDiff(platform, cwd),
   ]);
-  const diff = [unstaged, staged, untracked].filter((chunk) => chunk.trim().length > 0).join("\n");
-  const scope = createScope("uncommitted", "Reviewing uncommitted changes", diff);
-  return ensureReviewableScope(scope, "No reviewable files remain after filtering uncommitted changes.");
+  const rawDiff = [unstaged, staged, untracked].filter((chunk) => chunk.trim().length > 0).join("\n");
+  const diff = filterDiffToWorkspaceTarget(rawDiff, selection);
+  ensureTargetScopeHasDiff(
+    diff,
+    buildEmptyScopeMessage("No reviewable files remain after filtering uncommitted changes", selection),
+    selection,
+  );
+  const scope = createScope(
+    "uncommitted",
+    appendTargetContext("Reviewing uncommitted changes", selection),
+    diff,
+  );
+  return ensureReviewableScope(
+    scope,
+    buildEmptyScopeMessage("No reviewable files remain after filtering uncommitted changes", selection),
+  );
 }
 
 export async function loadCommitScope(
   platform: Pick<Platform, "exec">,
   cwd: string,
   commit: string,
+  selection?: ReviewWorkspaceSelection | null,
 ): Promise<ReviewScope> {
-  const diff = await execGit(platform, cwd, ["show", "--format=", "--no-ext-diff", "--binary", commit]);
-  const scope = createScope("commit", `Reviewing commit ${commit}`, diff, { commit });
-  return ensureReviewableScope(scope, "No reviewable files remain after filtering commit changes.");
+  const rawDiff = await execGit(platform, cwd, ["show", "--format=", "--no-ext-diff", "--binary", commit]);
+  const diff = filterDiffToWorkspaceTarget(rawDiff, selection);
+  ensureTargetScopeHasDiff(
+    diff,
+    buildEmptyScopeMessage("No reviewable files remain after filtering commit changes", selection),
+    selection,
+  );
+  const scope = createScope(
+    "commit",
+    appendTargetContext(`Reviewing commit ${commit}`, selection),
+    diff,
+    { commit },
+  );
+  return ensureReviewableScope(
+    scope,
+    buildEmptyScopeMessage("No reviewable files remain after filtering commit changes", selection),
+  );
 }
 
 export async function loadCustomReviewScope(
   platform: Pick<Platform, "exec">,
   cwd: string,
   instructions: string,
+  selection?: ReviewWorkspaceSelection | null,
 ): Promise<ReviewScope> {
-  let diff = "";
+  let rawDiff = "";
 
   try {
-    diff = await execGit(platform, cwd, ["diff", "--no-ext-diff", "--binary", "HEAD"]);
+    rawDiff = await execGit(platform, cwd, ["diff", "--no-ext-diff", "--binary", "HEAD"]);
   } catch {
-    diff = "";
+    rawDiff = "";
   }
 
-  return createScope(
+  const diff = filterDiffToWorkspaceTarget(rawDiff, selection);
+  ensureTargetScopeHasDiff(
+    diff,
+    buildEmptyScopeMessage("No reviewable files remain after filtering custom review changes", selection),
+    selection,
+  );
+  const scope = createScope(
     "custom",
-    `Custom review: ${instructions.slice(0, 60)}`,
+    appendTargetContext(`Custom review: ${instructions.slice(0, 60)}`, selection),
     diff,
     { customInstructions: instructions },
   );
+
+  return selection
+    ? ensureReviewableScope(
+        scope,
+        buildEmptyScopeMessage("No reviewable files remain after filtering custom review changes", selection),
+      )
+    : scope;
 }
 
 export async function selectReviewScope(
   platform: Pick<Platform, "exec">,
   ctx: Pick<PlatformContext, "cwd" | "ui">,
+  selection?: ReviewWorkspaceSelection | null,
 ): Promise<ReviewScope | null> {
   const choice = await ctx.ui.select(
     "What should /supi:review inspect?",
@@ -317,17 +435,19 @@ export async function selectReviewScope(
     if (!selected) {
       return null;
     }
-    return loadPullRequestScope(platform, ctx.cwd, selected);
+    return loadPullRequestScope(platform, ctx.cwd, selected, undefined, selection);
   }
 
   if (choice.startsWith("Uncommitted changes")) {
-    return loadUncommittedScope(platform, ctx.cwd);
+    return loadUncommittedScope(platform, ctx.cwd, selection);
   }
 
   if (choice.startsWith("Specific commit")) {
-    const commits = await listRecentReviewCommits(platform, ctx.cwd);
+    const commits = await listRecentReviewCommits(platform, ctx.cwd, 20, selection);
     if (commits.length === 0) {
-      throw new Error("No commits found.");
+      throw new Error(selection
+        ? `No commits found for ${buildTargetLabel(selection)}.`
+        : "No commits found.");
     }
     const selected = await ctx.ui.select("Commit to review", commits, {
       helpText: "Select a recent commit · Esc to cancel",
@@ -339,7 +459,7 @@ export async function selectReviewScope(
     if (!commit) {
       throw new Error("Could not determine the selected commit hash.");
     }
-    return loadCommitScope(platform, ctx.cwd, commit);
+    return loadCommitScope(platform, ctx.cwd, commit, selection);
   }
 
   const instructions = await ctx.ui.input("Custom review focus", {
@@ -349,5 +469,5 @@ export async function selectReviewScope(
   if (!instructions?.trim()) {
     return null;
   }
-  return loadCustomReviewScope(platform, ctx.cwd, instructions.trim());
+  return loadCustomReviewScope(platform, ctx.cwd, instructions.trim(), selection);
 }

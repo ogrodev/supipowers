@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { runMultiAgentReview } from "../../src/review/multi-agent-runner.js";
+import { buildConfiguredAgentPrompt, runMultiAgentReview } from "../../src/review/multi-agent-runner.js";
 import type { ConfiguredReviewAgent, ReviewScope } from "../../src/types.js";
 import type { AgentSession } from "../../src/platform/types.js";
 
@@ -99,5 +99,36 @@ describe("thinkingLevel override", () => {
       // thinkingLevel not set — exercises the undefined path
     });
     expect(calls[0].thinkingLevel).toBeNull();
+  });
+});
+
+describe("package-aware scope context", () => {
+  test("passes selected package descriptions and filtered diffs into agent prompts", () => {
+    const prompt = buildConfiguredAgentPrompt(
+      makeAgent(),
+      {
+        ...EMPTY_SCOPE,
+        description: "Reviewing uncommitted changes for api (packages/api)",
+        diff: [
+          "diff --git a/packages/api/src/index.ts b/packages/api/src/index.ts",
+          "--- a/packages/api/src/index.ts",
+          "+++ b/packages/api/src/index.ts",
+          "@@ -1 +1 @@",
+          "+export const api = true;",
+        ].join("\n"),
+        files: [
+          {
+            path: "packages/api/src/index.ts",
+            additions: 1,
+            deletions: 0,
+            diff: "@@ -1 +1 @@",
+          },
+        ],
+      },
+    );
+
+    expect(prompt).toContain("Reviewing uncommitted changes for api (packages/api)");
+    expect(prompt).toContain("packages/api/src/index.ts");
+    expect(prompt).not.toContain("packages/web/src/index.ts");
   });
 });

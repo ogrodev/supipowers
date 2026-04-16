@@ -3,16 +3,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  loadReviewAgents,
-  loadReviewAgentsConfig,
+  addAgentToConfig,
+  getGlobalReviewAgentsDir,
+  getReviewAgentsDir,
+  getWorkspaceReviewAgentsDir,
   loadGlobalReviewAgents,
   loadMergedReviewAgents,
+  loadReviewAgents,
+  loadReviewAgentsConfig,
   writeAgentFile,
-  addAgentToConfig,
-  getReviewAgentsDir,
-  getGlobalReviewAgentsDir,
-  getGlobalReviewAgentsConfigPath,
-  ensureGlobalDefaultReviewAgents,
 } from "../../src/review/agent-loader.js";
 import type { PlatformPaths } from "../../src/platform/types.js";
 
@@ -49,6 +48,27 @@ function writeConfigYaml(dir: string, agents: Array<{ name: string; enabled: boo
     "",
   ];
   fs.writeFileSync(path.join(dir, "config.yml"), lines.join("\n"));
+}
+
+function writePackageJson(dir: string, data: Record<string, unknown>): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(data, null, 2));
+}
+
+function setupWorkspaceRepo(repoRoot: string, workspaceRelativeDir = "packages/app"): string {
+  writePackageJson(repoRoot, {
+    name: "repo-root",
+    version: "1.0.0",
+    private: true,
+    workspaces: ["packages/*"],
+  });
+  const workspaceDir = path.join(repoRoot, workspaceRelativeDir);
+  writePackageJson(workspaceDir, {
+    name: "app",
+    version: "1.0.0",
+    private: true,
+  });
+  return workspaceDir;
 }
 
 describe("loadReviewAgents", () => {
@@ -204,15 +224,13 @@ describe("loadMergedReviewAgents", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test("merges global and project agents", async () => {
-    // Global has "perf" agent
+  test("merges global and root agents", async () => {
     const globalDir = getGlobalReviewAgentsDir(paths);
     writeAgentMarkdown(globalDir, "perf.md", "perf", "Performance reviewer", null, "Review for performance.\n\n{output_instructions}");
     writeConfigYaml(globalDir, [
       { name: "perf", enabled: true, data: "perf.md", model: null },
     ]);
 
-    // Project gets default agents
     const result = await loadMergedReviewAgents(paths, projectDir);
 
     const names = result.agents.map((a) => a.name).sort();
@@ -225,37 +243,33 @@ describe("loadMergedReviewAgents", () => {
     expect(perfAgent?.scope).toBe("global");
 
     const secAgent = result.agents.find((a) => a.name === "security");
-    expect(secAgent?.scope).toBe("project");
+    expect(secAgent?.scope).toBe("root");
   });
 
-  test("project agents override global agents with same name", async () => {
-    // Global has "security" agent
+  test("root agents override global agents with the same name", async () => {
     const globalDir = getGlobalReviewAgentsDir(paths);
     writeAgentMarkdown(globalDir, "security.md", "security", "Global security", null, "Global security prompt.\n\n{output_instructions}");
     writeConfigYaml(globalDir, [
       { name: "security", enabled: true, data: "security.md", model: null },
     ]);
 
-    // Project also has default "security" agent (ensured by loadReviewAgents)
     const result = await loadMergedReviewAgents(paths, projectDir);
 
     const securityAgents = result.agents.filter((a) => a.name === "security");
     expect(securityAgents.length).toBe(1);
-    expect(securityAgents[0].scope).toBe("project");
+    expect(securityAgents[0].scope).toBe("root");
   });
 
-  test("project-disabled agent shadows globally-enabled agent", async () => {
-    // Global has "security" agent enabled
+  test("root-disabled agent shadows globally-enabled agent", async () => {
     const globalDir = getGlobalReviewAgentsDir(paths);
     writeAgentMarkdown(globalDir, "security.md", "security", "Global security", null, "Global security prompt.\n\n{output_instructions}");
     writeConfigYaml(globalDir, [
       { name: "security", enabled: true, data: "security.md", model: null },
     ]);
 
-    // Project disables "security" explicitly
-    const projectAgentsDir = getReviewAgentsDir(paths, projectDir);
-    writeAgentMarkdown(projectAgentsDir, "security.md", "security", "Project security", null, "Project security prompt.\n\n{output_instructions}");
-    writeConfigYaml(projectAgentsDir, [
+    const rootAgentsDir = getReviewAgentsDir(paths, projectDir);
+    writeAgentMarkdown(rootAgentsDir, "security.md", "security", "Root security", null, "Root security prompt.\n\n{output_instructions}");
+    writeConfigYaml(rootAgentsDir, [
       { name: "security", enabled: false, data: "security.md", model: null },
       { name: "correctness", enabled: true, data: "correctness.md", model: null },
       { name: "maintainability", enabled: true, data: "maintainability.md", model: null },
@@ -263,15 +277,62 @@ describe("loadMergedReviewAgents", () => {
 
     const result = await loadMergedReviewAgents(paths, projectDir);
 
-    // "security" must not appear — disabled in project config shadows global
-    const securityAgents = result.agents.filter((a) => a.name === "security");
-    expect(securityAgents.length).toBe(0);
-
-    // Other project agents still present
+    expect(result.agents.filter((a) => a.name === "security")).toHaveLength(0);
     expect(result.agents.map((a) => a.name)).toContain("correctness");
     expect(result.agents.map((a) => a.name)).toContain("maintainability");
   });
+
+  test("workspace agents override inherited root agents", async () => {
+    const workspaceDir = setupWorkspaceRepo(projectDir);
+    const rootAgentsDir = getReviewAgentsDir(paths, projectDir);
+    writeAgentMarkdown(rootAgentsDir, "perf.md", "perf", "Root perf", null, "Root perf prompt.\n\n{output_instructions}");
+    writeConfigYaml(rootAgentsDir, [
+      { name: "security", enabled: true, data: "security.md", model: null },
+      { name: "correctness", enabled: true, data: "correctness.md", model: null },
+      { name: "maintainability", enabled: true, data: "maintainability.md", model: null },
+      { name: "perf", enabled: true, data: "perf.md", model: null },
+    ]);
+
+    const workspaceAgentsDir = getWorkspaceReviewAgentsDir(paths, projectDir, "packages/app");
+    writeAgentMarkdown(workspaceAgentsDir, "perf.md", "perf", "Workspace perf", null, "Workspace perf prompt.\n\n{output_instructions}");
+    writeConfigYaml(workspaceAgentsDir, [
+      { name: "perf", enabled: true, data: "perf.md", model: "openai/gpt-4o" },
+    ]);
+
+    const result = await loadMergedReviewAgents(paths, workspaceDir);
+
+    const perfAgents = result.agents.filter((a) => a.name === "perf");
+    expect(perfAgents).toHaveLength(1);
+    expect(perfAgents[0]?.scope).toBe("workspace");
+    expect(perfAgents[0]?.description).toBe("Workspace perf");
+    expect(perfAgents[0]?.model).toBe("openai/gpt-4o");
+  });
+
+  test("workspace-disabled agents do not leak into sibling workspaces", async () => {
+    const workspaceDir = setupWorkspaceRepo(projectDir);
+    const siblingDir = path.join(projectDir, "packages/tools");
+    writePackageJson(siblingDir, {
+      name: "tools",
+      version: "1.0.0",
+      private: true,
+    });
+
+    const workspaceAgentsDir = getWorkspaceReviewAgentsDir(paths, projectDir, "packages/app");
+    writeAgentMarkdown(workspaceAgentsDir, "security.md", "security", "Workspace security", null, "Workspace security prompt.\n\n{output_instructions}");
+    writeConfigYaml(workspaceAgentsDir, [
+      { name: "security", enabled: false, data: "security.md", model: null },
+    ]);
+
+    const workspaceResult = await loadMergedReviewAgents(paths, workspaceDir);
+    expect(workspaceResult.agents.filter((a) => a.name === "security")).toHaveLength(0);
+
+    const siblingResult = await loadMergedReviewAgents(paths, siblingDir);
+    const siblingSecurity = siblingResult.agents.find((a) => a.name === "security");
+    expect(siblingSecurity?.scope).toBe("root");
+  });
+
 });
+
 
 describe("writeAgentFile", () => {
   let tmpDir: string;
