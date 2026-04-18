@@ -1,4 +1,7 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   detectTechStack,
   buildContextReport,
@@ -24,77 +27,67 @@ function skill(name: string, tokenSize: number = 500): ParsedSkill {
   };
 }
 
-function mockPlatform(opts: {
-  packageJson?: string | null;
-  files?: Record<string, boolean>;
-}) {
-  const { packageJson, files = {} } = opts;
-  return {
-    exec: mock((cmd: string, args: string[]) => {
-      if (cmd === "cat" && args[0] === "package.json") {
-        return packageJson != null
-          ? { code: 0, stdout: packageJson, stderr: "" }
-          : { code: 1, stdout: "", stderr: "not found" };
-      }
-      if (cmd === "test" && args[0] === "-f") {
-        const filename = args[1];
-        return { code: files[filename] ? 0 : 1, stdout: "", stderr: "" };
-      }
-      return { code: 1, stdout: "", stderr: "" };
-    }),
-  } as any;
+let tmpDir: string;
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-context-optimizer-"));
+});
+
+afterEach(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+function writeFile(relativePath: string, content: string): void {
+  const filePath = path.join(tmpDir, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
 }
 
 // ── detectTechStack ─────────────────────────────────────────
 
 describe("detectTechStack", () => {
   test("detects typescript and react from package.json", async () => {
-    const pkg = JSON.stringify({
+    writeFile("package.json", JSON.stringify({
       dependencies: { react: "^18.0.0", "react-dom": "^18.0.0" },
       devDependencies: { typescript: "^5.0.0" },
-    });
-    const platform = mockPlatform({
-      packageJson: pkg,
-      files: { "tsconfig.json": true, "bun.lock": true },
-    });
-    const ts = await detectTechStack(platform, "/test");
+    }));
+    writeFile("tsconfig.json", "{}");
+    writeFile("bun.lock", "lockfile");
+
+    const ts = await detectTechStack({} as any, tmpDir);
     expect(ts.languages).toContain("typescript");
     expect(ts.frameworks).toContain("react");
     expect(ts.runtime).toBe("bun");
   });
 
   test("detects tools from devDependencies", async () => {
-    const pkg = JSON.stringify({
+    writeFile("package.json", JSON.stringify({
       devDependencies: { tailwindcss: "^3.0.0", "@playwright/test": "^1.0.0" },
-    });
-    const platform = mockPlatform({ packageJson: pkg });
-    const ts = await detectTechStack(platform, "/test");
+    }));
+
+    const ts = await detectTechStack({} as any, tmpDir);
     expect(ts.tools).toContain("tailwind");
     expect(ts.tools).toContain("playwright");
   });
 
   test("detects languages from config files", async () => {
-    const platform = mockPlatform({
-      packageJson: null,
-      files: { "Cargo.toml": true, "go.mod": true },
-    });
-    const ts = await detectTechStack(platform, "/test");
+    writeFile("Cargo.toml", "[package]\nname = \"demo\"");
+    writeFile("go.mod", "module demo");
+
+    const ts = await detectTechStack({} as any, tmpDir);
     expect(ts.languages).toContain("rust");
     expect(ts.languages).toContain("go");
   });
 
   test("detects node runtime from package-lock.json", async () => {
-    const platform = mockPlatform({
-      packageJson: null,
-      files: { "package-lock.json": true },
-    });
-    const ts = await detectTechStack(platform, "/test");
+    writeFile("package-lock.json", "{}");
+
+    const ts = await detectTechStack({} as any, tmpDir);
     expect(ts.runtime).toBe("node");
   });
 
   test("returns empty stacks when nothing detected", async () => {
-    const platform = mockPlatform({ packageJson: null });
-    const ts = await detectTechStack(platform, "/test");
+    const ts = await detectTechStack({} as any, tmpDir);
     expect(ts.languages).toEqual([]);
     expect(ts.frameworks).toEqual([]);
     expect(ts.tools).toEqual([]);
@@ -102,8 +95,9 @@ describe("detectTechStack", () => {
   });
 
   test("handles malformed package.json gracefully", async () => {
-    const platform = mockPlatform({ packageJson: "not json{" });
-    const ts = await detectTechStack(platform, "/test");
+    writeFile("package.json", "not json{");
+
+    const ts = await detectTechStack({} as any, tmpDir);
     expect(ts.languages).toEqual([]);
     expect(ts.frameworks).toEqual([]);
   });
@@ -181,7 +175,6 @@ describe("buildContextReport", () => {
       section("Base", 2000),
     ];
     const report = buildContextReport(sections, [], ts);
-    // Total includes the Skills aggregate section even though it's excluded from entries
     expect(report.totalTokens).toBe(
       Math.ceil(4000 / 4) + Math.ceil(2000 / 4),
     );

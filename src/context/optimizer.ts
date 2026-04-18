@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { Platform } from "../platform/types.js";
 import type { ParsedSkill, PromptSection } from "./analyzer.js";
 import { estimateTokens } from "./analyzer.js";
@@ -56,24 +58,20 @@ const DEP_TO_TOOL: Record<string, string> = {
 
 // ── Tech Stack Detection ────────────────────────────────────
 
-/** Read a file via platform.exec; returns content or null on failure. */
-async function tryRead(
-  platform: Platform,
-  cwd: string,
-  filename: string,
-): Promise<string | null> {
-  const r = await platform.exec("cat", [filename], { cwd });
-  return r.code === 0 ? r.stdout : null;
+function tryReadFile(cwd: string, filename: string): string | null {
+  try {
+    return fs.readFileSync(path.join(cwd, filename), "utf8");
+  } catch {
+    return null;
+  }
 }
 
-/** Check if a file exists at `cwd/filename` via exec. */
-async function fileExists(
-  platform: Platform,
-  cwd: string,
-  filename: string,
-): Promise<boolean> {
-  const r = await platform.exec("test", ["-f", filename], { cwd });
-  return r.code === 0;
+function fileExists(cwd: string, filename: string): boolean {
+  try {
+    return fs.statSync(path.join(cwd, filename)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -84,13 +82,14 @@ export async function detectTechStack(
   platform: Platform,
   cwd: string,
 ): Promise<TechStack> {
+  void platform;
+
   const languages = new Set<string>();
   const frameworks = new Set<string>();
   const tools = new Set<string>();
   let runtime: string | null = null;
 
-  // 1. package.json — deps & devDeps
-  const pkgRaw = await tryRead(platform, cwd, "package.json");
+  const pkgRaw = tryReadFile(cwd, "package.json");
   if (pkgRaw) {
     try {
       const pkg = JSON.parse(pkgRaw);
@@ -110,18 +109,16 @@ export async function detectTechStack(
     }
   }
 
-  // 2. Lockfiles → runtime (first match wins, most-specific first)
-  if (await fileExists(platform, cwd, "bun.lock")) {
+  if (fileExists(cwd, "bun.lock")) {
     runtime = "bun";
-  } else if (await fileExists(platform, cwd, "package-lock.json")) {
+  } else if (fileExists(cwd, "package-lock.json")) {
     runtime = "node";
-  } else if (await fileExists(platform, cwd, "pnpm-lock.yaml")) {
+  } else if (fileExists(cwd, "pnpm-lock.yaml")) {
     runtime = "node";
-  } else if (await fileExists(platform, cwd, "yarn.lock")) {
+  } else if (fileExists(cwd, "yarn.lock")) {
     runtime = "node";
   }
 
-  // 3. Config files → languages
   const configChecks: [string, string][] = [
     ["tsconfig.json", "typescript"],
     ["Cargo.toml", "rust"],
@@ -130,15 +127,10 @@ export async function detectTechStack(
     ["go.mod", "go"],
     ["Gemfile", "ruby"],
   ];
-  const results = await Promise.all(
-    configChecks.map(([file, lang]) =>
-      fileExists(platform, cwd, file).then((exists) =>
-        exists ? lang : null,
-      ),
-    ),
-  );
-  for (const lang of results) {
-    if (lang) languages.add(lang);
+  for (const [file, language] of configChecks) {
+    if (fileExists(cwd, file)) {
+      languages.add(language);
+    }
   }
 
   return {
