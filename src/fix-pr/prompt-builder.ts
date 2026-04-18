@@ -1,4 +1,7 @@
 import type { FixPrConfig } from "./types.js";
+import type { FixPrAssessmentBatch, FixPrWorkBatch } from "./contracts.js";
+import { FixPrAssessmentBatchSchema } from "./contracts.js";
+import { renderSchemaText } from "../ai/schema-text.js";
 import { buildReceivingReviewInstructions } from "../discipline/receiving-review.js";
 
 export interface FixPrPromptOptions {
@@ -14,6 +17,10 @@ export interface FixPrPromptOptions {
   taskModel: string;
   selectedTargetLabel: string;
   deferredCommentsSummary: string | null;
+  /** Validated assessment artifact from runFixPrAssessment. */
+  assessment: FixPrAssessmentBatch;
+  /** Work batches derived deterministically from `assessment`. */
+  workBatches: FixPrWorkBatch[];
 }
 
 function buildReplyInstructions(config: FixPrConfig): string {
@@ -63,6 +70,8 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     taskModel,
     selectedTargetLabel,
     deferredCommentsSummary,
+    assessment,
+    workBatches,
   } = options;
   const { loop, reviewer } = config;
   const maxIter = loop.maxIterations;
@@ -119,32 +128,30 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
   );
 
   sections.push(
-    "## Step 1: Assess Each Comment",
+    "## Step 1: Validated Assessment Artifact",
     "",
-    "For each comment:",
-    "1. Read the actual code at the file and line referenced",
-    "2. Determine the verdict: **ACCEPT** / **REJECT** / **INVESTIGATE**",
-    "3. Check ripple effects — who calls this, what tests cover it",
-    "4. YAGNI check — does the reviewer's suggestion address a real problem?",
+    "The per-comment assessment for this run has already been validated against the `FixPrAssessmentBatchSchema` contract. Treat it as the source of truth: do not re-assess, do not change verdicts. Each entry has a verdict (`apply` / `reject` / `investigate`), rationale, affectedFiles, rippleEffects (downstream callers/tests/docs), and a verificationPlan.",
     "",
-    "Record your assessment:",
+    "Schema:",
+    "```ts",
+    renderSchemaText(FixPrAssessmentBatchSchema),
     "```",
-    "Comment #ID by @user on file:line",
-    "Verdict: ACCEPT | REJECT | INVESTIGATE",
-    "Reasoning: [1-2 sentences]",
-    "Ripple effects: [list or none]",
-    "Group: [group-id]",
+    "",
+    "Validated artifact:",
+    "```json",
+    JSON.stringify(assessment, null, 2),
     "```",
     "",
   );
 
   sections.push(
-    "## Step 2: Group Comments",
+    "## Step 2: Work Batches (Parallel Execution Groups)",
     "",
-    "Group accepted comments for parallel execution:",
-    "- Same file or tightly coupled files → same group",
-    "- Independent files/areas → separate groups",
-    "- Cosmetic vs functional → separate groups",
+    "Batches were derived deterministically from the artifact above by grouping `apply` assessments whose `affectedFiles` overlap. Independent batches may run in parallel; a batch's commentIds share at least one file and must execute together. `reject` and `investigate` verdicts produce no batch — handle those per the reply policy below.",
+    "",
+    "```json",
+    JSON.stringify(workBatches, null, 2),
+    "```",
     "",
   );
 

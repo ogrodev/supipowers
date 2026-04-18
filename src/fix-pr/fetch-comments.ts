@@ -64,9 +64,10 @@ export function clusterPrCommentsByTarget<TTarget extends WorkspaceTarget>(
   for (const comment of comments) {
     const commentPath = comment.path?.trim();
     if (!commentPath) {
-      unscopedComments.push(comment);
-      if (rootTarget) {
+      if (targets.length === 1 && rootTarget) {
         appendComment(commentsByTargetId, rootTarget.id, comment);
+      } else {
+        unscopedComments.push(comment);
       }
       continue;
     }
