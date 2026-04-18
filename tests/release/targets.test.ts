@@ -142,6 +142,28 @@ describe("discoverReleaseTargets", () => {
       "tooling/eslint/config/index.js",
     ]);
   });
+  test("skips versionless root and workspace manifests from release targets", () => {
+    writeJson(path.join(tmpDir, "package.json"), {
+      name: "repo-root",
+      private: true,
+      workspaces: ["apps/*", "packages/*"],
+    });
+    writeJson(path.join(tmpDir, "apps/web/package.json"), {
+      name: "@repo/web",
+      private: true,
+    });
+    writeJson(path.join(tmpDir, "packages/pkg-a/package.json"), {
+      name: "@repo/pkg-a",
+      version: "2.0.0",
+    });
+
+    const targets = discoverReleaseTargets(tmpDir, "bun");
+
+    expect(targets.map((target) => [target.name, target.relativeDir, target.version])).toEqual([
+      ["@repo/pkg-a", "packages/pkg-a", "2.0.0"],
+    ]);
+  });
+
 });
 
 describe("getPublishableReleaseTargets", () => {

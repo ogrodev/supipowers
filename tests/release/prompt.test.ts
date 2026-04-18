@@ -22,9 +22,12 @@ describe("buildPolishPrompt", () => {
     expect(prompt).toMatch(/do \*\*not\*\* change version numbers/i);
   });
 
-  test("instructs to return only polished markdown", () => {
+  test("instructs to return a JSON object matching the contract", () => {
     const prompt = buildPolishPrompt(base);
-    expect(prompt).toMatch(/return \*\*only\*\* the polished markdown/i);
+    expect(prompt).toMatch(/JSON object that matches/i);
+    expect(prompt).toContain("title");
+    expect(prompt).toContain("highlights");
+    expect(prompt).toContain("status");
   });
 
   test("empty changelog — shows 'no notable changes' placeholder", () => {
