@@ -5,7 +5,6 @@ import {
   getRootStateDir,
   getTargetStateDir,
   getTargetStatePath,
-  getWorkspaceConfigPath,
   getWorkspaceStateDir,
 } from "../../src/workspace/state-paths.js";
 import type { WorkspaceTarget } from "../../src/types.js";
@@ -37,9 +36,6 @@ describe("workspace state paths", () => {
   test("namespaces workspace state under the repo root .omp tree", () => {
     expect(getWorkspaceStateDir(paths, "/repo", "packages/pkg-a")).toBe(
       "/repo/.omp/supipowers/workspaces/packages/pkg-a",
-    );
-    expect(getWorkspaceConfigPath(paths, "/repo", "packages/pkg-a")).toBe(
-      "/repo/.omp/supipowers/workspaces/packages/pkg-a/config.json",
     );
     expect(getTargetStatePath(paths, target("@repo/pkg-a", "packages/pkg-a"), "reviews", "session.json")).toBe(
       "/repo/.omp/supipowers/workspaces/packages/pkg-a/reviews/session.json",

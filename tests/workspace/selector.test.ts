@@ -5,6 +5,8 @@ import {
   resolveRequestedWorkspaceTarget,
   selectWorkspaceTarget,
   sortWorkspaceTargetOptions,
+  stripCliArg,
+  tokenizeCliArgs,
   type WorkspaceTargetOption,
 } from "../../src/workspace/selector.js";
 import {
@@ -34,6 +36,21 @@ describe("workspace selector", () => {
     expect(parseTargetArg("--raw --target @repo/pkg")).toBe("@repo/pkg");
     expect(parseTargetArg("--target=@repo/cli --dry-run")).toBe("@repo/cli");
     expect(parseTargetArg("--raw")).toBeNull();
+  });
+
+  test("tokenizes quoted CLI args once in the shared helper", () => {
+    expect(tokenizeCliArgs("docs --target @repo/pkg \"fix login flow\"")).toEqual([
+      "docs",
+      "--target",
+      "@repo/pkg",
+      "fix login flow",
+    ]);
+  });
+
+  test("strips a target flag while preserving the remaining user context", () => {
+    expect(stripCliArg("--target @repo/pkg fix login flow", "--target")).toBe("fix login flow");
+    expect(stripCliArg("fix login --target=@repo/pkg", "--target")).toBe("fix login");
+    expect(stripCliArg("--target @repo/pkg", "--target")).toBeUndefined();
   });
 
   test("resolves explicit targets by id or name", () => {

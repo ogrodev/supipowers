@@ -106,4 +106,54 @@ describe("discoverWorkspaceTargets", () => {
       "tooling/cli",
     ]);
   });
+  test("includes versionless root and workspace manifests for non-release commands", () => {
+    writeJson(path.join(tmpDir, "package.json"), {
+      name: "repo-root",
+      private: true,
+      workspaces: ["apps/*", "packages/*"],
+    });
+    writeJson(path.join(tmpDir, "apps/web/package.json"), {
+      name: "@repo/web",
+      private: true,
+    });
+    writeJson(path.join(tmpDir, "packages/pkg-a/package.json"), {
+      name: "@repo/pkg-a",
+      version: "2.0.0",
+    });
+
+    const targets = discoverWorkspaceTargets(tmpDir, "bun");
+
+    expect(targets.map((target) => [target.name, target.relativeDir, target.version])).toEqual([
+      ["repo-root", ".", "0.0.0"],
+      ["@repo/web", "apps/web", "0.0.0"],
+      ["@repo/pkg-a", "packages/pkg-a", "2.0.0"],
+    ]);
+  });
+
+
+  test("synthesizes a root target for monorepos whose root package.json has no name field", () => {
+    // Pure workspace aggregator: has workspaces but no name. Root-level files like
+    // bun.lock and .gitignore need a target or they become unaddressable.
+    writeJson(path.join(tmpDir, "package.json"), {
+      private: true,
+      workspaces: ["packages/*"],
+    });
+    writeJson(path.join(tmpDir, "packages/lib/package.json"), {
+      name: "lib",
+      version: "1.0.0",
+    });
+
+    const targets = discoverWorkspaceTargets(tmpDir, "bun");
+
+    const root = targets.find((t) => t.kind === "root");
+    expect(root).toBeDefined();
+    expect(root!.relativeDir).toBe(".");
+    // Name derived from directory basename
+    expect(root!.name.length).toBeGreaterThan(0);
+    // Workspace package also present
+    expect(targets.some((t) => t.name === "lib")).toBe(true);
+    // Root sorts first
+    expect(targets[0]!.kind).toBe("root");
+  });
+
 });
