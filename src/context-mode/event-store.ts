@@ -1,7 +1,6 @@
 // src/context-mode/event-store.ts
-import { Database } from "bun:sqlite";
+import { constants, Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { unlinkSync } from "node:fs";
 
 /** Event categories extracted from tool results */
 export type EventCategory =
@@ -130,14 +129,6 @@ function computeDataHash(data: string): string {
   return createHash("sha256").update(data).digest("hex").slice(0, 16);
 }
 
-function removeSqliteSidecar(sidecarPath: string): void {
-  try {
-    unlinkSync(sidecarPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") throw error;
-  }
-}
 
 
 export class EventStore {
@@ -388,14 +379,13 @@ export class EventStore {
     if (this.#closed) return;
 
     try {
+      // Mirror Bun's documented WAL cleanup path so Windows releases the main
+      // database file instead of leaving teardown to fight lingering sidecar locks.
+      this.#db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
       this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
     } finally {
       this.#db.close();
       this.#closed = true;
-      if (process.platform === "win32") {
-        removeSqliteSidecar(`${this.#dbPath}-wal`);
-        removeSqliteSidecar(`${this.#dbPath}-shm`);
-      }
     }
   }
 }

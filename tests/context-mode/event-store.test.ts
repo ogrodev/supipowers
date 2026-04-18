@@ -400,14 +400,10 @@ describe("EventStore edge cases", () => {
     sidecarStore.close();
     expect(() => sidecarStore.close()).not.toThrow();
 
-    if (process.platform === "win32") {
-      expect(sidecars.every((file) => !fs.existsSync(file))).toBe(true);
-    } else {
-      const reopened = new EventStore(dbPath);
-      reopened.init();
-      expect(reopened.getEvents("sidecar-session")).toHaveLength(1);
-      reopened.close();
-    }
+    const reopened = new EventStore(dbPath);
+    reopened.init();
+    expect(reopened.getEvents("sidecar-session")).toHaveLength(1);
+    reopened.close();
   });
 
 
