@@ -4,12 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it, mock, test } from "bun:test";
 import {
   analyzeAndCommit,
-  parseCommitPlan,
   buildAnalysisPrompt,
   commitStaged,
-  validatePlanFiles,
 } from "../../src/git/commit.js";
 import type { CommitPlan } from "../../src/git/commit.js";
+import { validateCommitPlanCoverage } from "../../src/git/commit-contract.js";
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -144,100 +143,44 @@ function createPromptCapturingSession(plan: CommitPlan, capture: { prompt: strin
   };
 }
 
-// ── parseCommitPlan ────────────────────────────────────────
+// ── validateCommitPlanCoverage ──────────────────────────────────
 
-describe("parseCommitPlan", () => {
-  test("parses valid single-commit plan", () => {
-    const text = [
-      "Here is the plan:",
-      "```json",
-      JSON.stringify({
-        commits: [{
-          type: "feat",
-          scope: "auth",
-          summary: "add login",
-          details: ["Added /api/login"],
-          files: ["src/auth.ts"],
-        }],
-      }),
-      "```",
-    ].join("\n");
-
-    const plan = parseCommitPlan(text);
-    expect(plan).not.toBeNull();
-    expect(plan!.commits).toHaveLength(1);
-    expect(plan!.commits[0].type).toBe("feat");
-    expect(plan!.commits[0].scope).toBe("auth");
-    expect(plan!.commits[0].files).toEqual(["src/auth.ts"]);
-  });
-
-  test("parses multi-commit plan", () => {
-    const text = "```json\n" + JSON.stringify({
+describe("validateCommitPlanCoverage", () => {
+  test("returns no errors when every staged file is covered exactly once", () => {
+    const plan: CommitPlan = {
       commits: [
-        { type: "feat", summary: "add feature", details: [], files: ["a.ts"] },
-        { type: "fix", summary: "fix bug", details: [], files: ["b.ts"] },
+        { type: "feat", scope: null, summary: "x", details: [], files: ["a.ts", "b.ts"] },
       ],
-    }) + "\n```";
-
-    const plan = parseCommitPlan(text);
-    expect(plan).not.toBeNull();
-    expect(plan!.commits).toHaveLength(2);
+    };
+    expect(validateCommitPlanCoverage(plan, ["a.ts", "b.ts"])).toEqual([]);
   });
 
-  test("returns null for text without JSON fence", () => {
-    expect(parseCommitPlan("no json here")).toBeNull();
+  test("reports staged files not covered by any commit", () => {
+    const plan: CommitPlan = {
+      commits: [{ type: "feat", scope: null, summary: "x", details: [], files: ["a.ts"] }],
+    };
+    const errors = validateCommitPlanCoverage(plan, ["a.ts", "b.ts"]);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.message.includes("b.ts"))).toBe(true);
   });
 
-  test("returns null for invalid JSON", () => {
-    expect(parseCommitPlan("```json\n{broken}\n```")).toBeNull();
+  test("reports files outside the staged set", () => {
+    const plan: CommitPlan = {
+      commits: [{ type: "feat", scope: null, summary: "x", details: [], files: ["a.ts", "ghost.ts"] }],
+    };
+    const errors = validateCommitPlanCoverage(plan, ["a.ts"]);
+    expect(errors.some((e) => e.message.includes("ghost.ts"))).toBe(true);
   });
 
-  test("returns null when commits array is missing", () => {
-    expect(parseCommitPlan('```json\n{"foo": 1}\n```')).toBeNull();
-  });
-
-  test("returns null for empty commits array", () => {
-    expect(parseCommitPlan('```json\n{"commits": []}\n```')).toBeNull();
-  });
-
-  test("returns null for invalid commit type", () => {
-    const text = "```json\n" + JSON.stringify({
-      commits: [{ type: "wip", summary: "x", details: [], files: ["a.ts"] }],
-    }) + "\n```";
-    expect(parseCommitPlan(text)).toBeNull();
-  });
-
-  test("returns null for missing files", () => {
-    const text = "```json\n" + JSON.stringify({
-      commits: [{ type: "feat", summary: "x", details: [], files: [] }],
-    }) + "\n```";
-    expect(parseCommitPlan(text)).toBeNull();
-  });
-
-  test("returns null when same file appears in multiple groups", () => {
-    const text = "```json\n" + JSON.stringify({
+  test("reports duplicate files across commits", () => {
+    const plan: CommitPlan = {
       commits: [
-        { type: "feat", summary: "a", details: [], files: ["shared.ts"] },
-        { type: "fix", summary: "b", details: [], files: ["shared.ts"] },
+        { type: "feat", scope: null, summary: "a", details: [], files: ["shared.ts"] },
+        { type: "fix", scope: null, summary: "b", details: [], files: ["shared.ts"] },
       ],
-    }) + "\n```";
-    expect(parseCommitPlan(text)).toBeNull();
-  });
-
-  test("defaults scope to null when omitted", () => {
-    const text = "```json\n" + JSON.stringify({
-      commits: [{ type: "chore", summary: "bump deps", files: ["package.json"] }],
-    }) + "\n```";
-    const plan = parseCommitPlan(text);
-    expect(plan!.commits[0].scope).toBeNull();
-  });
-
-  test("defaults details to empty array when omitted", () => {
-    const text = "```json\n" + JSON.stringify({
-      commits: [{ type: "chore", summary: "bump", files: ["package.json"] }],
-    }) + "\n```";
-    const plan = parseCommitPlan(text);
-    expect(plan!.commits[0].details).toEqual([]);
+    };
+    const errors = validateCommitPlanCoverage(plan, ["shared.ts"]);
+    expect(errors.some((e) => e.message.includes("multiple"))).toBe(true);
   });
 });
 
@@ -333,6 +276,25 @@ describe("buildAnalysisPrompt", () => {
     expect(prompt).toContain("fix");
     expect(prompt).toContain("refactor");
   });
+
+  test("includes multi-target mode instruction when multiTarget is true", () => {
+    const withMulti = buildAnalysisPrompt({
+      diff: "d",
+      stat: "s",
+      fileList: ["packages/pkg-a/src/index.ts", "packages/pkg-b/src/index.ts"],
+      conventions: "",
+      multiTarget: true,
+    });
+    const withoutMulti = buildAnalysisPrompt({
+      diff: "d",
+      stat: "s",
+      fileList: ["packages/pkg-a/src/index.ts"],
+      conventions: "",
+    });
+    expect(withMulti).toContain("Multi-target mode");
+    expect(withoutMulti).not.toContain("Multi-target mode");
+  });
+
 });
 
 // ── analyzeAndCommit ───────────────────────────────────────
@@ -389,7 +351,8 @@ describe("analyzeAndCommit", () => {
     });
     const platform = createMockPlatform({ exec, createAgentSession });
     const select = mock()
-      .mockImplementationOnce((_title: string, options: string[]) => Promise.resolve(options[0]))
+      // Explicitly pick pkg-a from the custom picker (options[0] is now "All workspaces")
+      .mockImplementationOnce((_title: string, options: string[]) => Promise.resolve(options.find((o) => o.includes("pkg-a")) ?? null))
       .mockResolvedValueOnce("commit — feat(pkg-a): add feature");
     const ctx = createMockCtx({
       cwd: repoRoot,
@@ -411,6 +374,55 @@ describe("analyzeAndCommit", () => {
       (call: any[]) => call[0] === "git" && call[1][0] === "add",
     );
     expect(addCall?.[1]).toEqual(["add", "-A", "--", "packages/pkg-a/src/index.ts"]);
+  });
+
+  test("resolves commit targets from the repo root when invoked inside a package", async () => {
+    const repoRoot = createMonorepoFixture();
+    const plan: CommitPlan = {
+      commits: [{
+        type: "feat",
+        scope: "pkg-b",
+        summary: "add feature",
+        details: [],
+        files: ["packages/pkg-b/src/index.ts"],
+      }],
+    };
+    const capture = { prompt: "" };
+    let agentCwd = "";
+
+    const exec = createMockExec({
+      "git status": {
+        stdout: " M packages/pkg-a/src/index.ts\n M packages/pkg-b/src/index.ts\n",
+        code: 0,
+      },
+      "git add -A -- packages/pkg-b/src/index.ts": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "packages/pkg-b/src/index.ts\n", code: 0 },
+      "git diff --cached --stat -- packages/pkg-b/src/index.ts": { stdout: " 1 file changed\n", code: 0 },
+      "git diff --cached -- packages/pkg-b/src/index.ts": { stdout: "diff --git a/packages/pkg-b/src/index.ts\n+new code", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const createAgentSession = mock(async (opts: { cwd: string }) => {
+      agentCwd = opts.cwd;
+      return createPromptCapturingSession(plan, capture) as any;
+    });
+    const platform = createMockPlatform({ exec, createAgentSession });
+    const select = mock().mockResolvedValue("commit — feat(pkg-b): add feature");
+    const ctx = createMockCtx({
+      cwd: join(repoRoot, "packages", "pkg-a"),
+      ui: { select, notify: mock(), input: mock() },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx, { requestedTarget: "pkg-b" });
+
+    expect(result).not.toBeNull();
+    expect(result!.committed).toBe(1);
+    expect(agentCwd).toBe(join(repoRoot, "packages", "pkg-b"));
+    expect(capture.prompt).toContain("pkg-b — packages/pkg-b");
+    expect(capture.prompt).not.toContain("packages/pkg-a/src/index.ts");
   });
 
   test("keeps diff analysis scoped to the single staged monorepo target", async () => {
@@ -494,6 +506,68 @@ describe("analyzeAndCommit", () => {
       expect.stringContaining("Mixed-package staged changes are not supported yet"),
       "error",
     );
+  });
+
+  test("stages all files and produces a multi-target commit when 'All workspaces' is selected", async () => {
+    const repoRoot = createMonorepoFixture();
+    const plan: CommitPlan = {
+      commits: [
+        { type: "feat", scope: "pkg-a", summary: "add feature in a", details: [], files: ["packages/pkg-a/src/index.ts"] },
+        { type: "fix", scope: "pkg-b", summary: "fix bug in b", details: [], files: ["packages/pkg-b/src/index.ts"] },
+      ],
+    };
+    const capture = { prompt: "" };
+
+    const exec = createMockExec({
+      "git status": {
+        stdout: " M packages/pkg-a/src/index.ts\n M packages/pkg-b/src/index.ts\n",
+        code: 0,
+      },
+      "git add -A --": { stdout: "", code: 0 },
+      "git diff --cached --name-only": {
+        stdout: "packages/pkg-a/src/index.ts\npackages/pkg-b/src/index.ts\n",
+        code: 0,
+      },
+      "git diff --cached --stat": { stdout: " 2 files changed\n", code: 0 },
+      "git diff --cached": { stdout: "diff --git a/packages\n+code", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mock(async () => createPromptCapturingSession(plan, capture) as any),
+    });
+    // First select: picks options[0] = 'All workspaces ...' label
+    // Second select: approves the commit plan
+    const select = mock()
+      .mockImplementationOnce((_title: string, options: string[]) => Promise.resolve(options[0]))
+      .mockResolvedValueOnce("commit \u2014 apply 2 commits");
+    const ctx = createMockCtx({
+      cwd: repoRoot,
+      ui: { select, notify: mock(), input: mock() },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    expect(result).not.toBeNull();
+    expect(result!.committed).toBe(2);
+
+    // All files staged in a single git add call
+    const addCalls = exec.mock.calls.filter(
+      (call: any[]) => call[0] === "git" && call[1][0] === "add",
+    );
+    expect(addCalls.length).toBe(1);
+    expect(addCalls[0][1]).toContain("packages/pkg-a/src/index.ts");
+    expect(addCalls[0][1]).toContain("packages/pkg-b/src/index.ts");
+
+    // Prompt signals multi-target mode to the AI
+    expect(capture.prompt).toContain("Multi-target mode");
+    expect(capture.prompt).toContain("all workspaces");
+    expect(capture.prompt).toContain("packages/pkg-a/src/index.ts");
+    expect(capture.prompt).toContain("packages/pkg-b/src/index.ts");
   });
 
   test("executes single commit from agent plan", async () => {
@@ -949,6 +1023,97 @@ describe("analyzeAndCommit", () => {
     expect(lastCall[0]).toBe("supi-commit");
     expect(lastCall[1]).toBeUndefined();
   });
+
+  test("falls back to manual when plan is missing a staged file", async () => {
+    // Plan only covers a.ts, but both a.ts and b.ts are staged.
+    const plan: CommitPlan = {
+      commits: [{ type: "feat", scope: null, summary: "partial", details: [], files: ["a.ts"] }],
+    };
+    const exec = createMockExec({
+      "git status": { stdout: " M a.ts\n M b.ts", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "a.ts\nb.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 2 files\n", code: 0 },
+      "git diff --cached": { stdout: "diff", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mockAgentSession(plan),
+    });
+    const ctx = createMockCtx({
+      ui: {
+        select: mock(),
+        notify: mock(),
+        input: mock().mockResolvedValue("fix: manual cover"),
+      },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    // Structured path exhausted (coverage failure) → manual fallback.
+    expect(ctx.ui.input).toHaveBeenCalled();
+    expect(result).not.toBeNull();
+    expect(result!.committed).toBe(1);
+    expect(result!.messages[0]).toBe("fix: manual cover");
+  });
+
+  test("retries on unparseable output then succeeds", async () => {
+    // First prompt() call returns prose; subsequent calls return a valid plan.
+    const validPlan: CommitPlan = {
+      commits: [{ type: "fix", scope: null, summary: "retry success", details: [], files: ["a.ts"] }],
+    };
+    const responses = [
+      "I think you should just commit this.",
+      "```json\n" + JSON.stringify(validPlan) + "\n```",
+    ];
+    let callIdx = 0;
+    const session = {
+      subscribe: mock(() => () => {}),
+      prompt: mock().mockResolvedValue(undefined),
+      state: { messages: [] as any[] },
+      dispose: mock().mockResolvedValue(undefined),
+    };
+    // Each createAgentSession call gets the next response in order.
+    const createAgentSession = mock(async () => {
+      const content = responses[Math.min(callIdx, responses.length - 1)]!;
+      callIdx += 1;
+      session.state.messages = [{ role: "assistant", content }];
+      return session as any;
+    });
+
+    const exec = createMockExec({
+      "git status": { stdout: " M a.ts", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "a.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 1 file\n", code: 0 },
+      "git diff --cached": { stdout: "diff", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({ exec, createAgentSession });
+    const ctx = createMockCtx({
+      ui: {
+        select: mock().mockResolvedValue("commit \u2014 fix: retry success"),
+        notify: mock(),
+        input: mock(),
+      },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    expect(result).not.toBeNull();
+    expect(result!.committed).toBe(1);
+    // Confirm we actually retried — at least 2 agent sessions were created.
+    expect(createAgentSession.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Manual input was not used.
+    expect(ctx.ui.input).not.toHaveBeenCalled();
+  });
+
 });
 
 
@@ -1015,51 +1180,3 @@ describe("commitStaged", () => {
   });
 });
 
-// ── validatePlanFiles ───────────────────────────────────────────────────────
-
-describe("validatePlanFiles", () => {
-  test("filters out files not in the staged list", () => {
-    const plan: CommitPlan = {
-      commits: [
-        { type: "feat", scope: null, summary: "add feature", details: [], files: ["src/a.ts", "hallucinated.ts"] },
-      ],
-    };
-    const result = validatePlanFiles(plan, ["src/a.ts", "src/b.ts"]);
-    expect(result.commits).toHaveLength(1);
-    expect(result.commits[0].files).toEqual(["src/a.ts"]);
-  });
-
-  test("drops commit groups that become empty after filtering", () => {
-    const plan: CommitPlan = {
-      commits: [
-        { type: "feat", scope: null, summary: "real", details: [], files: ["src/a.ts"] },
-        { type: "fix", scope: null, summary: "hallucinated", details: [], files: ["ghost.ts"] },
-      ],
-    };
-    const result = validatePlanFiles(plan, ["src/a.ts"]);
-    expect(result.commits).toHaveLength(1);
-    expect(result.commits[0].summary).toBe("real");
-  });
-
-  test("falls back to original plan when all files are filtered out", () => {
-    const plan: CommitPlan = {
-      commits: [
-        { type: "feat", scope: null, summary: "ghost", details: [], files: ["ghost.ts"] },
-      ],
-    };
-    const result = validatePlanFiles(plan, ["src/a.ts"]);
-    // Falls back to original because filtering would leave nothing
-    expect(result).toBe(plan);
-  });
-
-  test("returns plan unchanged when all files match", () => {
-    const plan: CommitPlan = {
-      commits: [
-        { type: "feat", scope: null, summary: "add feature", details: [], files: ["src/a.ts", "src/b.ts"] },
-      ],
-    };
-    const result = validatePlanFiles(plan, ["src/a.ts", "src/b.ts", "src/c.ts"]);
-    expect(result.commits).toHaveLength(1);
-    expect(result.commits[0].files).toEqual(["src/a.ts", "src/b.ts"]);
-  });
-});
