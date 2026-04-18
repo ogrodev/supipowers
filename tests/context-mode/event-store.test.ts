@@ -388,6 +388,29 @@ describe("EventStore edge cases", () => {
     s2.close();
   });
 
+  test("close() handles WAL sidecars without breaking repeated close or reopen", () => {
+    const dbPath = path.join(tmpDir, "sidecars.db");
+    const sidecars = [`${dbPath}-wal`, `${dbPath}-shm`];
+    const sidecarStore = new EventStore(dbPath);
+    sidecarStore.init();
+    sidecarStore.writeEvent(event("file", '{"op":"read"}', { sessionId: "sidecar-session" }));
+
+    expect(sidecars.some((file) => fs.existsSync(file))).toBe(true);
+
+    sidecarStore.close();
+    expect(() => sidecarStore.close()).not.toThrow();
+
+    if (process.platform === "win32") {
+      expect(sidecars.every((file) => !fs.existsSync(file))).toBe(true);
+    } else {
+      const reopened = new EventStore(dbPath);
+      reopened.init();
+      expect(reopened.getEvents("sidecar-session")).toHaveLength(1);
+      reopened.close();
+    }
+  });
+
+
   test("searchEvents respects limit parameter", () => {
     const batch = Array.from({ length: 30 }, (_, i) =>
       event("file", `{"i":${i},"tag":"needle"}`),

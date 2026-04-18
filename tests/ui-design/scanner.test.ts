@@ -37,7 +37,7 @@ describe("scanner — composed design context", () => {
     const scan = await scanDesignContext(path.join(FIXTURES, "design-md-project"));
     expect(scan.designMd.status).toBe("ok");
     if (scan.designMd.status === "ok") {
-      expect(scan.designMd.path).toMatch(/DESIGN\.md$/);
+      expect(scan.designMd.path).toBe(path.join(FIXTURES, "design-md-project", "DESIGN.md"));
     }
   });
 

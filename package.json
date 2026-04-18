@@ -9,6 +9,8 @@
     "test:watch": "bun test --watch tests/",
     "test:evals": "bun test tests/evals/",
     "build": "tsc -p tsconfig.build.json",
+    "install:visual-server": "npm --prefix src/visual/scripts ci --ignore-scripts --no-audit --no-fund",
+    "postinstall": "bun run install:visual-server",
     "prepare": "git config core.hooksPath hooks || true"
   },
   "engines": {

@@ -171,6 +171,29 @@ describe("KnowledgeStore", () => {
     expect(remaining.cnt).toBe(1);
   });
 
+  test("close releases WAL resources so the database directory can be removed", () => {
+    store.index([makeChunk("Cleanup", "release file locks before teardown")], "cleanup");
+
+    store.close();
+
+    expect(() => fs.rmSync(tmpDir, { recursive: true })).not.toThrow();
+    expect(fs.existsSync(tmpDir)).toBe(false);
+  });
+
+  test("search still works after close and reopen", () => {
+    const dbPath = path.join(tmpDir, "knowledge.db");
+    store.index([makeChunk("Reopen", "reopenable indexed content")], "reopen");
+
+    store.close();
+    store = new KnowledgeStore(dbPath);
+    store.init();
+
+    const results = store.search(["reopenable"]);
+    expect(results[0].results).toHaveLength(1);
+    expect(results[0].results[0].title).toBe("Reopen");
+  });
+
+
   test("empty search returns empty results for each query", () => {
     store.index([makeChunk("Real", "actual content here")], "test");
 

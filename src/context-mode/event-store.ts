@@ -1,6 +1,7 @@
 // src/context-mode/event-store.ts
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { unlinkSync } from "node:fs";
 
 /** Event categories extracted from tool results */
 export type EventCategory =
@@ -129,75 +130,88 @@ function computeDataHash(data: string): string {
   return createHash("sha256").update(data).digest("hex").slice(0, 16);
 }
 
+function removeSqliteSidecar(sidecarPath: string): void {
+  try {
+    unlinkSync(sidecarPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw error;
+  }
+}
+
+
 export class EventStore {
-  private db: Database;
+  #db: Database;
+  readonly #dbPath: string;
+  #closed = false;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
+    this.#dbPath = dbPath;
+    this.#db = new Database(dbPath);
   }
 
   init(): void {
-    this.db.exec("PRAGMA journal_mode = WAL;");
-    this.migrate();
-    this.db.exec(SCHEMA);
+    this.#db.exec("PRAGMA journal_mode = WAL;");
+    this.#migrate();
+    this.#db.exec(SCHEMA);
   }
 
   // ── Schema migration ────────────────────────────────────────
 
-  private migrate(): void {
-    const { user_version } = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
+  #migrate(): void {
+    const { user_version } = this.#db.prepare("PRAGMA user_version").get() as { user_version: number };
     if (user_version >= SCHEMA_VERSION) return;
 
     // Upgrade from v0: session_events exists but lacks data_hash column
-    const tableExists = this.db.prepare(
+    const tableExists = this.#db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='session_events'",
     ).get();
 
     if (tableExists) {
       try {
-        this.db.exec("ALTER TABLE session_events ADD COLUMN data_hash TEXT NOT NULL DEFAULT ''");
+        this.#db.exec("ALTER TABLE session_events ADD COLUMN data_hash TEXT NOT NULL DEFAULT ''");
       } catch {
         // Column already exists (fresh install ran SCHEMA first somehow)
       }
     }
 
-    this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+    this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }
 
   // ── Write with dedup + eviction ─────────────────────────────
 
   writeEvent(event: Omit<TrackedEvent, "id" | "dataHash">): void {
     const dataHash = computeDataHash(event.data);
-    if (this.isDuplicate(event.sessionId, event.category, dataHash)) return;
+    if (this.#isDuplicate(event.sessionId, event.category, dataHash)) return;
 
-    this.db.prepare(
+    this.#db.prepare(
       "INSERT INTO session_events (session_id, category, data, priority, source, timestamp, data_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
     ).run(event.sessionId, event.category, event.data, event.priority, event.source, event.timestamp, dataHash);
 
-    this.enforceEventCap(event.sessionId);
+    this.#enforceEventCap(event.sessionId);
   }
 
   writeEvents(events: Omit<TrackedEvent, "id" | "dataHash">[]): void {
     if (events.length === 0) return;
 
-    const insert = this.db.prepare(
+    const insert = this.#db.prepare(
       "INSERT INTO session_events (session_id, category, data, priority, source, timestamp, data_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
     );
-    const tx = this.db.transaction(() => {
+    const tx = this.#db.transaction(() => {
       for (const event of events) {
         const dataHash = computeDataHash(event.data);
-        if (this.isDuplicate(event.sessionId, event.category, dataHash)) continue;
+        if (this.#isDuplicate(event.sessionId, event.category, dataHash)) continue;
         insert.run(event.sessionId, event.category, event.data, event.priority, event.source, event.timestamp, dataHash);
       }
     });
     tx();
 
-    this.enforceEventCap(events[0].sessionId);
+    this.#enforceEventCap(events[0].sessionId);
   }
 
   /** Check last DEDUP_WINDOW events for same category + content hash */
-  private isDuplicate(sessionId: string, category: string, dataHash: string): boolean {
-    const row = this.db.prepare(
+  #isDuplicate(sessionId: string, category: string, dataHash: string): boolean {
+    const row = this.#db.prepare(
       `SELECT 1 FROM (
         SELECT category, data_hash FROM session_events
         WHERE session_id = ? ORDER BY id DESC LIMIT ?
@@ -207,15 +221,15 @@ export class EventStore {
   }
 
   /** Delete lowest-priority (highest number), then oldest events to stay at cap */
-  private enforceEventCap(sessionId: string): void {
-    const { count } = this.db.prepare(
+  #enforceEventCap(sessionId: string): void {
+    const { count } = this.#db.prepare(
       "SELECT COUNT(*) AS count FROM session_events WHERE session_id = ?",
     ).get(sessionId) as { count: number };
 
     if (count <= MAX_EVENTS_PER_SESSION) return;
 
     const excess = count - MAX_EVENTS_PER_SESSION;
-    this.db.prepare(
+    this.#db.prepare(
       `DELETE FROM session_events WHERE id IN (
         SELECT id FROM session_events WHERE session_id = ?
         ORDER BY CAST(priority AS INTEGER) DESC, timestamp ASC
@@ -258,7 +272,7 @@ export class EventStore {
       params.push(filters.limit);
     }
 
-    return this.db.prepare(sql).all(...params) as TrackedEvent[];
+    return this.#db.prepare(sql).all(...params) as TrackedEvent[];
   }
 
   searchEvents(sessionId: string, query: string, limit = 20): TrackedEvent[] {
@@ -271,11 +285,11 @@ export class EventStore {
       ORDER BY rank
       LIMIT ?
     `;
-    return this.db.prepare(sql).all(query, sessionId, limit) as TrackedEvent[];
+    return this.#db.prepare(sql).all(query, sessionId, limit) as TrackedEvent[];
   }
 
   getEventCounts(sessionId: string): Record<EventCategory, number> {
-    const rows = this.db.prepare(
+    const rows = this.#db.prepare(
       "SELECT category, COUNT(*) AS count FROM session_events WHERE session_id = ? GROUP BY category",
     ).all(sessionId) as Array<{ category: EventCategory; count: number }>;
 
@@ -288,7 +302,7 @@ export class EventStore {
   // ── Session metadata ────────────────────────────────────────
 
   upsertMeta(sessionId: string, projectDir: string): void {
-    this.db.prepare(
+    this.#db.prepare(
       `INSERT INTO session_meta (session_id, project_dir, event_count)
        VALUES (?, ?, 0)
        ON CONFLICT(session_id) DO UPDATE SET
@@ -298,7 +312,7 @@ export class EventStore {
   }
 
   getMeta(sessionId: string): SessionMeta | null {
-    const row = this.db.prepare(
+    const row = this.#db.prepare(
       `SELECT session_id AS sessionId, project_dir AS projectDir,
               started_at AS startedAt, last_event_at AS lastEventAt,
               event_count AS eventCount, compact_count AS compactCount
@@ -308,7 +322,7 @@ export class EventStore {
   }
 
   incrementCompactCount(sessionId: string): void {
-    this.db.prepare(
+    this.#db.prepare(
       "UPDATE session_meta SET compact_count = compact_count + 1 WHERE session_id = ?",
     ).run(sessionId);
   }
@@ -316,7 +330,7 @@ export class EventStore {
   // ── Resume snapshots ────────────────────────────────────────
 
   upsertResume(sessionId: string, snapshot: string, eventCount: number): void {
-    this.db.prepare(
+    this.#db.prepare(
       `INSERT INTO session_resume (session_id, snapshot, event_count, consumed)
        VALUES (?, ?, ?, 0)
        ON CONFLICT(session_id) DO UPDATE SET
@@ -328,7 +342,7 @@ export class EventStore {
   }
 
   getResume(sessionId: string): SessionResume | null {
-    const row = this.db.prepare(
+    const row = this.#db.prepare(
       `SELECT session_id AS sessionId, snapshot, event_count AS eventCount,
               created_at AS createdAt, consumed
        FROM session_resume WHERE session_id = ? AND consumed = 0`,
@@ -338,7 +352,7 @@ export class EventStore {
   }
 
   consumeResume(sessionId: string): void {
-    this.db.prepare(
+    this.#db.prepare(
       "UPDATE session_resume SET consumed = 1 WHERE session_id = ?",
     ).run(sessionId);
   }
@@ -346,11 +360,11 @@ export class EventStore {
   // ── Maintenance ─────────────────────────────────────────────
 
   pruneEvents(olderThan: number): number {
-    const countRow = this.db.prepare(
+    const countRow = this.#db.prepare(
       "SELECT COUNT(*) AS count FROM session_events WHERE timestamp < ?",
     ).get(olderThan) as { count: number };
     if (countRow.count > 0) {
-      this.db.prepare("DELETE FROM session_events WHERE timestamp < ?").run(olderThan);
+      this.#db.prepare("DELETE FROM session_events WHERE timestamp < ?").run(olderThan);
     }
     return countRow.count;
   }
@@ -359,7 +373,7 @@ export class EventStore {
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     const pruned = this.pruneEvents(cutoff);
     // Remove orphaned metadata for sessions with no remaining events
-    this.db.exec(`
+    this.#db.exec(`
       DELETE FROM session_meta WHERE session_id NOT IN (
         SELECT DISTINCT session_id FROM session_events
       );
@@ -371,6 +385,17 @@ export class EventStore {
   }
 
   close(): void {
-    this.db.close();
+    if (this.#closed) return;
+
+    try {
+      this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    } finally {
+      this.#db.close();
+      this.#closed = true;
+      if (process.platform === "win32") {
+        removeSqliteSidecar(`${this.#dbPath}-wal`);
+        removeSqliteSidecar(`${this.#dbPath}-shm`);
+      }
+    }
   }
 }

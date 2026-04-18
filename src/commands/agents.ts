@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Platform } from "../platform/types.js";
 import {
   addAgentToConfig,
@@ -294,7 +295,7 @@ ${creatingAgentsSkill}
 ## Save Instructions
 
 Once the user approves the agent design, save it:
-1. Write the markdown file to: ${agentsDir}/${agentName}.md
+1. Write the markdown file to: ${path.join(agentsDir, `${agentName}.md`)}
    - The file MUST have YAML frontmatter (name, description, focus) and a prompt body ending with {output_instructions}
 2. Update config at: ${configPath}
    - Add entry: { name: "${agentName}", enabled: true, data: "${agentName}.md", model: ${model ? `"${model}"` : "null"}, thinkingLevel: ${thinkingLevel ? `"${thinkingLevel}"` : "null"} }

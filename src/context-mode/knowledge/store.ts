@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { constants, Database } from "bun:sqlite";
 import fs from "node:fs";
 import type { Chunk } from "./chunker.js";
 
@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS url_cache (
 export class KnowledgeStore {
   private _db: Database;
   private dbPath: string;
+  #closed = false;
 
   /** Public accessor for direct SQL on extension tables (e.g. url_cache). */
   get db(): Database {
@@ -172,7 +173,16 @@ export class KnowledgeStore {
   }
 
   close(): void {
-    this._db.close();
+    if (this.#closed) return;
+
+    try {
+      // Bun's documented WAL cleanup path prevents lingering sidecar/lock issues on close.
+      this._db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+      this._db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } finally {
+      this._db.close();
+      this.#closed = true;
+    }
   }
 }
 

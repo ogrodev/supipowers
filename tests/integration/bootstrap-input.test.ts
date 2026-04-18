@@ -1,14 +1,10 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createPaths } from "../../src/platform/types.js";
 import { cancelUiDesignTracking, isUiDesignActive, startUiDesignTracking } from "../../src/ui-design/session.js";
 
 const handleAiReview = mock();
 const registerAiReviewCommand = mock();
-
-mock.module("../../src/commands/ai-review.js", () => ({
-  handleAiReview,
-  registerAiReviewCommand,
-}));
+let actualAiReviewModule: typeof import("../../src/commands/ai-review.js") | null = null;
 
 function createPlatform() {
   const handlers = new Map<string, any>();
@@ -44,7 +40,19 @@ describe("bootstrap input interception", () => {
     cancelUiDesignTracking("bootstrap-test-reset");
   });
 
+  afterEach(() => {
+    if (actualAiReviewModule) {
+      mock.module("../../src/commands/ai-review.js", () => actualAiReviewModule!);
+    }
+  });
+
   test("forwards /supi:review args to the intercepted TUI handler", async () => {
+    actualAiReviewModule ??= await import("../../src/commands/ai-review.js");
+    mock.module("../../src/commands/ai-review.js", () => ({
+      ...actualAiReviewModule!,
+      handleAiReview,
+      registerAiReviewCommand,
+    }));
     const { bootstrap } = await import("../../src/bootstrap.js");
     const { platform, handlers } = createPlatform();
 

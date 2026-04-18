@@ -5,10 +5,14 @@ export interface LanguageRunner {
   compileCmd?: (srcPath: string, outPath: string) => string[];
 }
 
+function getPythonBinary(): string[] {
+  return process.platform === "win32" ? ["python"] : ["python3"];
+}
+
 const RUNNERS: Record<string, LanguageRunner> = {
   javascript: { binary: ["bun", "run"], fileExt: ".js" },
   typescript: { binary: ["bun", "run"], fileExt: ".ts" },
-  python: { binary: ["python3"], fileExt: ".py" },
+  python: { binary: getPythonBinary(), fileExt: ".py" },
   shell: { binary: ["bash"], fileExt: ".sh" },
   ruby: { binary: ["ruby"], fileExt: ".rb" },
   go: { binary: ["go", "run"], fileExt: ".go" },

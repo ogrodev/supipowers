@@ -61,6 +61,26 @@ describe("fetchAndIndex", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
+  test("cache survives close and reopen without refetching", async () => {
+    const dbPath = path.join(tmpDir, "knowledge.db");
+    mockFetch(SAMPLE_HTML);
+
+    const first = await fetchAndIndex("https://example.com/page", store);
+    expect(first.cached).toBe(false);
+
+    store.close();
+    store = new KnowledgeStore(dbPath);
+    store.init();
+
+    const result = await fetchAndIndex("https://example.com/page", store);
+
+    expect(result.cached).toBe(true);
+    expect(result.chunksIndexed).toBe(first.chunksIndexed);
+    expect(result.preview.length).toBeGreaterThan(0);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+
   test("force bypasses cache", async () => {
     mockFetch(SAMPLE_HTML);
 

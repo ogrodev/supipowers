@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import os from "node:os";
 import { executeCode } from "../../../src/context-mode/sandbox/executor.js";
+import { getRunner } from "../../../src/context-mode/sandbox/runners.js";
 
 describe("executeCode", () => {
   test("shell: echo hello", async () => {
@@ -13,6 +14,12 @@ describe("executeCode", () => {
     const result = await executeCode("javascript", "console.log(42)");
     expect(result.stdout.trim()).toBe("42");
     expect(result.exitCode).toBe(0);
+  });
+
+  test("python selects the OS-native launcher", () => {
+    const runner = getRunner("python");
+    const expectedBinary = process.platform === "win32" ? ["python"] : ["python3"];
+    expect(runner.binary).toEqual(expectedBinary);
   });
 
   test("python: print ok", async () => {

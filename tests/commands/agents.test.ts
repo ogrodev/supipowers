@@ -354,8 +354,19 @@ describe("runAgentCreateFlow — send a prompt", () => {
 
     const sendCall = (platform.sendMessage as any).mock.calls.at(-1);
     const steerContent = sendCall[0].content[0].text;
-    expect(steerContent).toContain("workspaces/packages/app/review-agents");
-    expect(steerContent).toContain("ux-review.md");
+    const expectedWorkspaceAgentsDir = path.join(
+      tmpDir,
+      ".omp",
+      "supipowers",
+      "workspaces",
+      "packages",
+      "app",
+      "review-agents",
+    );
+    const expectedWorkspaceAgentFile = path.join(expectedWorkspaceAgentsDir, "ux-review.md");
+
+    expect(steerContent).toContain(expectedWorkspaceAgentsDir);
+    expect(steerContent).toContain(expectedWorkspaceAgentFile);
   });
 
 

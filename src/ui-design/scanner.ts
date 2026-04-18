@@ -33,17 +33,28 @@ const UI_LIBRARY_PREFIXES: Array<{ prefix: string; collapseTo: string }> = [
   { prefix: "@radix-ui/", collapseTo: "@radix-ui" },
 ];
 
+function resolveExistingPathWithActualCase(dir: string, filename: string): string | null {
+  const requestedPath = path.join(dir, filename);
+  if (!fs.existsSync(requestedPath)) return null;
+
+  const actualFilename = fs.readdirSync(dir).find((entry) => entry.toLowerCase() === filename.toLowerCase());
+  if (!actualFilename) return null;
+
+  return path.join(dir, actualFilename);
+}
+
 function scanDesignMd(repoRoot: string): ContextScan["designMd"] {
   try {
     for (const { dir, filenames } of DESIGN_MD_CANDIDATES) {
+      const parentDir = path.join(repoRoot, dir);
       for (const filename of filenames) {
-        const abs = path.join(repoRoot, dir, filename);
-        if (!fs.existsSync(abs)) continue;
+        const abs = resolveExistingPathWithActualCase(parentDir, filename);
+        if (!abs) continue;
 
         const stat = fs.statSync(abs);
         if (!stat.isFile()) continue;
 
-        return { status: "ok", path: fs.realpathSync(abs), bytes: stat.size };
+        return { status: "ok", path: abs, bytes: stat.size };
       }
     }
     return { status: "missing" };
