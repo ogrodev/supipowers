@@ -31,6 +31,13 @@ import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
 import { registerPlanApprovalHook } from "./planning/approval-flow.js";
 import { registerPlanningSystemPromptHook } from "./planning/system-prompt.js";
 import { registerPlanningAskTool, registerPlanningAskToolGuard } from "./planning/planning-ask-tool.js";
+import { registerUiDesignCommand } from "./commands/ui-design.js";
+import { registerUiDesignSystemPromptHook } from "./ui-design/system-prompt.js";
+import {
+  registerUiDesignApprovalHook,
+  registerUiDesignToolGuard,
+  stopActiveUiDesignSession,
+} from "./ui-design/session.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -83,6 +90,7 @@ export function bootstrap(platform: Platform): void {
   registerCommitCommand(platform);
   registerGenerateCommand(platform);
   registerAgentsCommand(platform);
+  registerUiDesignCommand(platform);
 
 
   // Register plan approval flow (agent_end hook for plan approval UI)
@@ -90,6 +98,9 @@ export function bootstrap(platform: Platform): void {
   registerPlanningAskTool(platform);
   registerPlanningAskToolGuard(platform);
 
+  // Register ui-design approval flow + runtime write-scope guard
+  registerUiDesignApprovalHook(platform);
+  registerUiDesignToolGuard(platform);
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
   // message submission, so no chat message appears and no "Working..." indicator
@@ -127,6 +138,7 @@ export function bootstrap(platform: Platform): void {
   // Planning-mode prompt override — registered after context-mode so it wins
   // when /supi:plan is active and otherwise stays dormant.
   registerPlanningSystemPromptHook(platform);
+  registerUiDesignSystemPromptHook(platform);
 
   // MCP per-turn activation
   platform.on("before_agent_start", async (event, ctx) => {
@@ -159,6 +171,9 @@ export function bootstrap(platform: Platform): void {
       stopVisualServer(previousVisualDir);
       setActiveVisualSessionDir(null);
     }
+
+    // Clean up any leftover ui-design companion from a previous session
+    await stopActiveUiDesignSession();
 
     // Clear leftover model-override status from a previous session.
     // OMP's StatusLine never clears hook statuses on /new, so extensions must do it.
@@ -201,8 +216,10 @@ export function bootstrap(platform: Platform): void {
       });
   });
 
-  // MCP session shutdown
+  // Session shutdown
   platform.on("session_shutdown", async (_event, ctx) => {
+    await stopActiveUiDesignSession();
+
     const mcpConfig = loadConfig(platform.paths, ctx.cwd ?? process.cwd());
     if (!mcpConfig.mcp?.closeSessionsOnExit) return;
 
