@@ -15,6 +15,7 @@ import type {
 } from "../types.js";
 import { collectLspDiagnostics } from "../lsp/bridge.js";
 import { filterPathsForWorkspaceTarget, normalizeRepoPath } from "../workspace/path-mapping.js";
+import { createExecShell } from "../utils/shell.js";
 import { CANONICAL_GATE_ORDER, type GateRegistry } from "./registry.js";
 
 interface ReviewScope {
@@ -171,15 +172,6 @@ function selectConfiguredGates(gates: QualityGatesConfig, filters: GateFilters):
   return enabledGates;
 }
 
-function createExecShell(exec: GateExecutionContext["exec"]): GateExecutionContext["execShell"] {
-  return async (command: string, opts?: ExecOptions): Promise<ExecResult> => {
-    if (process.platform === "win32") {
-      return exec("cmd", ["/d", "/s", "/c", command], opts);
-    }
-
-    return exec("sh", ["-lc", command], opts);
-  };
-}
 
 function createGateExecutionContext(
   input: RunQualityGatesInput,

@@ -375,12 +375,16 @@ describe("runQualityGates", () => {
     const gitCwds = execCalls
       .filter((call) => call.cmd === "git")
       .map((call) => call.cwd);
-    const shellCwds = execCalls
-      .filter((call) => call.cmd === "sh")
-      .map((call) => call.cwd);
+    const shellCommand = process.platform === "win32" ? "cmd" : "sh";
+    const shellCalls = execCalls.filter((call) => call.cmd === shellCommand);
 
     expect(gitCwds).toEqual(["/repo", "/repo", "/repo"]);
-    expect(shellCwds).toEqual(["/repo/packages/alpha"]);
+    expect(shellCalls.map((call) => call.cwd)).toEqual(["/repo/packages/alpha"]);
+    expect(shellCalls[0]?.args).toEqual(
+      process.platform === "win32"
+        ? ["/d", "/s", "/c", "eslint ."]
+        : ["-lc", "eslint ."],
+    );
   });
 
   test("uses the default LSP diagnostics integration when no override is provided", async () => {
