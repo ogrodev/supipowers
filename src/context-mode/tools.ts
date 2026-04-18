@@ -315,6 +315,11 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     description:
       "Index documentation or knowledge content into a searchable BM25 knowledge base. After indexing, use ctx_search to retrieve specific sections on-demand.",
     promptSnippet: "ctx_index — store content in knowledge base for later search",
+    promptGuidelines: [
+      "Use when you have raw text or markdown to make searchable later via ctx_search",
+      "Use ctx_fetch_and_index instead when the source is a URL",
+      "Provide a descriptive `source` label so others can scope ctx_search by source",
+    ],
     parameters: {
       type: "object",
       properties: {
@@ -348,6 +353,11 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     description:
       "Search indexed content. Requires prior indexing via ctx_batch_execute, ctx_index, or ctx_fetch_and_index. Pass ALL search questions as queries array in ONE call.",
     promptSnippet: "ctx_search — query indexed content with BM25 search",
+    promptGuidelines: [
+      "Use to retrieve specific sections from previously indexed content",
+      "Pass ALL questions in the queries array in one call — do not chain ctx_search calls",
+      "Filter by `source` when you know which indexed bundle to search",
+    ],
     parameters: {
       type: "object",
       properties: {
@@ -379,6 +389,10 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     description:
       "Fetch URL content, convert HTML to markdown, index into searchable knowledge base, and return a ~3KB preview. Use ctx_search for deeper lookups.",
     promptSnippet: "ctx_fetch_and_index — fetch URL, index content, return preview",
+    promptGuidelines: [
+      "Use this instead of curl/wget/WebFetch — raw HTML never enters context",
+      "After indexing, use ctx_search for deeper lookups beyond the preview",
+    ],
     parameters: {
       type: "object",
       properties: {
@@ -411,6 +425,10 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     description:
       "Returns context consumption statistics for the current session. Shows total bytes returned to context, breakdown by tool, call counts, and knowledge base stats.",
     promptSnippet: "ctx_stats — show session context stats",
+    promptGuidelines: [
+      "Use only when the user asks about context consumption or to debug context bloat",
+      "Do not call this proactively — it consumes context itself",
+    ],
     parameters: { type: "object", properties: {} },
     async execute() {
       const storeStats = store.getStats();
@@ -445,6 +463,10 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     description:
       "Delete all indexed content from the knowledge base. Does NOT touch the event store (events.db). Use when you want a fresh start.",
     promptSnippet: "ctx_purge — clear all indexed content",
+    promptGuidelines: [
+      "Use only when the user explicitly asks to reset the knowledge base",
+      "Does NOT delete the event store (events.db) — only the knowledge index",
+    ],
     parameters: { type: "object", properties: {} },
     async execute() {
       const count = store.purge();
