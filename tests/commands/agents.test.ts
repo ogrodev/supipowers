@@ -282,6 +282,83 @@ describe("runAgentCreateFlow — send a prompt", () => {
     expect(configContent).toContain("name: perf-review");
   });
 
+  test("writes project-scoped agents to workspace review-agent state", async () => {
+    const workspaceDir = setupWorkspaceRepo(tmpDir);
+    ctx.cwd = workspaceDir;
+
+    const rootAgentsDir = path.join(tmpDir, ".omp", "supipowers", "review-agents");
+    fs.mkdirSync(rootAgentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(rootAgentsDir, "perf-review.md"),
+      "---\nname: perf-review\ndescription: Root perf\n---\n\nRoot perf prompt.\n\n{output_instructions}\n",
+    );
+    fs.writeFileSync(
+      path.join(rootAgentsDir, "config.yml"),
+      [
+        "agents:",
+        "  - name: perf-review",
+        "    enabled: true",
+        "    data: perf-review.md",
+        "    model: null",
+        "    thinkingLevel: null",
+        "",
+      ].join("\n"),
+    );
+
+    (ctx.ui.select as any).mockResolvedValueOnce("This project");
+    (ctx.ui.input as any).mockResolvedValueOnce("perf-review");
+    (ctx.ui.select as any).mockResolvedValueOnce("anthropic/claude-sonnet-4-20250514");
+    (ctx.ui.select as any).mockResolvedValueOnce("Inherit (model default)");
+    (ctx.ui.select as any).mockResolvedValueOnce("Send a prompt");
+    (ctx.ui.input as any).mockResolvedValueOnce("Review workspace performance.\n\n{output_instructions}");
+
+    await runAgentCreateFlow(platform, ctx);
+
+    const workspaceAgentFile = path.join(
+      tmpDir,
+      ".omp",
+      "supipowers",
+      "workspaces",
+      "packages",
+      "app",
+      "review-agents",
+      "perf-review.md",
+    );
+    const workspaceConfigFile = path.join(
+      tmpDir,
+      ".omp",
+      "supipowers",
+      "workspaces",
+      "packages",
+      "app",
+      "review-agents",
+      "config.yml",
+    );
+
+    expect(fs.existsSync(workspaceAgentFile)).toBe(true);
+    expect(fs.readFileSync(workspaceAgentFile, "utf-8")).toContain("Review workspace performance.");
+    expect(fs.readFileSync(workspaceConfigFile, "utf-8")).toContain("name: perf-review");
+    expect((ctx.ui.notify as any).mock.calls.some((call: any[]) => String(call[0]).includes("already exists"))).toBe(false);
+  });
+
+  test("workspace create-from-zero prompt uses workspace review-agent paths", async () => {
+    ctx.cwd = setupWorkspaceRepo(tmpDir);
+
+    (ctx.ui.select as any).mockResolvedValueOnce("This project");
+    (ctx.ui.input as any).mockResolvedValueOnce("ux-review");
+    (ctx.ui.select as any).mockResolvedValueOnce(null);
+    (ctx.ui.select as any).mockResolvedValueOnce("Inherit (model default)");
+    (ctx.ui.select as any).mockResolvedValueOnce("Create from zero");
+
+    await runAgentCreateFlow(platform, ctx);
+
+    const sendCall = (platform.sendMessage as any).mock.calls.at(-1);
+    const steerContent = sendCall[0].content[0].text;
+    expect(steerContent).toContain("workspaces/packages/app/review-agents");
+    expect(steerContent).toContain("ux-review.md");
+  });
+
+
   test("cancels gracefully when scope is cancelled", async () => {
     (ctx.ui.select as any).mockResolvedValueOnce(null);
 

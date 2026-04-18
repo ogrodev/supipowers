@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createPaths, type Platform } from "../../src/platform/types.js";
-import { checkConfig } from "../../src/commands/doctor.js";
+import { checkConfig, formatReliabilityReportLines } from "../../src/commands/doctor.js";
+import { appendReliabilityRecord } from "../../src/storage/reliability-metrics.js";
 
 function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
   return {
@@ -62,5 +63,50 @@ describe("checkConfig", () => {
     const result = await checkConfig(platform, tmpDir);
 
     expect(result.functional?.detail).toMatch(/JSON Parse error|Unexpected token/);
+  });
+});
+
+describe("formatReliabilityReportLines", () => {
+  let tmpDir: string;
+  let platform: Platform;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-doctor-reliability-"));
+    platform = createPlatform(createTestPaths(tmpDir));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("renders empty-state line when no records exist", () => {
+    const lines = formatReliabilityReportLines(platform, tmpDir);
+    expect(lines).toEqual([
+      "Reliability: no records yet (metrics appear after AI-heavy commands run).",
+    ]);
+  });
+
+  test("renders per-command rows aggregated from stored records", () => {
+    appendReliabilityRecord(platform.paths, tmpDir, {
+      ts: "2026-04-14T10:00:00.000Z",
+      command: "review",
+      outcome: "ok",
+      attempts: 1,
+    });
+    appendReliabilityRecord(platform.paths, tmpDir, {
+      ts: "2026-04-15T10:00:00.000Z",
+      command: "review",
+      outcome: "retry-exhausted",
+      attempts: 3,
+    });
+
+    const lines = formatReliabilityReportLines(platform, tmpDir);
+    expect(lines[0]).toBe("Reliability (last 2 records)");
+    const row = lines.find((l) => l.startsWith("review"));
+    expect(row).toBeDefined();
+    expect(row).toContain("ok 1");
+    expect(row).toContain("retry-exhausted 1");
+    expect(row).toContain("avg-attempts 2.0");
+    expect(row).toContain("last 2026-04-15");
   });
 });

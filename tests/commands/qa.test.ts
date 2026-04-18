@@ -25,7 +25,12 @@ function createPlatform(): Platform {
     registerCommand: mock(),
     getCommands: mock(() => []),
     on: mock(),
-    exec: mock(),
+    exec: mock(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+        return { stdout: "/repo\n", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    }),
     sendMessage: mock(),
     sendUserMessage: mock(),
     getActiveTools: mock(() => []),
@@ -122,6 +127,102 @@ describe("handleQa", () => {
     expect(message.content[0].text).not.toContain("/repo/packages/other");
   });
 
+  test("auto-selects the only runnable target outside interactive mode", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    const rootTarget = target("repo-root");
+    const packageTarget = target("@repo/web", "packages/web");
+    const deps = createDependencies({
+      discoverWorkspaceTargets: mock(() => [rootTarget, packageTarget]),
+      selectWorkspaceTarget: mock(async () => null) as any,
+      detectAppType: mock((targetDir: string) => {
+        if (targetDir === "/repo") throw new Error("no app metadata");
+        return {
+          type: "nextjs-app",
+          devCommand: "bun run dev",
+          port: 3000,
+          baseUrl: "http://localhost:3000",
+          isLikelyApp: true,
+        };
+      }) as any,
+      discoverRoutes: mock((targetDir: string) => {
+        if (targetDir === "/repo/packages/web") {
+          return [{ path: "/", file: "app/page.tsx", type: "page", hasForm: false }];
+        }
+        throw new Error(`unexpected route discovery for ${targetDir}`);
+      }) as any,
+    });
+
+    await handleQa(platform, ctx, undefined, deps);
+
+    expect(deps.selectWorkspaceTarget).not.toHaveBeenCalled();
+    expect(deps.detectAppType).toHaveBeenCalledTimes(2);
+    expect(deps.detectAppType).toHaveBeenNthCalledWith(1, "/repo");
+    expect(deps.detectAppType).toHaveBeenNthCalledWith(2, "/repo/packages/web");
+    expect(deps.discoverRoutes).toHaveBeenCalledTimes(1);
+    expect(deps.createNewE2eSession).toHaveBeenCalledWith(platform.paths, "/repo", expect.anything(), packageTarget);
+  });
+
+  test("keeps an explicitly requested non-runnable target selected", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    const rootTarget = target("repo-root");
+    const packageTarget = target("@repo/web", "packages/web");
+    const deps = createDependencies({
+      discoverWorkspaceTargets: mock(() => [rootTarget, packageTarget]),
+      selectWorkspaceTarget: mock(async (_ctx, options: Array<{ target: WorkspaceTarget }>, requestedTarget) =>
+        options.find((option) => option.target.name === requestedTarget)?.target ?? null,
+      ) as any,
+      detectAppType: mock((targetDir: string) => {
+        if (targetDir === "/repo") {
+          return {
+            type: "generic",
+            devCommand: "npm run dev",
+            port: 3000,
+            baseUrl: "http://localhost:3000",
+            isLikelyApp: false,
+          };
+        }
+
+        return {
+          type: "nextjs-app",
+          devCommand: "bun run dev",
+          port: 3000,
+          baseUrl: "http://localhost:3000",
+          isLikelyApp: true,
+        };
+      }) as any,
+      discoverRoutes: mock((targetDir: string) => (targetDir === "/repo" ? [] : [{ path: "/", file: "app/page.tsx", type: "page", hasForm: false }])) as any,
+    });
+
+    await handleQa(platform, ctx, "--target repo-root", deps);
+
+    expect(deps.notifyError).toHaveBeenCalledWith(
+      ctx,
+      "Selected target is not a runnable app",
+      expect.stringContaining("repo-root"),
+    );
+    expect(deps.createNewE2eSession).not.toHaveBeenCalled();
+    expect(platform.sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("discovers QA targets from the repo root when invoked inside a package", async () => {
+    const platform = createPlatform();
+    const ctx = createContext({ cwd: "/repo/packages/api" });
+    const apiTarget = target("@repo/api", "packages/api");
+    const webTarget = target("@repo/web", "packages/web");
+    const deps = createDependencies({
+      discoverWorkspaceTargets: mock((cwd: string) => cwd === "/repo" ? [apiTarget, webTarget] : [apiTarget]) as any,
+      selectWorkspaceTarget: mock(async () => webTarget) as any,
+    });
+
+    await handleQa(platform, ctx, "--target @repo/web", deps);
+
+    expect(deps.resolvePackageManager).toHaveBeenCalledWith("/repo");
+    expect(deps.discoverWorkspaceTargets).toHaveBeenCalledWith("/repo", "bun");
+    expect(deps.detectAppType).toHaveBeenCalledWith("/repo/packages/web");
+  });
+
   test("rejects targets that do not look like runnable apps", async () => {
     const platform = createPlatform();
     const ctx = createContext();
@@ -130,7 +231,7 @@ describe("handleQa", () => {
       discoverWorkspaceTargets: mock(() => [packageTarget]),
       selectWorkspaceTarget: mock(async () => packageTarget) as any,
       detectAppType: mock(() => ({
-        type: "generic",
+        type: "generic" as const,
         devCommand: "npm run dev",
         port: 3000,
         baseUrl: "http://localhost:3000",

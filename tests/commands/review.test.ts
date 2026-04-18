@@ -90,6 +90,9 @@ function createPlatform(options?: { changedFiles?: string[]; trackedFiles?: stri
     exec: mock(async (cmd: string, args: string[], opts?: ExecOptions) => {
       if (cmd === "git") {
         const signature = args.join(" ");
+        if (signature === "rev-parse --show-toplevel") {
+          return { stdout: "/repo\n", stderr: "", code: 0 };
+        }
         if (signature === "diff --name-only HEAD") {
           return { stdout: `${changedFiles.join("\n")}${changedFiles.length > 0 ? "\n" : ""}`, stderr: "", code: 0 };
         }
@@ -261,9 +264,9 @@ describe("handleChecks", () => {
 
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
       platform.paths,
-      ctx.cwd,
+      "/repo",
       "root",
-      { repoRoot: "/repo", workspaceRelativeDir: null },
+      { repoRoot: "/repo" },
     );
     expect(deps.setupGates).toHaveBeenCalledWith(
       platform,
@@ -278,7 +281,7 @@ describe("handleChecks", () => {
     expect(deps.notifyInfo).toHaveBeenCalledWith(
       ctx,
       "Removed invalid review config",
-      expect.stringContaining("root config"),
+      expect.stringContaining("repository config"),
     );
   });
 
@@ -315,9 +318,9 @@ describe("handleChecks", () => {
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledTimes(1);
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
       platform.paths,
-      ctx.cwd,
+      "/repo",
       "global",
-      { repoRoot: "/repo", workspaceRelativeDir: null },
+      { repoRoot: "/repo" },
     );
 
   });
@@ -356,15 +359,15 @@ describe("handleChecks", () => {
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledTimes(2);
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
       platform.paths,
-      ctx.cwd,
+      "/repo",
       "global",
-      { repoRoot: "/repo", workspaceRelativeDir: null },
+      { repoRoot: "/repo" },
     );
     expect(deps.removeQualityGatesConfig).toHaveBeenCalledWith(
       platform.paths,
-      ctx.cwd,
+      "/repo",
       "root",
-      { repoRoot: "/repo", workspaceRelativeDir: null },
+      { repoRoot: "/repo" },
     );
   });
 
@@ -424,11 +427,72 @@ describe("handleChecks", () => {
     );
   });
 
-  test("auto-selects the single changed workspace target without prompting", async () => {
+  test("defaults to All in monorepos and runs root plus workspaces", async () => {
     const platform = createPlatform({ changedFiles: ["packages/alpha/src/file.ts"] });
     const ctx = createContext();
     const rootTarget = createTarget();
-    const workspaceTarget = createTarget({
+    const alphaTarget = createTarget({
+      id: "@repo/alpha",
+      name: "@repo/alpha",
+      kind: "workspace",
+      relativeDir: "packages/alpha",
+      packageDir: "/repo/packages/alpha",
+    });
+    const betaTarget = createTarget({
+      id: "@repo/beta",
+      name: "@repo/beta",
+      kind: "workspace",
+      relativeDir: "packages/beta",
+      packageDir: "/repo/packages/beta",
+    });
+    const deps = createDependencies(
+      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createReport(),
+      [rootTarget, alphaTarget, betaTarget],
+    );
+    deps.saveReviewReport = mock((_paths, target: WorkspaceTarget) => `/reports/${target.id}.json`) as any;
+    ctx.ui.select = mock(async (_title: string, options: string[]) => options[0]!);
+
+    await handleChecks(platform, ctx, "", deps);
+
+    expect(ctx.ui.select).toHaveBeenCalledWith(
+      "Checks target",
+      expect.arrayContaining([
+        expect.stringContaining("All"),
+        expect.stringContaining(rootTarget.name),
+        expect.stringContaining(alphaTarget.name),
+      ]),
+      expect.objectContaining({ initialIndex: 0 }),
+    );
+    expect(deps.runQualityGates).toHaveBeenCalledTimes(3);
+    expect(deps.runQualityGates).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        target: rootTarget,
+        workspaceTargets: [rootTarget, alphaTarget, betaTarget],
+      }),
+    );
+    expect(deps.runQualityGates).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ target: alphaTarget }),
+    );
+    expect(deps.runQualityGates).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ target: betaTarget }),
+    );
+
+    const [, title, detail] = (deps.notifyInfo as ReturnType<typeof mock>).mock.calls.at(-1)!;
+    expect(title).toBe("Checks complete: 3 passed");
+    expect(detail).toContain(`${rootTarget.name} (root): passed`);
+    expect(detail).toContain(`${alphaTarget.name} (${alphaTarget.relativeDir}): passed`);
+    expect(detail).toContain(`${betaTarget.name} (${betaTarget.relativeDir}): passed`);
+  });
+
+  test("supports --target all without prompting", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    const rootTarget = createTarget();
+    const alphaTarget = createTarget({
       id: "@repo/alpha",
       name: "@repo/alpha",
       kind: "workspace",
@@ -438,24 +502,15 @@ describe("handleChecks", () => {
     const deps = createDependencies(
       createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
       createReport(),
-      [rootTarget, workspaceTarget],
+      [rootTarget, alphaTarget],
     );
 
-    await handleChecks(platform, ctx, "", deps);
+    await handleChecks(platform, ctx, "--target all", deps);
 
     expect(ctx.ui.select).not.toHaveBeenCalled();
-    expect(deps.loadConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, {
-      repoRoot: "/repo",
-      workspaceRelativeDir: "packages/alpha",
-    });
-    expect(deps.runQualityGates).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: "/repo/packages/alpha",
-        target: workspaceTarget,
-        workspaceTargets: [rootTarget, workspaceTarget],
-      }),
-    );
-    expect(deps.saveReviewReport).toHaveBeenCalledWith(platform.paths, workspaceTarget, expect.anything());
+    expect(deps.runQualityGates).toHaveBeenCalledTimes(2);
+    expect(deps.loadConfig).toHaveBeenNthCalledWith(1, platform.paths, "/repo", { repoRoot: "/repo" });
+    expect(deps.loadConfig).toHaveBeenNthCalledWith(2, platform.paths, "/repo", { repoRoot: "/repo" });
   });
 
   test("passes an explicit target through to config, runner, and report storage", async () => {
@@ -477,9 +532,8 @@ describe("handleChecks", () => {
 
     await handleChecks(platform, ctx, "--target beta", deps);
 
-    expect(deps.loadConfig).toHaveBeenCalledWith(platform.paths, ctx.cwd, {
+    expect(deps.loadConfig).toHaveBeenCalledWith(platform.paths, "/repo", {
       repoRoot: "/repo",
-      workspaceRelativeDir: "packages/beta",
     });
     expect(deps.runQualityGates).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -488,6 +542,61 @@ describe("handleChecks", () => {
       }),
     );
     expect(deps.saveReviewReport).toHaveBeenCalledWith(platform.paths, workspaceTarget, expect.anything());
+  });
+
+  test("defaults to All from inside a workspace package", async () => {
+    const platform = createPlatform();
+    const ctx = createContext();
+    ctx.cwd = "/repo/packages/alpha";
+    ctx.hasUI = false;
+    const rootTarget = createTarget();
+    const alphaTarget = createTarget({
+      id: "@repo/alpha",
+      name: "alpha",
+      kind: "workspace",
+      relativeDir: "packages/alpha",
+      packageDir: "/repo/packages/alpha",
+    });
+    const betaTarget = createTarget({
+      id: "@repo/beta",
+      name: "beta",
+      kind: "workspace",
+      relativeDir: "packages/beta",
+      packageDir: "/repo/packages/beta",
+    });
+    const deps = createDependencies(
+      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createReport(),
+      [rootTarget, alphaTarget, betaTarget],
+    );
+    deps.discoverWorkspaceTargets = mock((cwd: string) =>
+      cwd === "/repo" ? [rootTarget, alphaTarget, betaTarget] : [alphaTarget],
+    ) as any;
+
+    await handleChecks(platform, ctx, "", deps);
+
+    expect(deps.resolvePackageManager).toHaveBeenCalledWith("/repo");
+    expect(deps.discoverWorkspaceTargets).toHaveBeenCalledWith("/repo", "bun");
+    expect(deps.loadConfig).toHaveBeenCalledTimes(3);
+    expect((deps.loadConfig as ReturnType<typeof mock>).mock.calls.every(([, cwd, options]) =>
+      cwd === "/repo" && options?.repoRoot === "/repo",
+    )).toBe(true);
+    expect(deps.runQualityGates).toHaveBeenCalledTimes(3);
+    expect(deps.runQualityGates).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        target: rootTarget,
+        workspaceTargets: [rootTarget, alphaTarget, betaTarget],
+      }),
+    );
+    expect(deps.runQualityGates).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ target: alphaTarget }),
+    );
+    expect(deps.runQualityGates).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ target: betaTarget }),
+    );
   });
 
   test("summary includes skipped gates in canonical order", async () => {

@@ -11,8 +11,7 @@ import {
 } from "../../src/commands/config.js";
 import { inspectConfig, updateConfig } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
-import { getWorkspaceConfigPath } from "../../src/workspace/state-paths.js";
-import type { ConfigScope, WorkspaceTarget } from "../../src/types.js";
+import type { ConfigScope } from "../../src/types.js";
 
 function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
   return {
@@ -61,15 +60,6 @@ function writeGlobalConfig(localPaths: ReturnType<typeof createPaths>, data: unk
   writeJsonFile(localPaths.global("config.json"), data);
 }
 
-function writeWorkspaceConfig(
-  localPaths: ReturnType<typeof createPaths>,
-  repoRoot: string,
-  workspaceRelativeDir: string,
-  data: unknown,
-): void {
-  writeJsonFile(getWorkspaceConfigPath(localPaths, repoRoot, workspaceRelativeDir), data);
-}
-
 function readProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: string): unknown {
   return JSON.parse(fs.readFileSync(localPaths.project(cwd, "config.json"), "utf-8"));
 }
@@ -78,38 +68,27 @@ function readGlobalConfig(localPaths: ReturnType<typeof createPaths>): unknown {
   return JSON.parse(fs.readFileSync(localPaths.global("config.json"), "utf-8"));
 }
 
-function readWorkspaceConfig(
+function workspaceConfigPath(
   localPaths: ReturnType<typeof createPaths>,
   repoRoot: string,
   workspaceRelativeDir: string,
-): unknown {
-  return JSON.parse(fs.readFileSync(getWorkspaceConfigPath(localPaths, repoRoot, workspaceRelativeDir), "utf-8"));
-}
-
-function createWorkspaceTarget(repoRoot: string, relativeDir: string, name = "pkg-a"): WorkspaceTarget {
-  const packageDir = path.join(repoRoot, relativeDir);
-  return {
-    id: name,
-    name,
-    kind: "workspace",
+): string {
+  return localPaths.project(
     repoRoot,
-    packageDir,
-    manifestPath: path.join(packageDir, "package.json"),
-    relativeDir,
-    version: "1.0.0",
-    private: true,
-    packageManager: "bun",
-  };
+    "workspaces",
+    ...workspaceRelativeDir.split("/"),
+    "config.json",
+  );
 }
 
 function createScopeView(
   platform: Platform,
   scope: ConfigScope,
   repoRoot: string,
-  workspaceTarget: WorkspaceTarget | null = null,
+  isMonorepo = false,
 ) {
-  const selection: ConfigScopeSelection = { scope, repoRoot, workspaceTarget };
-  return buildConfigScopeView(platform, repoRoot, selection, { inspectConfig });
+  const selection: ConfigScopeSelection = { scope, repoRoot, isMonorepo };
+  return buildConfigScopeView(platform, repoRoot, selection);
 }
 
 describe("config command settings", () => {
@@ -137,7 +116,7 @@ describe("config command settings", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test("quality gate setup rejects invalid AI suggestions and preserves root config", async () => {
+  test("quality gate setup rejects invalid AI suggestions and preserves repository config", async () => {
     const originalConfig = { lsp: { setupGuide: false } };
     writeProjectConfig(localPaths, tmpDir, originalConfig);
 
@@ -162,13 +141,10 @@ describe("config command settings", () => {
     expect(readProjectConfig(localPaths, tmpDir)).toEqual(originalConfig);
   });
 
-  test("quality gate setup saves to the selected workspace scope", async () => {
-    const workspaceTarget = createWorkspaceTarget(tmpDir, "packages/pkg-a");
-    fs.mkdirSync(workspaceTarget.packageDir, { recursive: true });
-    fs.writeFileSync(
-      workspaceTarget.manifestPath,
-      JSON.stringify({ name: workspaceTarget.name, version: workspaceTarget.version }),
-    );
+  test("quality gate setup saves to the shared repository scope in monorepos", async () => {
+    const workspaceDir = path.join(tmpDir, "packages", "pkg-a");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    ctx.cwd = workspaceDir;
     ctx.ui.select = mock(async () => "Accept");
 
     const inspect = mock((paths: Platform["paths"], cwd: string, options?: any) => inspectConfig(paths, cwd, options));
@@ -177,27 +153,42 @@ describe("config command settings", () => {
       updateConfig: mock(updateConfig),
       setupGates: mock(async () => ({
         status: "proposed" as const,
-        proposal: { gates: { "lsp-diagnostics": { enabled: true } } },
+        proposal: {
+          gates: { "lsp-diagnostics": { enabled: true } },
+          notes: ["Typecheck: Detected typecheck commands in workspace targets only."],
+        },
       })),
     };
 
     const settings = buildSettings(
       platform,
       ctx,
-      createScopeView(platform, "workspace", tmpDir, workspaceTarget),
+      createScopeView(platform, "root", tmpDir, true),
       deps as any,
     );
     const qualitySetting = settings.find((setting) => setting.key === "quality.gates");
     if (!qualitySetting) throw new Error("Missing quality.gates setting");
 
-    const result = await qualitySetting.set(tmpDir, "Run deterministic setup");
+    const result = await qualitySetting.set(workspaceDir, "Run deterministic setup");
 
     expect(result).toBe("saved");
-    expect(readWorkspaceConfig(localPaths, tmpDir, workspaceTarget.relativeDir)).toEqual({
+    expect(readProjectConfig(localPaths, tmpDir)).toEqual({
       quality: { gates: { "lsp-diagnostics": { enabled: true } } },
     });
-    expect(fs.existsSync(localPaths.project(tmpDir, "config.json"))).toBe(false);
     expect(fs.existsSync(localPaths.global("config.json"))).toBe(false);
+    expect(deps.setupGates).toHaveBeenCalledWith(
+      platform,
+      tmpDir,
+      expect.anything(),
+      expect.objectContaining({ mode: "deterministic" }),
+    );
+    expect(ctx.ui.select).toHaveBeenCalledWith(
+      "Quality gate setup",
+      ["Accept", "Revise", "Cancel"],
+      expect.objectContaining({
+        helpText: expect.stringContaining("workspace targets only"),
+      }),
+    );
   });
 
   test("settings no longer expose Default profile", () => {
@@ -225,7 +216,7 @@ describe("config command settings", () => {
     expect(fs.existsSync(localPaths.project(tmpDir, "config.json"))).toBe(false);
   });
 
-  test("qa framework setting persists only qa.framework in root scope", async () => {
+  test("qa framework setting persists only qa.framework in repository scope", async () => {
     const settings = buildSettings(platform, ctx, createScopeView(platform, "root", tmpDir), {
       inspectConfig,
       updateConfig: mock(updateConfig),
@@ -242,12 +233,11 @@ describe("config command settings", () => {
     expect(fs.existsSync(localPaths.global("config.json"))).toBe(false);
   });
 
-  test("release channels setting writes to the selected workspace scope only", async () => {
-    const workspaceTarget = createWorkspaceTarget(tmpDir, "packages/pkg-a");
+  test("release channels setting writes to the shared repository scope only", async () => {
     const settings = buildSettings(
       platform,
       ctx,
-      createScopeView(platform, "workspace", tmpDir, workspaceTarget),
+      createScopeView(platform, "root", tmpDir, true),
       {
         inspectConfig,
         updateConfig: mock(updateConfig),
@@ -264,43 +254,57 @@ describe("config command settings", () => {
 
     await releaseSetting.set(tmpDir, "github — GitHub Release with gh CLI");
 
-    const saved = readWorkspaceConfig(localPaths, tmpDir, workspaceTarget.relativeDir) as { release?: { channels?: string[] } };
+    const saved = readProjectConfig(localPaths, tmpDir) as { release?: { channels?: string[] } };
     expect(saved.release?.channels).toEqual(["github"]);
-    expect(fs.existsSync(localPaths.project(tmpDir, "config.json"))).toBe(false);
     expect(fs.existsSync(localPaths.global("config.json"))).toBe(false);
   });
 
-  test("settings show inherited and overridden provenance", () => {
-    const workspaceTarget = createWorkspaceTarget(tmpDir, "packages/pkg-a");
+  test("repository settings show inherited provenance from global", () => {
     writeGlobalConfig(localPaths, { lsp: { setupGuide: false } });
-    writeWorkspaceConfig(localPaths, tmpDir, workspaceTarget.relativeDir, { lsp: { setupGuide: true } });
 
-    const rootSettings = buildSettings(platform, ctx, createScopeView(platform, "root", tmpDir), {
+    const settings = buildSettings(platform, ctx, createScopeView(platform, "root", tmpDir, true), {
       inspectConfig,
       updateConfig: mock(updateConfig),
       setupGates: mock(),
     } as any);
-    const rootLsp = rootSettings.find((setting) => setting.key === "lsp.setupGuide");
-    if (!rootLsp) throw new Error("Missing root lsp.setupGuide setting");
+    const lspSetting = settings.find((setting) => setting.key === "lsp.setupGuide");
+    if (!lspSetting) throw new Error("Missing lsp.setupGuide setting");
 
-    const workspaceSettings = buildSettings(
-      platform,
-      ctx,
-      createScopeView(platform, "workspace", tmpDir, workspaceTarget),
-      {
-        inspectConfig,
-        updateConfig: mock(updateConfig),
-        setupGates: mock(),
-      } as any,
-    );
-    const workspaceLsp = workspaceSettings.find((setting) => setting.key === "lsp.setupGuide");
-    if (!workspaceLsp) throw new Error("Missing workspace lsp.setupGuide setting");
-
-    expect(rootLsp.get()).toBe("off — inherited from global");
-    expect(workspaceLsp.get()).toBe("on — overridden in workspace");
+    expect(lspSetting.get()).toBe("off — inherited from global");
   });
 
-  test("runConfigMenu requires selecting a workspace target before editing workspace scope", async () => {
+  test("repository settings show repository overrides", () => {
+    writeGlobalConfig(localPaths, { lsp: { setupGuide: false } });
+    writeProjectConfig(localPaths, tmpDir, { lsp: { setupGuide: true } });
+
+    const settings = buildSettings(platform, ctx, createScopeView(platform, "root", tmpDir, true), {
+      inspectConfig,
+      updateConfig: mock(updateConfig),
+      setupGates: mock(),
+    } as any);
+    const lspSetting = settings.find((setting) => setting.key === "lsp.setupGuide");
+    if (!lspSetting) throw new Error("Missing lsp.setupGuide setting");
+
+    expect(lspSetting.get()).toBe("on — overridden in repository");
+  });
+
+  test("global scope view ignores repository overrides", () => {
+    writeGlobalConfig(localPaths, { lsp: { setupGuide: false } });
+    writeProjectConfig(localPaths, tmpDir, { lsp: { setupGuide: true } });
+
+    const settings = buildSettings(platform, ctx, createScopeView(platform, "global", tmpDir), {
+      inspectConfig,
+      updateConfig: mock(updateConfig),
+      setupGates: mock(),
+    } as any);
+    const globalLsp = settings.find((setting) => setting.key === "lsp.setupGuide");
+    if (!globalLsp) throw new Error("Missing global lsp.setupGuide setting");
+
+    expect(globalLsp.get()).toBe("off — overridden in global");
+  });
+
+  test("runConfigMenu defaults to repository scope and hides workspace-specific choices in monorepos", async () => {
+    const workspaceDir = path.join(tmpDir, "packages", "pkg-a");
     writeJsonFile(path.join(tmpDir, "package.json"), {
       name: "repo-root",
       version: "1.0.0",
@@ -308,7 +312,7 @@ describe("config command settings", () => {
       workspaces: ["packages/*"],
       packageManager: "bun@1.2.0",
     });
-    writeJsonFile(path.join(tmpDir, "packages/pkg-a/package.json"), {
+    writeJsonFile(path.join(workspaceDir, "package.json"), {
       name: "pkg-a",
       version: "1.0.0",
       private: true,
@@ -318,7 +322,7 @@ describe("config command settings", () => {
       version: "1.0.0",
       private: true,
     });
-
+    ctx.cwd = workspaceDir;
     platform.exec = mock(async (command: string, args: string[]) => {
       if (command === "git" && args.join(" ") === "rev-parse --show-toplevel") {
         return { code: 0, stdout: `${tmpDir}\n`, stderr: "" };
@@ -326,19 +330,20 @@ describe("config command settings", () => {
       return { code: 1, stdout: "", stderr: "" };
     }) as any;
 
-    const selectTitles: string[] = [];
     let settingsVisits = 0;
+    let topLevelOptions: string[] = [];
+    let scopeOptions: string[] = [];
+    const selectTitles: string[] = [];
     ctx.ui.select = mock(async (title: string, options: string[]) => {
       selectTitles.push(title);
       if (title === "Supipowers Settings") {
         settingsVisits += 1;
+        topLevelOptions = [...options];
         return settingsVisits === 1 ? options[0]! : "Done";
       }
       if (title === "Config scope") {
-        return options.find((option) => option.startsWith("Workspace")) ?? null;
-      }
-      if (title === "Workspace config target") {
-        return null;
+        scopeOptions = [...options];
+        return options[1]!;
       }
       return null;
     });
@@ -349,8 +354,14 @@ describe("config command settings", () => {
       setupGates: mock(),
     });
 
-    expect(selectTitles).toContain("Workspace config target");
-    expect(fs.existsSync(getWorkspaceConfigPath(localPaths, tmpDir, "packages/pkg-a"))).toBe(false);
+    expect(topLevelOptions[0]).toContain("Config scope: monorepo repository");
+    expect(scopeOptions).toEqual([
+      "Global — ~/.omp/supipowers/config.json",
+      "Monorepo repository — .omp/supipowers/config.json",
+      "Cancel",
+    ]);
+    expect(selectTitles).not.toContain("Workspace config target");
+    expect(fs.existsSync(workspaceConfigPath(localPaths, tmpDir, "packages/pkg-a"))).toBe(false);
   });
 
   test("buildConfigScopeView preserves default effective config when no files exist", () => {

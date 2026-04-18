@@ -385,7 +385,7 @@ describe("runAiReviewSessionForTest", () => {
         selectResponses: ["Quick — fast high-signal review"],
       });
       const webCtx = createContext({
-        cwd: fixture.repoRoot,
+        cwd: join(fixture.repoRoot, "packages", "api"),
         includeCustom: false,
         selectResponses: ["Quick — fast high-signal review"],
       });
@@ -435,6 +435,35 @@ describe("runAiReviewSessionForTest", () => {
         "AI review complete: passed",
         expect.stringContaining("target: api (packages/api)"),
       );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test("loads review agents with the selected workspace context", async () => {
+    const fixture = createMonorepoFixture();
+    try {
+      const platform = createPlatform();
+      const ctx = createContext({
+        cwd: join(fixture.repoRoot, "packages", "api"),
+        includeCustom: false,
+        selectResponses: ["Multi-agent — focused specialist agents"],
+      });
+      const deps = createDependencies({ reviewOutput: OUTPUT_WITHOUT_FINDINGS, level: "multi-agent" });
+
+      await runAiReviewSessionForTest(platform, ctx, deps, "--target web");
+
+      expect(deps.selectReviewScope).toHaveBeenCalledWith(
+        platform,
+        ctx,
+        expect.objectContaining({
+          target: expect.objectContaining({ name: "web", relativeDir: "packages/web" }),
+        }),
+      );
+      expect(deps.loadReviewAgents).toHaveBeenCalledWith(platform.paths, ctx.cwd, {
+        repoRoot: fixture.repoRoot,
+        workspaceRelativeDir: "packages/web",
+      });
     } finally {
       fixture.cleanup();
     }

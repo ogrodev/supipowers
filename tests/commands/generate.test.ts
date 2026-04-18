@@ -385,6 +385,64 @@ describe("docs flow", () => {
     );
   });
 
+  test("resolves documentation targets from the repo root when invoked inside a package", async () => {
+    createWorkspaceRepo();
+    const exec = mock(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "ls-files") {
+        return {
+          code: 0,
+          stdout: [
+            "README.md",
+            "packages/pkg-a/README.md",
+            "packages/pkg-b/README.md",
+            "packages/pkg-b/docs/setup.md",
+          ].join("\n"),
+          stderr: "",
+        };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+
+    const platform = createPlatform({ exec } as any);
+    registerGenerateCommand(platform);
+    const handler = (platform.registerCommand as any).mock.calls[0][1].handler;
+
+    let selectCount = 0;
+    const ctx = createContext({
+      cwd: path.join(tmpDir, "packages", "pkg-a"),
+      ui: {
+        notify: mock(),
+        select: mock(async (_title: string, options: string[]) => {
+          selectCount += 1;
+          if (selectCount === 1) {
+            expect(options).toEqual([
+              "○ packages/pkg-b/README.md",
+              "○ packages/pkg-b/docs/setup.md",
+              "─── Add manually ───",
+              "─── Done ───",
+            ]);
+            return "○ packages/pkg-b/README.md";
+          }
+
+          return "─── Done ───";
+        }),
+        input: mock(),
+        confirm: mock(),
+      },
+    });
+
+    await handler("docs --target pkg-b", ctx);
+
+    const targets = discoverWorkspaceTargets(tmpDir, detectPackageManager(tmpDir));
+    const pkgBTarget = targets.find((target) => target.name === "pkg-b");
+    expect(pkgBTarget).toBeDefined();
+    const state = loadState(platform.paths, tmpDir, {
+      target: pkgBTarget!,
+      allTargets: targets,
+    });
+    expect(state.trackedFiles).toEqual(["packages/pkg-b/README.md"]);
+  });
+
   test("subsequent run with no changes notifies user", async () => {
     const paths = createPaths();
     saveState(paths, tmpDir, {
@@ -423,6 +481,9 @@ describe("docs flow", () => {
     });
 
     const exec = mock(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+        return { code: 0, stdout: `${tmpDir}\n`, stderr: "" };
+      }
       if (cmd === "git" && args[0] === "diff" && args[1] === "--name-only") {
         return { code: 0, stdout: "src/app.ts\n", stderr: "" };
       }
@@ -491,11 +552,16 @@ describe("docs flow", () => {
   });
 
   test("first run with no files selected does not save state", async () => {
-    const exec = mock(async () => ({
-      code: 0,
-      stdout: "README.md\n",
-      stderr: "",
-    }));
+    const exec = mock(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+        return { code: 0, stdout: `${tmpDir}\n`, stderr: "" };
+      }
+      return {
+        code: 0,
+        stdout: "README.md\n",
+        stderr: "",
+      };
+    });
     const platform = createPlatform({ exec } as any);
     registerGenerateCommand(platform);
     const call = (platform.registerCommand as any).mock.calls[0];
