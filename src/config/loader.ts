@@ -8,10 +8,7 @@ import type {
   QualityGatesConfig,
 } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
-import {
-  getRootConfigPath,
-  getWorkspaceConfigPath,
-} from "../workspace/state-paths.js";
+import { getRootConfigPath } from "../workspace/state-paths.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import {
   collectConfigValidationErrors,
@@ -38,7 +35,6 @@ export interface QualityGateRecoveryInspection {
 
 export interface ConfigResolutionOptions {
   repoRoot?: string;
-  workspaceRelativeDir?: string | null;
 }
 
 export interface ConfigMutationOptions extends ConfigResolutionOptions {
@@ -47,7 +43,6 @@ export interface ConfigMutationOptions extends ConfigResolutionOptions {
 
 interface ResolvedConfigContext {
   repoRoot: string;
-  workspaceRelativeDir: string | null;
 }
 
 interface ResolvedConfigLayer {
@@ -56,13 +51,7 @@ interface ResolvedConfigLayer {
 }
 
 function resolveConfigContext(cwd: string, options?: ConfigResolutionOptions): ResolvedConfigContext {
-  const repoRoot = options?.repoRoot ?? cwd;
-  const workspaceRelativeDir = options?.workspaceRelativeDir
-    && options.workspaceRelativeDir !== "."
-      ? options.workspaceRelativeDir
-      : null;
-
-  return { repoRoot, workspaceRelativeDir };
+  return { repoRoot: options?.repoRoot ?? cwd };
 }
 
 function getGlobalConfigPath(paths: PlatformPaths): string {
@@ -75,24 +64,18 @@ function getConfigPath(
   scope: ConfigScope,
   options?: ConfigResolutionOptions,
 ): string {
-  const { repoRoot, workspaceRelativeDir } = resolveConfigContext(cwd, options);
+  const { repoRoot } = resolveConfigContext(cwd, options);
 
   switch (scope) {
     case "global":
       return getGlobalConfigPath(paths);
     case "root":
       return getRootConfigPath(paths, repoRoot);
-    case "workspace":
-      if (!workspaceRelativeDir) {
-        throw new Error("Workspace config scope requires a workspaceRelativeDir.");
-      }
-      return getWorkspaceConfigPath(paths, repoRoot, workspaceRelativeDir);
   }
 }
 
-function getInspectionScopes(options?: ConfigResolutionOptions): ConfigScope[] {
-  const { workspaceRelativeDir } = resolveConfigContext(".", options);
-  return workspaceRelativeDir ? ["global", "root", "workspace"] : ["global", "root"];
+function getInspectionScopes(): ConfigScope[] {
+  return ["global", "root"];
 }
 
 function readJsonFile(
@@ -303,7 +286,7 @@ function readConfigLayers(
   cwd: string,
   options?: ConfigResolutionOptions,
  ): ResolvedConfigLayerRead[] {
-  return getInspectionScopes(options).map((scope) => {
+  return getInspectionScopes().map((scope) => {
     const filePath = getConfigPath(paths, cwd, scope, options);
     return {
       scope,
@@ -388,9 +371,7 @@ export function inspectQualityGateRecovery(
   options?: ConfigResolutionOptions,
  ): QualityGateRecoveryInspection {
   return {
-    scopes: getInspectionScopes(options).map((scope) =>
-      inspectScopeConfig(paths, cwd, scope, options),
-    ),
+    scopes: getInspectionScopes().map((scope) => inspectScopeConfig(paths, cwd, scope, options)),
   };
 }
 
@@ -437,10 +418,14 @@ export function removeQualityGatesConfig(
   return true;
 }
 
+function describeConfigSource(source: ConfigParseError["source"]): string {
+  return source === "root" ? "repository" : source;
+}
+
 export function formatConfigErrors(result: InspectionLoadResult): string {
   const messages = [
     ...result.parseErrors.map(
-      (error) => `${error.source} config ${error.path}: ${error.message}`,
+      (error) => `${describeConfigSource(error.source)} config ${error.path}: ${error.message}`,
     ),
     ...result.validationErrors.map(
       (error) => `${error.path}: ${error.message}`,
@@ -450,12 +435,7 @@ export function formatConfigErrors(result: InspectionLoadResult): string {
   return messages.join("\n") || "Unknown config error";
 }
 
-export function inspectConfig(
-  paths: PlatformPaths,
-  cwd: string,
-  options?: ConfigResolutionOptions,
- ): InspectionLoadResult {
-  const layers = readConfigLayers(paths, cwd, options);
+function buildInspectionLoadResult(layers: ResolvedConfigLayerRead[]): InspectionLoadResult {
   const mergedConfig = mergeConfigLayers(
     DEFAULT_CONFIG,
     ...layers.map((layer) => layer.readResult.data),
@@ -476,7 +456,30 @@ export function inspectConfig(
   };
 }
 
-/** Load config with global -> root -> workspace layering over defaults. */
+export function inspectConfigAtScope(
+  paths: PlatformPaths,
+  cwd: string,
+  scope: ConfigScope,
+  options?: ConfigResolutionOptions,
+): InspectionLoadResult {
+  const layers = readConfigLayers(paths, cwd, options).filter((layer) =>
+    scope === "global"
+      ? layer.scope === "global"
+      : layer.scope === "global" || layer.scope === "root",
+  );
+
+  return buildInspectionLoadResult(layers);
+}
+
+export function inspectConfig(
+  paths: PlatformPaths,
+  cwd: string,
+  options?: ConfigResolutionOptions,
+): InspectionLoadResult {
+  return buildInspectionLoadResult(readConfigLayers(paths, cwd, options));
+}
+
+/** Load config with global -> repository layering over defaults. */
 export function loadConfig(
   paths: PlatformPaths,
   cwd: string,
