@@ -188,7 +188,7 @@ describe("session CRUD", () => {
     const dir = getSessionDir(paths, target(tmpDir, "packages/pkg-a"), "fpr-20260312-143000-a1b2");
     expect(dir).toContain("workspaces");
     expect(dir).toContain("fix-pr-sessions");
-    expect(dir).toContain("packages/pkg-a");
+    expect(dir).toContain(path.join("packages", "pkg-a"));
     expect(dir).toContain("fpr-20260312-143000-a1b2");
     cleanup();
   });

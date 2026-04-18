@@ -30,7 +30,9 @@ describe("KnowledgeStore", () => {
 
   afterEach(() => {
     store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (fs.existsSync(tmpDir)) {
+      fs.rmSync(tmpDir, { recursive: true });
+    }
   });
 
   test("index + search round-trip", () => {
@@ -171,10 +173,11 @@ describe("KnowledgeStore", () => {
     expect(remaining.cnt).toBe(1);
   });
 
-  test("close releases WAL resources so the database directory can be removed", () => {
+  test("close is idempotent and releases the database directory for cleanup", () => {
     store.index([makeChunk("Cleanup", "release file locks before teardown")], "cleanup");
 
     store.close();
+    expect(() => store.close()).not.toThrow();
 
     expect(() => fs.rmSync(tmpDir, { recursive: true })).not.toThrow();
     expect(fs.existsSync(tmpDir)).toBe(false);

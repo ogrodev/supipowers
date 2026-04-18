@@ -21,7 +21,9 @@ beforeEach(() => {
 
 afterEach(() => {
   store.close();
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (fs.existsSync(tmpDir)) {
+    fs.rmSync(tmpDir, { recursive: true });
+  }
 });
 
 function event(
@@ -388,14 +390,11 @@ describe("EventStore edge cases", () => {
     s2.close();
   });
 
-  test("close() handles WAL sidecars without breaking repeated close or reopen", () => {
+  test("close() stays idempotent, preserves data across reopen, and leaves the directory removable", () => {
     const dbPath = path.join(tmpDir, "sidecars.db");
-    const sidecars = [`${dbPath}-wal`, `${dbPath}-shm`];
     const sidecarStore = new EventStore(dbPath);
     sidecarStore.init();
     sidecarStore.writeEvent(event("file", '{"op":"read"}', { sessionId: "sidecar-session" }));
-
-    expect(sidecars.some((file) => fs.existsSync(file))).toBe(true);
 
     sidecarStore.close();
     expect(() => sidecarStore.close()).not.toThrow();
@@ -404,6 +403,8 @@ describe("EventStore edge cases", () => {
     reopened.init();
     expect(reopened.getEvents("sidecar-session")).toHaveLength(1);
     reopened.close();
+    expect(() => fs.rmSync(tmpDir, { recursive: true })).not.toThrow();
+    expect(fs.existsSync(tmpDir)).toBe(false);
   });
 
 

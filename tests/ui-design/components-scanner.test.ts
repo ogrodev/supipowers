@@ -51,4 +51,34 @@ describe("components scanner", () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.path).toBe("dist/Compiled.tsx");
   });
+
+  test("normalizes discovered repo-relative paths before excludes and output", async () => {
+    const originalScan = Bun.Glob.prototype.scan;
+    Object.defineProperty(Bun.Glob.prototype, "scan", {
+      configurable: true,
+      value: async function* scanWithWindowsSeparators() {
+        yield "components\\Button.tsx";
+        yield "dist\\Compiled.tsx";
+      },
+    });
+
+    try {
+      const result = await scanExistingComponents(path.join(FIXTURES, "react-components"));
+      expect(result.status).toBe("ok");
+      if (result.status !== "ok") throw new Error("expected ok");
+      expect(result.items).toEqual([
+        {
+          name: "Button",
+          path: "components/Button.tsx",
+          framework: "react",
+          exports: ["Button"],
+        },
+      ]);
+    } finally {
+      Object.defineProperty(Bun.Glob.prototype, "scan", {
+        configurable: true,
+        value: originalScan,
+      });
+    }
+  });
 });

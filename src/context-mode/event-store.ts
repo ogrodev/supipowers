@@ -142,9 +142,41 @@ export class EventStore {
   }
 
   init(): void {
-    this.#db.exec("PRAGMA journal_mode = WAL;");
+    this.#ensureDeleteJournalMode();
     this.#migrate();
     this.#db.exec(SCHEMA);
+  }
+
+  #ensureDeleteJournalMode(): void {
+    const journalMode = this.#getJournalMode();
+    if (journalMode === "delete") return;
+
+    if (journalMode === "wal") {
+      this.#cleanupWalSidecars();
+    }
+
+    try {
+      this.#db.exec("PRAGMA journal_mode = DELETE;");
+    } catch {
+      // Older WAL-backed databases can stay on WAL for this process.
+      // close() still checkpoints them so teardown and the next reopen succeed.
+    }
+  }
+
+  #getJournalMode(): string {
+    const { journal_mode } = this.#db.prepare("PRAGMA journal_mode").get() as {
+      journal_mode: string;
+    };
+    return journal_mode.toLowerCase();
+  }
+
+  #cleanupWalSidecars(): void {
+    try {
+      this.#db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+      this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    } catch {
+      // Best effort only: close() still releases the handle in finally.
+    }
   }
 
   // ── Schema migration ────────────────────────────────────────
@@ -379,10 +411,13 @@ export class EventStore {
     if (this.#closed) return;
 
     try {
-      // Mirror Bun's documented WAL cleanup path so Windows releases the main
-      // database file instead of leaving teardown to fight lingering sidecar locks.
-      this.#db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
-      this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      try {
+        if (this.#getJournalMode() === "wal") {
+          this.#cleanupWalSidecars();
+        }
+      } catch {
+        // The DB path may already be gone during teardown; still close the handle.
+      }
     } finally {
       this.#db.close();
       this.#closed = true;

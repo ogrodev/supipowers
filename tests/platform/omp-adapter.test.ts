@@ -1,4 +1,5 @@
 import { describe, expect, it, mock, test } from "bun:test";
+import * as path from "node:path";
 import { createOmpAdapter } from "../../src/platform/omp.js";
 
 function createMockOmpApi() {
@@ -30,7 +31,9 @@ describe("createOmpAdapter", () => {
   it("has OMP paths using .omp directory", () => {
     const adapter = createOmpAdapter(createMockOmpApi());
     expect(adapter.paths.dotDir).toBe(".omp");
-    expect(adapter.paths.project("/proj", "plans")).toContain(".omp/supipowers/plans");
+    expect(adapter.paths.project("/proj", "plans")).toBe(
+      path.join("/proj", ".omp", "supipowers", "plans"),
+    );
   });
 
   it("normalizes input event: { action: 'handled' } → { handled: true }", () => {

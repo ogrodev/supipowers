@@ -32,7 +32,9 @@ beforeEach(() => {
 
 afterEach(() => {
   store.close();
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (fs.existsSync(tmpDir)) {
+    fs.rmSync(tmpDir, { recursive: true });
+  }
 });
 
 function registerAll() {

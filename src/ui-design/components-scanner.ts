@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExistingComponent } from "./types.js";
+import { normalizeRepoPath } from "../workspace/path-mapping.js";
 
 export interface ScanExistingComponentsOptions {
   globs?: string[];
@@ -82,11 +83,12 @@ export async function scanExistingComponents(
     for (const pattern of globs) {
       const glob = new Bun.Glob(pattern);
       for await (const match of glob.scan({ cwd: repoRoot, onlyFiles: true })) {
-        if (seen.has(match)) continue;
-        if (matchesExcludePattern(match, excludes)) continue;
-        seen.add(match);
+        const repoRelativePath = normalizeRepoPath(match);
+        if (seen.has(repoRelativePath)) continue;
+        if (matchesExcludePattern(repoRelativePath, excludes)) continue;
+        seen.add(repoRelativePath);
 
-        const absPath = path.join(repoRoot, match);
+        const absPath = path.join(repoRoot, repoRelativePath);
         let content = "";
         try {
           content = fs.readFileSync(absPath, "utf-8");
@@ -95,9 +97,9 @@ export async function scanExistingComponents(
         }
 
         items.push({
-          name: inferName(match),
-          path: match,
-          framework: detectFramework(match),
+          name: inferName(repoRelativePath),
+          path: repoRelativePath,
+          framework: detectFramework(repoRelativePath),
           exports: extractExports(content),
         });
 

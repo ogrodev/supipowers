@@ -131,7 +131,7 @@ function createPlatform(options?: {
         }
       }
 
-      if (cmd === "sh") {
+      if (cmd === "sh" || cmd === "cmd") {
         return { stdout: "", stderr: "", code: 0 };
       }
 

@@ -73,11 +73,43 @@ export class KnowledgeStore {
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     this._db = new Database(dbPath);
-    this._db.exec("PRAGMA journal_mode=WAL");
   }
 
   init(): void {
+    this.#ensureDeleteJournalMode();
     this._db.exec(SCHEMA);
+  }
+
+  #ensureDeleteJournalMode(): void {
+    const journalMode = this.#getJournalMode();
+    if (journalMode === "delete") return;
+
+    if (journalMode === "wal") {
+      this.#cleanupWalSidecars();
+    }
+
+    try {
+      this._db.exec("PRAGMA journal_mode = DELETE");
+    } catch {
+      // Older WAL-backed databases can stay on WAL for this process.
+      // close() still checkpoints them so teardown and the next reopen succeed.
+    }
+  }
+
+  #getJournalMode(): string {
+    const { journal_mode } = this._db.prepare("PRAGMA journal_mode").get() as {
+      journal_mode: string;
+    };
+    return journal_mode.toLowerCase();
+  }
+
+  #cleanupWalSidecars(): void {
+    try {
+      this._db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+      this._db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch {
+      // Best effort only: close() still releases the handle in finally.
+    }
   }
   index(chunks: Chunk[], source: string): void {
     const del = this._db.prepare("DELETE FROM content_chunks WHERE source = ?");
@@ -176,9 +208,13 @@ export class KnowledgeStore {
     if (this.#closed) return;
 
     try {
-      // Bun's documented WAL cleanup path prevents lingering sidecar/lock issues on close.
-      this._db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
-      this._db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      try {
+        if (this.#getJournalMode() === "wal") {
+          this.#cleanupWalSidecars();
+        }
+      } catch {
+        // The DB path may already be gone during teardown; still close the handle.
+      }
     } finally {
       this._db.close();
       this.#closed = true;
