@@ -375,3 +375,34 @@ describe("selector labels", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PlanSpec validation gate (P3-03)
+// ---------------------------------------------------------------------------
+
+describe("PlanSpec validation gate", () => {
+  test("invalid plan triggers a retry steer and suppresses approval UI", async () => {
+    // Plan file has no frontmatter AND an empty filename — parsePlan returns
+    // name: "" which violates PlanSpecSchema's `name: minLength 1`.
+    mockListPlans
+      .mockReturnValueOnce([]) // startPlanTracking
+      .mockReturnValue([".md"]);
+    mockReadPlanFile.mockReturnValue("no frontmatter, no tasks");
+
+    const ctx = makeCtx();
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
+
+    const platform = makePlatform();
+    registerPlanApprovalHook(platform as any);
+
+    await platform.fireAgentEnd(ctx);
+
+    // Approval UI must NOT be shown.
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    // A retry steer must be sent so the agent can fix the plan.
+    expect(platform.sendMessage).toHaveBeenCalledTimes(1);
+    const [msg, opts] = platform.sendMessage.mock.calls[0];
+    expect(msg.customType).toBe("supi-plan-invalid");
+    expect(opts).toEqual({ deliverAs: "steer", triggerTurn: true });
+  });
+});
