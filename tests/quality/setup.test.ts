@@ -53,8 +53,9 @@ function createInspection(): InspectionLoadResult {
   };
 }
 
-function writePackageJson(tmpDir: string, data: unknown): void {
-  fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify(data, null, 2));
+function writePackageJson(dir: string, data: unknown): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(data, null, 2));
 }
 
 function writeProjectConfig(localPaths: ReturnType<typeof createPaths>, cwd: string, data: unknown): void {
@@ -106,6 +107,118 @@ describe("setupGates", () => {
     }
     expect(result.proposal).toMatchObject({
       gates: { "test-suite": { enabled: true, command: "bun test" } },
+    });
+  });
+
+
+  test("keeps workspace-only commands as proposal notes instead of auto-configuring them", async () => {
+    writePackageJson(tmpDir, {
+      name: "repo-root",
+      private: true,
+      workspaces: ["packages/*"],
+      scripts: { test: "bun test" },
+      packageManager: "bun@1.3.10",
+    });
+    writePackageJson(path.join(tmpDir, "packages", "web"), {
+      name: "web",
+      scripts: { typecheck: "tsc --noEmit", test: "bun test" },
+    });
+    writePackageJson(path.join(tmpDir, "packages", "api"), {
+      name: "api",
+      scripts: { checkTypes: "tsc --noEmit", test: "bun test" },
+    });
+
+    const result = await setupGates(
+      createPlatform(localPaths),
+      tmpDir,
+      createInspection(),
+      { mode: "deterministic" },
+    );
+
+    expect(result.status).toBe("proposed");
+    if (result.status !== "proposed") {
+      throw new Error("Expected a proposed setup result");
+    }
+    expect(result.proposal.gates["typecheck"]).toBeUndefined();
+    expect(result.proposal.notes).toEqual(
+      expect.arrayContaining([expect.stringContaining("workspace targets only")]),
+    );
+  });
+
+  test("auto-configures commands shared across all targets even when script names differ", async () => {
+    writePackageJson(tmpDir, {
+      name: "repo-root",
+      private: true,
+      workspaces: ["packages/*"],
+      scripts: { checkTypes: "tsc --noEmit", test: "bun test" },
+      packageManager: "bun@1.3.10",
+    });
+    writePackageJson(path.join(tmpDir, "packages", "web"), {
+      name: "web",
+      scripts: { typecheck: "tsc --noEmit", test: "bun test" },
+    });
+    writePackageJson(path.join(tmpDir, "packages", "api"), {
+      name: "api",
+      scripts: { types: "tsc --noEmit", test: "bun test" },
+    });
+
+    const result = await setupGates(
+      createPlatform(localPaths),
+      tmpDir,
+      createInspection(),
+      { mode: "deterministic" },
+    );
+
+    expect(result.status).toBe("proposed");
+    if (result.status !== "proposed") {
+      throw new Error("Expected a proposed setup result");
+    }
+    expect(result.proposal.gates["typecheck"]).toEqual({ enabled: true, command: "tsc --noEmit" });
+    expect(result.proposal.notes).toEqual(
+      expect.arrayContaining([expect.stringContaining("shared across all targets")]),
+    );
+  });
+
+  test("passes per-target package scripts to AI-assisted setup in monorepos", async () => {
+    writePackageJson(tmpDir, {
+      name: "repo-root",
+      private: true,
+      workspaces: ["packages/*"],
+      scripts: { test: "bun test" },
+      packageManager: "bun@1.3.10",
+    });
+    writePackageJson(path.join(tmpDir, "packages", "web"), {
+      name: "web",
+      scripts: { typecheck: "tsc --noEmit", test: "bun test" },
+    });
+    writePackageJson(path.join(tmpDir, "packages", "api"), {
+      name: "api",
+      scripts: { typecheck: "tsc --noEmit", test: "bun test" },
+    });
+
+    let receivedFacts: any = null;
+    const result = await setupGates(
+      createPlatform(localPaths),
+      tmpDir,
+      createInspection(),
+      { mode: "ai-assisted" },
+      {
+        suggestWithAi: mock(async ({ projectFacts }) => {
+          receivedFacts = projectFacts;
+          return { typecheck: { enabled: true, command: "tsc --noEmit" } };
+        }),
+      },
+    );
+
+    expect(result.status).toBe("proposed");
+    expect(receivedFacts).toMatchObject({
+      cwd: tmpDir,
+      packageScripts: { test: "bun test" },
+      targets: [
+        { name: "repo-root", kind: "root", relativeDir: ".", packageScripts: { test: "bun test" } },
+        { name: "api", kind: "workspace", relativeDir: "packages/api", packageScripts: { typecheck: "tsc --noEmit", test: "bun test" } },
+        { name: "web", kind: "workspace", relativeDir: "packages/web", packageScripts: { typecheck: "tsc --noEmit", test: "bun test" } },
+      ],
     });
   });
 });

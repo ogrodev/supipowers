@@ -43,6 +43,14 @@ describe("lspDiagnosticsGate.detect", () => {
         lockfiles: [],
         activeTools: ["typescript:lsp"],
         existingGates: {},
+        targets: [
+          {
+            name: "project",
+            kind: "root",
+            relativeDir: ".",
+            packageScripts: {},
+          },
+        ],
       }),
     ).toEqual({
       suggestedConfig: { enabled: true },

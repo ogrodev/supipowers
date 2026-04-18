@@ -11,6 +11,14 @@ function createProjectFacts(testScript?: string): ProjectFacts {
     lockfiles: [],
     activeTools: [],
     existingGates: {},
+    targets: [
+      {
+        name: "repo",
+        kind: "root",
+        relativeDir: ".",
+        packageScripts: testScript ? { test: testScript } : {},
+      },
+    ],
   };
 }
 
