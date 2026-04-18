@@ -1,5 +1,4 @@
 import fixFindingsPrompt from "./prompts/fix-findings.md" with { type: "text" };
-import fixOutputSchemaPrompt from "./prompts/fix-output-schema.md" with { type: "text" };
 import type {
   GateExecutionContext,
   ReviewFinding,
@@ -8,9 +7,12 @@ import type {
   ReviewOutput,
   ReviewScope,
 } from "../types.js";
-import { parseStructuredOutput, runWithOutputValidation } from "./output.js";
+import { parseStructuredOutput, runWithOutputValidation, type ReliabilityReporter } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
 import { ReviewFixOutputSchema } from "./types.js";
-import { renderReviewTemplate } from "./template.js";
+import { renderTemplate } from "../ai/template.js";
+
+const REVIEW_FIX_OUTPUT_SCHEMA_TEXT = renderSchemaText(ReviewFixOutputSchema);
 
 export interface ReviewFixInput {
   cwd: string;
@@ -20,6 +22,7 @@ export interface ReviewFixInput {
   model?: string;
   thinkingLevel?: string | null;
   timeoutMs?: number;
+  reliability?: ReliabilityReporter;
 }
 
 export interface ReviewFixRunResult {
@@ -127,10 +130,10 @@ function normalizeFixOutput(
 }
 
 export function buildFixPrompt(scope: ReviewScope, findings: ReviewFinding[]): string {
-  return renderReviewTemplate(fixFindingsPrompt, {
+  return renderTemplate(fixFindingsPrompt, {
     scope,
     findingsJson: JSON.stringify(findings, null, 2),
-    fixOutputSchema: fixOutputSchemaPrompt.trim(),
+    fixOutputSchema: REVIEW_FIX_OUTPUT_SCHEMA_TEXT,
   });
 }
 
@@ -158,13 +161,14 @@ export async function runAutoFix(input: ReviewFixInput): Promise<ReviewFixRunRes
   const result = await runWithOutputValidation(input.createAgentSession, {
     cwd: input.cwd,
     prompt: buildFixPrompt(input.scope, fixableFindings),
-    schema: fixOutputSchemaPrompt.trim(),
+    schema: REVIEW_FIX_OUTPUT_SCHEMA_TEXT,
     parse(raw) {
       return parseStructuredOutput<ReviewFixOutput>(raw, ReviewFixOutputSchema);
     },
     model: input.model,
     thinkingLevel: input.thinkingLevel ?? null,
     timeoutMs: input.timeoutMs ?? 180_000,
+    reliability: input.reliability,
   });
 
   if (result.status === "blocked") {

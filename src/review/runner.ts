@@ -1,8 +1,12 @@
-import reviewOutputSchema from "./prompts/review-output-schema.md" with { type: "text" };
 import singleReviewPrompt from "./prompts/single-review.md" with { type: "text" };
 import type { GateExecutionContext, ReviewLevel, ReviewOutput, ReviewScope } from "../types.js";
-import { explainReviewOutputFailure, parseReviewOutput, runWithOutputValidation } from "./output.js";
-import { renderReviewTemplate } from "./template.js";
+import { runWithOutputValidation, type ReliabilityReporter } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
+import { explainReviewOutputFailure, parseReviewOutput } from "./output.js";
+import { renderTemplate } from "../ai/template.js";
+import { ReviewOutputSchema } from "./types.js";
+
+const REVIEW_OUTPUT_SCHEMA_TEXT = renderSchemaText(ReviewOutputSchema);
 
 export type SingleReviewLevel = Extract<ReviewLevel, "quick" | "deep">;
 
@@ -14,6 +18,7 @@ export interface SingleReviewRunnerInput {
   model?: string;
   thinkingLevel?: string | null;
   timeoutMs?: number;
+  reliability?: ReliabilityReporter;
 }
 
 export interface SingleReviewRunResult {
@@ -70,12 +75,12 @@ export function normalizeReviewOutput(output: ReviewOutput): ReviewOutput {
 }
 
 export function buildSingleReviewPrompt(scope: ReviewScope, level: SingleReviewLevel): string {
-  return renderReviewTemplate(singleReviewPrompt, {
+  return renderTemplate(singleReviewPrompt, {
     level,
     scope,
     isQuick: level === "quick",
     isDeep: level === "deep",
-    outputSchema: reviewOutputSchema.trim(),
+    outputSchema: REVIEW_OUTPUT_SCHEMA_TEXT,
   });
 }
 
@@ -83,7 +88,7 @@ export async function runSingleReview(input: SingleReviewRunnerInput): Promise<S
   const result = await runWithOutputValidation(input.createAgentSession, {
     cwd: input.cwd,
     prompt: buildSingleReviewPrompt(input.scope, input.level),
-    schema: reviewOutputSchema.trim(),
+    schema: REVIEW_OUTPUT_SCHEMA_TEXT,
     parse(raw) {
       const output = parseReviewOutput(raw);
       return {
@@ -94,6 +99,7 @@ export async function runSingleReview(input: SingleReviewRunnerInput): Promise<S
     model: input.model,
     thinkingLevel: input.thinkingLevel ?? null,
     timeoutMs: input.timeoutMs ?? 120_000,
+    reliability: input.reliability,
   });
 
   if (result.status === "blocked") {

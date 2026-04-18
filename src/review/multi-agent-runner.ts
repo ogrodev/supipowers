@@ -1,9 +1,13 @@
 import agentReviewWrapperPrompt from "./prompts/agent-review-wrapper.md" with { type: "text" };
 import outputInstructionsPrompt from "./prompts/output-instructions.md" with { type: "text" };
-import reviewOutputSchema from "./prompts/review-output-schema.md" with { type: "text" };
 import type { ConfiguredReviewAgent, GateExecutionContext, ReviewOutput, ReviewScope } from "../types.js";
-import { explainReviewOutputFailure, parseReviewOutput, runWithOutputValidation } from "./output.js";
-import { renderReviewTemplate } from "./template.js";
+import { runWithOutputValidation, type ReliabilityReporter } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
+import { explainReviewOutputFailure, parseReviewOutput } from "./output.js";
+import { renderTemplate } from "../ai/template.js";
+import { ReviewOutputSchema } from "./types.js";
+
+const REVIEW_OUTPUT_SCHEMA_TEXT = renderSchemaText(ReviewOutputSchema);
 
 export interface MultiAgentReviewInput {
   cwd: string;
@@ -15,6 +19,7 @@ export interface MultiAgentReviewInput {
   timeoutMs?: number;
   onAgentStart?: (agent: ConfiguredReviewAgent) => void;
   onAgentComplete?: (result: MultiAgentAgentResult) => void;
+  reliability?: ReliabilityReporter;
 }
 
 export interface MultiAgentAgentResult {
@@ -30,8 +35,8 @@ export interface MultiAgentReviewResult {
 }
 
 function renderOutputInstructions(): string {
-  return renderReviewTemplate(outputInstructionsPrompt, {
-    outputSchema: reviewOutputSchema.trim(),
+  return renderTemplate(outputInstructionsPrompt, {
+    outputSchema: REVIEW_OUTPUT_SCHEMA_TEXT,
   });
 }
 
@@ -41,12 +46,10 @@ export function buildConfiguredAgentPrompt(agent: ConfiguredReviewAgent, scope: 
   }
 
   const outputInstructions = renderOutputInstructions();
-  const agentPrompt = renderReviewTemplate(
-    agent.prompt.replaceAll("{output_instructions}", "{{outputInstructions}}"),
-    { outputInstructions },
-  );
+  const agentPrompt = renderTemplate(agent.prompt.replaceAll("{output_instructions}", "{{outputInstructions}}"),
+  { outputInstructions },);
 
-  return renderReviewTemplate(agentReviewWrapperPrompt, {
+  return renderTemplate(agentReviewWrapperPrompt, {
     agent,
     agentPrompt,
     scope,
@@ -79,7 +82,7 @@ async function runConfiguredAgent(
   const result = await runWithOutputValidation(input.createAgentSession, {
     cwd: input.cwd,
     prompt: buildConfiguredAgentPrompt(agent, input.scope),
-    schema: reviewOutputSchema.trim(),
+    schema: REVIEW_OUTPUT_SCHEMA_TEXT,
     parse(raw) {
       const output = parseReviewOutput(raw);
       return {
@@ -90,6 +93,7 @@ async function runConfiguredAgent(
     model: agent.model ?? input.model,
     thinkingLevel: agent.thinkingLevel ?? input.thinkingLevel ?? null,
     timeoutMs: input.timeoutMs ?? 120_000,
+    reliability: input.reliability,
   });
 
   if (result.status === "blocked") {

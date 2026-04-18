@@ -1,5 +1,4 @@
 import { Type } from "@sinclair/typebox";
-import type { TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
   ConfiguredReviewAgent,
@@ -222,25 +221,6 @@ export const ReviewSessionSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export interface ReviewValidationError {
-  path: string;
-  message: string;
-}
-
-function normalizeErrorPath(path: string): string {
-  return path.replace(/^\//, "").replace(/\//g, ".") || "(root)";
-}
-
-export function collectReviewValidationErrors(schema: TSchema, data: unknown): ReviewValidationError[] {
-  return [...Value.Errors(schema, data)].map((error) => ({
-    path: normalizeErrorPath(error.path),
-    message: error.message,
-  }));
-}
-
-export function formatReviewValidationErrors(errors: ReviewValidationError[]): string[] {
-  return errors.map((error) => `${error.path}: ${error.message}`);
-}
 
 export function isReviewScopeFile(value: unknown): value is ReviewScopeFile {
   return Value.Check(ReviewScopeFileSchema, value);

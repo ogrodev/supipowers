@@ -13,16 +13,16 @@ import type {
 } from "../types.js";
 import { normalizeLineEndings } from "../text.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
+import { resolveRepoRootFromFs } from "../workspace/repo-root.js";
 import {
   getRootStateDir,
   getWorkspaceStateDir,
 } from "../workspace/state-paths.js";
 import { discoverWorkspaceTargets } from "../workspace/targets.js";
+import { collectValidationErrors, formatValidationErrors } from "../ai/structured-output.js";
 import {
   ReviewAgentFrontmatterSchema,
   ReviewAgentsConfigSchema,
-  collectReviewValidationErrors,
-  formatReviewValidationErrors,
 } from "./types.js";
 
 const REVIEW_AGENTS_DIR = "review-agents";
@@ -144,7 +144,7 @@ function migrateConfigIfNeeded(configPath: string): void {
 }
 
 function validateReviewAgentsConfig(data: unknown): ReviewAgentsConfig {
-  const errors = formatReviewValidationErrors(collectReviewValidationErrors(ReviewAgentsConfigSchema, data));
+  const errors = formatValidationErrors(collectValidationErrors(ReviewAgentsConfigSchema, data));
   if (errors.length > 0) {
     throw new Error(`Invalid review-agents config: ${errors.join("; ")}`);
   }
@@ -177,9 +177,7 @@ function parseFrontmatter(frontmatter: string, filePath: string): ReviewAgentDef
     metadata[key] = value;
   }
 
-  const errors = formatReviewValidationErrors(
-    collectReviewValidationErrors(ReviewAgentFrontmatterSchema, metadata),
-  );
+  const errors = formatValidationErrors(collectValidationErrors(ReviewAgentFrontmatterSchema, metadata),);
   if (errors.length > 0) {
     throw new Error(`Invalid agent frontmatter in ${filePath}: ${errors.join("; ")}`);
   }
@@ -244,61 +242,12 @@ export function getWorkspaceReviewAgentsConfigPath(
   return path.join(getWorkspaceReviewAgentsDir(paths, repoRoot, workspaceRelativeDir), CONFIG_FILE);
 }
 
-function hasWorkspaceManifest(repoRoot: string): boolean {
-  if (fs.existsSync(path.join(repoRoot, "pnpm-workspace.yaml"))) {
-    return true;
-  }
-
-  const manifestPath = path.join(repoRoot, "package.json");
-  if (!fs.existsSync(manifestPath)) {
-    return false;
-  }
-
-  try {
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as {
-      workspaces?: unknown;
-    };
-    if (Array.isArray(manifest.workspaces)) {
-      return manifest.workspaces.some((entry) => typeof entry === "string" && entry.length > 0);
-    }
-
-    const workspaces = manifest.workspaces;
-    if (!workspaces || typeof workspaces !== "object" || Array.isArray(workspaces)) {
-      return false;
-    }
-
-    const packages = (workspaces as { packages?: unknown }).packages;
-    return Array.isArray(packages) && packages.some((entry) => typeof entry === "string" && entry.length > 0);
-  } catch {
-    return false;
-  }
-}
-
-function resolveRepoRoot(cwd: string): string {
-  let current = path.resolve(cwd);
-  let packageRoot: string | null = null;
-
-  while (true) {
-    if (fs.existsSync(path.join(current, "package.json"))) {
-      packageRoot ??= current;
-      if (hasWorkspaceManifest(current)) {
-        return current;
-      }
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return packageRoot ?? path.resolve(cwd);
-    }
-    current = parent;
-  }
-}
 
 export function resolveReviewAgentContext(
   cwd: string,
   options?: ReviewAgentLoadOptions,
 ): ResolvedReviewAgentContext {
-  const repoRoot = options?.repoRoot ?? resolveRepoRoot(cwd);
+  const repoRoot = options?.repoRoot ?? resolveRepoRootFromFs(cwd);
   const explicitWorkspaceRelativeDir = options?.workspaceRelativeDir;
   if (explicitWorkspaceRelativeDir !== undefined) {
     return {

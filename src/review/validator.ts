@@ -1,8 +1,12 @@
-import reviewOutputSchema from "./prompts/review-output-schema.md" with { type: "text" };
 import validationReviewPrompt from "./prompts/validation-review.md" with { type: "text" };
 import type { GateExecutionContext, ReviewFinding, ReviewOutput, ReviewScope } from "../types.js";
-import { explainReviewOutputFailure, parseReviewOutput, runWithOutputValidation } from "./output.js";
-import { renderReviewTemplate } from "./template.js";
+import { runWithOutputValidation, type ReliabilityReporter } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
+import { explainReviewOutputFailure, parseReviewOutput } from "./output.js";
+import { renderTemplate } from "../ai/template.js";
+import { ReviewOutputSchema } from "./types.js";
+
+const REVIEW_OUTPUT_SCHEMA_TEXT = renderSchemaText(ReviewOutputSchema);
 
 export interface ReviewValidationInput {
   cwd: string;
@@ -14,6 +18,7 @@ export interface ReviewValidationInput {
   timeoutMs?: number;
   validatorName?: string;
   now?: () => Date;
+  reliability?: ReliabilityReporter;
 }
 
 export interface ReviewValidationResult {
@@ -80,12 +85,12 @@ export function buildValidationPrompt(
   validatorName: string,
   validatedAt: string,
 ): string {
-  return renderReviewTemplate(validationReviewPrompt, {
+  return renderTemplate(validationReviewPrompt, {
     scope,
     findingsJson: JSON.stringify(findings, null, 2),
     validatorName,
     validatedAt,
-    outputSchema: reviewOutputSchema.trim(),
+    outputSchema: REVIEW_OUTPUT_SCHEMA_TEXT,
   });
 }
 
@@ -107,7 +112,7 @@ export async function validateReviewFindings(input: ReviewValidationInput): Prom
   const result = await runWithOutputValidation(input.createAgentSession, {
     cwd: input.cwd,
     prompt: buildValidationPrompt(input.scope, input.findings, validatorName, validatedAt),
-    schema: reviewOutputSchema.trim(),
+    schema: REVIEW_OUTPUT_SCHEMA_TEXT,
     parse(raw) {
       const output = parseReviewOutput(raw);
       return {
@@ -118,6 +123,7 @@ export async function validateReviewFindings(input: ReviewValidationInput): Prom
     model: input.model,
     thinkingLevel: input.thinkingLevel ?? null,
     timeoutMs: input.timeoutMs ?? 120_000,
+    reliability: input.reliability,
   });
 
   if (result.status === "blocked") {
