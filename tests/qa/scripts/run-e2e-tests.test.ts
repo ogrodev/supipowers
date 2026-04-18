@@ -1,63 +1,79 @@
-
+import { beforeEach, afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
-const SCRIPT_PATH = path.resolve(__dirname, "../../../src/qa/scripts/run-e2e-tests.sh");
+const RUNNER_PATH = path.resolve(import.meta.dir, "../../../src/qa/scripts/run-e2e-tests.ts");
 
-/**
- * Create a fake `playwright-cli` binary that writes JSON to stdout and exits with the given code.
- * The '\'' idiom (end quote, escaped quote, start quote) embeds literal single quotes
- * inside a single-quoted bash string, keeping $() and backticks inert.
- */
-function writeFakePlaywright(binDir: string, jsonOutput: string, exitCode = 0): void {
-  const script = `#!/usr/bin/env bash
-echo '${jsonOutput.replace(/'/g, "'\\''")}'
-exit ${exitCode}
-`;
-  const binPath = path.join(binDir, "playwright-cli");
-  fs.writeFileSync(binPath, script, { mode: 0o755 });
+function installFakePlaywright(binDir: string): void {
+  const runnerScriptPath = path.join(binDir, "playwright-cli-runner.js");
+  fs.writeFileSync(
+    runnerScriptPath,
+    [
+      "const fs = require('node:fs');",
+      "const argsFile = process.env.PW_ARGS_FILE;",
+      "if (argsFile) fs.writeFileSync(argsFile, process.argv.slice(2).join(' '));",
+      "process.stdout.write(process.env.PW_STDOUT ?? '');",
+      "process.stderr.write(process.env.PW_STDERR ?? '');",
+      "process.exit(Number(process.env.PW_EXIT_CODE ?? '0'));",
+      "",
+    ].join("\n"),
+  );
+
+  if (process.platform === "win32") {
+    fs.writeFileSync(
+      path.join(binDir, "playwright-cli.cmd"),
+      `@echo off\r\n"${process.execPath}" "%~dp0\\playwright-cli-runner.js" %*\r\n`,
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    path.join(binDir, "playwright-cli"),
+    `#!${process.execPath}\nrequire("./playwright-cli-runner.js");\n`,
+    { mode: 0o755 },
+  );
 }
 
-/** Create a fake `playwright-cli` that writes nothing to stdout */
-function writeSilentPlaywright(binDir: string, exitCode = 1): void {
-  const script = `#!/usr/bin/env bash
-exit ${exitCode}
-`;
-  const binPath = path.join(binDir, "playwright-cli");
-  fs.writeFileSync(binPath, script, { mode: 0o755 });
-}
-
-/** Run the script with a custom PATH that includes the fake playwright-cli */
-function runScript(
+function runRunner(
   binDir: string,
   testDir: string,
   baseUrl: string,
-  opts?: { testFilter?: string; env?: NodeJS.ProcessEnv; cwd?: string },
+  opts?: {
+    testFilter?: string;
+    env?: NodeJS.ProcessEnv;
+    cwd?: string;
+  },
 ): { stdout: string; exitCode: number } {
-  const args = [testDir, baseUrl];
-  if (opts?.testFilter) args.push(opts.testFilter);
+  const args = [RUNNER_PATH, testDir, baseUrl];
+  if (opts?.testFilter) {
+    args.push(opts.testFilter);
+  }
 
-  const env = opts?.env ?? {
+  const env = {
     ...process.env,
-    PATH: `${binDir}:${process.env.PATH}`,
+    PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    ...opts?.env,
   };
 
   try {
-    const stdout = execSync(`bash "${SCRIPT_PATH}" ${args.map((a) => `"${a}"`).join(" ")}`, {
+    const stdout = execFileSync(process.execPath, args, {
       env,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       cwd: opts?.cwd,
     });
     return { stdout: stdout.trim(), exitCode: 0 };
-  } catch (err: any) {
-    return { stdout: (err.stdout || "").trim(), exitCode: err.status ?? 1 };
+  } catch (error: any) {
+    return {
+      stdout: String(error.stdout ?? "").trim(),
+      exitCode: error.status ?? 1,
+    };
   }
 }
 
-describe("run-e2e-tests.sh", () => {
+describe("run-e2e-tests.ts", () => {
   let tmpDir: string;
   let binDir: string;
   let testDir: string;
@@ -75,14 +91,12 @@ describe("run-e2e-tests.sh", () => {
   });
 
   test("exits with error JSON when playwright is not installed", () => {
-    // PATH excludes playwright, cwd has no node_modules — both detection paths fail.
-    // node is intentionally unreachable on this PATH; the script exits before the node parser.
     const env = {
       ...process.env,
-      PATH: "/usr/bin:/bin",
+      PATH: process.platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin",
     };
 
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000", {
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
       env,
       cwd: tmpDir,
     });
@@ -94,10 +108,50 @@ describe("run-e2e-tests.sh", () => {
     expect(result.total).toBe(0);
   });
 
-  test("exits with error JSON when playwright produces no output", () => {
-    writeSilentPlaywright(binDir, 1);
+  test("uses local node_modules/.bin fallback when PATH does not contain playwright", () => {
+    const localBinDir = path.join(tmpDir, "node_modules", ".bin");
+    fs.mkdirSync(localBinDir, { recursive: true });
+    installFakePlaywright(localBinDir);
 
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+    const pwOutput = JSON.stringify({
+      suites: [
+        {
+          title: "Smoke",
+          specs: [
+            {
+              title: "loads",
+              file: "smoke.spec.ts",
+              tests: [{ results: [{ status: "passed", duration: 100 }] }],
+            },
+          ],
+          suites: [],
+        },
+      ],
+    });
+
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PATH: process.platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin",
+        PW_STDOUT: pwOutput,
+        PW_EXIT_CODE: "0",
+      },
+      cwd: tmpDir,
+    });
+
+    expect(exitCode).toBe(0);
+    const result = JSON.parse(stdout);
+    expect(result.passed).toBe(1);
+  });
+
+  test("exits with error JSON when playwright produces no output", () => {
+    installFakePlaywright(binDir);
+
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_EXIT_CODE: "1",
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(1);
     const result = JSON.parse(stdout);
@@ -106,6 +160,7 @@ describe("run-e2e-tests.sh", () => {
   });
 
   test("parses passing test results into compact summary", () => {
+    installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
         {
@@ -115,11 +170,7 @@ describe("run-e2e-tests.sh", () => {
               title: "should log in",
               file: "login.spec.ts",
               line: 5,
-              tests: [
-                {
-                  results: [{ status: "passed", duration: 1200 }],
-                },
-              ],
+              tests: [{ results: [{ status: "passed", duration: 1200 }] }],
             },
           ],
           suites: [],
@@ -127,9 +178,13 @@ describe("run-e2e-tests.sh", () => {
       ],
     });
 
-    writeFakePlaywright(binDir, pwOutput, 0);
-
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_STDOUT: pwOutput,
+        PW_EXIT_CODE: "0",
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(0);
     const result = JSON.parse(stdout);
@@ -142,6 +197,7 @@ describe("run-e2e-tests.sh", () => {
   });
 
   test("reports failures with error messages and exits non-zero", () => {
+    installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
         {
@@ -169,10 +225,13 @@ describe("run-e2e-tests.sh", () => {
       ],
     });
 
-    // Playwright exits 1 on test failure, but the script captures output regardless
-    writeFakePlaywright(binDir, pwOutput, 1);
-
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_STDOUT: pwOutput,
+        PW_EXIT_CODE: "1",
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(2);
     const result = JSON.parse(stdout);
@@ -185,6 +244,7 @@ describe("run-e2e-tests.sh", () => {
   });
 
   test("counts timedOut as failed", () => {
+    installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
         {
@@ -193,11 +253,7 @@ describe("run-e2e-tests.sh", () => {
             {
               title: "waits forever",
               file: "slow.spec.ts",
-              tests: [
-                {
-                  results: [{ status: "timedOut", duration: 30000 }],
-                },
-              ],
+              tests: [{ results: [{ status: "timedOut", duration: 30000 }] }],
             },
           ],
           suites: [],
@@ -205,9 +261,13 @@ describe("run-e2e-tests.sh", () => {
       ],
     });
 
-    writeFakePlaywright(binDir, pwOutput, 1);
-
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_STDOUT: pwOutput,
+        PW_EXIT_CODE: "1",
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(2);
     const result = JSON.parse(stdout);
@@ -217,6 +277,7 @@ describe("run-e2e-tests.sh", () => {
   });
 
   test("handles mixed results (pass + fail + skipped)", () => {
+    installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
         {
@@ -256,9 +317,13 @@ describe("run-e2e-tests.sh", () => {
       ],
     });
 
-    writeFakePlaywright(binDir, pwOutput, 1);
-
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_STDOUT: pwOutput,
+        PW_EXIT_CODE: "1",
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(2);
     const result = JSON.parse(stdout);
@@ -272,6 +337,7 @@ describe("run-e2e-tests.sh", () => {
   });
 
   test("creates results directory and writes summary.json", () => {
+    installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
         {
@@ -288,8 +354,13 @@ describe("run-e2e-tests.sh", () => {
       ],
     });
 
-    writeFakePlaywright(binDir, pwOutput, 0);
-    runScript(binDir, testDir, "http://localhost:3000");
+    runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_STDOUT: pwOutput,
+        PW_EXIT_CODE: "0",
+      },
+      cwd: tmpDir,
+    });
 
     const resultsDir = path.join(tmpDir, "results");
     expect(fs.existsSync(resultsDir)).toBe(true);
@@ -303,6 +374,7 @@ describe("run-e2e-tests.sh", () => {
   });
 
   test("handles nested suites", () => {
+    installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
         {
@@ -326,20 +398,23 @@ describe("run-e2e-tests.sh", () => {
       ],
     });
 
-    writeFakePlaywright(binDir, pwOutput, 0);
-
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_STDOUT: pwOutput,
+        PW_EXIT_CODE: "0",
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(0);
     const result = JSON.parse(stdout);
     expect(result.total).toBe(1);
     expect(result.passed).toBe(1);
-    // The test name includes parent suite titles
     expect(result.failures).toEqual([]);
   });
 
   test("passes test_filter as --grep to playwright", () => {
-    // Fake playwright that records its arguments to a file and emits minimal valid output
+    installFakePlaywright(binDir);
     const argsFile = path.join(tmpDir, "pw-args.txt");
     const minimalOutput = JSON.stringify({
       suites: [
@@ -356,15 +431,16 @@ describe("run-e2e-tests.sh", () => {
         },
       ],
     });
-    const script = `#!/usr/bin/env bash
-echo "$@" > "${argsFile}"
-echo '${minimalOutput.replace(/'/g, "'\\''")}'
-exit 0
-`;
-    const binPath = path.join(binDir, "playwright-cli");
-    fs.writeFileSync(binPath, script, { mode: 0o755 });
 
-    const { exitCode } = runScript(binDir, testDir, "http://localhost:3000", { testFilter: "login flow" });
+    const { exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      testFilter: "login flow",
+      env: {
+        PW_STDOUT: minimalOutput,
+        PW_EXIT_CODE: "0",
+        PW_ARGS_FILE: argsFile,
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(0);
     const capturedArgs = fs.readFileSync(argsFile, "utf-8").trim();
@@ -373,10 +449,15 @@ exit 0
   });
 
   test("emits parse error JSON when playwright outputs malformed data", () => {
-    // Playwright crashes and writes non-JSON garbage to stdout
-    writeFakePlaywright(binDir, "not valid json at all", 1);
+    installFakePlaywright(binDir);
 
-    const { stdout, exitCode } = runScript(binDir, testDir, "http://localhost:3000");
+    const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {
+      env: {
+        PW_STDOUT: "not valid json at all",
+        PW_EXIT_CODE: "1",
+      },
+      cwd: tmpDir,
+    });
 
     expect(exitCode).toBe(1);
     const result = JSON.parse(stdout);

@@ -125,6 +125,10 @@ describe("handleQa", () => {
     const message = (platform.sendMessage as any).mock.calls[0]?.[0];
     expect(message.content[0].text).toContain("/repo/packages/web");
     expect(message.content[0].text).not.toContain("/repo/packages/other");
+    expect(message.content[0].text).toContain("start-dev-server.ts");
+    expect(message.content[0].text).toContain("run-e2e-tests.ts");
+    expect(message.content[0].text).not.toContain("start-dev-server.sh");
+    expect(message.content[0].text).not.toContain("run-e2e-tests.sh");
   });
 
   test("auto-selects the only runnable target outside interactive mode", async () => {

@@ -13,7 +13,17 @@ export interface E2ePromptOptions {
 }
 
 export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
-  const { appType, sessionDir, scriptsDir, config, discoveredRoutes, previousMatrix, skillContent, dotDirDisplay } = options;
+  const {
+    cwd,
+    appType,
+    sessionDir,
+    scriptsDir,
+    config,
+    discoveredRoutes,
+    previousMatrix,
+    skillContent,
+    dotDirDisplay,
+  } = options;
   const { playwright, execution } = config;
 
   const headedFlag = playwright.headless ? "" : " --headed";
@@ -22,7 +32,7 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "# E2E QA Pipeline — Autonomous Execution",
     "",
     `You are an autonomous E2E QA pipeline for a **${appType.type}** application.`,
-    "Run all phases sequentially without stopping. Use `playwright-cli` for browser interactions and the provided scripts for test execution.",
+    "Run all phases sequentially without stopping. Use `playwright-cli` for browser interactions and the provided Bun runners for execution.",
     "",
     "## Session Context",
     "",
@@ -37,7 +47,6 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "",
   ];
 
-  // Previous matrix
   if (previousMatrix) {
     sections.push(
       "## Previous Matrix",
@@ -53,7 +62,6 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     );
   }
 
-  // Route hints (not authoritative — playwright-cli exploration is the source of truth)
   sections.push(
     "## Route Hints",
     "",
@@ -65,7 +73,6 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "",
   );
 
-  // Skill content
   if (skillContent) {
     sections.push(
       "## E2E Testing Methodology",
@@ -75,7 +82,6 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     );
   }
 
-  // Step 1: Flow Discovery — interactive exploration via playwright-cli
   sections.push(
     "## Step 1: Flow Discovery",
     "",
@@ -105,7 +111,6 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "",
   );
 
-  // Step 2: Test Generation
   sections.push(
     "## Step 2: Test Generation",
     "",
@@ -118,7 +123,7 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "   - Use `expect(page).toHaveURL()`, `expect(locator).toBeVisible()` for assertions",
     "   - Use `page.waitForSelector()` or `expect(locator).toBeVisible()` before assertions — never use `networkidle` (unreliable for SPAs)",
     "   - Set meaningful test descriptions that describe the user journey",
-    `4. Import from \`playwright/test\``,
+    "4. Import from `playwright/test`",
     `5. Each test should start with \`await page.goto('${appType.baseUrl}/...')\``,
     "",
     "Example test structure:",
@@ -138,23 +143,22 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "",
   );
 
-  // Step 3: Execution
   sections.push(
     "## Step 3: Execution",
     "",
     "Run the generated tests:",
     "",
-    `1. Start the dev server:`,
-    "```bash",
-    `bash ${scriptsDir}/start-dev-server.sh "${options.cwd}" "${appType.devCommand}" ${appType.port} 60 "${sessionDir}"`,
+    "1. Start the dev server:",
+    "```text",
+    `bun \"${scriptsDir}/start-dev-server.ts\" \"${cwd}\" \"${appType.devCommand}\" ${appType.port} 60 \"${sessionDir}\"`,
     "```",
     "   Read the JSON output. If `ready: false`, stop and report the error.",
     "",
-    "2. Run the tests — **IMPORTANT: never run playwright directly. Always use the script:**",
-    "```bash",
-    `bash ${scriptsDir}/run-e2e-tests.sh "${sessionDir}/tests" "${appType.baseUrl}"`,
+    "2. Run the tests — **IMPORTANT: never run playwright directly. Always use the runner:**",
+    "```text",
+    `bun \"${scriptsDir}/run-e2e-tests.ts\" \"${sessionDir}/tests\" \"${appType.baseUrl}\"`,
     "```",
-    "   Exit codes: 0 = all passed, 2 = some tests failed, 1 = script/playwright error.",
+    "   Exit codes: 0 = all passed, 2 = some tests failed, 1 = runner/playwright error.",
     "   Read the JSON output. It contains `total`, `passed`, `failed`, `failures[]`.",
     "",
     `3. If there are failures and retries remain (max ${execution.maxRetries}):`,
@@ -164,13 +168,12 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "   - If real app bug: note it for the report",
     "",
     "4. Stop the dev server:",
-    "```bash",
-    `bash ${scriptsDir}/stop-dev-server.sh "${sessionDir}"`,
+    "```text",
+    `bun \"${scriptsDir}/stop-dev-server.ts\" \"${sessionDir}\"`,
     "```",
     "",
   );
 
-  // Step 4: Regression Analysis & Reporting
   sections.push(
     "## Step 4: Regression Analysis & Reporting",
     "",
@@ -195,33 +198,28 @@ export function buildE2eOrchestratorPrompt(options: E2ePromptOptions): string {
     "",
   );
 
-  // Script paths
   sections.push(
-    "## Script Paths",
+    "## Runner Paths",
     "",
-    `- detect-app-type.sh: \`${scriptsDir}/detect-app-type.sh\``,
-    `- discover-routes.sh: \`${scriptsDir}/discover-routes.sh\``,
-    `- start-dev-server.sh: \`${scriptsDir}/start-dev-server.sh\``,
-    `- run-e2e-tests.sh: \`${scriptsDir}/run-e2e-tests.sh\``,
-    `- stop-dev-server.sh: \`${scriptsDir}/stop-dev-server.sh\``,
+    `- start-dev-server.ts: \`${scriptsDir}/start-dev-server.ts\``,
+    `- run-e2e-tests.ts: \`${scriptsDir}/run-e2e-tests.ts\``,
+    `- stop-dev-server.ts: \`${scriptsDir}/stop-dev-server.ts\``,
     "",
   );
 
-  // Token guidance
   sections.push(
     "## Token Guidance",
     "",
     "To minimize token usage:",
-    "- Always use `run-e2e-tests.sh` — never run playwright directly for test execution",
+    "- Always use `run-e2e-tests.ts` — never run playwright directly for test execution",
     "- Use `playwright-cli snapshot` instead of `playwright-cli screenshot` when you only need element structure",
     "- Only read the `failures` array from test results, skip passed tests",
     "- Don't cat full test files when analyzing failures — read only the failing line range",
     "- Write tests incrementally by flow group, run after each group to catch issues early",
-    "- Don't dump raw playwright output — the script produces a compact JSON summary",
+    "- Don't dump raw playwright output — the runner produces a compact JSON summary",
     "",
   );
 
-  // Troubleshooting
   sections.push(
     "## Troubleshooting",
     "",

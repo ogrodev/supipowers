@@ -14,7 +14,7 @@ import { createNewE2eSession } from "../qa/session.js";
 import type { AppType, E2eQaConfig, E2eRegression } from "../qa/types.js";
 import type { WorkspaceTarget } from "../types.js";
 import { findActiveSession, getSessionDir } from "../storage/qa-sessions.js";
-import { moduleDir, toBashPath } from "../utils/paths.js";
+import { moduleDir } from "../utils/paths.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
 import { resolveRepoRoot } from "../workspace/repo-root.js";
 import {
@@ -73,7 +73,7 @@ const QA_COMMAND_DEPENDENCIES: QaCommandDependencies = {
 };
 
 function getScriptsDir(): string {
-  return toBashPath(path.join(moduleDir(import.meta.url), "..", "qa", "scripts"));
+  return path.join(moduleDir(import.meta.url), "..", "qa", "scripts");
 }
 
 function findSkillPath(skillName: string): string | null {
@@ -369,7 +369,7 @@ export async function handleQa(
   const matrixJson = previousMatrix ? JSON.stringify(previousMatrix, null, 2) : null;
 
   const ledger = deps.createNewE2eSession(platform.paths, ctx.cwd, config, selectedTarget);
-  const sessionDir = toBashPath(deps.getSessionDir(platform.paths, ctx.cwd, ledger.id, selectedTarget));
+  const sessionDir = deps.getSessionDir(platform.paths, ctx.cwd, ledger.id, selectedTarget);
 
   let skillContent = "";
   const skillPath = findSkillPath("qa-strategy");
@@ -384,7 +384,7 @@ export async function handleQa(
   const routeCount = discoveredRoutes.split("\n").filter(Boolean).length;
 
   const prompt = buildE2eOrchestratorPrompt({
-    cwd: toBashPath(targetDir),
+    cwd: targetDir,
     appType: config.app,
     sessionDir,
     scriptsDir,
