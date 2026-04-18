@@ -4,6 +4,8 @@ import type { ResolvedModel } from "../types.js";
 import type { PlanningSystemPromptOptions } from "./system-prompt.js";
 import { applyModelOverride } from "../config/model-resolver.js";
 import { listPlans, readPlanFile } from "../storage/plans.js";
+import { validatePlanMarkdown } from "./validate.js";
+import { appendReliabilityRecord } from "../storage/reliability-metrics.js";
 
 /**
  * Plan approval flow state.
@@ -211,7 +213,66 @@ export function registerPlanApprovalHook(platform: Platform): void {
       return;
     }
 
+    // Schema-first validation: the plan must parse into a valid PlanSpec.
+    // Invalid plans trigger a retry steer — no approval UI until the agent
+    // produces an artifact whose task list matches the PlanSpec contract.
+    //
+    // We validate but do NOT canonicalize the on-disk file. Today's plan
+    // writer produces rich markdown (architecture, per-task TDD steps) that
+    // the parser intentionally does not capture. Rewriting the file from the
+    // parsed PlanSpec would strip that structure. The schema is the
+    // validation gate; markdown stays the user-visible form until a future
+    // phase lifts the agent to write PlanSpec directly.
+    const validated = validatePlanMarkdown(planContent, planName);
+    if (!validated.output) {
+      debugLogger?.log("approval_flow_plan_invalid", {
+        planName,
+        error: validated.error,
+        errors: validated.errors,
+      });
+      try {
+        appendReliabilityRecord(platform.paths, planCwd, {
+          ts: new Date().toISOString(),
+          command: "plan",
+          operation: "plan-spec",
+          outcome: "blocked",
+          attempts: 1,
+          reason: validated.error ?? "Plan validation failed.",
+          cwd: planCwd,
+        });
+      } catch {}
+      plansBefore = plansNow;
+      const steer = [
+        `The plan you just wrote to \`${platform.paths.dotDirDisplay}/supipowers/plans/${planName}\` does not match the required schema.`,
+        "",
+        "Validation errors:",
+        ...validated.errors.map((err) => `- ${err.path}: ${err.message}`),
+        "",
+        "Fix the plan and rewrite the file so every task includes id, name, files, criteria, and complexity (small|medium|large).",
+      ].join("\n");
+      platform.sendMessage(
+        {
+          customType: "supi-plan-invalid",
+          content: [{ type: "text", text: steer }],
+          display: "none",
+        },
+        { deliverAs: "steer", triggerTurn: true },
+      );
+      return;
+    }
+
+    const canonicalContent = planContent;
     const planPath = `${platform.paths.dotDirDisplay}/supipowers/plans/${planName}`;
+    try {
+      appendReliabilityRecord(platform.paths, planCwd, {
+        ts: new Date().toISOString(),
+        command: "plan",
+        operation: "plan-spec",
+        outcome: "ok",
+        attempts: 1,
+        cwd: planCwd,
+      });
+    } catch {}
     const approvalOptions = [
       "Approve and execute",
       "Refine plan",
@@ -238,7 +299,7 @@ export function registerPlanApprovalHook(platform: Platform): void {
       await executeApproveFlow(
         platform,
         ctx,
-        planContent,
+        canonicalContent,
         planPath,
         executionNewSession,
         executionModel,
@@ -260,7 +321,7 @@ export function registerPlanApprovalHook(platform: Platform): void {
         await executeApproveFlow(
         platform,
         ctx,
-        planContent,
+        canonicalContent,
         planPath,
         executionNewSession,
         executionModel,
