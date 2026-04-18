@@ -100,7 +100,6 @@ function buildFullPlanningSection(options: PlanningSystemPromptOptions): string 
     "- The only allowed file writes are the approved design doc under `.omp/supipowers/specs/` and the final implementation plan under `.omp/supipowers/plans/`.",
     "- Keep planning artifacts local. Do NOT stage, commit, or push the design doc or implementation plan.",
     "- If the user asks to jump into coding early, explain that planning mode must finish first.",
-    "- When you need to ask the user a question with options, use the `planning_ask` tool instead of `ask`. It has no timeout so the user can think without pressure.",
     "",
     "## Planning Workflow",
     "",

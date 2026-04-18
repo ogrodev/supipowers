@@ -1,4 +1,5 @@
 import type { Platform } from "../platform/types.js";
+import { isPlanningActive } from "./approval-flow.js";
 
 /**
  * Register a `planning_ask` tool — identical to the built-in `ask` tool
@@ -77,5 +78,27 @@ export function registerPlanningAskTool(platform: Platform): void {
         details: { question: params.question, selected },
       };
     },
+  });
+}
+
+
+/**
+ * Register a tool_call guard that blocks the generic `ask` tool during
+ * active planning sessions and points the model at `planning_ask` instead.
+ *
+ * This is the runtime complement to the prompt-level directive in
+ * src/planning/system-prompt.ts: even if prompt wording drifts or the model
+ * ignores it, invoking `ask` during planning mode returns a block result
+ * with a truthful redirection.
+ */
+export function registerPlanningAskToolGuard(platform: Platform): void {
+  platform.on("tool_call", (event) => {
+    if (!isPlanningActive()) return;
+    if (event.toolName !== "ask") return;
+    return {
+      block: true,
+      reason:
+        "Planning mode: use the `planning_ask` tool instead of `ask`. `planning_ask` has no timeout so the user can think without pressure.",
+    };
   });
 }
