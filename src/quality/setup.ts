@@ -4,6 +4,7 @@ import type { Platform, PlatformContext } from "../platform/types.js";
 import type {
   ConfigScope,
   ProjectFacts,
+  ProjectFactsTarget,
   QualityGatesConfig,
   SetupGatesResult,
   SetupProposal,
@@ -11,8 +12,10 @@ import type {
 import type { InspectionLoadResult } from "../config/schema.js";
 import { validateQualityGates } from "../config/schema.js";
 import { writeQualityGatesConfig } from "../config/loader.js";
+import { resolvePackageManager } from "../workspace/package-manager.js";
+import { discoverWorkspaceTargets } from "../workspace/targets.js";
 import { CANONICAL_GATE_ORDER } from "./registry.js";
-import { detectReviewGates } from "./review-gates.js";
+import { collectReviewGateNotes, detectReviewGates } from "./review-gates.js";
 import { suggestQualityGatesWithAi } from "./ai-setup.js";
 
 export type GateSetupMode = "deterministic" | "ai-assisted";
@@ -63,17 +66,70 @@ function detectLockfiles(cwd: string): string[] {
     .filter((file) => fs.existsSync(path.join(cwd, file)));
 }
 
+function normalizeScriptCommand(command: string | undefined): string | null {
+  const trimmed = command?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function collectProjectTargets(cwd: string): ProjectFactsTarget[] {
+  const packageManager = resolvePackageManager(cwd).id;
+  const targets = discoverWorkspaceTargets(cwd, packageManager);
+  if (targets.length === 0) {
+    return [
+      {
+        name: path.basename(cwd) || "root",
+        kind: "root",
+        relativeDir: ".",
+        packageScripts: readPackageScripts(cwd),
+      },
+    ];
+  }
+
+  return targets.map((target) => ({
+    name: target.name,
+    kind: target.kind,
+    relativeDir: target.relativeDir,
+    packageScripts: readPackageScripts(target.packageDir),
+  }));
+}
+
+function collectSharedPackageScripts(targets: ProjectFactsTarget[]): Record<string, string> {
+  if (targets.length === 0) {
+    return {};
+  }
+
+  const shared = { ...targets[0].packageScripts };
+  for (const scriptName of Object.keys(shared)) {
+    const command = normalizeScriptCommand(shared[scriptName]);
+    if (!command) {
+      delete shared[scriptName];
+      continue;
+    }
+
+    const matchesEveryTarget = targets.slice(1).every(
+      (target) => normalizeScriptCommand(target.packageScripts[scriptName]) === command,
+    );
+    if (!matchesEveryTarget) {
+      delete shared[scriptName];
+    }
+  }
+
+  return shared;
+}
+
 export function collectProjectFacts(
   cwd: string,
   inspection: InspectionLoadResult,
   activeTools: string[],
 ): ProjectFacts {
+  const targets = collectProjectTargets(cwd);
   return {
     cwd,
-    packageScripts: readPackageScripts(cwd),
+    packageScripts: collectSharedPackageScripts(targets),
     lockfiles: detectLockfiles(cwd),
     activeTools,
     existingGates: inspection.effectiveConfig?.quality.gates ?? {},
+    targets,
   };
 }
 
@@ -87,17 +143,34 @@ export function formatGateProposal(proposal: SetupProposal): string {
   const entries = CANONICAL_GATE_ORDER
     .filter((gateId) => proposal.gates[gateId] !== undefined)
     .map((gateId) => [gateId, proposal.gates[gateId]] as const);
+  const sections: string[] = [];
+
   if (entries.length === 0) {
-    return "No gates suggested.";
+    sections.push("No gates suggested.");
+  } else {
+    sections.push(
+      entries
+        .map(([gateId, config]) => `${gateId}: ${JSON.stringify(config)}`)
+        .join("\n"),
+    );
   }
 
-  return entries
-    .map(([gateId, config]) => `${gateId}: ${JSON.stringify(config)}`)
-    .join("\n");
+  if (proposal.notes && proposal.notes.length > 0) {
+    sections.push([
+      "Notes:",
+      ...proposal.notes.map((note) => `- ${note}`),
+    ].join("\n"));
+  }
+
+  return sections.join("\n\n");
 }
 
 export function buildDeterministicSuggestion(projectFacts: ProjectFacts): SetupProposal {
-  return { gates: detectReviewGates(projectFacts) };
+  const notes = collectReviewGateNotes(projectFacts);
+  return {
+    gates: detectReviewGates(projectFacts),
+    ...(notes.length > 0 ? { notes } : {}),
+  };
 }
 
 export async function setupGates(
@@ -122,6 +195,7 @@ export async function setupGates(
         projectFacts,
         proposal,
       }),
+      ...(proposal.notes && proposal.notes.length > 0 ? { notes: proposal.notes } : {}),
     };
     options.onProgress?.({ type: "ai-analysis-completed" });
   }
@@ -141,14 +215,14 @@ export async function setupGates(
   };
 }
 
-function parseRevisedProposal(raw: string): SetupProposal {
+function parseRevisedProposal(raw: string): QualityGatesConfig {
   const parsed = JSON.parse(raw) as QualityGatesConfig;
   const validation = validateQualityGates(parsed);
   if (!validation.valid) {
     throw new Error(validation.errors.join("\n"));
   }
 
-  return { gates: parsed };
+  return parsed;
 }
 
 function labelForScope(scope: ConfigScope): string {
@@ -156,9 +230,7 @@ function labelForScope(scope: ConfigScope): string {
     case "global":
       return "Global (~/.omp/supipowers/config.json)";
     case "root":
-      return "Root (.omp/supipowers/config.json)";
-    case "workspace":
-      return "Workspace (.omp/supipowers/workspaces/<target>/config.json)";
+      return "Repository (.omp/supipowers/config.json)";
   }
 }
 
@@ -168,7 +240,7 @@ async function selectSaveScope(ctx: PlatformContext): Promise<ConfigScope | null
     [labelForScope("root"), labelForScope("global"), "Cancel"],
     {
       initialIndex: 0,
-      helpText: "Choose whether review gates apply only to this repository root or all repositories.",
+      helpText: "Choose whether review gates apply only to this repository or all repositories.",
     },
   );
 
@@ -214,7 +286,10 @@ export async function interactivelySaveGateSetup(
       }
 
       try {
-        proposal = parseRevisedProposal(revised);
+        proposal = {
+          ...proposal,
+          gates: parseRevisedProposal(revised),
+        };
       } catch (error) {
         ctx.ui.notify((error as Error).message, "error");
       }

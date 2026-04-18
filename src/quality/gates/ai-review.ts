@@ -1,5 +1,6 @@
-import { stripMarkdownCodeFence } from "../../text.js";
-import { runStructuredAgentSession } from "../ai-session.js";
+import { parseStructuredOutput, runWithOutputValidation, type ReliabilityReporter } from "../../ai/structured-output.js";
+import { renderSchemaText } from "../../ai/schema-text.js";
+import { AiReviewOutputSchema, type AiReviewOutput } from "../contracts.js";
 import type {
   GateExecutionContext,
   GateIssue,
@@ -15,11 +16,7 @@ export interface AiReviewResult {
   metadata?: Record<string, unknown>;
 }
 
-interface AiReviewPayload {
-  summary: string;
-  issues: GateIssue[];
-  recommendedStatus: AiReviewResult["status"];
-}
+const AI_REVIEW_SCHEMA_TEXT = renderSchemaText(AiReviewOutputSchema);
 
 export function buildAiReviewPrompt(
   scopeFiles: string[],
@@ -42,50 +39,14 @@ export function buildAiReviewPrompt(
     "Files in scope:",
     files,
     "",
-    "Return JSON only with this exact shape:",
-    '{"summary":"string","issues":[{"severity":"error|warning|info","message":"string","file":"optional string","line":"optional number","detail":"optional string"}],"recommendedStatus":"passed|failed|blocked"}',
+    "Return JSON only matching this schema:",
+    AI_REVIEW_SCHEMA_TEXT,
     "",
     "Rules:",
     "- recommendedStatus must be 'failed' when you found actionable issues.",
     "- recommendedStatus may be 'blocked' only if review could not be completed truthfully.",
     "- Do not wrap the JSON in markdown fences.",
   ].join("\n");
-}
-
-function isGateIssue(value: unknown): value is GateIssue {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as GateIssue).severity !== undefined &&
-    ["error", "warning", "info"].includes((value as GateIssue).severity) &&
-    typeof (value as GateIssue).message === "string" &&
-    ((value as GateIssue).file === undefined || typeof (value as GateIssue).file === "string") &&
-    ((value as GateIssue).line === undefined || typeof (value as GateIssue).line === "number") &&
-    ((value as GateIssue).detail === undefined || typeof (value as GateIssue).detail === "string")
-  );
-}
-
-function parseAiReviewPayload(raw: string): AiReviewPayload | null {
-  try {
-    const parsed = JSON.parse(stripMarkdownCodeFence(raw)) as Record<string, unknown>;
-
-    if (
-      typeof parsed.summary !== "string" ||
-      !Array.isArray(parsed.issues) ||
-      !parsed.issues.every(isGateIssue) ||
-      !["passed", "failed", "blocked"].includes(String(parsed.recommendedStatus))
-    ) {
-      return null;
-    }
-
-    return {
-      summary: parsed.summary,
-      issues: parsed.issues,
-      recommendedStatus: parsed.recommendedStatus as AiReviewPayload["recommendedStatus"],
-    };
-  } catch {
-    return null;
-  }
 }
 
 function buildBlockedResult(summary: string, metadata?: Record<string, unknown>): AiReviewResult {
@@ -100,30 +61,31 @@ function buildBlockedResult(summary: string, metadata?: Record<string, unknown>)
 export async function runAiReview(
   context: Pick<GateExecutionContext, "cwd" | "scopeFiles" | "fileScope" | "createAgentSession" | "reviewModel">,
   depth: AiReviewDepth,
+  reliability?: ReliabilityReporter,
 ): Promise<AiReviewResult> {
-  const sessionResult = await runStructuredAgentSession(context.createAgentSession, {
+  const result = await runWithOutputValidation<AiReviewOutput>(context.createAgentSession, {
     cwd: context.cwd,
     prompt: buildAiReviewPrompt(context.scopeFiles, context.fileScope, depth),
+    schema: AI_REVIEW_SCHEMA_TEXT,
+    parse: (raw) => parseStructuredOutput<AiReviewOutput>(raw, AiReviewOutputSchema),
     model: context.reviewModel?.model,
     thinkingLevel: context.reviewModel?.thinkingLevel ?? null,
     timeoutMs: 120_000,
+    reliability,
   });
 
-  if (sessionResult.status !== "ok") {
-    return buildBlockedResult(sessionResult.error);
-  }
-
-  const parsed = parseAiReviewPayload(sessionResult.finalText);
-  if (!parsed) {
-    return buildBlockedResult("AI review returned invalid JSON.", {
-      rawOutput: sessionResult.finalText,
+  if (result.status === "blocked") {
+    return buildBlockedResult(result.error, {
+      depth,
+      attempts: result.attempts,
+      ...(result.rawOutputs.length > 0 ? { rawOutputs: result.rawOutputs } : {}),
     });
   }
 
   return {
-    status: parsed.recommendedStatus,
-    summary: parsed.summary,
-    issues: parsed.issues,
-    metadata: { depth },
+    status: result.output.recommendedStatus,
+    summary: result.output.summary,
+    issues: result.output.issues as GateIssue[],
+    metadata: { depth, attempts: result.attempts },
   };
 }
