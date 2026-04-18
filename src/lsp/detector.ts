@@ -1,4 +1,5 @@
 // src/lsp/detector.ts
+import { findExecutable } from "../utils/executable.js";
 import { LSP_SERVERS, type LspServerEntry } from "./setup-guide.js";
 
 export interface LspServerStatus {
@@ -7,21 +8,16 @@ export interface LspServerStatus {
 }
 
 /**
- * Check which LSP servers are installed by looking for their binaries.
+ * Check which LSP servers are installed by looking for their binaries on PATH.
  */
 export async function checkInstalledServers(
-  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; code: number }>
+  _exec: (cmd: string, args: string[]) => Promise<{ stdout: string; code: number }>,
+  resolveExecutable: (command: string) => string | null = (command) => findExecutable(command),
 ): Promise<LspServerStatus[]> {
-  const results: LspServerStatus[] = [];
-  for (const server of LSP_SERVERS) {
-    try {
-      const result = await exec("which", [server.server]);
-      results.push({ server, installed: result.code === 0 });
-    } catch {
-      results.push({ server, installed: false });
-    }
-  }
-  return results;
+  return LSP_SERVERS.map((server) => ({
+    server,
+    installed: resolveExecutable(server.server) !== null,
+  }));
 }
 
 /**

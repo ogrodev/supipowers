@@ -1,6 +1,6 @@
 // tests/lsp/detector.test.ts
 
-import { isLspAvailable } from "../../src/lsp/detector.js";
+import { checkInstalledServers, isLspAvailable } from "../../src/lsp/detector.js";
 import { LSP_SERVERS, formatSetupGuide } from "../../src/lsp/setup-guide.js";
 import { buildLspDiagnosticsPrompt } from "../../src/lsp/bridge.js";
 
@@ -11,6 +11,21 @@ describe("isLspAvailable", () => {
 
   test("returns false when lsp is not in active tools", () => {
     expect(isLspAvailable(["read", "write", "bash"])).toBe(false);
+  });
+});
+
+describe("checkInstalledServers", () => {
+  test("uses the injected resolver instead of a Unix-only which command", async () => {
+    const statuses = await checkInstalledServers(
+      async () => ({ stdout: "", code: 0 }),
+      (command) => command === "typescript-language-server" ? `/fake/${command}` : null,
+    );
+
+    const typescriptServer = statuses.find((status) => status.server.server === "typescript-language-server");
+    const pythonServer = statuses.find((status) => status.server.server === "pyright");
+
+    expect(typescriptServer?.installed).toBe(true);
+    expect(pythonServer?.installed).toBe(false);
   });
 });
 

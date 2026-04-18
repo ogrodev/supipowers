@@ -106,7 +106,7 @@ describe("DEPENDENCIES", () => {
     expect(pw!.binary).toBe("playwright");
     expect(pw!.required).toBe(false);
     expect(pw!.category).toBe("testing");
-    expect(pw!.description).toContain("Test runner for E2E tests");
+    expect(pw!.description).toContain("portable QA Bun entrypoints");
     expect(pw!.installCmd).toBeNull();
     expect(pw!.url).toBe("https://playwright.dev");
   });
