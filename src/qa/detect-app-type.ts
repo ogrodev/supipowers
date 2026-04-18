@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { AppType } from "./types.js";
 
 export interface AppDetection {
-  type: string;
+  type: AppType;
   devCommand: string;
   port: number;
   baseUrl: string;
@@ -30,7 +31,7 @@ function readJson(filePath: string): Record<string, unknown> | null {
 }
 
 export function detectAppType(cwd: string): AppDetection {
-  let type = "generic";
+  let type: AppType = "generic";
   let devCommand = "npm run dev";
   let port = 3000;
   let isLikelyApp = false;
