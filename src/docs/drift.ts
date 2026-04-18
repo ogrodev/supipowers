@@ -2,7 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Platform, PlatformPaths } from "../platform/types.js";
 import type { DocDriftState, DriftCheckResult, DriftFinding, WorkspaceTarget } from "../types.js";
-import { runStructuredAgentSession } from "../quality/ai-session.js";
+import { runWithOutputValidation, parseStructuredOutput } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
+import { DocDriftOutputSchema, type DocDriftOutput } from "./contracts.js";
+import { ReleaseDocFixOutputSchema } from "../release/contracts.js";
 import { filterPathsForWorkspaceTarget } from "../workspace/path-mapping.js";
 import { getTargetStatePath } from "../workspace/state-paths.js";
 
@@ -305,85 +308,48 @@ export function buildSubAgentPrompt(group: DocDriftGroup, isFirstRun: boolean): 
     `- Only flag things that are factually wrong or missing`,
     `- If documentation is accurate, say so`,
     ``,
-    `Respond with a JSON object:`,
-    `{`,
-    `  "findings": [`,
-    `    {`,
-    `      "file": "path/to/doc.md",`,
-    `      "description": "What is wrong or missing",`,
-    `      "severity": "info" | "warning" | "error",`,
-    `      "relatedFiles": ["path/to/source.ts"]`,
-    `    }`,
-    `  ],`,
-    `  "status": "ok" | "drifted"`,
-    `}`,
+    `Respond with a JSON object that matches this TypeScript shape exactly:`,
     ``,
-    `Set status to "drifted" if ANY findings exist, "ok" if all docs are accurate.`,
-    `Respond ONLY with the JSON object, no other text.`,
+    `\`\`\`ts`,
+    renderSchemaText(DocDriftOutputSchema),
+    `\`\`\``,
+    ``,
+    `Set "status" to "drifted" if ANY findings exist, "ok" if all docs are accurate.`,
+    `Respond with only the JSON object. You may wrap it in a \`\`\`json fence.`,
   );
 
   return parts.join("\n");
 }
 
-// ── Response parsing ──────────────────────────────────────────
-
-export function parseDriftFindings(text: string): { findings: DriftFinding[]; status: string } {
-  try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (Array.isArray(parsed.findings)) {
-        const findings: DriftFinding[] = parsed.findings
-          .filter(
-            (f: any) =>
-              typeof f.file === "string" &&
-              typeof f.description === "string",
-          )
-          .map((f: any) => ({
-            file: f.file,
-            description: f.description,
-            severity: f.severity === "warning" || f.severity === "error" ? f.severity : "info",
-            ...(Array.isArray(f.relatedFiles) ? { relatedFiles: f.relatedFiles } : {}),
-          }));
-        return { findings, status: parsed.status === "ok" ? "ok" : "drifted" };
-      }
-    }
-  } catch {
-    // Fall through
-  }
-
-  // Fallback: treat unparseable response as potential drift
-  const lower = text.toLowerCase();
-  const likelyDrifted =
-    lower.includes("inaccura") ||
-    lower.includes("outdated") ||
-    lower.includes("missing") ||
-    lower.includes("drift");
-  return {
-    findings: likelyDrifted
-      ? [{ file: "unknown", description: text.slice(0, 200), severity: "warning" }]
-      : [],
-    status: likelyDrifted ? "drifted" : "ok",
-  };
-}
-
 // ── Sub-agent runner ──────────────────────────────────────────
+
+export type DriftSubAgentResult =
+  | { status: "ok"; output: DocDriftOutput }
+  | { status: "blocked"; error: string };
 
 async function runDriftSubAgent(
   createAgentSession: Platform["createAgentSession"],
+  paths: PlatformPaths,
   group: DocDriftGroup,
   isFirstRun: boolean,
   cwd: string,
-): Promise<{ findings: DriftFinding[]; status: string }> {
+): Promise<DriftSubAgentResult> {
   const prompt = buildSubAgentPrompt(group, isFirstRun);
-  const result = await runStructuredAgentSession(
-    createAgentSession.bind(undefined) as any,
-    { cwd, prompt },
+  const result = await runWithOutputValidation<DocDriftOutput>(
+    createAgentSession as any,
+    {
+      cwd,
+      prompt,
+      schema: renderSchemaText(DocDriftOutputSchema),
+      parse: (raw) => parseStructuredOutput<DocDriftOutput>(raw, DocDriftOutputSchema),
+      reliability: { paths, cwd, command: "docs", operation: "drift-analyze" },
+    },
   );
-  if (result.status !== "ok" || !result.finalText) {
-    return { findings: [], status: "error" };
+
+  if (result.status === "ok") {
+    return { status: "ok", output: result.output };
   }
-  return parseDriftFindings(result.finalText);
+  return { status: "blocked", error: result.error };
 }
 
 // ── Orchestrator ──────────────────────────────────────────────
@@ -391,6 +357,8 @@ async function runDriftSubAgent(
 /**
  * Checks tracked docs for drift using parallel sub-agents.
  * Returns null to skip silently, or a DriftCheckResult with per-doc findings.
+ * Sub-agents whose output fails schema validation surface their error via
+ * `result.errors` — the orchestrator never fabricates findings on parse failure.
  */
 export async function checkDocDrift(
   platform: Platform,
@@ -420,6 +388,7 @@ export async function checkDocDrift(
     groups.map((group) =>
       runDriftSubAgent(
         platform.createAgentSession.bind(platform),
+        platform.paths,
         group,
         isFirstRun,
         cwd,
@@ -427,18 +396,32 @@ export async function checkDocDrift(
     ),
   );
 
-  // Aggregate findings
+  // Aggregate findings and errors
   const allFindings: DriftFinding[] = [];
+  const errors: string[] = [];
   for (const result of results) {
-    allFindings.push(...result.findings);
+    if (result.status === "ok") {
+      allFindings.push(...result.output.findings);
+    } else {
+      errors.push(result.error);
+    }
   }
 
   const drifted = allFindings.length > 0;
-  const summary = drifted
-    ? `${allFindings.length} finding(s) across ${new Set(allFindings.map((f) => f.file)).size} doc(s)`
-    : "All documentation is up to date.";
+  const parts: string[] = [];
+  if (drifted) {
+    parts.push(`${allFindings.length} finding(s) across ${new Set(allFindings.map((f) => f.file)).size} doc(s)`);
+  } else if (errors.length === 0) {
+    parts.push("All documentation is up to date.");
+  }
+  if (errors.length > 0) {
+    parts.push(`${errors.length} sub-agent(s) failed validation`);
+  }
+  const summary = parts.join(" · ");
 
-  return { drifted, summary, findings: allFindings };
+  return errors.length > 0
+    ? { drifted, summary, findings: allFindings, errors }
+    : { drifted, summary, findings: allFindings };
 }
 
 // ── Doc fix prompt ────────────────────────────────────────────
@@ -479,6 +462,23 @@ export function buildFixPrompt(findings: DriftFinding[]): string {
     parts.push(``);
   }
 
-  parts.push(`Read each file listed above, apply the fixes, and write the corrected files.`);
+  parts.push(
+    `Read each file listed above, apply the fixes, and write the corrected files.`,
+    ``,
+    `## Output`,
+    ``,
+    `After applying the edits, respond with a JSON object that matches this TypeScript shape exactly:`,
+    ``,
+    "```ts",
+    renderSchemaText(ReleaseDocFixOutputSchema),
+    "```",
+    ``,
+    `Field guide:`,
+    `- \`edits\`: one entry per file you modified, with \`file\` as the relative path and \`instructions\` as a short description of what you changed.`,
+    `- \`summary\`: one-sentence summary of the overall fix.`,
+    `- \`status\`: \`"ok"\` when every finding was addressed; \`"blocked"\` when you could not complete the fixes — put the reason in \`summary\`.`,
+    ``,
+    "Respond with only the JSON object. You may wrap it in a ```json fence.",
+  );
   return parts.join("\n");
 }
