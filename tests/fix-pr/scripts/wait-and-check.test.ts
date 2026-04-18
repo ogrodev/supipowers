@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { rmDirWithRetry } from "../../helpers/fs.js";
 
 const RUNNER_PATH = path.resolve(import.meta.dir, "../../../src/fix-pr/scripts/wait-and-check.ts");
 
@@ -83,7 +84,7 @@ describe("wait-and-check.ts", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   test("emits new and changed comments before the JSON summary", () => {

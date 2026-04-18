@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { rmDirWithRetry } from "../helpers/fs.js";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import { registerContextModeHooks, _resetCache, getEventStore, getSessionId } from "../../src/context-mode/hooks.js";
@@ -233,7 +234,7 @@ describe("compaction integration", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   function createPlatformWithRealStore() {
@@ -389,7 +390,7 @@ describe("exported helpers", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   function createPlatformWithTmpPaths() {
@@ -490,7 +491,7 @@ describe("error handling", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   function createPlatformWithTmpPaths() {
@@ -620,7 +621,7 @@ describe("tool_result with MCP tool names", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   function createPlatformWithTmpPaths() {

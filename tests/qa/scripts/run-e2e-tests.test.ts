@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { rmDirWithRetry } from "../../helpers/fs.js";
 
 const RUNNER_PATH = path.resolve(import.meta.dir, "../../../src/qa/scripts/run-e2e-tests.ts");
 
@@ -87,7 +88,7 @@ describe("run-e2e-tests.ts", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   test("exits with error JSON when playwright is not installed", () => {

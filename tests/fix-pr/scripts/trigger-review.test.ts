@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { rmDirWithRetry } from "../../helpers/fs.js";
 
 const RUNNER_PATH = path.resolve(import.meta.dir, "../../../src/fix-pr/scripts/trigger-review.ts");
 
@@ -72,7 +73,7 @@ describe("trigger-review.ts", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   test("posts a reviewer trigger comment for coderabbit", () => {

@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
+import { rmDirWithRetry } from "../../helpers/fs.js";
 
 const START_RUNNER_PATH = path.resolve(import.meta.dir, "../../../src/qa/scripts/start-dev-server.ts");
 const STOP_RUNNER_PATH = path.resolve(import.meta.dir, "../../../src/qa/scripts/stop-dev-server.ts");
@@ -80,7 +81,7 @@ describe("QA dev-server runners", () => {
 
   afterEach(() => {
     runRunner(STOP_RUNNER_PATH, [sessionDir]);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    rmDirWithRetry(tmpDir);
   });
 
   test("starts a dev server, reports already-running state, then stops it", async () => {

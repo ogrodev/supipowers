@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { EventStore } from "../../src/context-mode/event-store.js";
 import { buildResumeSnapshot } from "../../src/context-mode/snapshot-builder.js";
+import { rmDirWithRetry } from "../helpers/fs.js";
 
 let tmpDir: string;
 let store: EventStore;
@@ -17,7 +18,7 @@ beforeEach(() => {
 
 afterEach(() => {
   store.close();
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  rmDirWithRetry(tmpDir);
 });
 
 function writeEvent(category: string, data: Record<string, unknown>, priority: number = 3) {

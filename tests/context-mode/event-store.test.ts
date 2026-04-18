@@ -9,6 +9,7 @@ import {
   type EventPriority,
   type TrackedEvent,
 } from "../../src/context-mode/event-store.js";
+import { rmDirWithRetry } from "../helpers/fs.js";
 
 let tmpDir: string;
 let store: EventStore;
@@ -22,7 +23,7 @@ beforeEach(() => {
 afterEach(() => {
   store.close();
   if (fs.existsSync(tmpDir)) {
-    fs.rmSync(tmpDir, { recursive: true });
+    rmDirWithRetry(tmpDir);
   }
 });
 
@@ -403,7 +404,7 @@ describe("EventStore edge cases", () => {
     reopened.init();
     expect(reopened.getEvents("sidecar-session")).toHaveLength(1);
     reopened.close();
-    expect(() => fs.rmSync(tmpDir, { recursive: true })).not.toThrow();
+    expect(() => rmDirWithRetry(tmpDir)).not.toThrow();
     expect(fs.existsSync(tmpDir)).toBe(false);
   });
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import { KnowledgeStore } from "../../src/context-mode/knowledge/store.js";
 import { registerContextModeTools, _stats, INTENT_THRESHOLD } from "../../src/context-mode/tools.js";
+import { rmDirWithRetry } from "../helpers/fs.js";
 
 let tmpDir: string;
 let store: KnowledgeStore;
@@ -33,7 +34,7 @@ beforeEach(() => {
 afterEach(() => {
   store.close();
   if (fs.existsSync(tmpDir)) {
-    fs.rmSync(tmpDir, { recursive: true });
+    rmDirWithRetry(tmpDir);
   }
 });
 

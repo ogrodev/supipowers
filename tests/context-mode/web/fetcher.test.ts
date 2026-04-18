@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { KnowledgeStore } from "../../../src/context-mode/knowledge/store.js";
+import { rmDirWithRetry } from "../../helpers/fs.js";
 import { fetchAndIndex } from "../../../src/context-mode/web/fetcher.js";
 
 let tmpDir: string;
@@ -18,7 +19,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   store.close();
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  rmDirWithRetry(tmpDir);
 });
 
 function mockFetch(body: string, contentType = "text/html", status = 200) {

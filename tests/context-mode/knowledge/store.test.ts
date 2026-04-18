@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Chunk } from "../../../src/context-mode/knowledge/chunker.js";
 import { KnowledgeStore } from "../../../src/context-mode/knowledge/store.js";
+import { rmDirWithRetry } from "../../helpers/fs.js";
 
 function makeChunk(
   title: string,
@@ -31,7 +32,7 @@ describe("KnowledgeStore", () => {
   afterEach(() => {
     store.close();
     if (fs.existsSync(tmpDir)) {
-      fs.rmSync(tmpDir, { recursive: true });
+      rmDirWithRetry(tmpDir);
     }
   });
 
@@ -179,7 +180,7 @@ describe("KnowledgeStore", () => {
     store.close();
     expect(() => store.close()).not.toThrow();
 
-    expect(() => fs.rmSync(tmpDir, { recursive: true })).not.toThrow();
+    expect(() => rmDirWithRetry(tmpDir)).not.toThrow();
     expect(fs.existsSync(tmpDir)).toBe(false);
   });
 
