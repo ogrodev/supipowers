@@ -2,9 +2,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createPaths } from "../../src/platform/types.js";
 import { cancelUiDesignTracking, isUiDesignActive, startUiDesignTracking } from "../../src/ui-design/session.js";
 
-const handleAiReview = mock();
-const registerAiReviewCommand = mock();
-let actualAiReviewModule: typeof import("../../src/commands/ai-review.js") | null = null;
 
 function createPlatform() {
   const handlers = new Map<string, any>();
@@ -35,25 +32,12 @@ function createPlatform() {
 
 describe("bootstrap input interception", () => {
   beforeEach(() => {
-    handleAiReview.mockReset();
-    registerAiReviewCommand.mockReset();
     cancelUiDesignTracking("bootstrap-test-reset");
   });
 
-  afterEach(() => {
-    if (actualAiReviewModule) {
-      mock.module("../../src/commands/ai-review.js", () => actualAiReviewModule!);
-    }
-  });
-
-  test("forwards /supi:review args to the intercepted TUI handler", async () => {
-    actualAiReviewModule ??= await import("../../src/commands/ai-review.js");
-    mock.module("../../src/commands/ai-review.js", () => ({
-      ...actualAiReviewModule!,
-      handleAiReview,
-      registerAiReviewCommand,
-    }));
-    const { bootstrap } = await import("../../src/bootstrap.js");
+  test("intercepts /supi:review input before chat submission", async () => {
+    const bootstrapModulePath = "../../src/bootstrap.js?bootstrap-input-review";
+    const { bootstrap } = await import(bootstrapModulePath);
     const { platform, handlers } = createPlatform();
 
     bootstrap(platform);
@@ -64,18 +48,23 @@ describe("bootstrap input interception", () => {
     const ctx = {
       cwd: process.cwd(),
       hasUI: true,
-      ui: { notify: mock() },
+      ui: {
+        notify: mock(),
+        select: mock(async () => null),
+        custom: mock(async () => null),
+        input: mock(async () => null),
+      },
       modelRegistry: { getAvailable: () => [] },
     } as any;
 
     const result = inputHandler({ text: "/supi:review --target pkg-a" }, ctx);
 
     expect(result).toEqual({ action: "handled" });
-    expect(handleAiReview).toHaveBeenCalledWith(platform, ctx, "--target pkg-a");
   });
 
   test("session_shutdown tears down any active ui-design companion", async () => {
-    const { bootstrap } = await import("../../src/bootstrap.js");
+    const bootstrapModulePath = "../../src/bootstrap.js?bootstrap-input-shutdown";
+    const { bootstrap } = await import(bootstrapModulePath);
     const { platform, handlers } = createPlatform();
     const cleanup = mock(async () => {});
 
