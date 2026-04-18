@@ -179,6 +179,66 @@
     .mock-content { padding: 1.5rem; flex: 1; }
     .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
     .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+
+    /* ===== UI-DESIGN COMPANION ===== */
+    .component-gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+    .component-gallery .component-tile {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .component-gallery .component-tile-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 0.75rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .component-gallery .component-tile-body { padding: 1rem; }
+
+    .preview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+    @media (max-width: 800px) { .preview-grid { grid-template-columns: 1fr; } }
+    .preview-grid > .preview-item {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+    }
+
+    .critique-report { display: flex; flex-direction: column; gap: 1rem; margin: 1rem 0; }
+    .critique-report .critique-section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+    }
+    .critique-report .critique-section h3 {
+      font-size: 0.95rem;
+      margin-bottom: 0.5rem;
+    }
+    .critique-report .critique-section.fixable h3 { color: var(--warning); }
+    .critique-report .critique-section.advisory h3 { color: var(--text-secondary); }
+
+    .decomposition-tree {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
