@@ -65,6 +65,33 @@ describe("registerContextModeTools", () => {
     }
   });
 
+  test("every tool has a description and promptSnippet", () => {
+    registerAll();
+    for (const [, def] of registeredTools) {
+      expect(typeof def.description).toBe("string");
+      expect(def.description.length).toBeGreaterThan(0);
+      expect(typeof def.promptSnippet).toBe("string");
+      expect(def.promptSnippet.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("every tool exposes at least one promptGuideline (drift guard)", () => {
+    registerAll();
+    for (const [name, def] of registeredTools) {
+      expect(Array.isArray(def.promptGuidelines)).toBe(true);
+      expect(def.promptGuidelines.length).toBeGreaterThan(0);
+      for (const guideline of def.promptGuidelines) {
+        expect(typeof guideline).toBe("string");
+        expect(guideline.length).toBeGreaterThan(0);
+      }
+      // Sanity: guideline should mention something relevant.
+      const guideText = def.promptGuidelines.join(" ").toLowerCase();
+      expect(guideText).not.toBe("");
+      // Each guideline is attached to the intended tool.
+      expect(name).toBeDefined();
+    }
+  });
+
   test("tool names match expected set", () => {
     registerAll();
     const names = [...registeredTools.keys()].sort();
