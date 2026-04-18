@@ -4,11 +4,13 @@
 // a conventional-commit plan (optionally split by file), presents
 // the plan for user approval, then executes file-level staging + commit.
 
-import type { Platform } from "../platform/types.js";
+import type { Platform, PlatformPaths } from "../platform/types.js";
+import { appendReliabilityRecord } from "../storage/reliability-metrics.js";
 import type { WorkspaceTarget } from "../types.js";
 import { createWorkflowProgress } from "../platform/progress.js";
 import { VALID_COMMIT_TYPES } from "../release/commit-types.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
 import {
   buildWorkspaceTargetOptionLabel,
   resolveRequestedWorkspaceTarget,
@@ -29,17 +31,13 @@ import { loadModelConfig } from "../config/model-config.js";
 
 // ── Public types ───────────────────────────────────────────
 
-export interface CommitGroup {
-  type: string;
-  scope: string | null;
-  summary: string;
-  details: string[];
-  files: string[];
-}
+import { CommitPlanSchema, validateCommitPlanCoverage, type CommitGroup, type CommitPlan } from "./commit-contract.js";
+import { parseStructuredOutput, runWithOutputValidation, formatValidationErrors } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
 
-export interface CommitPlan {
-  commits: CommitGroup[];
-}
+export type { CommitGroup, CommitPlan };
+
+const COMMIT_PLAN_SCHEMA_TEXT = renderSchemaText(CommitPlanSchema);
 
 export interface CommitResult {
   committed: number;
@@ -156,6 +154,8 @@ interface CommitTargetContext {
   scopeHint: string | null;
   targetLabel: string;
   agentCwd: string;
+  /** True when changes span multiple workspace packages. Signals the AI to group by scope. */
+  multiTarget?: boolean;
 }
 
 function buildDiffArgs(baseArgs: string[], fileList: string[]): string[] {
@@ -218,7 +218,8 @@ async function resolveCommitTargetContext(
       notifyError(ctx, "Commit target has no changes", `${formatTargetSummary(requested)} has no tracked changes to stage.`);
       return null;
     }
-    const options = sortWorkspaceTargetOptions(
+
+    const sortedOptions = sortWorkspaceTargetOptions(
       changedTargets.map((target) => ({
         target,
         changed: true,
@@ -226,29 +227,106 @@ async function resolveCommitTargetContext(
       })),
     );
 
-    const selectedTarget = requested ?? await selectWorkspaceTarget(ctx, options, null, {
-      title: "Commit target",
-      helpText: "Pick one target to stage and commit. This wave supports one target per invocation.",
-    });
+    // When multiple targets have changes and no explicit --target, offer "All workspaces".
+    // The all path stages every file and returns a multi-target context directly, bypassing
+    // the single-target staged-file detection that follows this block.
+    if (!requested && sortedOptions.length > 1) {
+      const allFileCount = changedTargets.reduce(
+        (sum, t) => sum + filterPathsForWorkspaceTarget(targets, t, status.files).length,
+        0,
+      );
+      const allLabel = `All workspaces \u2014 ${changedTargets.length} targets, ${allFileCount} file(s)`;
+      const targetLabels = sortedOptions.map((opt) => opt.label ?? buildWorkspaceTargetOptionLabel(opt));
+      const choice = await ctx.ui.select("Commit target", [allLabel, ...targetLabels], {
+        helpText: "Pick one target to stage and commit, or select all to process every changed package in one pass.",
+      });
 
-    if (!selectedTarget) {
-      notifyInfo(ctx, "Commit cancelled", "No target selected");
-      return null;
-    }
+      if (!choice) {
+        notifyInfo(ctx, "Commit cancelled", "No target selected");
+        return null;
+      }
 
-    const targetFiles = filterPathsForWorkspaceTarget(targets, selectedTarget, status.files);
-    if (targetFiles.length === 0) {
-      notifyInfo(ctx, "Nothing to commit", `${formatTargetSummary(selectedTarget)} has no changes to stage`);
-      return null;
-    }
+      if (choice === allLabel) {
+        // Stage every changed file across all targets.
+        const allFiles = changedTargets.flatMap((t) => filterPathsForWorkspaceTarget(targets, t, status.files));
+        progress.activate(1, `all workspaces \u00b7 ${allFiles.length} file(s)`);
+        const addResult = await exec("git", ["add", "-A", "--", ...allFiles], { cwd });
+        if (addResult.code !== 0) {
+          notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
+          return null;
+        }
+        progress.complete(1, `all workspaces \u00b7 ${allFiles.length} file(s)`);
 
-    progress.activate(1, `${selectedTarget.name} · ${targetFiles.length} file(s)`);
-    const addResult = await exec("git", ["add", "-A", "--", ...targetFiles], { cwd });
-    if (addResult.code !== 0) {
-      notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
-      return null;
+        // Verify what actually landed in the index.
+        const stagedVerify = await exec("git", ["diff", "--cached", "--name-only"], { cwd });
+        if (stagedVerify.code !== 0) {
+          notifyError(ctx, "git diff failed", stagedVerify.stderr || "Could not read staged files");
+          return null;
+        }
+        const allStagedFiles = normalizeLineEndings(stagedVerify.stdout).trim().split("\n").filter(Boolean);
+        if (allStagedFiles.length === 0) {
+          notifyInfo(ctx, "Nothing to commit", "No changes after staging");
+          return null;
+        }
+
+        const rootTarget = targets.find((t) => t.kind === "root") ?? targets[0]!;
+        return {
+          target: rootTarget,
+          fileList: allStagedFiles,
+          scopeHint: null,
+          targetLabel: `all workspaces (${changedTargets.length} targets)`,
+          agentCwd: cwd,
+          multiTarget: true,
+        };
+      }
+
+      // Single target selected from the custom picker.
+      const selectedIdx = targetLabels.indexOf(choice);
+      const selectedTarget = selectedIdx >= 0 ? sortedOptions[selectedIdx]?.target ?? null : null;
+      if (!selectedTarget) {
+        notifyInfo(ctx, "Commit cancelled", "No target selected");
+        return null;
+      }
+
+      const targetFiles = filterPathsForWorkspaceTarget(targets, selectedTarget, status.files);
+      if (targetFiles.length === 0) {
+        notifyInfo(ctx, "Nothing to commit", `${formatTargetSummary(selectedTarget)} has no changes to stage`);
+        return null;
+      }
+
+      progress.activate(1, `${selectedTarget.name} \u00b7 ${targetFiles.length} file(s)`);
+      const addResult = await exec("git", ["add", "-A", "--", ...targetFiles], { cwd });
+      if (addResult.code !== 0) {
+        notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
+        return null;
+      }
+      progress.complete(1, `${selectedTarget.name} \u00b7 ${targetFiles.length} file(s)`);
+    } else {
+      // Single target or --target specified: original flow.
+      const selectedTarget = requested ?? await selectWorkspaceTarget(ctx, sortedOptions, null, {
+        title: "Commit target",
+        helpText: "Pick one target to stage and commit.",
+      });
+
+      if (!selectedTarget) {
+        notifyInfo(ctx, "Commit cancelled", "No target selected");
+        return null;
+      }
+
+      const targetFiles = filterPathsForWorkspaceTarget(targets, selectedTarget, status.files);
+      if (targetFiles.length === 0) {
+        notifyInfo(ctx, "Nothing to commit", `${formatTargetSummary(selectedTarget)} has no changes to stage`);
+        return null;
+      }
+
+      progress.activate(1, `${selectedTarget.name} \u00b7 ${targetFiles.length} file(s)`);
+      const addResult = await exec("git", ["add", "-A", "--", ...targetFiles], { cwd });
+      if (addResult.code !== 0) {
+        notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
+        return null;
+      }
+      progress.complete(1, `${selectedTarget.name} \u00b7 ${targetFiles.length} file(s)`);
     }
-    progress.complete(1, `${selectedTarget.name} · ${targetFiles.length} file(s)`);
   } else {
     progress.activate(1, `${status.stagedFiles.length} staged`);
     progress.complete(1, `${status.stagedFiles.length} staged`);
@@ -314,7 +392,7 @@ export async function analyzeAndCommit(
   options: CommitOptions = {},
 ): Promise<CommitResult | null> {
   const exec = platform.exec.bind(platform);
-  const cwd: string = ctx.cwd;
+  const cwd = await resolveRepoRoot(platform, ctx.cwd);
   const progress = createProgress(ctx);
 
   try {
@@ -365,10 +443,12 @@ export async function analyzeAndCommit(
       userContext: options.userContext,
       scopeHint: targetContext.scopeHint,
       targetLabel: targetContext.targetLabel,
+      multiTarget: targetContext.multiTarget,
     });
 
     let plan: CommitPlan | null = null;
     let agentReason: string | undefined;
+    let agentAttempts = 0;
 
     if (platform.capabilities.agentSessions) {
       progress.activate(4, `${fileList.length} file(s)`);
@@ -390,15 +470,16 @@ export async function analyzeAndCommit(
           ctx.ui?.setStatus?.("supi-model", `Model: ${candidate.model} (${detail})`);
         }
 
-        const agentResult = await tryAgentPlan(platform, targetContext.agentCwd, prompt, candidate.model);
+        const agentResult = await tryAgentPlan(platform, targetContext.agentCwd, prompt, fileList, candidate.model);
         if (agentResult.plan) {
-          plan = validatePlanFiles(agentResult.plan, fileList);
+          plan = agentResult.plan;
           progress.complete(4, `${plan.commits.length} commit(s)`);
           break;
         }
 
         // Store last failure reason; try next candidate
         agentReason = agentResult.reason;
+        agentAttempts = agentResult.attempts;
       }
 
       if (!plan) {
@@ -416,7 +497,7 @@ export async function analyzeAndCommit(
       const reason = !platform.capabilities.agentSessions
         ? "no agent sessions"
         : agentReason;
-      return manualFallback(platform, ctx, cwd, fileList, reason);
+      return manualFallback(platform, ctx, cwd, fileList, platform.paths, agentAttempts, reason);
     }
 
     // 6. Present plan for approval
@@ -454,62 +535,53 @@ interface AgentPlanResult {
   plan: CommitPlan | null;
   /** Human-readable reason when plan is null */
   reason?: string;
+  /** Number of attempts made by runWithOutputValidation (0 if never reached). */
+  attempts: number;
 }
 
 async function tryAgentPlan(
   platform: Platform,
   cwd: string,
   prompt: string,
+  stagedFiles: string[],
   model?: string,
 ): Promise<AgentPlanResult> {
-  let session: Awaited<ReturnType<Platform["createAgentSession"]>> | null = null;
   try {
-    session = await platform.createAgentSession({ cwd, hasUI: false, ...(model ? { model } : {}) });
+    const result = await runWithOutputValidation<CommitPlan>(
+      platform.createAgentSession.bind(platform),
+      {
+        cwd,
+        prompt,
+        schema: COMMIT_PLAN_SCHEMA_TEXT,
+        parse: (raw) => parseStructuredOutput<CommitPlan>(raw, CommitPlanSchema),
+        model,
+        maxAttempts: 3,
+        reliability: {
+          paths: platform.paths,
+          cwd,
+          command: "commit",
+          operation: "commit-plan",
+        },
+      },
+    );
 
-    const agentDone = new Promise<void>((resolve) => {
-      session!.subscribe((event: any) => {
-        if (event.type === "agent_end") resolve();
-      });
-    });
+    if (result.status === "blocked") {
+      return { plan: null, reason: result.error, attempts: result.attempts };
+    }
 
-    await session.prompt(prompt);
-    await agentDone;
+    const coverageErrors = validateCommitPlanCoverage(result.output, stagedFiles);
+    if (coverageErrors.length > 0) {
+      return {
+        plan: null,
+        reason: `Commit plan coverage check failed: ${formatValidationErrors(coverageErrors).join("; ")}`,
+        attempts: result.attempts,
+      };
+    }
 
-    // Extract JSON from the last assistant message
-    const messages = session.state.messages;
-    const lastAssistant = [...messages]
-      .reverse()
-      .find((m: any) => m.role === "assistant");
-
-    if (!lastAssistant) return { plan: null, reason: "no assistant response" };
-
-    const text =
-      typeof lastAssistant.content === "string"
-        ? lastAssistant.content
-        : Array.isArray(lastAssistant.content)
-          ? lastAssistant.content
-              .filter((b: any) => b.type === "text")
-              .map((b: any) => b.text)
-              .join("\n")
-          : "";
-
-    if (!text) return { plan: null, reason: "empty agent response" };
-
-    const plan = parseCommitPlan(text);
-    if (!plan) return { plan: null, reason: diagnoseParseFailure(text) };
-
-    return { plan };
+    return { plan: result.output, attempts: result.attempts };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { plan: null, reason: message };
-  } finally {
-    if (session) {
-      try {
-        await session.dispose();
-      } catch {
-        // Swallow disposal errors
-      }
-    }
+    return { plan: null, reason: message, attempts: 0 };
   }
 }
 
@@ -520,9 +592,23 @@ async function manualFallback(
   ctx: any,
   cwd: string,
   fileList: string[],
+  paths: PlatformPaths,
+  attempts: number,
   reason?: string,
 ): Promise<CommitResult | null> {
   const exec = platform.exec.bind(platform);
+
+  try {
+    appendReliabilityRecord(paths, cwd, {
+      ts: new Date().toISOString(),
+      command: "commit",
+      operation: "commit-plan",
+      outcome: "fallback",
+      attempts,
+      reason,
+      cwd,
+    });
+  } catch {}
 
   notifyInfo(
     ctx,
@@ -551,24 +637,6 @@ async function manualFallback(
   return { committed: 1, messages: [message] };
 }
 
-// ── Plan validation ────────────────────────────────────────
-
-/**
- * Filter an AI-generated commit plan against the actual staged file list.
- * Removes hallucinated paths that aren't staged, and drops empty groups.
- * Falls back to the original plan if filtering would leave nothing.
- */
-export function validatePlanFiles(plan: CommitPlan, stagedFiles: string[]): CommitPlan {
-  const stagedSet = new Set(stagedFiles);
-  const validCommits = plan.commits
-    .map((group) => ({
-      ...group,
-      files: group.files.filter((f) => stagedSet.has(f)),
-    }))
-    .filter((group) => group.files.length > 0);
-
-  return validCommits.length > 0 ? { commits: validCommits } : plan;
-}
 
 
 // ── Commit execution ───────────────────────────────────────
@@ -680,11 +748,13 @@ interface PromptInput {
   userContext?: string;
   scopeHint?: string | null;
   targetLabel?: string;
+  /** When true, changes span multiple packages; AI should group commits by workspace scope. */
+  multiTarget?: boolean;
 }
 
 /** Exported for testing */
 export function buildAnalysisPrompt(input: PromptInput): string {
-  const { diff, stat, fileList, conventions, userContext, scopeHint, targetLabel } = input;
+  const { diff, stat, fileList, conventions, userContext, scopeHint, targetLabel, multiTarget } = input;
   const normalizedDiff = normalizeLineEndings(diff);
 
   const parts: string[] = [
@@ -707,6 +777,14 @@ export function buildAnalysisPrompt(input: PromptInput): string {
   }
   if (targetLabel) {
     parts.push(`**Selected target:** ${targetLabel}`, "");
+  }
+
+  if (multiTarget) {
+    parts.push(
+      "**Multi-target mode:** Changes span multiple workspace packages.",
+      "Group commits by package or workspace scope — each commit should cover one logical area.",
+      "",
+    );
   }
 
   if (scopeHint) {
@@ -765,93 +843,7 @@ export function buildAnalysisPrompt(input: PromptInput): string {
   return parts.join("\n");
 }
 
-// ── Plan parsing ───────────────────────────────────────────
 
-/**
- * Produce a human-readable reason why parseCommitPlan returned null.
- * Used for diagnostics — never shown raw to the user.
- */
-function diagnoseParseFailure(text: string): string {
-  const fenceRe = /```json\s*\n([\s\S]*?)```/;
-  const match = fenceRe.exec(text);
-  if (!match) return "no JSON code block in response";
-
-  let parsed: any;
-  try {
-    parsed = JSON.parse(match[1]);
-  } catch {
-    return "JSON parse error in response";
-  }
-
-  if (!parsed.commits || !Array.isArray(parsed.commits)) return "missing commits array";
-  if (parsed.commits.length === 0) return "empty commits array";
-
-  for (const c of parsed.commits) {
-    if (!c.type) return "commit missing type";
-    if (!c.summary) return "commit missing summary";
-    if (!Array.isArray(c.files) || c.files.length === 0) return "commit missing files";
-    if (!(VALID_COMMIT_TYPES as readonly string[]).includes(c.type)) {
-      return `invalid commit type: ${c.type}`;
-    }
-  }
-
-  // Check for duplicate files across groups
-  const seen = new Set<string>();
-  for (const group of parsed.commits) {
-    for (const file of group.files) {
-      if (seen.has(file)) return `duplicate file across commits: ${file}`;
-      seen.add(file);
-    }
-  }
-
-  return "unknown parse failure";
-}
-
-
-/** Exported for testing */
-export function parseCommitPlan(text: string): CommitPlan | null {
-  // Look for ```json ... ``` fenced block
-  const fenceRe = /```json\s*\n([\s\S]*?)```/;
-  const match = fenceRe.exec(text);
-  if (!match) return null;
-
-  try {
-    const parsed = JSON.parse(match[1]);
-    if (!parsed.commits || !Array.isArray(parsed.commits)) return null;
-
-    const commits: CommitGroup[] = [];
-    for (const c of parsed.commits) {
-      if (!c.type || !c.summary || !Array.isArray(c.files) || c.files.length === 0) {
-        return null;
-      }
-      if (!(VALID_COMMIT_TYPES as readonly string[]).includes(c.type)) {
-        return null;
-      }
-      commits.push({
-        type: c.type,
-        scope: c.scope ?? null,
-        summary: String(c.summary),
-        details: Array.isArray(c.details) ? c.details.map(String) : [],
-        files: c.files.map(String),
-      });
-    }
-
-    if (commits.length === 0) return null;
-
-    // Validate: no duplicate files across groups
-    const seen = new Set<string>();
-    for (const group of commits) {
-      for (const file of group.files) {
-        if (seen.has(file)) return null;
-        seen.add(file);
-      }
-    }
-
-    return { commits };
-  } catch {
-    return null;
-  }
-}
 
 // ── Formatting ─────────────────────────────────────────────
 
