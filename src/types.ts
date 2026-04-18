@@ -1,6 +1,12 @@
 import type { TSchema } from "@sinclair/typebox";
 import type { AgentSession, AgentSessionOptions, ExecOptions, ExecResult } from "./platform/types.js";
 
+
+/** Generic schema-validation error produced by src/ai/structured-output.ts */
+export interface ValidationError {
+  path: string;
+  message: string;
+}
 // src/types.ts — Shared type definitions for supipowers
 
 /** Task complexity level */
@@ -42,7 +48,7 @@ export interface Notification {
 export type CommandGateId = "lint" | "typecheck" | "format" | "test-suite" | "build";
 export type GateId = "lsp-diagnostics" | CommandGateId;
 
-export type ConfigScope = "global" | "root" | "workspace";
+export type ConfigScope = "global" | "root";
 
 /** Aggregate gate execution status */
 export type GateStatus = "passed" | "failed" | "skipped" | "blocked";
@@ -292,13 +298,24 @@ export interface GateFilters {
   skip?: GateId[];
 }
 
+/** Per-target facts used by monorepo-aware gate setup/detection */
+export interface ProjectFactsTarget {
+  name: string;
+  kind: WorkspaceTargetKind;
+  relativeDir: string;
+  packageScripts: Record<string, string>;
+}
+
 /** Project facts used by gate setup/detection */
 export interface ProjectFacts {
   cwd: string;
+  /** Scripts that are shared across every discovered target and are safe baseline candidates. */
   packageScripts: Record<string, string>;
   lockfiles: string[];
   activeTools: string[];
   existingGates: QualityGatesConfig;
+  /** Detailed per-target scripts for AI-assisted setup in monorepos. */
+  targets: ProjectFactsTarget[];
 }
 
 /** Recommendation returned by gate auto-detection */
@@ -339,6 +356,7 @@ export interface GateDefinition<TConfig> {
 /** A proposed quality-gate configuration */
 export interface SetupProposal {
   gates: QualityGatesConfig;
+  notes?: string[];
 }
 
 /** Result of running the setup flow */
@@ -537,4 +555,43 @@ export interface DriftCheckResult {
   drifted: boolean;
   summary: string;
   findings: DriftFinding[];
+  /** Error messages from sub-agents whose output failed schema validation after retries. */
+  errors?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Reliability metrics (Phase 8 — observability + failure mining)
+// ---------------------------------------------------------------------------
+
+/** Outcome categories for AI-heavy command attempts. */
+export type ReliabilityOutcome = "ok" | "blocked" | "retry-exhausted" | "fallback" | "agent-error";
+
+/** A single recorded outcome from an AI-heavy workflow attempt. */
+export interface ReliabilityRecord {
+  /** ISO timestamp the attempt completed. */
+  ts: string;
+  /** Logical command name (e.g. "plan", "commit", "review", "fix-pr", "release"). */
+  command: string;
+  /** Specific operation within the command (e.g. "plan-spec", "commit-plan", "polish"). Optional. */
+  operation?: string;
+  /** Final outcome category. */
+  outcome: ReliabilityOutcome;
+  /** Number of attempts the underlying retry loop performed. */
+  attempts: number;
+  /** Short truthful reason on blocked/error outcomes. Optional on success. */
+  reason?: string;
+  /** Optional cwd where the attempt ran. */
+  cwd?: string;
+}
+
+/** Aggregated summary of reliability records, suitable for status/doctor output. */
+export interface ReliabilitySummary {
+  command: string;
+  total: number;
+  /** Count by outcome category. */
+  byOutcome: Record<ReliabilityOutcome, number>;
+  /** Average attempts across all records (0 when total is 0). */
+  avgAttempts: number;
+  /** Most recent record timestamp, or null when empty. */
+  lastRecordedAt: string | null;
 }
