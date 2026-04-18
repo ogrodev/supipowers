@@ -36,6 +36,7 @@ OMP Runtime
     ├── src/quality/          ← composable check runner (lsp-diagnostics, lint, typecheck, test-suite, build, format)
     ├── src/review/           ← AI review pipeline (scope, runners, validation, fixing, consolidation)
     ├── src/planning/         ← plan approval UI flow (agent_end hook)
+    ├── src/ui-design/        ← Design Director pipeline (config, scanners, backend adapter, session, system-prompt override)
     ├── src/notifications/    ← notification rendering and emission
     ├── src/lsp/              ← LSP availability detection via platform.getActiveTools()
     ├── src/mcp/              ← MCP server management (registry, activation, lifecycle)
@@ -104,6 +105,7 @@ supipowers/
 ├── tests/                    # Mirrors src/ structure — tests/<module>/<unit>.test.ts
 ├── skills/                   # OMP skills used by steer-based commands or manual prompting
 │   ├── planning/SKILL.md
+│   ├── ui-design/SKILL.md
 │   ├── code-review/SKILL.md
 │   ├── debugging/SKILL.md
 │   ├── qa-strategy/SKILL.md
@@ -139,6 +141,9 @@ supipowers/
 |`src/storage/review-sessions.ts`|Review session persistence under `.omp/supipowers/reviews/`|
 |`src/config/defaults.ts`|`DEFAULT_CONFIG` — built-in default configuration|
 |`src/planning/approval-flow.ts`|Plan approval UI flow (agent_end hook)|
+|`src/ui-design/session.ts`|ui-design session lifecycle + `agent_end` approval hook|
+|`src/ui-design/system-prompt.ts`|Design Director `before_agent_start` system prompt override|
+|`src/commands/ui-design.ts`|`/supi:ui-design` command handler and first-run wizard|
 |`.omp/supipowers/review-agents/config.yml`|Project-local review-agent pipeline config materialized on first `/supi:review` run|
 |`package.json`|`omp.extensions` field registers `./src/index.ts` with the OMP runtime|
 |`tsconfig.json` / `tsconfig.build.json`|Base config (includes tests) vs. build config (excludes tests)|
@@ -334,6 +339,7 @@ Skills are OMP-consumed markdown prompt files in `skills/`. Steer-based commands
 | Skill               | Path                                    | Used by                                    |
 | ------------------- | --------------------------------------- | ------------------------------------------ |
 | Planning            | `skills/planning/SKILL.md`              | `/supi:plan`                               |
+| UI design           | `skills/ui-design/SKILL.md`             | `/supi:ui-design`                          |
 | Code review         | `skills/code-review/SKILL.md`           | Manual prompting / reusable review guidance |
 | QA strategy         | `skills/qa-strategy/SKILL.md`           | `/supi:qa`                                 |
 | Fix PR              | `skills/fix-pr/SKILL.md`                | `/supi:fix-pr`                             |

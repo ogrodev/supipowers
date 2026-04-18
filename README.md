@@ -60,6 +60,7 @@ The installer scans for these and offers to install missing tooling where it can
 | ------------------------ | ------------------------------------------------------------- |
 | `/supi`                  | Interactive menu with commands and project status             |
 | `/supi:plan`             | Collaborative planning with structured task breakdown         |
+| `/supi:ui-design`        | Design Director pipeline — gather UI context, decompose target into components, build mockups in browser companion, validate, save to `.omp/supipowers/ui-design/` |
 | `/supi:review`           | AI code review with validated findings docs and fix/document/discuss actions |
 | `/supi:checks`           | Run deterministic quality gates                               |
 | `/supi:qa`               | E2E testing pipeline with Playwright                          |
@@ -201,6 +202,7 @@ Supipowers ships runtime-loaded prompt skills that are also available to the age
 | Skill                   | Used by                 |
 | ----------------------- | ----------------------- |
 | `planning`              | `/supi:plan`            |
+| `ui-design`             | `/supi:ui-design`       |
 | `code-review`           | Manual prompting / reusable review guidance |
 | `qa-strategy`           | `/supi:qa`              |
 | `fix-pr`                | `/supi:fix-pr`          |
