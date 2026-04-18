@@ -1,5 +1,6 @@
 import type { Platform } from "../platform/types.js";
 import { isPlanningActive } from "./approval-flow.js";
+import { isUiDesignActive, recordUiDesignReviewApproval } from "../ui-design/session.js";
 
 /**
  * Register a `planning_ask` tool — identical to the built-in `ask` tool
@@ -67,6 +68,7 @@ export function registerPlanningAskTool(platform: Platform): void {
       });
 
       const selected = choice ?? labels[params.recommended ?? 0] ?? labels[0];
+      recordUiDesignReviewApproval(params.question, labels, selected);
 
       return {
         content: [
@@ -81,24 +83,38 @@ export function registerPlanningAskTool(platform: Platform): void {
   });
 }
 
+function getAskRedirectReason(): string | null {
+  if (isPlanningActive()) {
+    return "Planning mode: use the `planning_ask` tool instead of `ask`. `planning_ask` has no timeout so the user can think without pressure.";
+  }
+
+  if (isUiDesignActive()) {
+    return "UI-design mode: use the `planning_ask` tool instead of `ask`. The Design Director workflow requires auditable gated responses through `planning_ask`.";
+  }
+
+  return null;
+}
 
 /**
  * Register a tool_call guard that blocks the generic `ask` tool during
- * active planning sessions and points the model at `planning_ask` instead.
+ * active planning or ui-design sessions and points the model at
+ * `planning_ask` instead.
  *
- * This is the runtime complement to the prompt-level directive in
- * src/planning/system-prompt.ts: even if prompt wording drifts or the model
- * ignores it, invoking `ask` during planning mode returns a block result
+ * This is the runtime complement to the prompt-level directive in the
+ * planning and ui-design prompts: even if prompt wording drifts or the
+ * model ignores it, invoking `ask` in those modes returns a block result
  * with a truthful redirection.
  */
 export function registerPlanningAskToolGuard(platform: Platform): void {
   platform.on("tool_call", (event) => {
-    if (!isPlanningActive()) return;
     if (event.toolName !== "ask") return;
+
+    const reason = getAskRedirectReason();
+    if (!reason) return;
+
     return {
       block: true,
-      reason:
-        "Planning mode: use the `planning_ask` tool instead of `ask`. `planning_ask` has no timeout so the user can think without pressure.",
+      reason,
     };
   });
 }
