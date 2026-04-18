@@ -11,6 +11,11 @@ const BASE_CONTEXT = {
   packageManager: "bun",
 };
 
+function expectedShellCall(command: string, options: Record<string, unknown>) {
+  return process.platform === "win32"
+    ? ["cmd", ["/d", "/s", "/c", command], options]
+    : ["sh", ["-lc", command], options];
+}
 
 describe("createCustomHandler", () => {
   test("creates handler with correct id and label", () => {
@@ -47,7 +52,7 @@ describe("createCustomHandler", () => {
 
       expect(status.channel).toBe("my-forge");
       expect(status.available).toBe(true);
-      expect(exec).toHaveBeenCalledWith("sh", ["-c", "tea login list"], { cwd: "/cwd" });
+      expect(exec).toHaveBeenCalledWith(...expectedShellCall("tea login list", { cwd: "/cwd" }));
     });
 
     test("unavailable when detectCommand fails", async () => {
@@ -94,21 +99,22 @@ describe("createCustomHandler", () => {
 
       expect(result.success).toBe(true);
       expect(exec).toHaveBeenCalledWith(
-        "sh",
-        ["-c", 'tea release create --tag ${tag} --title ${tag} --note "${changelog}"'],
-        {
-          cwd: "/project",
-          env: {
-            tag: "v1.2.3",
-            version: "1.2.3",
-            changelog,
-            targetName: "@repo/pkg",
-            targetId: "@repo/pkg",
-            targetPath: "packages/pkg",
-            manifestPath: "/project/packages/pkg/package.json",
-            packageManager: "bun",
+        ...expectedShellCall(
+          'tea release create --tag ${tag} --title ${tag} --note "${changelog}"',
+          {
+            cwd: "/project",
+            env: {
+              tag: "v1.2.3",
+              version: "1.2.3",
+              changelog,
+              targetName: "@repo/pkg",
+              targetId: "@repo/pkg",
+              targetPath: "packages/pkg",
+              manifestPath: "/project/packages/pkg/package.json",
+              packageManager: "bun",
+            },
           },
-        },
+        ),
       );
     });
 

@@ -1,5 +1,6 @@
 // src/release/channels/custom.ts — Wraps user-defined custom channel config into a ChannelHandler
 import type { CustomChannelConfig } from "../../types.js";
+import { execShellCommand } from "../../utils/shell.js";
 import type { ChannelHandler, ChannelPublishContext, ChannelStatus, ExecFn } from "./types.js";
 
 
@@ -13,7 +14,7 @@ export function createCustomHandler(id: string, config: CustomChannelConfig): Ch
         return { channel: id, available: true, detail: "No detect command configured — assumed available" };
       }
       try {
-        const result = await exec("sh", ["-c", config.detectCommand], { cwd });
+        const result = await execShellCommand(exec, config.detectCommand, { cwd });
         if (result.code === 0) {
           return { channel: id, available: true, detail: `Detect command succeeded` };
         }
@@ -27,7 +28,7 @@ export function createCustomHandler(id: string, config: CustomChannelConfig): Ch
       try {
         // `${tag}`/`${version}`/`${changelog}` stay in the shell template, but
         // their values cross the shell boundary via environment variables.
-        const result = await exec("sh", ["-c", config.publishCommand], {
+        const result = await execShellCommand(exec, config.publishCommand, {
           cwd: ctx.cwd,
           env: {
             tag: ctx.tag,
