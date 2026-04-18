@@ -10,7 +10,7 @@ import { commitStaged } from "../git/commit.js";
 import { formatTag } from "./version.js";
 import { resolveChannelHandler } from "./channels/registry.js";
 import type { ExecFn } from "./channels/types.js";
-import { getRunScriptCommand } from "./package-manager.js";
+import { getRunScriptCommand } from "../workspace/package-manager.js";
 
 /** Callback to report step progress during release execution. */
 export type ReleaseProgressFn = (step: string, status: "active" | "done" | "error", detail?: string) => void;

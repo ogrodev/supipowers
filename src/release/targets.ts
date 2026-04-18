@@ -62,8 +62,11 @@ function getDefaultTagFormat(target: WorkspaceTarget): string {
   return target.kind === "root" ? ROOT_TAG_FORMAT : `${target.name}@${ROOT_TAG_FORMAT.replace("v", "")}`;
 }
 
-function toReleaseTarget(target: WorkspaceTarget): ReleaseTarget {
-  const manifest = readReleaseManifest(target.manifestPath);
+function hasReleaseVersion(manifest: ReleaseManifest | null): manifest is ReleaseManifest & { version: string } {
+  return typeof manifest?.version === "string" && manifest.version.trim().length > 0;
+}
+
+function toReleaseTarget(target: WorkspaceTarget, manifest = readReleaseManifest(target.manifestPath)): ReleaseTarget {
   return {
     ...target,
     publishScopePaths: buildPublishScopePaths(target, manifest),
@@ -72,7 +75,10 @@ function toReleaseTarget(target: WorkspaceTarget): ReleaseTarget {
 }
 
 export function discoverReleaseTargets(repoRoot: string, packageManager: PackageManagerId): ReleaseTarget[] {
-  return discoverWorkspaceTargets(repoRoot, packageManager).map(toReleaseTarget);
+  return discoverWorkspaceTargets(repoRoot, packageManager).flatMap((target) => {
+    const manifest = readReleaseManifest(target.manifestPath);
+    return hasReleaseVersion(manifest) ? [toReleaseTarget(target, manifest)] : [];
+  });
 }
 
 export function getPublishableReleaseTargets(targets: ReleaseTarget[]): ReleaseTarget[] {

@@ -1,4 +1,6 @@
 import { formatTag } from "./version.js";
+import { renderSchemaText } from "../ai/schema-text.js";
+import { ReleaseNotePolishOutputSchema } from "./contracts.js";
 
 export interface BuildPolishPromptOpts {
   changelog: string;
@@ -10,7 +12,9 @@ export interface BuildPolishPromptOpts {
  * Build a prompt for a headless agent session that polishes raw changelog
  * text into clear, user-facing release notes.
  *
- * The agent returns only the polished markdown — no commands, no confirmation.
+ * The agent returns a structured JSON artifact matching
+ * ReleaseNotePolishOutputSchema. The release command renders the polished
+ * changelog from that artifact — no free-form text, no regex extraction.
  */
 export function buildPolishPrompt(opts: BuildPolishPromptOpts): string {
   const { changelog, version } = opts;
@@ -66,6 +70,18 @@ export function buildPolishPrompt(opts: BuildPolishPromptOpts): string {
     "",
     "## Output",
     "",
-    "Return **only** the polished markdown changelog. No preamble, no explanation, no code fences wrapping the whole output.",
+    "Respond with a JSON object that matches this TypeScript shape exactly:",
+    "",
+    "```ts",
+    renderSchemaText(ReleaseNotePolishOutputSchema),
+    "```",
+    "",
+    "Field guide:",
+    "- `title`: short one-line heading for the release (no leading `#`).",
+    "- `body`: the grouped markdown sections (Breaking Changes, Features, Fixes, ...). Omit empty sections.",
+    "- `highlights`: 0–5 short bullet strings summarising the most user-visible changes. Each string is a plain sentence, no leading `-`.",
+    "- `status`: `\"ok\"` when the release has notable changes; `\"empty\"` when the raw changelog had nothing worth polishing (highlights may be empty and body may be a short placeholder).",
+    "",
+    "Respond with only the JSON object. You may wrap it in a ```json fence.",
   ].join("\n");
 }
