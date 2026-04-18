@@ -1,3 +1,5 @@
+import type { FixPrAssessmentBatch } from "./contracts.js";
+
 /** Supported automated PR reviewers */
 export type ReviewerType = "coderabbit" | "copilot" | "gemini" | "none";
 
@@ -58,4 +60,6 @@ export interface FixPrSessionLedger {
   iteration: number;
   config: FixPrConfig;
   commentsProcessed: number[];
+  /** Validated per-comment assessment artifact. Absent in older sessions. */
+  assessment?: FixPrAssessmentBatch;
 }
