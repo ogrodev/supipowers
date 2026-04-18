@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   registerPlanningAskTool,
   registerPlanningAskToolGuard,
@@ -7,12 +10,17 @@ import {
   cancelPlanTracking,
   startPlanTracking,
 } from "../../src/planning/approval-flow.js";
+import {
+  cancelUiDesignTracking,
+  startUiDesignTracking,
+} from "../../src/ui-design/session.js";
 
 // ---------------------------------------------------------------------------
-// Reset module-level planning state between tests to avoid pollution
+// Reset module-level planning/ui-design state between tests to avoid pollution
 // ---------------------------------------------------------------------------
 afterEach(() => {
   cancelPlanTracking();
+  cancelUiDesignTracking("test-cleanup");
 });
 
 function makePlatform() {
@@ -44,8 +52,57 @@ describe("registerPlanningAskTool — registration", () => {
   });
 });
 
+describe("registerPlanningAskTool — execution", () => {
+  test("records the ui-design review approval artifact for phase-9 decisions", async () => {
+    const platform = makePlatform();
+    registerPlanningAskTool(platform as any);
+    const tool = platform.getRegisteredTool();
+    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-ui-design-approval-"));
+
+    try {
+      fs.writeFileSync(
+        path.join(sessionDir, "screen-review.html"),
+        "<!DOCTYPE html><html><body><section>review</section></body></html>",
+      );
+      startUiDesignTracking(
+        {
+          id: "uidesign-20260418-120000-abcd",
+          dir: sessionDir,
+          backend: "local-html",
+          companionUrl: "http://localhost:4321",
+        },
+        async () => {},
+      );
+
+      const result = await tool.execute(
+        "call-1",
+        {
+          question: "Approve the mockup?",
+          options: [
+            { label: "approve" },
+            { label: "request-changes" },
+            { label: "discard" },
+          ],
+        },
+        new AbortController().signal,
+        null,
+        { ui: { select: mock(async () => "approve") } },
+      );
+
+      const record = JSON.parse(
+        fs.readFileSync(path.join(sessionDir, "review-approval.json"), "utf-8"),
+      );
+      expect(record.selected).toBe("approve");
+      expect(record.selectedLabel).toBe("approve");
+      expect(result.details).toEqual({ question: "Approve the mockup?", selected: "approve" });
+    } finally {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
-  test("no-op when planning is not active", async () => {
+  test("no-op when neither planning nor ui-design is active", async () => {
     const platform = makePlatform();
     registerPlanningAskToolGuard(platform as any);
     const result = await platform.fireToolCall("ask");
@@ -66,6 +123,30 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("planning_ask");
     expect(result?.reason).toContain("`ask`");
+  });
+
+  test("blocks the `ask` tool when ui-design is active", async () => {
+    const platform = makePlatform();
+    registerPlanningAskToolGuard(platform as any);
+
+    startUiDesignTracking(
+      {
+        id: "uidesign-20260418-120000-abcd",
+        dir: "/tmp/ui-design-session",
+        backend: "local-html",
+        companionUrl: "http://localhost:4321",
+      },
+      async () => {},
+    );
+
+    const result = (await platform.fireToolCall("ask")) as
+      | { block: true; reason: string }
+      | undefined;
+
+    expect(result).toBeDefined();
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("UI-design mode");
+    expect(result?.reason).toContain("planning_ask");
   });
 
   test("leaves other tool calls alone while planning is active", async () => {
