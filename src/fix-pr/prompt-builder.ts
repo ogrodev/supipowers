@@ -13,13 +13,10 @@ export interface FixPrPromptOptions {
   config: FixPrConfig;
   iteration: number;
   skillContent: string;
-  /** Resolved model ID for sub-agent tasks (planner, fixer roles). */
   taskModel: string;
   selectedTargetLabel: string;
   deferredCommentsSummary: string | null;
-  /** Validated assessment artifact from runFixPrAssessment. */
   assessment: FixPrAssessmentBatch;
-  /** Work batches derived deterministically from `assessment`. */
   workBatches: FixPrWorkBatch[];
 }
 
@@ -181,20 +178,20 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
   sections.push(
     "## Step 6: Push and Check for New Comments",
     "",
-    '1. Stage and commit: `git add -A && git commit -m "fix: address PR review comments (iteration ' + iteration + ')"`',
+    `1. Stage and commit: \`git add -A && git commit -m \"fix: address PR review comments (iteration ${iteration})\"\``,
     "2. Push: `git push`",
   );
 
   if (reviewer.type !== "none" && reviewer.triggerMethod) {
     sections.push(
-      `3. Trigger re-review: \`bash ${scriptsDir}/trigger-review.sh "${repo}" ${prNumber} "${reviewer.type}" "${reviewer.triggerMethod}"\``,
+      `3. Trigger re-review: \`bun \"${scriptsDir}/trigger-review.ts\" \"${repo}\" ${prNumber} \"${reviewer.type}\" \"${reviewer.triggerMethod}\"\``,
     );
   }
 
   sections.push(
-    `${reviewer.type !== "none" ? "4" : "3"}. Run the check script:`,
-    "```bash",
-    `bash ${scriptsDir}/wait-and-check.sh "${sessionDir}" ${delay} ${iteration + 1} "${repo}" ${prNumber}`,
+    `${reviewer.type !== "none" ? "4" : "3"}. Run the wait-and-check runner:`,
+    "```text",
+    `bun \"${scriptsDir}/wait-and-check.ts\" \"${sessionDir}\" ${delay} ${iteration + 1} \"${repo}\" ${prNumber}`,
     "```",
     `${reviewer.type !== "none" ? "5" : "4"}. Read the last line of output:`,
     `   - If \`hasNewComments: true\` and iteration < ${maxIter}: process the new comments (go back to Step 1)`,
@@ -203,12 +200,10 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
   );
 
   sections.push(
-    "## Script Paths",
+    "## Runner Paths",
     "",
-    `- fetch-pr-comments.sh: \`${scriptsDir}/fetch-pr-comments.sh\``,
-    `- diff-comments.sh: \`${scriptsDir}/diff-comments.sh\``,
-    `- trigger-review.sh: \`${scriptsDir}/trigger-review.sh\``,
-    `- wait-and-check.sh: \`${scriptsDir}/wait-and-check.sh\``,
+    `- trigger-review.ts: \`${scriptsDir}/trigger-review.ts\``,
+    `- wait-and-check.ts: \`${scriptsDir}/wait-and-check.ts\``,
     "",
   );
 

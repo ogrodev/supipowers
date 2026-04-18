@@ -241,6 +241,10 @@ describe("registerFixPrCommand", () => {
     expect(prompt).toContain("Deferred comments outside this target: root (.): 1 comment; unscoped review comments: 1 comment without file path");
     expect(prompt).toContain('"id":1');
     expect(prompt).toContain('"commentId": 1');
+    expect(prompt).toContain("wait-and-check.ts");
+    expect(prompt).toContain("trigger-review.ts");
+    expect(prompt).not.toContain("wait-and-check.sh");
+    expect(prompt).not.toContain("trigger-review.sh");
     expect(prompt).not.toContain('"id":2');
     expect(prompt).not.toContain('"id":3');
   });

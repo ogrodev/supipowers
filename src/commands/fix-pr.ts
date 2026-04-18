@@ -7,7 +7,7 @@ import { buildWorkspaceTargetOptionLabel, parseTargetArg, selectWorkspaceTarget,
 import { resolvePackageManager } from "../workspace/package-manager.js";
 import { resolveRepoRoot } from "../workspace/repo-root.js";
 import { discoverWorkspaceTargets } from "../workspace/targets.js";
-import { moduleDir, toBashPath } from "../utils/paths.js";
+import { moduleDir } from "../utils/paths.js";
 import { loadFixPrConfig, saveFixPrConfig } from "../fix-pr/config.js";
 import { buildFixPrOrchestratorPrompt } from "../fix-pr/prompt-builder.js";
 import type { FixPrAssessmentBatch } from "../fix-pr/contracts.js";
@@ -48,7 +48,7 @@ modelRegistry.register({
 });
 
 function getScriptsDir(): string {
-  return toBashPath(path.join(moduleDir(import.meta.url), "..", "fix-pr", "scripts"));
+  return path.join(moduleDir(import.meta.url), "..", "fix-pr", "scripts");
 }
 
 function findSkillPath(skillName: string): string | null {
@@ -298,7 +298,7 @@ export function registerFixPrCommand(platform: Platform): void {
           createFixPrSession(platform.paths, selectedTarget, ledger);
         }
 
-        const sessionDir = toBashPath(getSessionDir(platform.paths, selectedTarget, ledger.id));
+        const sessionDir = getSessionDir(platform.paths, selectedTarget, ledger.id);
         const scriptsDir = getScriptsDir();
         const snapshotPath = path.join(sessionDir, "snapshots", `comments-${ledger.iteration}.jsonl`);
         const selectedCommentsJsonl = stringifyPrCommentsJsonl(selectedComments);

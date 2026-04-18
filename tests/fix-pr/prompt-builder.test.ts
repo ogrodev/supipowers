@@ -1,4 +1,3 @@
-
 import { buildFixPrOrchestratorPrompt } from "../../src/fix-pr/prompt-builder.js";
 import { DEFAULT_FIX_PR_CONFIG } from "../../src/fix-pr/config.js";
 import type { FixPrAssessmentBatch, FixPrWorkBatch } from "../../src/fix-pr/contracts.js";
@@ -88,8 +87,8 @@ describe("buildFixPrOrchestratorPrompt", () => {
     expect(result.toLowerCase()).toContain("assess");
     expect(result.toLowerCase()).toContain("verdict");
     expect(result).toContain("FixPrAssessmentBatchSchema");
-    expect(result).toContain("\"verdict\": \"apply\"");
-    expect(result).toContain("\"verdict\": \"reject\"");
+    expect(result).toContain('"verdict": "apply"');
+    expect(result).toContain('"verdict": "reject"');
   });
 
   test("includes grouping step with work batches", () => {
@@ -111,25 +110,28 @@ describe("buildFixPrOrchestratorPrompt", () => {
     expect(result.toLowerCase()).toContain("test");
   });
 
-  test("includes push and loop step", () => {
+  test("includes push and loop step with portable runners", () => {
     const result = buildDefaultPrompt();
     expect(result).toContain("git push");
-    expect(result).toContain("wait-and-check");
+    expect(result).toContain('bun "/tmp/scripts/wait-and-check.ts"');
+    expect(result).not.toContain("wait-and-check.sh");
   });
 
-  test("includes script paths", () => {
+  test("includes runner paths instead of shell script paths", () => {
     const result = buildDefaultPrompt();
     expect(result).toContain("/tmp/scripts");
-    expect(result).toContain("fetch-pr-comments.sh");
-    expect(result).toContain("diff-comments.sh");
-    expect(result).toContain("trigger-review.sh");
-    expect(result).toContain("wait-and-check.sh");
+    expect(result).toContain("trigger-review.ts");
+    expect(result).toContain("wait-and-check.ts");
+    expect(result).not.toContain("fetch-pr-comments.sh");
+    expect(result).not.toContain("diff-comments.sh");
+    expect(result).not.toContain("trigger-review.sh");
+    expect(result).not.toContain("wait-and-check.sh");
   });
 
   test("includes iteration info", () => {
     const result = buildDefaultPrompt();
     expect(result).toContain("0");
-    expect(result).toContain("3"); // maxIterations
+    expect(result).toContain("3");
   });
 
   test("includes comment reply policy", () => {
