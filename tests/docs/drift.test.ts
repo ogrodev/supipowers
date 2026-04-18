@@ -12,7 +12,6 @@ import {
   groupDocsByAffinity,
   isProjectDoc,
   loadState,
-  parseDriftFindings,
   saveState,
   statePath,
 } from "../../src/docs/drift.js";
@@ -365,11 +364,16 @@ describe("buildSubAgentPrompt", () => {
     expect(prompt).toContain("skill://create-readme");
   });
 
-  test("prompt includes JSON response format instructions", () => {
+  test("prompt includes schema-backed JSON response instructions", () => {
     const prompt = buildSubAgentPrompt(group, false);
-    expect(prompt).toContain('"findings"');
-    expect(prompt).toContain('"status"');
+    // renderSchemaText output mentions the top-level keys from DocDriftOutputSchema.
+    expect(prompt).toContain("findings");
+    expect(prompt).toContain("status");
     expect(prompt).toContain("JSON");
+    // Severity literals are embedded in the rendered schema.
+    expect(prompt).toContain('"info"');
+    expect(prompt).toContain('"warning"');
+    expect(prompt).toContain('"error"');
   });
 
   test("first run does not include Code Changes to Consider", () => {
@@ -378,127 +382,158 @@ describe("buildSubAgentPrompt", () => {
   });
 });
 
-// ── parseDriftFindings ───────────────────────────────────────
+// ── checkDocDrift (schema-backed) ──────────────────────────────
 
-describe("parseDriftFindings", () => {
-  test("valid JSON with findings returns structured findings", () => {
-    const input = JSON.stringify({
-      findings: [
-        { file: "README.md", description: "Missing setup section", severity: "warning" },
-      ],
-      status: "drifted",
+describe("checkDocDrift", () => {
+  function mockSessionFactory(assistantText: string | string[]) {
+    const texts = Array.isArray(assistantText) ? assistantText : [assistantText];
+    let call = 0;
+    return mock(async () => {
+      const text = texts[Math.min(call, texts.length - 1)];
+      call += 1;
+      return {
+        prompt: mock(async () => {}),
+        state: {
+          messages: [
+            { role: "assistant", content: text },
+          ],
+        },
+        dispose: mock(async () => {}),
+      } as any;
     });
-    const result = parseDriftFindings(input);
-    expect(result.status).toBe("drifted");
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].file).toBe("README.md");
-    expect(result.findings[0].description).toBe("Missing setup section");
-    expect(result.findings[0].severity).toBe("warning");
-  });
+  }
 
-  test("valid JSON with status ok and empty findings", () => {
-    const input = JSON.stringify({ findings: [], status: "ok" });
-    const result = parseDriftFindings(input);
-    expect(result.status).toBe("ok");
-    expect(result.findings).toHaveLength(0);
-  });
+  function execMock(diffFiles: string[]) {
+    return mock(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "diff" && args[1] === "--name-only") {
+        return { code: 0, stdout: diffFiles.join("\n") + "\n", stderr: "" };
+      }
+      if (cmd === "git" && args[0] === "rev-parse") {
+        return { code: 0, stdout: "deadbeef\n", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+  }
 
-  test("JSON wrapped in markdown code fences", () => {
-    const input = [
-      "```json",
-      JSON.stringify({
+  test("parses valid schema-compliant drift output", async () => {
+    const paths = createPaths();
+    saveState(paths, tmpDir, {
+      trackedFiles: ["README.md"],
+      lastCommit: "abc123",
+      lastRunAt: "2026-04-01T00:00:00Z",
+    });
+    const platform = createPlatform({
+      exec: execMock(["src/app.ts"]),
+      createAgentSession: mockSessionFactory(JSON.stringify({
         findings: [
-          { file: "docs/setup.md", description: "Outdated example", severity: "error" },
+          { file: "README.md", description: "Outdated example", severity: "warning" },
         ],
         status: "drifted",
-      }),
-      "```",
-    ].join("\n");
-    const result = parseDriftFindings(input);
-    expect(result.status).toBe("drifted");
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].severity).toBe("error");
+      })),
+      paths,
+    } as any);
+
+    const result = await checkDocDrift(platform, tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.drifted).toBe(true);
+    expect(result!.findings).toHaveLength(1);
+    expect(result!.findings[0].file).toBe("README.md");
+    expect(result!.findings[0].severity).toBe("warning");
+    expect(result!.errors).toBeUndefined();
   });
 
-  test("invalid JSON falls back to heuristic", () => {
-    const input = "This documentation is outdated and needs updating.";
-    const result = parseDriftFindings(input);
-    // "outdated" triggers fallback
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].file).toBe("unknown");
-    expect(result.findings[0].severity).toBe("warning");
-  });
-
-  test("text mentioning missing produces fallback finding", () => {
-    const input = "There are missing sections in the documentation.";
-    const result = parseDriftFindings(input);
-    expect(result.findings).toHaveLength(1);
-    expect(result.status).toBe("drifted");
-  });
-
-  test("text with no drift indicators returns empty findings", () => {
-    const input = "Everything looks great, no issues found.";
-    const result = parseDriftFindings(input);
-    expect(result.findings).toHaveLength(0);
-    expect(result.status).toBe("ok");
-  });
-
-  test("findings with missing severity default to info", () => {
-    const input = JSON.stringify({
-      findings: [
-        { file: "README.md", description: "Minor note", severity: "unknown" },
-      ],
-      status: "drifted",
+  test("preserves relatedFiles from valid output", async () => {
+    const paths = createPaths();
+    saveState(paths, tmpDir, {
+      trackedFiles: ["README.md"],
+      lastCommit: "abc123",
+      lastRunAt: "2026-04-01T00:00:00Z",
     });
-    const result = parseDriftFindings(input);
-    expect(result.findings[0].severity).toBe("info");
+    const platform = createPlatform({
+      exec: execMock(["src/app.ts"]),
+      createAgentSession: mockSessionFactory(JSON.stringify({
+        findings: [
+          { file: "README.md", description: "Wrong", severity: "error", relatedFiles: ["src/app.ts"] },
+        ],
+        status: "drifted",
+      })),
+      paths,
+    } as any);
+
+    const result = await checkDocDrift(platform, tmpDir);
+    expect(result!.findings[0].relatedFiles).toEqual(["src/app.ts"]);
   });
 
-  test("findings with relatedFiles are preserved", () => {
-    const input = JSON.stringify({
-      findings: [
-        {
-          file: "docs/api.md",
-          description: "API changed",
-          severity: "warning",
-          relatedFiles: ["src/api/handler.ts", "src/api/routes.ts"],
-        },
-      ],
-      status: "drifted",
+  test("invalid schema (unknown severity) blocks after retries — no findings fabricated", async () => {
+    const paths = createPaths();
+    saveState(paths, tmpDir, {
+      trackedFiles: ["README.md"],
+      lastCommit: "abc123",
+      lastRunAt: "2026-04-01T00:00:00Z",
     });
-    const result = parseDriftFindings(input);
-    expect(result.findings[0].relatedFiles).toEqual([
-      "src/api/handler.ts",
-      "src/api/routes.ts",
-    ]);
+    const platform = createPlatform({
+      exec: execMock(["src/app.ts"]),
+      createAgentSession: mockSessionFactory(JSON.stringify({
+        findings: [
+          { file: "README.md", description: "Something", severity: "bogus" },
+        ],
+        status: "drifted",
+      })),
+      paths,
+    } as any);
+
+    const result = await checkDocDrift(platform, tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.findings).toHaveLength(0);
+    expect(result!.drifted).toBe(false);
+    expect(result!.errors).toBeDefined();
+    expect(result!.errors!.length).toBeGreaterThan(0);
   });
 
-  test("malformed findings entries are filtered out", () => {
-    const input = JSON.stringify({
-      findings: [
-        { file: "valid.md", description: "Valid finding", severity: "info" },
-        { description: "No file field" },
-        { file: "no-desc.md" },
-        "not an object",
-      ],
-      status: "drifted",
+  test("non-JSON output blocks after retries — no heuristic invention", async () => {
+    const paths = createPaths();
+    saveState(paths, tmpDir, {
+      trackedFiles: ["README.md"],
+      lastCommit: "abc123",
+      lastRunAt: "2026-04-01T00:00:00Z",
     });
-    const result = parseDriftFindings(input);
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].file).toBe("valid.md");
+    // Previously, text containing "outdated" would have fabricated a drift finding.
+    const platform = createPlatform({
+      exec: execMock(["src/app.ts"]),
+      createAgentSession: mockSessionFactory("This documentation is outdated and missing sections."),
+      paths,
+    } as any);
+
+    const result = await checkDocDrift(platform, tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.findings).toHaveLength(0);
+    expect(result!.drifted).toBe(false);
+    expect(result!.errors).toBeDefined();
+    expect(result!.errors!.length).toBe(1);
   });
 
-  test("findings without relatedFiles omit the field", () => {
-    const input = JSON.stringify({
-      findings: [
-        { file: "README.md", description: "Something", severity: "info" },
-      ],
-      status: "ok",
+  test("skips when no tracked files", async () => {
+    const platform = createPlatform();
+    const result = await checkDocDrift(platform, tmpDir);
+    expect(result).toBeNull();
+  });
+
+  test("skips when no code changes since last commit", async () => {
+    const paths = createPaths();
+    saveState(paths, tmpDir, {
+      trackedFiles: ["README.md"],
+      lastCommit: "abc123",
+      lastRunAt: "2026-04-01T00:00:00Z",
     });
-    const result = parseDriftFindings(input);
-    expect(result.findings[0]).not.toHaveProperty("relatedFiles");
+    const platform = createPlatform({
+      exec: execMock([]),
+      paths,
+    } as any);
+    const result = await checkDocDrift(platform, tmpDir);
+    expect(result).toBeNull();
   });
 });
+
 
 // ── buildFixPrompt ───────────────────────────────────────────
 
