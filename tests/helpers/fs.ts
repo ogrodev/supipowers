@@ -13,9 +13,19 @@ export function rmDirWithRetry(dir: string, attempts = 20, delayMs = 50): void {
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (!code || !RETRYABLE_CODES.has(code) || attempt === attempts - 1) {
+      const retryable = !!code && RETRYABLE_CODES.has(code);
+
+      // Windows runners can keep SQLite-backed temp dirs locked past test teardown
+      // even after close() + retries. Since these helpers are test-only and every
+      // test uses a unique tmpDir, prefer finishing the suite over failing cleanup.
+      if (process.platform === "win32" && retryable && attempt === attempts - 1) {
+        return;
+      }
+
+      if (!retryable || attempt === attempts - 1) {
         throw error;
       }
+
       sleepSync(delayMs);
     }
   }
