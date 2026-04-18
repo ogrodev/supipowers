@@ -30,6 +30,53 @@ function wrapInFrame(content) {
   return frameTemplate.replace('<!-- CONTENT -->', content);
 }
 
+function injectHelper(html) {
+  if (html.includes('</body>')) {
+    return html.replace('</body>', `${helperInjection}\n</body>`);
+  }
+  return html + helperInjection;
+}
+
+function renderHtml(raw) {
+  const html = isFullDocument(raw) ? raw : wrapInFrame(raw);
+  return injectHelper(html);
+}
+
+function resolveArtifactPath(requestPath) {
+  if (!requestPath || requestPath.startsWith('.')) return null;
+
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(requestPath);
+  } catch {
+    return null;
+  }
+
+  const normalizedPath = path.normalize(decodedPath).replace(/^([/\\])+/, '');
+  if (!normalizedPath || normalizedPath.startsWith('..') || path.isAbsolute(normalizedPath)) {
+    return null;
+  }
+
+  const artifactPath = path.resolve(SCREEN_DIR, normalizedPath);
+  const relative = path.relative(SCREEN_DIR, artifactPath);
+  if (relative.startsWith('..') || path.isAbsolute(relative) || !fs.existsSync(artifactPath)) {
+    return null;
+  }
+
+  return artifactPath;
+}
+
+function serveArtifact(res, artifactPath) {
+  if (artifactPath.endsWith('.html')) {
+    const raw = fs.readFileSync(artifactPath, 'utf-8');
+    res.type('html').send(renderHtml(raw));
+    return;
+  }
+
+  res.sendFile(artifactPath);
+}
+
+
 // Find the newest .html file in the directory by mtime
 function getNewestScreen() {
   const files = fs.readdirSync(SCREEN_DIR)
@@ -86,26 +133,25 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Serve newest screen with helper.js injected
+// Serve newest screen at the root, and session artifacts on direct paths
 app.get('/', (req, res) => {
   const screenFile = getNewestScreen();
-  let html;
-
   if (!screenFile) {
-    html = WAITING_PAGE;
-  } else {
-    const raw = fs.readFileSync(screenFile, 'utf-8');
-    html = isFullDocument(raw) ? raw : wrapInFrame(raw);
+    res.type('html').send(renderHtml(WAITING_PAGE));
+    return;
   }
 
-  // Inject helper script
-  if (html.includes('</body>')) {
-    html = html.replace('</body>', `${helperInjection}\n</body>`);
-  } else {
-    html += helperInjection;
+  serveArtifact(res, screenFile);
+});
+
+app.get(/^\/(.+)$/, (req, res) => {
+  const artifactPath = resolveArtifactPath(req.params[0]);
+  if (!artifactPath) {
+    res.status(404).type('text').send(`Cannot GET ${req.path}`);
+    return;
   }
 
-  res.type('html').send(html);
+  serveArtifact(res, artifactPath);
 });
 
 // Watch for new or changed .html files

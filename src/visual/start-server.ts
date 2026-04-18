@@ -10,10 +10,10 @@ const POLL_INTERVAL_MS = 100;
 
 interface StartServerOptions {
   sessionDir: string;
+  port?: number;
   host?: string;
   urlHost?: string;
 }
-
 /** Start the visual companion server and wait for its connection info. */
 export async function startVisualServer(opts: StartServerOptions): Promise<VisualServerInfo | null> {
   const host = opts.host ?? DEFAULT_HOST;
@@ -31,6 +31,7 @@ export async function startVisualServer(opts: StartServerOptions): Promise<Visua
       env: {
         ...process.env,
         SUPI_VISUAL_DIR: opts.sessionDir,
+        SUPI_VISUAL_PORT: opts.port !== undefined ? String(opts.port) : undefined,
         SUPI_VISUAL_HOST: host,
         SUPI_VISUAL_URL_HOST: urlHost,
       },

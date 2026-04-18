@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { startVisualServer } from "../../src/visual/start-server.js";
+import { stopVisualServer } from "../../src/visual/stop-server.js";
 
 describe("startVisualServer", () => {
   let tmpDir: string;
@@ -70,6 +71,55 @@ describe("startVisualServer", () => {
     expect(options.env.SUPI_VISUAL_HOST).toBe("127.0.0.1");
     expect(options.env.SUPI_VISUAL_URL_HOST).toBe("localhost");
   });
+
+  test("forwards an explicit port override to the visual server process", async () => {
+    const spawn = mock((_cmd: string[], options: any) => {
+      const sessionDir = options.env.SUPI_VISUAL_DIR as string;
+      fs.writeFileSync(
+        path.join(sessionDir, ".server-info"),
+        JSON.stringify({
+          port: 50000,
+          host: options.env.SUPI_VISUAL_HOST,
+          url: `http://${options.env.SUPI_VISUAL_URL_HOST}:50000`,
+          screen_dir: sessionDir,
+        }) + "\n",
+      );
+
+      return {
+        pid: 4343,
+        unref: mock(),
+      };
+    });
+
+    (Bun as any).spawn = spawn;
+    (process as any).kill = mock((pid: number, signal?: number | NodeJS.Signals) => {
+      if (pid === 4343 && signal === 0) return true;
+      return true;
+    });
+
+    const result = await startVisualServer({ sessionDir: tmpDir, port: 50000 });
+
+    expect(result?.url).toBe("http://localhost:50000");
+    const [, options] = spawn.mock.calls[0] as [string[], any];
+    expect(options.env.SUPI_VISUAL_PORT).toBe("50000");
+  });
+
+  test("serves explicit HTML artifacts from the session directory", async () => {
+    fs.writeFileSync(path.join(tmpDir, "page.html"), "<!doctype html><html><body><h1>Landing</h1></body></html>");
+
+    const server = await startVisualServer({ sessionDir: tmpDir });
+    expect(server).not.toBeNull();
+
+    try {
+      const response = await fetch(`${server!.url}/page.html`);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain("<h1>Landing</h1>");
+    } finally {
+      stopVisualServer(tmpDir);
+    }
+  });
+
 
   test("returns null and cleans startup artifacts when the server never becomes ready", async () => {
     fs.writeFileSync(
