@@ -6,13 +6,32 @@ export interface WorkspaceTargetOption<TTarget extends WorkspaceTarget = Workspa
   label?: string;
 }
 
-function tokenizeCliArgs(args?: string): string[] {
+export function tokenizeCliArgs(args?: string): string[] {
   if (!args) {
     return [];
   }
 
   return (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [])
     .map((token) => token.replace(/^['"]|['"]$/g, ""));
+}
+
+export function stripCliArg(args: string | undefined, flag: string): string | undefined {
+  const tokens = tokenizeCliArgs(args);
+  const retained: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === flag) {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith(`${flag}=`)) {
+      continue;
+    }
+    retained.push(token);
+  }
+
+  return retained.length > 0 ? retained.join(" ") : undefined;
 }
 
 export function parseTargetArg(args?: string): string | null {

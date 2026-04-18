@@ -229,17 +229,14 @@ function collectWorkspaceDirectories(repoRoot: string, patterns: string[]): stri
   });
 }
 
-function isWorkspaceTargetManifest(manifest: WorkspaceManifest | null): manifest is WorkspaceManifest & { name: string; version: string } {
-  return typeof manifest?.name === "string"
-    && manifest.name.trim().length > 0
-    && typeof manifest.version === "string"
-    && manifest.version.trim().length > 0;
+function isWorkspaceTargetManifest(manifest: WorkspaceManifest | null): manifest is WorkspaceManifest & { name: string; version?: string } {
+  return typeof manifest?.name === "string" && manifest.name.trim().length > 0;
 }
 
 function buildWorkspaceTarget(
   repoRoot: string,
   packageDir: string,
-  manifest: WorkspaceManifest & { name: string; version: string },
+  manifest: WorkspaceManifest & { name: string; version?: string },
   packageManager: PackageManagerId,
   kind: WorkspaceTargetKind,
 ): WorkspaceTarget {
@@ -251,7 +248,9 @@ function buildWorkspaceTarget(
     packageDir,
     manifestPath: path.join(packageDir, "package.json"),
     relativeDir: toWorkspaceRelativeDir(repoRoot, packageDir),
-    version: manifest.version,
+    version: typeof manifest.version === "string" && manifest.version.trim().length > 0
+      ? manifest.version
+      : "0.0.0",
     private: manifest.private === true,
     packageManager,
   };
@@ -290,6 +289,18 @@ export function discoverWorkspaceTargets(repoRoot: string, packageManager: Packa
         packageManager,
         workspaceDir === repoRoot ? "root" : "workspace",
       ),
+    );
+  }
+
+  // Synthesize a root target when the repo is a monorepo (workspacePatterns exist) but the
+  // root package.json has no name field (pure workspace aggregators often omit it). Without
+  // a root target, root-level files like bun.lock, .gitignore, and config files have no
+  // mapping and become unaddressable by workspace-aware commands.
+  if (!targetByManifestPath.has(rootManifestPath) && workspacePatterns.length > 0) {
+    const fallbackName = path.basename(repoRoot) || "root";
+    targetByManifestPath.set(
+      rootManifestPath,
+      buildWorkspaceTarget(repoRoot, repoRoot, { name: fallbackName }, packageManager, "root"),
     );
   }
 

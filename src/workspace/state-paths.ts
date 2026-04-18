@@ -32,13 +32,6 @@ export function getRootConfigPath(paths: PlatformPaths, repoRoot: string): strin
   return path.join(getRootStateDir(paths, repoRoot), "config.json");
 }
 
-export function getWorkspaceConfigPath(
-  paths: PlatformPaths,
-  repoRoot: string,
-  workspaceRelativeDir: string,
-): string {
-  return path.join(getWorkspaceStateDir(paths, repoRoot, workspaceRelativeDir), "config.json");
-}
 
 export function getTargetStatePath(
   paths: PlatformPaths,
