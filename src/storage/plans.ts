@@ -1,22 +1,31 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeLineEndings } from "../text.js";
-import type { Plan, PlanTask, TaskComplexity } from "../types.js";
+import type { Plan, PlanTask, TaskComplexity, WorkspaceTarget } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
+import { getTargetStatePath } from "../workspace/state-paths.js";
 
 function getPlansDir(paths: PlatformPaths, cwd: string): string {
   return paths.project(cwd, "plans");
 }
 
-/** List all saved plans */
-export function listPlans(paths: PlatformPaths, cwd: string): string[] {
-  const dir = getPlansDir(paths, cwd);
+function listPlanFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
     .filter((f) => f.endsWith(".md"))
     .sort()
     .reverse();
+}
+
+/** List all saved plans */
+export function listPlans(paths: PlatformPaths, cwd: string): string[] {
+  return listPlanFiles(getPlansDir(paths, cwd));
+}
+
+/** List all saved plans for a specific workspace target. */
+export function listTargetPlans(paths: PlatformPaths, target: WorkspaceTarget): string[] {
+  return listPlanFiles(getTargetStatePath(paths, target, "plans"));
 }
 
 /** Read a plan file by name */

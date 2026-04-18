@@ -45,7 +45,12 @@ export function updateFixPrSession(paths: PlatformPaths, target: WorkspaceTarget
   fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
 }
 
-export function findActiveFixPrSession(paths: PlatformPaths, target: WorkspaceTarget): FixPrSessionLedger | null {
+export function findActiveFixPrSession(
+  paths: PlatformPaths,
+  target: WorkspaceTarget,
+  repo: string,
+  prNumber: number,
+): FixPrSessionLedger | null {
   const baseDir = getBaseDir(paths, target);
   if (!fs.existsSync(baseDir)) return null;
 
@@ -56,7 +61,7 @@ export function findActiveFixPrSession(paths: PlatformPaths, target: WorkspaceTa
 
   for (const dir of dirs) {
     const ledger = loadFixPrSession(paths, target, dir);
-    if (ledger && ledger.status === "running") return ledger;
+    if (ledger && ledger.status === "running" && ledger.repo === repo && ledger.prNumber === prNumber) return ledger;
   }
   return null;
 }
