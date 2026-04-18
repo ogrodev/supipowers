@@ -35,7 +35,7 @@ function installFakeGh(binDir: string): void {
   if (process.platform === "win32") {
     fs.writeFileSync(
       path.join(binDir, "gh.cmd"),
-      `@echo off\r\n"${process.execPath}" "%~dp0\\gh-runner.js" %*\r\n`,
+      `@echo off\r\n"${process.execPath}" run "%~dp0\\gh-runner.js" -- %*\r\n`,
     );
     return;
   }
@@ -47,14 +47,25 @@ function installFakeGh(binDir: string): void {
   );
 }
 
-function runRunner(args: string[], env: NodeJS.ProcessEnv, cwd: string): { stdout: string; exitCode: number } {
+function buildRunnerEnv(binDir: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    ...(process.platform === "win32" ? { PATHEXT: ".CMD;.EXE;.BAT;.COM" } : {}),
+    ...env,
+  };
+}
+
+function runRunner(
+  binDir: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): { stdout: string; exitCode: number } {
   try {
     const stdout = execFileSync(process.execPath, [RUNNER_PATH, ...args], {
       cwd,
-      env: {
-        ...process.env,
-        ...env,
-      },
+      env: buildRunnerEnv(binDir, env),
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -101,9 +112,9 @@ describe("wait-and-check.ts", () => {
     ].join("\n") + "\n";
 
     const { stdout, exitCode } = runRunner(
+      binDir,
       [sessionDir, "0", "1", "owner/repo", "42"],
       {
-        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         GH_INLINE_OUTPUT: inlineOutput,
         GH_REVIEW_OUTPUT: "",
       },
@@ -121,9 +132,9 @@ describe("wait-and-check.ts", () => {
 
   test("surfaces fetch failures instead of silently reporting no new comments", () => {
     const { stdout, exitCode } = runRunner(
+      binDir,
       [sessionDir, "0", "1", "owner/repo", "42"],
       {
-        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         GH_INLINE_EXIT_CODE: "1",
         GH_INLINE_STDERR: "inline failed",
         GH_REVIEW_EXIT_CODE: "1",

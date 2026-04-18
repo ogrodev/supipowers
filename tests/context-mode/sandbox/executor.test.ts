@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { describe, test, expect } from "bun:test";
 import os from "node:os";
 import { executeCode } from "../../../src/context-mode/sandbox/executor.js";
@@ -29,11 +30,7 @@ describe("executeCode", () => {
   });
 
   test("timeout kills process", async () => {
-    const result = await executeCode(
-      "shell",
-      "while true; do sleep 0.01; done",
-      { timeout: 500 },
-    );
+    const result = await executeCode("javascript", "setInterval(() => {}, 10)", { timeout: 500 });
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("Timeout");
   }, 10_000);
@@ -50,13 +47,8 @@ describe("executeCode", () => {
 
   test("cwd option", async () => {
     const tmp = os.tmpdir();
-    const result = await executeCode("shell", "pwd", { cwd: tmp });
-    // os.tmpdir() may return a symlink (e.g. /var -> /private/var on macOS)
-    // Resolve both to compare canonical paths
-    const { realpathSync } = await import("node:fs");
-    const expected = realpathSync(tmp);
-    const actual = realpathSync(result.stdout.trim());
-    expect(actual).toBe(expected);
+    const result = await executeCode("javascript", "console.log(process.cwd())", { cwd: tmp });
+    expect(realpathSync(result.stdout.trim())).toBe(realpathSync(tmp));
   });
 
   test("env vars", async () => {
@@ -67,7 +59,8 @@ describe("executeCode", () => {
   });
 
   test("invalid language throws", async () => {
-    expect(executeCode("brainfuck", "+++")).rejects.toThrow("Unsupported language");
+    expect(executeCode("brainfuck", "+++"))
+      .rejects.toThrow("Unsupported language");
   });
 
   test("duration is tracked", async () => {
@@ -81,7 +74,6 @@ describe("executeCode", () => {
       'echo "bg-started"; sleep 30',
       { background: true, timeout: 500 },
     );
-    // background returns exitCode 0 (still alive)
     expect(result.exitCode).toBe(0);
   }, 10_000);
 });

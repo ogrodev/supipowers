@@ -30,7 +30,7 @@ function installFakeGh(binDir: string): void {
   if (process.platform === "win32") {
     fs.writeFileSync(
       path.join(binDir, "gh.cmd"),
-      `@echo off\r\n"${process.execPath}" "%~dp0\\gh-runner.js" %*\r\n`,
+      `@echo off\r\n"${process.execPath}" run "%~dp0\\gh-runner.js" -- %*\r\n`,
     );
     return;
   }
@@ -42,13 +42,19 @@ function installFakeGh(binDir: string): void {
   );
 }
 
-function runRunner(args: string[], env?: NodeJS.ProcessEnv): { stdout: string; exitCode: number } {
+function buildRunnerEnv(binDir: string, env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    ...(process.platform === "win32" ? { PATHEXT: ".CMD;.EXE;.BAT;.COM" } : {}),
+    ...env,
+  };
+}
+
+function runRunner(binDir: string, args: string[], env?: NodeJS.ProcessEnv): { stdout: string; exitCode: number } {
   try {
     const stdout = execFileSync(process.execPath, [RUNNER_PATH, ...args], {
-      env: {
-        ...process.env,
-        ...env,
-      },
+      env: buildRunnerEnv(binDir, env),
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -79,9 +85,9 @@ describe("trigger-review.ts", () => {
   test("posts a reviewer trigger comment for coderabbit", () => {
     const argsFile = path.join(tmpDir, "gh-args.txt");
     const { stdout, exitCode } = runRunner(
+      binDir,
       ["owner/repo", "42", "coderabbit", "@coderabbit review"],
       {
-        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         GH_ARGS_FILE: argsFile,
       },
     );
@@ -98,9 +104,9 @@ describe("trigger-review.ts", () => {
   test("treats the copilot requested-reviewer call as best effort", () => {
     const argsFile = path.join(tmpDir, "gh-args.txt");
     const { stdout, exitCode } = runRunner(
+      binDir,
       ["owner/repo", "42", "copilot"],
       {
-        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         GH_ARGS_FILE: argsFile,
         GH_REQUESTED_REVIEWERS_EXIT_CODE: "1",
       },
@@ -116,9 +122,7 @@ describe("trigger-review.ts", () => {
   });
 
   test("returns a usage error for unknown reviewers without calling gh", () => {
-    const { stdout, exitCode } = runRunner(["owner/repo", "42", "mystery-reviewer"], {
-      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-    });
+    const { stdout, exitCode } = runRunner(binDir, ["owner/repo", "42", "mystery-reviewer"]);
 
     expect(exitCode).toBe(1);
     expect(JSON.parse(stdout)).toEqual({

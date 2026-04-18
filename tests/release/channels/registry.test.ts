@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { getShellInvocation } from "../../../src/utils/shell.js";
 import { resolveChannelHandler, getAllAvailableChannels } from "../../../src/release/channels/registry.js";
 
 const OK = { stdout: "", stderr: "", code: 0 };
@@ -66,12 +67,13 @@ describe("getAllAvailableChannels", () => {
 
     const ids = statuses.map((s) => s.channel);
     expect(ids).toContain("my-forge");
-    expect(statuses).toHaveLength(4); // 3 built-in + 1 custom
+    expect(statuses).toHaveLength(4);
   });
 
   test("custom channel with same id as built-in does not duplicate and uses custom detection", async () => {
+    const shell = getShellInvocation("custom-gh-detect");
     const exec = mock(async (cmd: string) =>
-      cmd === "sh"
+      cmd === shell.command
         ? { stdout: "", stderr: "", code: 0 }
         : { stdout: "", stderr: "", code: 1 },
     );
@@ -85,13 +87,13 @@ describe("getAllAvailableChannels", () => {
 
     const githubEntries = statuses.filter((s) => s.channel === "github");
     expect(githubEntries).toHaveLength(1);
-    expect(statuses).toHaveLength(3); // still 3, not 4
+    expect(statuses).toHaveLength(3);
     expect(githubEntries[0]).toEqual({
       channel: "github",
       available: true,
       detail: "Detect command succeeded",
     });
-    expect(exec.mock.calls.some((call) => call[0] === "sh")).toBe(true);
+    expect(exec.mock.calls.some((call) => call[0] === shell.command)).toBe(true);
     expect(exec.mock.calls.some((call) => call[0] === "gh")).toBe(false);
   });
 });

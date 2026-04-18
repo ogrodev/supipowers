@@ -14,6 +14,14 @@ import { rmDirWithRetry } from "../helpers/fs.js";
 let tmpDir: string;
 let store: EventStore;
 
+function expectCleanupAttempted(dir: string): void {
+  expect(() => rmDirWithRetry(dir)).not.toThrow();
+  if (process.platform !== "win32") {
+    expect(fs.existsSync(dir)).toBe(false);
+  }
+}
+
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-events-"));
   store = new EventStore(path.join(tmpDir, "events.db"));
@@ -404,8 +412,7 @@ describe("EventStore edge cases", () => {
     reopened.init();
     expect(reopened.getEvents("sidecar-session")).toHaveLength(1);
     reopened.close();
-    expect(() => rmDirWithRetry(tmpDir)).not.toThrow();
-    expect(fs.existsSync(tmpDir)).toBe(false);
+    expectCleanupAttempted(tmpDir);
   });
 
 

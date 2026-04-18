@@ -25,14 +25,42 @@ function createMockPlatformWithHandlers() {
   }) as any;
 }
 
+let activeSessionShutdown: (() => void) | null = null;
+
+function registerTrackedContextModeHooks(platform: any, config: SupipowersConfig): void {
+  registerContextModeHooks(platform, config);
+  activeSessionShutdown = () => {
+    const shutdown = platform._handlers?.get("session_shutdown");
+    if (typeof shutdown === "function") {
+      shutdown({}, {});
+      return;
+    }
+    getEventStore()?.close();
+    _resetCache();
+  };
+}
+
+function cleanupTrackedContextModeHooks(): void {
+  try {
+    activeSessionShutdown?.();
+  } finally {
+    activeSessionShutdown = null;
+    _resetCache();
+  }
+}
+
 describe("registerContextModeHooks", () => {
   beforeEach(() => {
     _resetCache();
   });
 
+  afterEach(() => {
+    cleanupTrackedContextModeHooks();
+  });
+
   test("registers hooks when enabled", () => {
     const platform = createMockPlatformWithHandlers();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
     expect(platform.on).toHaveBeenCalledWith("tool_result", expect.any(Function));
     expect(platform.on).toHaveBeenCalledWith("tool_call", expect.any(Function));
     expect(platform.on).toHaveBeenCalledWith("before_agent_start", expect.any(Function));
@@ -42,7 +70,7 @@ describe("registerContextModeHooks", () => {
 
   test("registers native context-mode tools", () => {
     const platform = createMockPlatformWithHandlers();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
     // 8 native tools should be registered
     expect(platform.registerTool).toHaveBeenCalledTimes(8);
   });
@@ -53,13 +81,13 @@ describe("registerContextModeHooks", () => {
       ...DEFAULT_CONFIG,
       contextMode: { ...DEFAULT_CONFIG.contextMode, enabled: false },
     };
-    registerContextModeHooks(platform, config);
+    registerTrackedContextModeHooks(platform, config);
     expect(platform.on).not.toHaveBeenCalled();
   });
 
   test("tool_result handler compresses large bash output", () => {
     const platform = createMockPlatformWithHandlers();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("tool_result");
     expect(handler).toBeDefined();
@@ -82,7 +110,7 @@ describe("registerContextModeHooks", () => {
 
   test("tool_result handler passes through small output", () => {
     const platform = createMockPlatformWithHandlers();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("tool_result");
     const event = {
@@ -102,7 +130,7 @@ describe("registerContextModeHooks", () => {
   test("tool_call handler blocks curl when context-mode detected", () => {
     const platform = createMockPlatformWithHandlers();
     platform.getActiveTools.mockReturnValue(["bash", "ctx_fetch_and_index"]);
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("tool_call");
     const event = {
@@ -121,7 +149,7 @@ describe("registerContextModeHooks", () => {
   test("tool_call handler blocks curl since context-mode tools are always available", () => {
     const platform = createMockPlatformWithHandlers();
     platform.getActiveTools.mockReturnValue(["bash", "read"]);
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("tool_call");
     const event = {
@@ -141,7 +169,7 @@ describe("registerContextModeHooks", () => {
   test("tool_call handler passes through non-HTTP bash commands", () => {
     const platform = createMockPlatformWithHandlers();
     platform.getActiveTools.mockReturnValue(["bash", "ctx_fetch_and_index"]);
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("tool_call");
     const event = {
@@ -158,7 +186,7 @@ describe("registerContextModeHooks", () => {
   test("before_agent_start handler concatenates routing when context-mode detected", () => {
     const platform = createMockPlatformWithHandlers();
     platform.getActiveTools.mockReturnValue(["bash", "ctx_execute", "ctx_search"]);
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     expect(handler).toBeDefined();
@@ -177,7 +205,7 @@ describe("registerContextModeHooks", () => {
       ...DEFAULT_CONFIG,
       contextMode: { ...DEFAULT_CONFIG.contextMode, routingInstructions: false, enforceRouting: false },
     };
-    registerContextModeHooks(platform, config);
+    registerTrackedContextModeHooks(platform, config);
 
     const handler = platform._handlers.get("before_agent_start");
     const event = { prompt: "fix the bug", systemPrompt: "You are an assistant." };
@@ -187,7 +215,7 @@ describe("registerContextModeHooks", () => {
 
   test("tool_result handler extracts events without throwing (fire-and-forget)", () => {
     const platform = createMockPlatformWithHandlers();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("tool_result");
     const event = {
@@ -206,7 +234,7 @@ describe("registerContextModeHooks", () => {
 
   test("registers compaction hooks when compaction enabled", () => {
     const platform = createMockPlatformWithHandlers();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
     const events = platform.on.mock.calls.map((c: any[]) => c[0]);
     expect(events).toContain("session_before_compact");
     expect(events).toContain("session_compact");
@@ -218,7 +246,7 @@ describe("registerContextModeHooks", () => {
       ...DEFAULT_CONFIG,
       contextMode: { ...DEFAULT_CONFIG.contextMode, compaction: false },
     };
-    registerContextModeHooks(platform, config);
+    registerTrackedContextModeHooks(platform, config);
     const events = platform.on.mock.calls.map((c: any[]) => c[0]);
     expect(events).not.toContain("session_before_compact");
     expect(events).not.toContain("session_compact");
@@ -234,6 +262,7 @@ describe("compaction integration", () => {
   });
 
   afterEach(() => {
+    cleanupTrackedContextModeHooks();
     rmDirWithRetry(tmpDir);
   });
 
@@ -262,7 +291,7 @@ describe("compaction integration", () => {
 
   test("session_before_compact returns undefined (does not cancel compaction)", () => {
     const platform = createPlatformWithRealStore();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Write some events through tool_result handler
     const toolHandler = platform._handlers.get("tool_result");
@@ -282,7 +311,7 @@ describe("compaction integration", () => {
 
   test("session_compact returns snapshot with context and preserveData", () => {
     const platform = createPlatformWithRealStore();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Write events to populate the store
     const toolHandler = platform._handlers.get("tool_result");
@@ -310,7 +339,7 @@ describe("compaction integration", () => {
 
   test("session_compact returns undefined when no snapshot was built", () => {
     const platform = createPlatformWithRealStore();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Call compact without calling before_compact first
     const result = platform._handlers.get("session_compact")();
@@ -320,7 +349,7 @@ describe("compaction integration", () => {
 
   test("compact count increments after each compaction", () => {
     const platform = createPlatformWithRealStore();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Write an event so snapshot is non-empty
     const toolHandler = platform._handlers.get("tool_result");
@@ -355,7 +384,7 @@ describe("compaction integration", () => {
   test("searchAvailable passed to snapshot when ctx_search detected", () => {
     const platform = createPlatformWithRealStore();
     platform.getActiveTools.mockReturnValue(["bash", "ctx_search", "ctx_execute"]);
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Write an event
     const toolHandler = platform._handlers.get("tool_result");
@@ -390,6 +419,7 @@ describe("exported helpers", () => {
   });
 
   afterEach(() => {
+    cleanupTrackedContextModeHooks();
     rmDirWithRetry(tmpDir);
   });
 
@@ -422,7 +452,7 @@ describe("exported helpers", () => {
 
   test("getEventStore returns non-null store after registration", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
     expect(getEventStore()).not.toBeNull();
   });
 
@@ -433,13 +463,13 @@ describe("exported helpers", () => {
 
   test("getSessionId returns a session ID matching session-<digits> after registration", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
     expect(getSessionId()).toMatch(/^session-\d+$/);
   });
 
   test("session_start prefers a stable session-file hash when available", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("session_start");
     expect(handler).toBeDefined();
@@ -456,7 +486,7 @@ describe("exported helpers", () => {
 
   test("_resetCache clears event store and session id", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
     expect(getEventStore()).not.toBeNull();
     expect(getSessionId()).not.toBe("");
     _resetCache();
@@ -466,7 +496,7 @@ describe("exported helpers", () => {
 
   test("session_shutdown clears exported state", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
     expect(getEventStore()).not.toBeNull();
     expect(getSessionId()).not.toBe("");
 
@@ -491,6 +521,7 @@ describe("error handling", () => {
   });
 
   afterEach(() => {
+    cleanupTrackedContextModeHooks();
     rmDirWithRetry(tmpDir);
   });
 
@@ -518,7 +549,7 @@ describe("error handling", () => {
 
   test("tool_result handler continues when event extraction throws", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Close the underlying store so writeEvents throws inside the try-block.
     getEventStore()?.close();
@@ -549,7 +580,7 @@ describe("error handling", () => {
 
   test("before_agent_start handler continues when prompt extraction throws", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Close the store: extractPromptEvents always produces >= 1 event,
     // so writeEvents will be invoked on a closed DB and throw.
@@ -579,7 +610,7 @@ describe("error handling", () => {
         compaction: true,
       },
     };
-    registerContextModeHooks(platform, config);
+    registerTrackedContextModeHooks(platform, config);
 
     const events = platform.on.mock.calls.map((c: any[]) => c[0]);
     expect(events).not.toContain("session_before_compact");
@@ -588,7 +619,7 @@ describe("error handling", () => {
 
   test("session_before_compact returns undefined on an empty session with no events", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("session_before_compact");
     let result: any = "unset";
@@ -598,7 +629,7 @@ describe("error handling", () => {
 
   test("session_compact returns undefined on a fresh session with no pending resume in the DB", () => {
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Fresh session: no events written and no before_compact called — the
     // session_resume row should not exist.
@@ -621,6 +652,7 @@ describe("tool_result with MCP tool names", () => {
   });
 
   afterEach(() => {
+    cleanupTrackedContextModeHooks();
     rmDirWithRetry(tmpDir);
   });
 
@@ -654,7 +686,7 @@ describe("tool_result with MCP tool names", () => {
     // extraction-failure warnings should be logged. If this behavior changes in
     // the future (e.g. recognizing mcp_*_ctx_* names), this test will fail loudly.
     const platform = createPlatformWithTmpPaths();
-    registerContextModeHooks(platform, DEFAULT_CONFIG);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("tool_result");
     const event = {

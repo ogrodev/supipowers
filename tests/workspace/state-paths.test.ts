@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, test } from "bun:test";
 import { createPaths } from "../../src/platform/types.js";
 import {
@@ -28,17 +29,17 @@ function target(name: string, relativeDir = "."): WorkspaceTarget {
 
 describe("workspace state paths", () => {
   test("keeps root state at the existing project path", () => {
-    expect(getRootStateDir(paths, "/repo")).toBe("/repo/.omp/supipowers");
-    expect(getRootConfigPath(paths, "/repo")).toBe("/repo/.omp/supipowers/config.json");
-    expect(getTargetStateDir(paths, target("repo-root"))).toBe("/repo/.omp/supipowers");
+    expect(getRootStateDir(paths, "/repo")).toBe(path.join("/repo", ".omp", "supipowers"));
+    expect(getRootConfigPath(paths, "/repo")).toBe(path.join("/repo", ".omp", "supipowers", "config.json"));
+    expect(getTargetStateDir(paths, target("repo-root"))).toBe(path.join("/repo", ".omp", "supipowers"));
   });
 
   test("namespaces workspace state under the repo root .omp tree", () => {
     expect(getWorkspaceStateDir(paths, "/repo", "packages/pkg-a")).toBe(
-      "/repo/.omp/supipowers/workspaces/packages/pkg-a",
+      path.join("/repo", ".omp", "supipowers", "workspaces", "packages", "pkg-a"),
     );
     expect(getTargetStatePath(paths, target("@repo/pkg-a", "packages/pkg-a"), "reviews", "session.json")).toBe(
-      "/repo/.omp/supipowers/workspaces/packages/pkg-a/reviews/session.json",
+      path.join("/repo", ".omp", "supipowers", "workspaces", "packages", "pkg-a", "reviews", "session.json"),
     );
   });
 });

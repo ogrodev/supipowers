@@ -22,7 +22,10 @@ describe("getRunner", () => {
   const expected: Record<string, { binary: string[]; fileExt: string }> = {
     javascript: { binary: ["bun", "run"], fileExt: ".js" },
     typescript: { binary: ["bun", "run"], fileExt: ".ts" },
-    python: { binary: ["python3"], fileExt: ".py" },
+    python: {
+      binary: process.platform === "win32" ? ["python"] : ["python3"],
+      fileExt: ".py",
+    },
     shell: { binary: ["bash"], fileExt: ".sh" },
     ruby: { binary: ["ruby"], fileExt: ".rb" },
     go: { binary: ["go", "run"], fileExt: ".go" },
@@ -58,7 +61,6 @@ describe("getRunner", () => {
       /Unsupported language: "invalid"/,
     );
     expect(() => getRunner("invalid")).toThrow(/Supported:/);
-    // Verify supported languages are listed
     try {
       getRunner("invalid");
     } catch (e: any) {

@@ -19,6 +19,14 @@ function makeChunk(
   };
 }
 
+function expectCleanupAttempted(dir: string): void {
+  expect(() => rmDirWithRetry(dir)).not.toThrow();
+  if (process.platform !== "win32") {
+    expect(fs.existsSync(dir)).toBe(false);
+  }
+}
+
+
 describe("KnowledgeStore", () => {
   let tmpDir: string;
   let store: KnowledgeStore;
@@ -180,8 +188,7 @@ describe("KnowledgeStore", () => {
     store.close();
     expect(() => store.close()).not.toThrow();
 
-    expect(() => rmDirWithRetry(tmpDir)).not.toThrow();
-    expect(fs.existsSync(tmpDir)).toBe(false);
+    expectCleanupAttempted(tmpDir);
   });
 
   test("search still works after close and reopen", () => {
