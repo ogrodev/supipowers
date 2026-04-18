@@ -1,18 +1,20 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Platform, PlatformContext } from "../platform/types.js";
 import type { ConfigResolutionOptions } from "../config/loader.js";
 import type { PackageManagerId, ReviewReport, WorkspaceTarget } from "../types.js";
 import { DEFAULT_CONFIG } from "../config/defaults.js";
 import { formatConfigErrors, inspectConfig } from "../config/loader.js";
+import { listTargetPlans } from "../storage/plans.js";
 import { loadLatestReport } from "../storage/reports.js";
+import { formatReliabilitySection, loadReliabilitySummaries } from "../storage/reliability-metrics.js";
 import { summarizeEnabledGates } from "../quality/setup.js";
 import { detectPackageManager } from "../workspace/package-manager.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
 import { discoverWorkspaceTargets } from "../workspace/targets.js";
 
 export interface StatusCommandDependencies {
   inspectConfig: typeof inspectConfig;
+  listTargetPlans: typeof listTargetPlans;
   loadLatestReport: typeof loadLatestReport;
   detectPackageManager: typeof detectPackageManager;
   discoverWorkspaceTargets: typeof discoverWorkspaceTargets;
@@ -33,10 +35,12 @@ interface StatusSnapshot {
   workspaceCount: number;
   targetsWithPlans: number;
   targetsWithReports: number;
+  reliabilityLines: string[];
 }
 
 const STATUS_COMMAND_DEPENDENCIES: StatusCommandDependencies = {
   inspectConfig,
+  listTargetPlans,
   loadLatestReport,
   detectPackageManager,
   discoverWorkspaceTargets,
@@ -60,22 +64,7 @@ function createFallbackRootTarget(repoRoot: string, packageManager: PackageManag
 }
 
 function getTargetConfigOptions(target: WorkspaceTarget): ConfigResolutionOptions {
-  return target.kind === "root"
-    ? { repoRoot: target.repoRoot }
-    : { repoRoot: target.repoRoot, workspaceRelativeDir: target.relativeDir };
-}
-
-function listPlansForTarget(platform: Platform, target: WorkspaceTarget): string[] {
-  const plansDir = getTargetStatePath(platform.paths, target, "plans");
-  if (!fs.existsSync(plansDir)) {
-    return [];
-  }
-
-  return fs
-    .readdirSync(plansDir)
-    .filter((file) => file.endsWith(".md"))
-    .sort()
-    .reverse();
+  return { repoRoot: target.repoRoot };
 }
 
 function summarizeTargetConfig(
@@ -104,20 +93,21 @@ function createTargetShortLabel(target: WorkspaceTarget): string {
   return target.kind === "root" ? "root" : target.name;
 }
 
-function collectStatusSnapshot(
+async function collectStatusSnapshot(
   platform: Platform,
   ctx: PlatformContext,
   deps: StatusCommandDependencies,
-): StatusSnapshot {
-  const packageManager = deps.detectPackageManager(ctx.cwd);
-  const discoveredTargets = deps.discoverWorkspaceTargets(ctx.cwd, packageManager);
+ ): Promise<StatusSnapshot> {
+  const repoRoot = await resolveRepoRoot(platform, ctx.cwd);
+  const packageManager = deps.detectPackageManager(repoRoot);
+  const discoveredTargets = deps.discoverWorkspaceTargets(repoRoot, packageManager);
   const targets = discoveredTargets.length > 0
     ? discoveredTargets
-    : [createFallbackRootTarget(ctx.cwd, packageManager)];
+    : [createFallbackRootTarget(repoRoot, packageManager)];
 
   const snapshots = targets.map((target) => {
     const latestReport = deps.loadLatestReport(platform.paths, target);
-    const plans = listPlansForTarget(platform, target);
+    const plans = deps.listTargetPlans(platform.paths, target);
 
     return {
       target,
@@ -129,12 +119,15 @@ function collectStatusSnapshot(
     } satisfies TargetStatusSnapshot;
   });
 
+  const reliabilityLines = formatReliabilitySection(loadReliabilitySummaries(platform.paths, ctx.cwd));
+
   return {
     targets: snapshots,
     isMonorepo: snapshots.length > 1,
     workspaceCount: snapshots.filter((snapshot) => snapshot.target.kind === "workspace").length,
     targetsWithPlans: snapshots.filter((snapshot) => snapshot.plans.length > 0).length,
     targetsWithReports: snapshots.filter((snapshot) => snapshot.latestReport !== null).length,
+    reliabilityLines,
   };
 }
 
@@ -166,12 +159,12 @@ function summarizeConfigProblems(snapshot: StatusSnapshot): string {
   return entries.join(" · ") || "none";
 }
 
-export function formatOverviewStatus(
+export async function formatOverviewStatus(
   platform: Platform,
   ctx: PlatformContext,
   deps: StatusCommandDependencies = STATUS_COMMAND_DEPENDENCIES,
-): string[] {
-  const snapshot = collectStatusSnapshot(platform, ctx, deps);
+ ): Promise<string[]> {
+  const snapshot = await collectStatusSnapshot(platform, ctx, deps);
 
   if (!snapshot.isMonorepo) {
     const [target] = snapshot.targets;
@@ -199,6 +192,8 @@ function formatStatusOptions(snapshot: StatusSnapshot): string[] {
       ...target.plans.map((plan) => `  · ${plan}`),
       `Last checks: ${formatLatestReport(target.latestReport)}`,
       "",
+      ...snapshot.reliabilityLines,
+      "",
       "Close",
     ];
   }
@@ -220,7 +215,7 @@ function formatStatusOptions(snapshot: StatusSnapshot): string[] {
     );
   }
 
-  options.push("Close");
+  options.push(...snapshot.reliabilityLines, "", "Close");
   return options;
 }
 
@@ -228,8 +223,8 @@ export async function showStatusDialog(
   platform: Platform,
   ctx: PlatformContext,
   deps: StatusCommandDependencies = STATUS_COMMAND_DEPENDENCIES,
-): Promise<void> {
-  const snapshot = collectStatusSnapshot(platform, ctx, deps);
+ ): Promise<void> {
+  const snapshot = await collectStatusSnapshot(platform, ctx, deps);
 
   await ctx.ui.select("Supipowers Status", formatStatusOptions(snapshot), {
     helpText: "Esc to close",

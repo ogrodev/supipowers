@@ -33,6 +33,7 @@ import { CANONICAL_GATE_ORDER, GATE_DISPLAY_NAMES } from "../quality/registry.js
 import { REVIEW_GATE_REGISTRY } from "../quality/review-gates.js";
 import { saveReviewReport } from "../storage/reports.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
 import { getChangedWorkspaceTargets } from "../workspace/path-mapping.js";
 import {
   parseTargetArg,
@@ -96,6 +97,30 @@ const CHECKS_COMMAND_DEPENDENCIES: ChecksCommandDependencies = {
   discoverWorkspaceTargets,
   notifyInfo,
 };
+
+interface ResolvedChecksTargets {
+  mode: "single" | "all";
+  runTargets: WorkspaceTarget[];
+  workspaceTargets: WorkspaceTarget[];
+}
+
+interface CompletedChecksRun {
+  target: WorkspaceTarget;
+  report: ReviewReport;
+  reportPath: string;
+  failedGates: GateResult[];
+}
+
+interface RunChecksForTargetInput {
+  platform: Platform;
+  ctx: any;
+  deps: ChecksCommandDependencies;
+  target: WorkspaceTarget;
+  workspaceTargets: WorkspaceTarget[];
+  filters: GateFilters;
+  reviewModel: ReturnType<ChecksCommandDependencies["resolveModelForAction"]>;
+}
+
 
 function tokenizeGateList(raw: string): string[] {
   return raw
@@ -173,7 +198,7 @@ function validateGateSelection(enabledGateIds: GateId[], filters: GateFilters): 
 }
 
 function describeScope(scope: ConfigScope): string {
-  return scope === "global" ? "global" : scope;
+  return scope === "global" ? "global" : "repository";
 }
 
 function buildRecoveryDetail(scopes: ConfigScope[]): string {
@@ -186,30 +211,85 @@ function buildRecoveryDetail(scopes: ConfigScope[]): string {
 }
 
 function getTargetConfigOptions(target: WorkspaceTarget) {
-  return target.kind === "workspace"
-    ? { repoRoot: target.repoRoot, workspaceRelativeDir: target.relativeDir }
-    : { repoRoot: target.repoRoot, workspaceRelativeDir: null };
+  return { repoRoot: target.repoRoot };
+}
+
+function formatTargetLocation(target: WorkspaceTarget): string {
+  return target.kind === "root" ? "root" : target.relativeDir;
+}
+
+function formatTargetLabel(target: WorkspaceTarget): string {
+  return target.kind === "root" ? `${target.name} (root)` : `${target.name} (${target.relativeDir})`;
 }
 
 function buildChecksTargetOptionLabel(option: { target: WorkspaceTarget; changed: boolean }): string {
-  return `${option.target.name} — ${option.target.relativeDir} — ${option.changed ? "changed" : "unchanged"}`;
+  return `${option.target.name} — ${formatTargetLocation(option.target)} — ${option.changed ? "changed" : "unchanged"}`;
 }
 
-async function selectChecksTarget(
+function buildAllChecksTargetLabel(
+  workspaceTargets: WorkspaceTarget[],
+  changedTargetIds: Set<string>,
+): string {
+  const workspaceCount = workspaceTargets.filter((target) => target.kind === "workspace").length;
+  const base = workspaceCount === 0
+    ? "All — root target"
+    : `All — root + ${workspaceCount} workspace${workspaceCount === 1 ? "" : "s"}`;
+  const changedCount = workspaceTargets.filter((target) => changedTargetIds.has(target.id)).length;
+  return changedCount > 0 ? `${base} — ${changedCount} changed` : `${base} — no changed targets`;
+}
+
+function getDefaultChecksTarget(workspaceTargets: WorkspaceTarget[]): WorkspaceTarget {
+  return workspaceTargets.find((target) => target.kind === "root") ?? workspaceTargets[0]!;
+}
+
+function isMonorepoTargets(workspaceTargets: WorkspaceTarget[]): boolean {
+  return workspaceTargets.some((target) => target.kind === "workspace");
+}
+
+async function resolveChecksTargets(
   platform: Platform,
   ctx: any,
   args: string | undefined,
   deps: ChecksCommandDependencies,
-): Promise<{ target: WorkspaceTarget; workspaceTargets: WorkspaceTarget[] } | null> {
+): Promise<ResolvedChecksTargets | null> {
   const requestedTarget = parseTargetArg(args);
-  const packageManager = deps.resolvePackageManager(ctx.cwd);
-  const workspaceTargets = deps.discoverWorkspaceTargets(ctx.cwd, packageManager.id);
+  const repoRoot = await resolveRepoRoot(platform, ctx.cwd);
+  const packageManager = deps.resolvePackageManager(repoRoot);
+  const workspaceTargets = deps.discoverWorkspaceTargets(repoRoot, packageManager.id);
 
   if (workspaceTargets.length === 0) {
     throw new Error("No workspace targets found for checks.");
   }
 
-  const changedRepoFiles = await discoverChangedRepoFiles(platform.exec.bind(platform), ctx.cwd);
+  if (requestedTarget?.toLowerCase() === "all") {
+    return { mode: "all", runTargets: workspaceTargets, workspaceTargets };
+  }
+
+  if (requestedTarget) {
+    const target = await selectWorkspaceTarget(
+      ctx,
+      workspaceTargets.map((target) => ({ target, changed: false })),
+      requestedTarget,
+      {
+        title: "Checks target",
+        helpText: "Pick one target to run checks for. Use --target all to run the root target and every workspace target.",
+      },
+    );
+    if (!target) {
+      throw new Error(`Checks target not found: ${requestedTarget}`);
+    }
+    return { mode: "single", runTargets: [target], workspaceTargets };
+  }
+
+  if (!isMonorepoTargets(workspaceTargets)) {
+    return {
+      mode: "single",
+      runTargets: [getDefaultChecksTarget(workspaceTargets)],
+      workspaceTargets,
+    };
+  }
+
+  const changedRepoFiles = await discoverChangedRepoFiles(platform.exec.bind(platform), repoRoot);
   const changedTargetIds = new Set(
     getChangedWorkspaceTargets(workspaceTargets, changedRepoFiles).map((target) => target.id),
   );
@@ -223,19 +303,27 @@ async function selectChecksTarget(
       }),
     })),
   );
-  const selectableOptions = !requestedTarget && changedTargetIds.size === 1
-    ? options.filter((option) => changedTargetIds.has(option.target.id))
-    : options;
-  const target = await selectWorkspaceTarget(ctx, selectableOptions, requestedTarget, {
-    title: "Checks target",
-    helpText: "Pick one package to run checks for. Target choice is runtime-only and is not persisted in config.",
-  });
 
-  if (requestedTarget && !target) {
-    throw new Error(`Checks target not found: ${requestedTarget}`);
+  if (!ctx.hasUI) {
+    return { mode: "all", runTargets: workspaceTargets, workspaceTargets };
   }
 
-  return target ? { target, workspaceTargets } : null;
+  const allLabel = buildAllChecksTargetLabel(workspaceTargets, changedTargetIds);
+  const labels = [allLabel, ...options.map((option) => option.label ?? buildChecksTargetOptionLabel(option))];
+  const choice = await ctx.ui.select("Checks target", labels, {
+    initialIndex: 0,
+    helpText: "All runs the root target and every workspace target. Choose a single target to narrow the run.",
+  });
+  if (!choice) {
+    return null;
+  }
+  if (choice === allLabel) {
+    return { mode: "all", runTargets: workspaceTargets, workspaceTargets };
+  }
+
+  const selectedIndex = labels.indexOf(choice) - 1;
+  const target = selectedIndex >= 0 ? options[selectedIndex]?.target ?? null : null;
+  return target ? { mode: "single", runTargets: [target], workspaceTargets } : null;
 }
 
 function gateStepKey(gateId: GateId): string {
@@ -426,8 +514,9 @@ async function recoverInvalidQualityGateConfig(
   | { status: "cancelled" }
   | { status: "recovered"; config: SupipowersConfig }
 > {
+  const configRoot = target.repoRoot;
   const configOptions = getTargetConfigOptions(target);
-  const recovery = deps.inspectQualityGateRecovery(platform.paths, ctx.cwd, configOptions);
+  const recovery = deps.inspectQualityGateRecovery(platform.paths, configRoot, configOptions);
   const recoverableScopes = recovery.scopes
     .filter((scope) => scope.recoverableInvalidQualityGates)
     .map((scope) => scope.scope);
@@ -446,7 +535,7 @@ async function recoverInvalidQualityGateConfig(
   reviewProgress.startRepair(`cleaning ${recoverableScopes.join(" + ")}`);
 
   for (const scope of recoverableScopes) {
-    deps.removeQualityGatesConfig(platform.paths, ctx.cwd, scope, configOptions);
+    deps.removeQualityGatesConfig(platform.paths, configRoot, scope, configOptions);
   }
 
   deps.notifyInfo(
@@ -457,8 +546,8 @@ async function recoverInvalidQualityGateConfig(
 
   const setupResult = await deps.setupGates(
     platform,
-    target.packageDir,
-    deps.inspectConfig(platform.paths, ctx.cwd, configOptions),
+    configRoot,
+    deps.inspectConfig(platform.paths, configRoot, configOptions),
     { mode: "deterministic" },
   );
   if (setupResult.status !== "proposed") {
@@ -472,7 +561,7 @@ async function recoverInvalidQualityGateConfig(
   const saveResult = await deps.interactivelySaveGateSetup(
     ctx,
     platform.paths,
-    ctx.cwd,
+    configRoot,
     setupResult.proposal,
   );
   if (saveResult !== "saved") {
@@ -486,13 +575,103 @@ async function recoverInvalidQualityGateConfig(
     return { status: "cancelled" };
   }
 
-  const config = deps.loadConfig(platform.paths, ctx.cwd, configOptions);
+  const config = deps.loadConfig(platform.paths, configRoot, configOptions);
   reviewProgress.completeRepair("reconfigured");
   return {
     status: "recovered",
     config,
   };
 }
+
+async function runChecksForTarget(input: RunChecksForTargetInput): Promise<CompletedChecksRun | null> {
+  const { platform, ctx, deps, target, workspaceTargets, filters, reviewModel } = input;
+  const reviewProgress = createReviewProgress(ctx);
+  const configRoot = target.repoRoot;
+  const configOptions = getTargetConfigOptions(target);
+
+  try {
+    reviewProgress.startLoadingConfig();
+
+    let config: SupipowersConfig;
+    try {
+      config = deps.loadConfig(platform.paths, configRoot, configOptions);
+      reviewProgress.completeLoadingConfig();
+    } catch (error) {
+      const recovered = await recoverInvalidQualityGateConfig(
+        platform,
+        ctx,
+        deps,
+        reviewProgress,
+        target,
+      );
+      if (recovered.status === "unrecoverable") {
+        throw error;
+      }
+      if (recovered.status === "cancelled") {
+        return null;
+      }
+      config = recovered.config;
+    }
+
+    const enabledGateIds = getEnabledGateIds(config.quality.gates);
+    reviewProgress.configureGateSteps(config.quality.gates, filters);
+    validateGateSelection(enabledGateIds, filters);
+
+    reviewProgress.startScopeDiscovery();
+    const report = await deps.runQualityGates({
+      platform,
+      cwd: target.packageDir,
+      target,
+      workspaceTargets,
+      gates: config.quality.gates,
+      filters,
+      reviewModel,
+      gateRegistry: REVIEW_GATE_REGISTRY,
+      onEvent: (event) => reviewProgress.handleRunnerEvent(event),
+    });
+
+    reviewProgress.startSavingReport();
+    const reportPath = deps.saveReviewReport(platform.paths, target, report);
+    reviewProgress.completeSavingReport(report.overallStatus);
+
+    return {
+      target,
+      report,
+      reportPath,
+      failedGates: getFailedGates(report),
+    };
+  } catch (error) {
+    reviewProgress.failActive((error as Error).message);
+    throw error;
+  } finally {
+    reviewProgress.dispose();
+  }
+}
+
+function buildBatchChecksTitle(results: CompletedChecksRun[]): string {
+  const counts = results.reduce(
+    (summary, result) => {
+      summary[result.report.overallStatus] += 1;
+      return summary;
+    },
+    { passed: 0, failed: 0, blocked: 0 } satisfies Record<ReviewReport["overallStatus"], number>,
+  );
+  const parts = [
+    counts.passed > 0 ? `${counts.passed} passed` : null,
+    counts.failed > 0 ? `${counts.failed} failed` : null,
+    counts.blocked > 0 ? `${counts.blocked} blocked` : null,
+  ].filter((part): part is string => part !== null);
+
+  return `Checks complete: ${parts.join(", ")}`;
+}
+
+function buildBatchChecksSummary(results: CompletedChecksRun[]): string {
+  return results.map((result) => {
+    const { passed, failed, blocked, skipped } = result.report.summary;
+    return `${formatTargetLabel(result.target)}: ${result.report.overallStatus} — ${passed} passed, ${failed} failed, ${blocked} blocked, ${skipped} skipped — saved: ${result.reportPath}`;
+  }).join("\n");
+}
+
 
 export function buildReviewSummary(report: ReviewReport, reportPath: string): string {
   const orderedGates = [...report.gates].sort(
@@ -620,7 +799,6 @@ function buildFixPrompt(failedGates: GateResult[]): string {
     ].join("\n"));
   }
 
-  const gateNames = failedGates.map((g) => GATE_DISPLAY_NAMES[g.gate] ?? g.gate);
   const rerunCmd = `/supi:checks --only ${failedGates.map((g) => g.gate).join(" ")}`;
 
   return [
@@ -637,7 +815,6 @@ export async function handleChecks(
   args: string | undefined,
   deps: ChecksCommandDependencies = CHECKS_COMMAND_DEPENDENCIES,
 ): Promise<void> {
-  const reviewProgress = createReviewProgress(ctx);
   let modelCleanup: (() => Promise<void>) | undefined;
 
   try {
@@ -646,98 +823,67 @@ export async function handleChecks(
     const resolved = deps.resolveModelForAction("checks", modelRegistry, modelCfg, bridge);
     modelCleanup = await deps.applyModelOverride(platform, ctx, "checks", resolved);
 
-    const selection = await selectChecksTarget(platform, ctx, args, deps);
+    const filters = parseGateFilters(args);
+    const selection = await resolveChecksTargets(platform, ctx, args, deps);
     if (!selection) {
       return;
     }
 
-    const selectedTarget = selection.target;
-    const configOptions = getTargetConfigOptions(selectedTarget);
-
-    reviewProgress.startLoadingConfig();
-
-    let config: SupipowersConfig;
-    try {
-      config = deps.loadConfig(platform.paths, ctx.cwd, configOptions);
-      reviewProgress.completeLoadingConfig();
-    } catch (error) {
-      const recovered = await recoverInvalidQualityGateConfig(
+    const results: CompletedChecksRun[] = [];
+    for (const target of selection.runTargets) {
+      const result = await runChecksForTarget({
         platform,
         ctx,
         deps,
-        reviewProgress,
-        selectedTarget,
-      );
-      if (recovered.status === "unrecoverable") {
-        throw error;
-      }
-      if (recovered.status === "cancelled") {
+        target,
+        workspaceTargets: selection.workspaceTargets,
+        filters,
+        reviewModel: resolved,
+      });
+      if (!result) {
         return;
       }
-      config = recovered.config;
+      results.push(result);
     }
 
-    const enabledGateIds = getEnabledGateIds(config.quality.gates);
-    const filters = parseGateFilters(args);
-    reviewProgress.configureGateSteps(config.quality.gates, filters);
-    validateGateSelection(enabledGateIds, filters);
+    if (selection.mode === "all" && results.length > 1) {
+      deps.notifyInfo(ctx, buildBatchChecksTitle(results), buildBatchChecksSummary(results));
+      return;
+    }
 
-    reviewProgress.startScopeDiscovery();
-    const report = await deps.runQualityGates({
-      platform,
-      cwd: selectedTarget.packageDir,
-      target: selectedTarget,
-      workspaceTargets: selection.workspaceTargets,
-      gates: config.quality.gates,
-      filters,
-      reviewModel: resolved,
-      gateRegistry: REVIEW_GATE_REGISTRY,
-      onEvent: (event) => reviewProgress.handleRunnerEvent(event),
-    });
+    const [result] = results;
+    if (!result) {
+      return;
+    }
 
-    reviewProgress.startSavingReport();
-    const reportPath = deps.saveReviewReport(platform.paths, selectedTarget, report);
-    reviewProgress.completeSavingReport(report.overallStatus);
-
-    // Dispose widget before showing any TUI dialogs
-    reviewProgress.dispose();
-
-    const failedGates = getFailedGates(report);
-
-    if (failedGates.length === 0) {
+    if (result.failedGates.length === 0) {
       deps.notifyInfo(
         ctx,
-        `Checks complete: ${report.overallStatus}`,
-        buildReviewSummary(report, reportPath),
+        `Checks complete: ${result.report.overallStatus}`,
+        buildReviewSummary(result.report, result.reportPath),
       );
       return;
     }
 
-    // Show compact failure summary
-    const failureNames = failedGates.map((g) => GATE_DISPLAY_NAMES[g.gate] ?? g.gate);
+    const failureNames = result.failedGates.map((gate) => GATE_DISPLAY_NAMES[gate.gate] ?? gate.gate);
     deps.notifyInfo(
       ctx,
-      `Checks complete: ${report.overallStatus}`,
-      buildFailureSummary(failedGates),
+      `Checks complete: ${result.report.overallStatus}`,
+      buildFailureSummary(result.failedGates),
     );
 
-    // Offer to fix
     const FIX_NOW = `Yes, fix ${failureNames.join(", ")}`;
     const SAVE_ONLY = "No, just save for later";
     const choice = await ctx.ui.select(
-      `${failedGates.length} check${failedGates.length === 1 ? "" : "s"} failed — do you want to fix now?`,
+      `${result.failedGates.length} check${result.failedGates.length === 1 ? "" : "s"} failed — do you want to fix now?`,
       [FIX_NOW, SAVE_ONLY],
     );
 
     if (choice === FIX_NOW) {
-      platform.sendUserMessage(buildFixPrompt(failedGates));
+      platform.sendUserMessage(buildFixPrompt(result.failedGates));
     }
-  } catch (error) {
-    reviewProgress.failActive((error as Error).message);
-    throw error;
   } finally {
     await modelCleanup?.();
-    reviewProgress.dispose();
   }
 }
 

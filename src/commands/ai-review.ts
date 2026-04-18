@@ -21,6 +21,7 @@ import {
 } from "../storage/review-sessions.js";
 import { accent, bright, muted } from "../platform/tui-colors.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
 import {
   buildWorkspaceTargetOptionLabel,
   parseTargetArg,
@@ -107,18 +108,23 @@ function buildReviewTargetSummary(target: WorkspaceTarget): string {
   return `${target.name} (${target.relativeDir})`;
 }
 
-async function selectReviewTarget(ctx: any, requestedTarget: string | null): Promise<ReviewTargetChoice | null> {
-  const packageManager = resolvePackageManager(ctx.cwd);
-  const discoveredTargets = discoverWorkspaceTargets(ctx.cwd, packageManager.id);
+async function selectReviewTarget(
+  platform: Platform,
+  ctx: any,
+  requestedTarget: string | null,
+): Promise<ReviewTargetChoice | null> {
+  const repoRoot = await resolveRepoRoot(platform, ctx.cwd);
+  const packageManager = resolvePackageManager(repoRoot);
+  const discoveredTargets = discoverWorkspaceTargets(repoRoot, packageManager.id);
   const targets = discoveredTargets.length > 0
     ? discoveredTargets
     : [{
         id: "root",
-        name: path.basename(ctx.cwd) || "root",
+        name: path.basename(repoRoot) || "root",
         kind: "root",
-        repoRoot: ctx.cwd,
-        packageDir: ctx.cwd,
-        manifestPath: path.join(ctx.cwd, "package.json"),
+        repoRoot,
+        packageDir: repoRoot,
+        manifestPath: path.join(repoRoot, "package.json"),
         relativeDir: ".",
         version: "0.0.0",
         private: true,
@@ -919,7 +925,7 @@ async function runAiReviewSession(
   }
 
   const { requestedTarget } = parseAiReviewArgs(args);
-  const selectedReviewTarget = await selectReviewTarget(ctx, requestedTarget);
+  const selectedReviewTarget = await selectReviewTarget(platform, ctx, requestedTarget);
   if (!selectedReviewTarget) {
     return;
   }
@@ -936,7 +942,10 @@ async function runAiReviewSession(
   }
 
   const loadedAgents = level === "multi-agent"
-    ? await deps.loadReviewAgents(platform.paths, ctx.cwd)
+    ? await deps.loadReviewAgents(platform.paths, ctx.cwd, {
+        repoRoot: reviewTarget.target.repoRoot,
+        workspaceRelativeDir: reviewTarget.target.kind === "workspace" ? reviewTarget.target.relativeDir : null,
+      })
     : null;
   const agents = loadedAgents?.agents ?? [];
   if (level === "multi-agent" && agents.length === 0) {

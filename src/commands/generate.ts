@@ -13,9 +13,12 @@ import {
   buildWorkspaceTargetOptionLabel,
   parseTargetArg,
   selectWorkspaceTarget,
+  stripCliArg,
+  tokenizeCliArgs,
   type WorkspaceTargetOption,
 } from "../workspace/selector.js";
 import { detectPackageManager } from "../workspace/package-manager.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
 import { discoverWorkspaceTargets } from "../workspace/targets.js";
 
 // ── Multi-select UI ───────────────────────────────────────────
@@ -56,31 +59,9 @@ async function selectDocFiles(
   return [...selected];
 }
 
-function tokenizeGenerateArgs(args?: string): string[] {
-  if (!args) {
-    return [];
-  }
-
-  return (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [])
-    .map((token) => token.replace(/^["']|["']$/g, ""));
-}
 
 function parseGenerateSubcommand(args?: string): string {
-  const tokens = tokenizeGenerateArgs(args);
-
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (!token || token === "--target") {
-      index += 1;
-      continue;
-    }
-    if (token.startsWith("--target=")) {
-      continue;
-    }
-    return token;
-  }
-
-  return "docs";
+  return tokenizeCliArgs(stripCliArg(args, "--target"))[0] ?? "docs";
 }
 
 function formatGenerateTarget(target: WorkspaceTarget): string {
@@ -96,13 +77,14 @@ function buildGenerateTargetOptionLabel(option: WorkspaceTargetOption<WorkspaceT
 }
 
 async function resolveGenerateScope(
+  platform: Platform,
   ctx: any,
   args?: string,
-): Promise<DocDriftScope | null> {
+ ): Promise<DocDriftScope | null> {
   const requestedTarget = parseTargetArg(args);
-  const packageManager = detectPackageManager(ctx.cwd);
-  const targets = discoverWorkspaceTargets(ctx.cwd, packageManager);
-
+  const repoRoot = await resolveRepoRoot(platform, ctx.cwd);
+  const packageManager = detectPackageManager(repoRoot);
+  const targets = discoverWorkspaceTargets(repoRoot, packageManager);
   if (targets.length === 0) {
     notifyError(ctx, "No documentation targets found", "Create a package.json with name and version before running /supi:generate.");
     return null;
@@ -142,7 +124,7 @@ async function handleDocs(platform: Platform, ctx: any, args?: string): Promise<
     return;
   }
 
-  const scope = await resolveGenerateScope(ctx, args);
+  const scope = await resolveGenerateScope(platform, ctx, args);
   if (!scope) {
     return;
   }
@@ -215,6 +197,15 @@ async function handleDocs(platform: Platform, ctx: any, args?: string): Promise<
 
   // Subsequent run: headless sub-agent drift check
   const result = await checkDocDrift(platform, cwd, scope);
+
+  if (result?.errors && result.errors.length > 0) {
+    notifyError(
+      ctx,
+      "Doc drift check failed",
+      `${result.errors.length} sub-agent(s) could not produce valid output. Target: ${targetSummary}\n\n- ${result.errors.join("\n- ")}`,
+    );
+    return;
+  }
 
   if (!result || !result.drifted) {
     notifyInfo(ctx, "Docs are up to date", `${result?.summary ?? "No changes since last check"} · Target: ${targetSummary}`);

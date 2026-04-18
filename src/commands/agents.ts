@@ -3,8 +3,10 @@ import {
   addAgentToConfig,
   getGlobalReviewAgentsConfigPath,
   getGlobalReviewAgentsDir,
-  getReviewAgentsConfigPath,
-  getReviewAgentsDir,
+  getRootReviewAgentsConfigPath,
+  getRootReviewAgentsDir,
+  getWorkspaceReviewAgentsConfigPath,
+  getWorkspaceReviewAgentsDir,
   loadMergedReviewAgents,
   resolveReviewAgentContext,
   writeAgentFile,
@@ -86,11 +88,56 @@ function buildAgentDashboard(
 
 const KEBAB_CASE_RE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
+type AgentCreateScope = "global" | "project";
+type AgentCreateStorageScope = "global" | "root" | "workspace";
+
+interface AgentCreateDestination {
+  agentsDir: string;
+  configPath: string;
+  scope: AgentCreateStorageScope;
+}
+
 function matchesCreateScope(
   agent: ConfiguredReviewAgent,
-  scope: "global" | "project",
+  scope: AgentCreateStorageScope,
 ): boolean {
-  return scope === "global" ? agent.scope === "global" : agent.scope !== "global";
+  switch (scope) {
+    case "global":
+      return agent.scope === "global";
+    case "workspace":
+      return agent.scope === "workspace";
+    case "root":
+      return agent.scope === "root" || agent.scope === undefined;
+  }
+}
+
+function resolveAgentCreateDestination(
+  platform: Platform,
+  cwd: string,
+  scope: AgentCreateScope,
+): AgentCreateDestination {
+  if (scope === "global") {
+    return {
+      agentsDir: getGlobalReviewAgentsDir(platform.paths),
+      configPath: getGlobalReviewAgentsConfigPath(platform.paths),
+      scope: "global",
+    };
+  }
+
+  const context = resolveReviewAgentContext(cwd);
+  if (context.workspaceRelativeDir) {
+    return {
+      agentsDir: getWorkspaceReviewAgentsDir(platform.paths, context.repoRoot, context.workspaceRelativeDir),
+      configPath: getWorkspaceReviewAgentsConfigPath(platform.paths, context.repoRoot, context.workspaceRelativeDir),
+      scope: "workspace",
+    };
+  }
+
+  return {
+    agentsDir: getRootReviewAgentsDir(platform.paths, context.repoRoot),
+    configPath: getRootReviewAgentsConfigPath(platform.paths, context.repoRoot),
+    scope: "root",
+  };
 }
 
 export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<void> {
@@ -106,7 +153,7 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
   ], { helpText: "Select scope · Esc to cancel" });
 
   if (!scopeChoice) return;
-  const scope: "global" | "project" = scopeChoice === "Global" ? "global" : "project";
+  const scope: AgentCreateScope = scopeChoice === "Global" ? "global" : "project";
 
   // Step 2: Agent name
   const nameInput = await ctx.ui.input("Agent name (kebab-case)", {
@@ -121,14 +168,16 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
     return;
   }
 
+  const destination = resolveAgentCreateDestination(platform, ctx.cwd, scope);
+
   // Check for name collision in target scope
   try {
     const existing = await loadMergedReviewAgents(platform.paths, ctx.cwd);
     const collision = existing.agents.find(
-      (agent) => agent.name === agentName && matchesCreateScope(agent, scope),
+      (agent) => agent.name === agentName && matchesCreateScope(agent, destination.scope),
     );
     if (collision) {
-      ctx.ui.notify(`Agent "${agentName}" already exists in ${scope} scope`, "error");
+      ctx.ui.notify(`Agent "${agentName}" already exists in ${destination.scope} scope`, "error");
       return;
     }
   } catch {
@@ -173,20 +222,13 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
   }
 
   // Step 6: Save
-  const agentsDir = scope === "global"
-    ? getGlobalReviewAgentsDir(platform.paths)
-    : getReviewAgentsDir(platform.paths, ctx.cwd);
-  const configPath = scope === "global"
-    ? getGlobalReviewAgentsConfigPath(platform.paths)
-    : getReviewAgentsConfigPath(platform.paths, ctx.cwd);
-
-  const fileName = writeAgentFile(agentsDir, agentName, {
+  const fileName = writeAgentFile(destination.agentsDir, agentName, {
     name: agentName,
     description: `${agentName} review agent`,
     focus: null,
   }, promptBody.trim());
 
-  await addAgentToConfig(configPath, {
+  await addAgentToConfig(destination.configPath, {
     name: agentName,
     enabled: true,
     data: fileName,
@@ -202,19 +244,20 @@ export async function runAgentCreateFlow(platform: Platform, ctx: any): Promise<
 function loadSkillAndSteer(
   platform: Platform,
   ctx: any,
-  scope: "global" | "project",
+  scope: AgentCreateScope,
   agentName: string,
   model: string | null,
   thinkingLevel: ThinkingLevel | null,
 ): void {
-  const agentsDir = scope === "global"
-    ? getGlobalReviewAgentsDir(platform.paths)
-    : getReviewAgentsDir(platform.paths, ctx.cwd);
-  const configPath = scope === "global"
-    ? getGlobalReviewAgentsConfigPath(platform.paths)
-    : getReviewAgentsConfigPath(platform.paths, ctx.cwd);
-
-  const prompt = buildSkillSteerPrompt(agentName, scope, agentsDir, configPath, model, thinkingLevel);
+  const destination = resolveAgentCreateDestination(platform, ctx.cwd, scope);
+  const prompt = buildSkillSteerPrompt(
+    agentName,
+    scope,
+    destination.agentsDir,
+    destination.configPath,
+    model,
+    thinkingLevel,
+  );
 
   platform.sendMessage(
     {

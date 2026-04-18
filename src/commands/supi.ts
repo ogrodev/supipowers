@@ -20,7 +20,7 @@ export async function showSupiDialog(
     "/supi:context  — Show context breakdown",
     "/supi:optimize-context — Optimize context to save tokens",
   ];
-  const status = formatOverviewStatus(platform, ctx);
+  const status = await formatOverviewStatus(platform, ctx);
 
   const choice = await ctx.ui.select(
     "Supipowers",

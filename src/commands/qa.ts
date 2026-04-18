@@ -7,7 +7,7 @@ import { applyModelOverride, createModelBridge, resolveModelForAction } from "..
 import { notifyError, notifyInfo } from "../notifications/renderer.js";
 import { DEFAULT_E2E_QA_CONFIG, loadE2eQaConfig, saveE2eQaConfig } from "../qa/config.js";
 import { detectAppType } from "../qa/detect-app-type.js";
-import { discoverRoutes } from "../qa/discover-routes.js";
+import { discoverRoutes, type DiscoveredRoute } from "../qa/discover-routes.js";
 import { loadE2eMatrix } from "../qa/matrix.js";
 import { buildE2eOrchestratorPrompt } from "../qa/prompt-builder.js";
 import { createNewE2eSession } from "../qa/session.js";
@@ -16,6 +16,7 @@ import type { WorkspaceTarget } from "../types.js";
 import { findActiveSession, getSessionDir } from "../storage/qa-sessions.js";
 import { moduleDir, toBashPath } from "../utils/paths.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
 import {
   buildWorkspaceTargetOptionLabel,
   parseTargetArg,
@@ -109,6 +110,55 @@ function describeTarget(target: WorkspaceTarget): string {
   return target.kind === "root" ? target.name : `${target.name} (${target.relativeDir})`;
 }
 
+interface QaTargetInspection {
+  detectedType: AppType | null;
+  detectedDevCommand: string | null;
+  detectedPort: number | null;
+  detectedIsLikelyApp: boolean;
+  preliminaryRoutes: DiscoveredRoute[];
+  isRunnable: boolean;
+  isRunnableForPrefilter: boolean;
+}
+
+function inspectQaTarget(target: WorkspaceTarget, deps: QaCommandDependencies): QaTargetInspection {
+  let detectedType: AppType | null = null;
+  let detectedDevCommand: string | null = null;
+  let detectedPort: number | null = null;
+  let detectedIsLikelyApp = false;
+  let preliminaryRoutes: DiscoveredRoute[] = [];
+  let detectionFailed = false;
+
+  try {
+    const detected = deps.detectAppType(target.packageDir);
+    detectedType = detected.type;
+    detectedDevCommand = detected.devCommand;
+    detectedPort = detected.port;
+    detectedIsLikelyApp = detected.isLikelyApp;
+  } catch {
+    detectionFailed = true;
+  }
+
+  if (!detectionFailed && detectedType) {
+    try {
+      preliminaryRoutes = deps.discoverRoutes(target.packageDir, detectedType);
+    } catch {
+      detectionFailed = true;
+    }
+  }
+
+  const isRunnable = detectedIsLikelyApp || preliminaryRoutes.length > 0;
+
+  return {
+    detectedType,
+    detectedDevCommand,
+    detectedPort,
+    detectedIsLikelyApp,
+    preliminaryRoutes,
+    isRunnable,
+    isRunnableForPrefilter: !detectionFailed && isRunnable,
+  };
+}
+
 async function runSetupWizard(
   ctx: any,
   detectedAppType: string | null,
@@ -177,28 +227,53 @@ export async function handleQa(
   const resolved = deps.resolveModelForAction("qa", modelRegistry, modelCfg, bridge);
   await deps.applyModelOverride(platform, ctx, "qa", resolved);
 
-  const packageManager = deps.resolvePackageManager(ctx.cwd);
-  const targets = deps.discoverWorkspaceTargets(ctx.cwd, packageManager.id);
+  const repoRoot = await resolveRepoRoot(platform, ctx.cwd);
+  const packageManager = deps.resolvePackageManager(repoRoot);
+  const targets = deps.discoverWorkspaceTargets(repoRoot, packageManager.id);
   if (targets.length === 0) {
     deps.notifyError(ctx, "QA target not found", "Create a package.json with name and version before running /supi:qa.");
     return;
   }
 
   const requestedTarget = parseTargetArg(args);
-  if (!ctx.hasUI && targets.length > 1 && !requestedTarget) {
-    deps.notifyError(ctx, "QA target required", "Pass --target <package> when running /supi:qa outside interactive mode.");
-    return;
+  const targetInspections = new Map<string, QaTargetInspection>();
+  const getTargetInspection = (target: WorkspaceTarget): QaTargetInspection => {
+    const existing = targetInspections.get(target.id);
+    if (existing) return existing;
+
+    const inspection = inspectQaTarget(target, deps);
+    targetInspections.set(target.id, inspection);
+    return inspection;
+  };
+
+  let selectedTarget: WorkspaceTarget | null = null;
+  let selectedInspection: QaTargetInspection | null = null;
+
+  if (!ctx.hasUI && !requestedTarget && targets.length > 1) {
+    const runnableTargets = targets
+      .map((target) => ({ target, inspection: getTargetInspection(target) }))
+      .filter(({ inspection }) => inspection.isRunnableForPrefilter);
+
+    if (runnableTargets.length === 1) {
+      selectedTarget = runnableTargets[0]!.target;
+      selectedInspection = runnableTargets[0]!.inspection;
+    } else {
+      deps.notifyError(ctx, "QA target required", "Pass --target <package> when running /supi:qa outside interactive mode.");
+      return;
+    }
   }
 
-  const selectedTarget = await deps.selectWorkspaceTarget(
-    ctx,
-    targets.map((target) => ({ target, changed: false, label: buildQaTargetOptionLabel({ target, changed: false }) })),
-    requestedTarget,
-    {
-      title: "QA target",
-      helpText: "Pick one app package to test. QA runs only within the selected target.",
-    },
-  );
+  if (!selectedTarget) {
+    selectedTarget = await deps.selectWorkspaceTarget(
+      ctx,
+      targets.map((target) => ({ target, changed: false, label: buildQaTargetOptionLabel({ target, changed: false }) })),
+      requestedTarget,
+      {
+        title: "QA target",
+        helpText: "Pick one app package to test. QA runs only within the selected target.",
+      },
+    );
+  }
   if (requestedTarget && !selectedTarget) {
     deps.notifyError(ctx, "QA target not found", requestedTarget);
     return;
@@ -207,26 +282,19 @@ export async function handleQa(
     return;
   }
 
+  selectedInspection ??= getTargetInspection(selectedTarget);
+
   const scriptsDir = getScriptsDir();
   const targetDir = selectedTarget.packageDir;
   const targetLabel = describeTarget(selectedTarget);
 
-  let detectedType: string | null = null;
-  let detectedDevCommand: string | null = null;
-  let detectedPort: number | null = null;
-  let detectedIsLikelyApp = false;
-  let preliminaryRoutes = [] as ReturnType<typeof discoverRoutes>;
-
-  try {
-    const detected = deps.detectAppType(targetDir);
-    detectedType = detected.type;
-    detectedDevCommand = detected.devCommand;
-    detectedPort = detected.port;
-    detectedIsLikelyApp = detected.isLikelyApp;
-    preliminaryRoutes = deps.discoverRoutes(targetDir, detected.type);
-  } catch {
-    // proceed without detection
-  }
+  const {
+    detectedType,
+    detectedDevCommand,
+    detectedPort,
+    detectedIsLikelyApp,
+    preliminaryRoutes,
+  } = selectedInspection;
 
   if (!detectedIsLikelyApp && preliminaryRoutes.length === 0) {
     deps.notifyError(

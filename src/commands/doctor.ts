@@ -7,6 +7,7 @@ import { detectContextMode } from "../context-mode/detector.js";
 import { isLspAvailable } from "../lsp/detector.js";
 import { summarizeEnabledGates } from "../quality/setup.js";
 import { DEPENDENCIES } from "../deps/registry.js";
+import { formatReliabilitySection, loadReliabilitySummaries } from "../storage/reliability-metrics.js";
 
 export interface CheckResult {
   name: string;
@@ -306,13 +307,18 @@ function formatReport(sections: SectionResult[]): string {
   return lines.join("\n");
 }
 
+export function formatReliabilityReportLines(platform: Platform, cwd: string): string[] {
+  return formatReliabilitySection(loadReliabilitySummaries(platform.paths, cwd));
+}
+
 export function handleDoctor(platform: Platform, ctx: PlatformContext): void {
   if (!ctx.hasUI) return;
 
   void (async () => {
     try {
       const sections = await runDoctorChecks(platform, ctx.cwd);
-      const report = formatReport(sections);
+      const reliabilityLines = formatReliabilityReportLines(platform, ctx.cwd);
+      const report = `${formatReport(sections)}\n\n${reliabilityLines.join("\n")}`;
       ctx.ui.notify(report, "info");
     } catch (err) {
       ctx.ui.notify(`Doctor failed: ${(err as Error).message}`, "error");

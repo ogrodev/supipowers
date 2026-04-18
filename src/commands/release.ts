@@ -8,7 +8,8 @@ import { loadConfig, updateConfig } from "../config/loader.js";
 import { detectChannels } from "../release/detector.js";
 import type { ChannelStatus } from "../release/channels/types.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
-import { parseTargetArg, resolveRequestedWorkspaceTarget, sortWorkspaceTargetOptions, selectWorkspaceTarget, type WorkspaceTargetOption } from "../workspace/selector.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
+import { parseTargetArg, resolveRequestedWorkspaceTarget, sortWorkspaceTargetOptions, selectWorkspaceTarget, tokenizeCliArgs, type WorkspaceTargetOption } from "../workspace/selector.js";
 import {
   isWorkspaceTargetLocked,
   releaseWorkspaceTargetLock,
@@ -38,7 +39,15 @@ import { buildPolishPrompt } from "../release/prompt.js";
 import { notifyInfo, notifySuccess, notifyError } from "../notifications/renderer.js";
 import { analyzeAndCommit } from "../git/commit.js";
 import { getWorkingTreeStatus } from "../git/status.js";
-import { runStructuredAgentSession } from "../quality/ai-session.js";
+import { runWithOutputValidation, parseStructuredOutput } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
+import {
+  ReleaseNotePolishOutputSchema,
+  ReleaseDocFixOutputSchema,
+  renderPolishedChangelog,
+  type ReleaseNotePolishOutput,
+  type ReleaseDocFixOutput,
+} from "../release/contracts.js";
 import {
   checkDocDrift,
   buildFixPrompt,
@@ -72,17 +81,9 @@ export interface ReleaseTargetOption extends WorkspaceTargetOption<ReleaseTarget
   summary: string;
 }
 
-function tokenizeReleaseArgs(args?: string): string[] {
-  if (!args) {
-    return [];
-  }
-
-  return (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [])
-    .map((token) => token.replace(/^['"]|['"]$/g, ""));
-}
 
 export function parseReleaseArgs(args?: string): ParsedReleaseArgs {
-  const tokens = tokenizeReleaseArgs(args);
+  const tokens = tokenizeCliArgs(args);
 
   return {
     skipPolish: tokens.includes("--raw"),
@@ -403,9 +404,10 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
     let lockedTargetId: string | null = null;
     try {
       const { skipPolish, isDryRun, requestedTarget } = parseReleaseArgs(args);
-      const packageManager = resolvePackageManager(ctx.cwd);
+      const repoRoot = await resolveRepoRoot(platform, ctx.cwd);
+      const packageManager = resolvePackageManager(repoRoot);
       const publishableTargets = getPublishableReleaseTargets(
-        discoverReleaseTargets(ctx.cwd, packageManager.id),
+        discoverReleaseTargets(repoRoot, packageManager.id),
       );
       if (publishableTargets.length === 0) {
         notifyError(ctx, "No publishable release targets found", "Create a non-private package.json with name and version before running /supi:release.");
@@ -437,14 +439,14 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       progress = createReleaseProgress(ctx, createReleaseRunId());
       progress.detail(`Target: ${selectedTarget.name} (${selectedTarget.relativeDir})`);
 
-      const config = loadConfig(platform.paths, ctx.cwd);
+      const config = loadConfig(platform.paths, repoRoot);
       const tagFormat = config.release.tagFormat;
       const effectiveTagFormat = getReleaseTagFormat(selectedTarget, tagFormat);
       let didStash = false;
 
       // ── 1. Quality checks (headless) ────────────────────────────────────
       progress.activate("checks", "Running quality gates");
-      const checksReport = await runHeadlessChecks(platform, ctx, config, resolved, selectedTarget);
+      const checksReport = await runHeadlessChecks(platform, repoRoot, config, resolved, selectedTarget);
       if (checksReport) {
         const { summary, overallStatus } = checksReport;
         const detail = `${summary.passed} passed, ${summary.failed} failed, ${summary.blocked} blocked`;
@@ -474,7 +476,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
       // ── 2. Doc-drift pre-check ──────────────────────────────────────────
       progress.activate("doc-drift", "Checking documentation drift");
-      const driftResult = await checkDocDrift(platform, ctx.cwd);
+      const driftResult = await checkDocDrift(platform, repoRoot);
       if (driftResult?.drifted) {
         progress.complete("doc-drift", "Drift detected");
         const driftAction = await ctx.ui.select(
@@ -491,20 +493,30 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           notifyInfo(ctx, "Updating documentation", driftResult.summary);
           const fixPrompt = buildFixPrompt(driftResult.findings);
           const { loadState: loadDriftState, saveState: saveDriftState, getHeadCommit } = await import("../docs/drift.js");
-          const driftHead = await getHeadCommit(platform, ctx.cwd);
-          const driftState = loadDriftState(platform.paths, ctx.cwd);
-          saveDriftState(platform.paths, ctx.cwd, { ...driftState, lastCommit: driftHead, lastRunAt: new Date().toISOString() });
+          const driftHead = await getHeadCommit(platform, repoRoot);
+          const driftState = loadDriftState(platform.paths, repoRoot);
+          saveDriftState(platform.paths, repoRoot, { ...driftState, lastCommit: driftHead, lastRunAt: new Date().toISOString() });
 
-          const fixResult = await runStructuredAgentSession(
+          const fixResult = await runWithOutputValidation<ReleaseDocFixOutput>(
             platform.createAgentSession.bind(platform),
-            { cwd: ctx.cwd, prompt: fixPrompt },
+            {
+              cwd: repoRoot,
+              prompt: fixPrompt,
+              schema: renderSchemaText(ReleaseDocFixOutputSchema),
+              parse: (raw) => parseStructuredOutput<ReleaseDocFixOutput>(raw, ReleaseDocFixOutputSchema),
+              reliability: { paths: platform.paths, cwd: repoRoot, command: "release", operation: "doc-fix" },
+            },
           );
-          if (fixResult.status === "ok") {
-            progress.complete("doc-drift", "Fixed");
-            notifySuccess(ctx, "Documentation updated");
+          if (fixResult.status === "ok" && fixResult.output.status === "ok") {
+            progress.complete("doc-drift", `Fixed — ${fixResult.output.edits.length} file(s)`);
+            notifySuccess(ctx, "Documentation updated", fixResult.output.summary);
           } else {
-            progress.fail("doc-drift", fixResult.error ?? "Agent session error");
-            notifyError(ctx, "Doc update failed", fixResult.error ?? "Agent session error");
+            const detail =
+              fixResult.status === "blocked"
+                ? fixResult.error
+                : `Doc fixer blocked: ${fixResult.output.summary}`;
+            progress.fail("doc-drift", detail);
+            notifyError(ctx, "Doc update failed", detail);
             progress.dispose();
             return;
           }
@@ -517,7 +529,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
       // ── 3. Check for uncommitted changes after preflight side effects ─────
       progress.activate("working-tree", "Checking working tree");
-      const treeStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
+      const treeStatus = await getWorkingTreeStatus(platform.exec.bind(platform), repoRoot);
       if (treeStatus.dirty) {
         progress.complete("working-tree", `${treeStatus.files.length} files changed`);
         const filePreview = treeStatus.files.slice(0, 8).join(", ");
@@ -545,7 +557,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
             notifyError(ctx, "Commit failed or cancelled", "Aborting release.");
             return;
           }
-          const afterStatus = await getWorkingTreeStatus(platform.exec.bind(platform), ctx.cwd);
+          const afterStatus = await getWorkingTreeStatus(platform.exec.bind(platform), repoRoot);
           if (afterStatus.dirty) {
             notifyError(ctx, "Still uncommitted changes", "Not all changes were committed. Aborting release.");
             return;
@@ -553,7 +565,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           progress.complete("working-tree", "Committed");
         } else if (action.startsWith("stash")) {
           progress.activate("working-tree", "Stashing changes");
-          const stashResult = await platform.exec("git", ["stash", "push", "-m", "supi:release auto-stash"], { cwd: ctx.cwd });
+          const stashResult = await platform.exec("git", ["stash", "push", "-m", "supi:release auto-stash"], { cwd: repoRoot });
           if (stashResult.code !== 0) {
             progress.fail("working-tree", stashResult.stderr || "stash failed");
             progress.dispose();
@@ -570,7 +582,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       // ── 4. Ensure channels are configured (or detect + ask) ─────────────
       progress.activate("channels", "Detecting channels");
       const customChannels = config.release.customChannels ?? {};
-      const detectedChannels = await detectChannels(platform.exec.bind(platform), ctx.cwd, customChannels);
+      const detectedChannels = await detectChannels(platform.exec.bind(platform), repoRoot, customChannels);
       let channels = config.release.channels;
       // Track whether channels were already set in config before any interactive
       // setup. This distinguishes "user already decided" from "just configured now",
@@ -590,7 +602,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
 
       if (channels.length === 0) {
         progress.complete("channels", "Awaiting selection");
-        channels = await setupChannels(platform, ctx, detectedChannels);
+        channels = await setupChannels(platform, ctx, repoRoot, detectedChannels);
         if (channels.length === 0) {
           progress.dispose();
           return;
@@ -627,7 +639,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       const gitLogArgs = ["log", sinceArg, "--format=%x1e%H%x1f%s", "--name-only"];
       let gitLogOutput: string;
       try {
-        const result = await platform.exec("git", gitLogArgs, { cwd: ctx.cwd });
+        const result = await platform.exec("git", gitLogArgs, { cwd: repoRoot });
         if (result.code !== 0) {
           gitLogOutput = "";
         } else {
@@ -724,18 +736,26 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       } else {
         progress.activate("polish", "Polishing release notes");
         const polishPrompt = buildPolishPrompt({ changelog: rawChangelog, version: nextVersion, tagFormat: effectiveTagFormat });
-        const polishResult = await runStructuredAgentSession(
+        const polishResult = await runWithOutputValidation<ReleaseNotePolishOutput>(
           platform.createAgentSession.bind(platform),
-          { cwd: ctx.cwd, prompt: polishPrompt },
+          {
+            cwd: repoRoot,
+            prompt: polishPrompt,
+            schema: renderSchemaText(ReleaseNotePolishOutputSchema),
+            parse: (raw) => parseStructuredOutput<ReleaseNotePolishOutput>(raw, ReleaseNotePolishOutputSchema),
+            reliability: { paths: platform.paths, cwd: repoRoot, command: "release", operation: "note-polish" },
+          },
         );
         if (polishResult.status === "ok") {
-          changelog = polishResult.finalText;
-          progress.complete("polish", "Polished");
+          changelog = renderPolishedChangelog(polishResult.output);
+          progress.complete("polish", polishResult.output.status === "empty" ? "No notable changes" : "Polished");
         } else {
-          // Polish failed — fall back to raw changelog, don't block the release
-          changelog = rawChangelog;
-          progress.fail("polish", polishResult.error ?? "Agent error — using raw changelog");
-          notifyInfo(ctx, "Polish failed — using raw changelog", polishResult.error ?? "");
+          // Contract validation failed — halt truthfully rather than ship
+          // an unreviewed or ambiguous changelog.
+          progress.fail("polish", polishResult.error);
+          notifyError(ctx, "Release-note polish failed validation", polishResult.error);
+          progress.dispose();
+          return;
         }
       }
 
@@ -780,7 +800,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
       try {
         let result = await executeRelease({
           exec: platform.exec.bind(platform),
-          cwd: ctx.cwd,
+          cwd: repoRoot,
           target: selectedTarget,
           version: nextVersion,
           changelog,
@@ -799,7 +819,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
             progress.activate("execute", `Retrying with GitHub account ${switchedTo}`);
             result = await executeRelease({
               exec: platform.exec.bind(platform),
-              cwd: ctx.cwd,
+              cwd: repoRoot,
               target: selectedTarget,
               version: nextVersion,
               changelog,
@@ -867,7 +887,7 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
         );
       } finally {
         if (didStash) {
-          const popResult = await platform.exec("git", ["stash", "pop"], { cwd: ctx.cwd });
+          const popResult = await platform.exec("git", ["stash", "pop"], { cwd: repoRoot });
           if (popResult.code !== 0) {
             notifyError(ctx, "Stash pop failed", "Run 'git stash pop' manually to recover your changes");
           }
@@ -893,11 +913,11 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
  */
 async function runHeadlessChecks(
   platform: Platform,
-  ctx: any,
+  repoRoot: string,
   config: ReturnType<typeof loadConfig>,
   resolved: ResolvedModel,
   selectedTarget: ReleaseTarget,
- ): Promise<ReviewReport | null> {
+): Promise<ReviewReport | null> {
   const enabledGates = Object.entries(config.quality.gates)
     .filter(([, gate]) => gate?.enabled === true);
 
@@ -907,11 +927,11 @@ async function runHeadlessChecks(
 
   const repoWideTarget = {
     id: "repo-root",
-    name: path.basename(ctx.cwd) || "repo-root",
+    name: path.basename(repoRoot) || "repo-root",
     kind: "root" as const,
-    repoRoot: ctx.cwd,
-    packageDir: ctx.cwd,
-    manifestPath: path.join(ctx.cwd, "package.json"),
+    repoRoot,
+    packageDir: repoRoot,
+    manifestPath: path.join(repoRoot, "package.json"),
     relativeDir: ".",
     version: selectedTarget.version,
     private: false,
@@ -920,7 +940,7 @@ async function runHeadlessChecks(
 
   return runQualityGates({
     platform,
-    cwd: ctx.cwd,
+    cwd: repoRoot,
     target: repoWideTarget,
     workspaceTargets: [repoWideTarget],
     gates: config.quality.gates,
@@ -934,6 +954,7 @@ async function runHeadlessChecks(
 async function setupChannels(
   platform: Platform,
   ctx: any,
+  configCwd: string,
   detected: ChannelStatus[],
 ): Promise<ReleaseChannel[]> {
   const availableChannels = detected.filter((channel) => channel.available);
@@ -987,7 +1008,7 @@ async function setupChannels(
   }
 
   // Persist to config
-  updateConfig(platform.paths, ctx.cwd, { release: { channels: selected } });
+  updateConfig(platform.paths, configCwd, { release: { channels: selected } });
   ctx.ui.notify(`Release channels set to: ${selected.join(", ")}`, "info");
 
   return selected;

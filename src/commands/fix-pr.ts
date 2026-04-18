@@ -3,13 +3,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Platform } from "../platform/types.js";
 import type { WorkspaceTarget } from "../types.js";
-import { buildWorkspaceTargetOptionLabel, parseTargetArg, selectWorkspaceTarget } from "../workspace/selector.js";
+import { buildWorkspaceTargetOptionLabel, parseTargetArg, selectWorkspaceTarget, stripCliArg, tokenizeCliArgs } from "../workspace/selector.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
 import { discoverWorkspaceTargets } from "../workspace/targets.js";
 import { moduleDir, toBashPath } from "../utils/paths.js";
 import { loadFixPrConfig, saveFixPrConfig } from "../fix-pr/config.js";
 import { buildFixPrOrchestratorPrompt } from "../fix-pr/prompt-builder.js";
-import type { FixPrConfig, CommentReplyPolicy } from "../fix-pr/types.js";
+import type { FixPrAssessmentBatch } from "../fix-pr/contracts.js";
+import type { FixPrConfig, CommentReplyPolicy, PrComment } from "../fix-pr/types.js";
 import {
   clusterPrCommentsByTarget,
   fetchPrComments,
@@ -27,6 +29,8 @@ import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { detectBotReviewers } from "../fix-pr/bot-detector.js";
+import { runFixPrAssessment, groupAssessmentsIntoBatches } from "../fix-pr/assessment.js";
+import { updateFixPrSession } from "../storage/fix-pr-sessions.js";
 
 modelRegistry.register({
   id: "fix-pr",
@@ -58,28 +62,11 @@ function findSkillPath(skillName: string): string | null {
   return null;
 }
 
-function tokenizeCliArgs(args?: string): string[] {
-  if (!args) {
-    return [];
-  }
-
-  return (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [])
-    .map((token) => token.replace(/^['"]|['"]$/g, ""));
-}
 
 function parsePrNumberArg(args?: string): number | null {
-  const tokens = tokenizeCliArgs(args);
+  const tokens = tokenizeCliArgs(stripCliArg(args, "--target"));
 
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token === "--target") {
-      index += 1;
-      continue;
-    }
-    if (token.startsWith("--target=")) {
-      continue;
-    }
-
+  for (const token of tokens) {
     const normalized = token.replace(/^#/, "");
     if (/^\d+$/.test(normalized)) {
       return parseInt(normalized, 10);
@@ -89,19 +76,6 @@ function parsePrNumberArg(args?: string): number | null {
   return null;
 }
 
-async function resolveRepoRoot(platform: Platform, cwd: string): Promise<string | null> {
-  try {
-    const result = await platform.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
-    if (result.code === 0) {
-      const repoRoot = result.stdout.trim();
-      return repoRoot.length > 0 ? repoRoot : null;
-    }
-  } catch {
-    // ignore and fall through
-  }
-
-  return null;
-}
 
 function describeTarget(target: WorkspaceTarget): string {
   return target.kind === "root"
@@ -113,10 +87,13 @@ function formatCommentCount(count: number): string {
   return `${count} comment${count === 1 ? "" : "s"}`;
 }
 
+function formatUnscopedCommentCount(count: number): string {
+  return `${formatCommentCount(count)} without file path`;
+}
+
 function buildCommentTargetOptions(
   targets: readonly WorkspaceTarget[],
-  commentsByTargetId: ReadonlyMap<string, readonly unknown[]>,
-  unscopedCommentCount: number,
+  commentsByTargetId: ReadonlyMap<string, readonly PrComment[]>,
 ) {
   return targets.flatMap((target) => {
     const count = commentsByTargetId.get(target.id)?.length ?? 0;
@@ -124,35 +101,49 @@ function buildCommentTargetOptions(
       return [];
     }
 
-    const details = [formatCommentCount(count)];
-    if (target.kind === "root" && unscopedCommentCount > 0) {
-      details.push(`${unscopedCommentCount} without file path`);
-    }
-
     return [{
       target,
       changed: true,
-      label: buildWorkspaceTargetOptionLabel({ target, changed: true }, details),
+      label: buildWorkspaceTargetOptionLabel({ target, changed: true }, [formatCommentCount(count)]),
     }];
   });
 }
 
+function countUnresolvedAssessments(assessment: FixPrAssessmentBatch): number {
+  return assessment.assessments.filter((item: FixPrAssessmentBatch["assessments"][number]) => item.verdict !== "apply").length;
+}
+
+
 function buildDeferredCommentsSummary(
   options: ReadonlyArray<{ target: WorkspaceTarget }>,
-  commentsByTargetId: ReadonlyMap<string, readonly unknown[]>,
+  commentsByTargetId: ReadonlyMap<string, readonly PrComment[]>,
   selectedTarget: WorkspaceTarget,
-): string | null {
+  unscopedCommentCount: number,
+ ): string | null {
   const deferred = options
     .filter((option) => option.target.id !== selectedTarget.id)
     .map((option) => `${describeTarget(option.target)}: ${formatCommentCount(commentsByTargetId.get(option.target.id)?.length ?? 0)}`);
 
+  if (unscopedCommentCount > 0) {
+    deferred.push(`unscoped review comments: ${formatUnscopedCommentCount(unscopedCommentCount)}`);
+  }
+
   return deferred.length > 0 ? deferred.join("; ") : null;
 }
 
-function buildAvailableTargetDetail(options: ReadonlyArray<{ target: WorkspaceTarget }>): string {
-  return options.length > 0
+function buildAvailableTargetDetail(
+  options: ReadonlyArray<{ target: WorkspaceTarget }>,
+  unscopedCommentCount: number,
+ ): string {
+  const availableTargets = options.length > 0
     ? `Available targets: ${options.map((option) => option.target.id).join(", ")}`
     : "No package or root targets have actionable comments in this PR snapshot.";
+
+  if (unscopedCommentCount === 0) {
+    return availableTargets;
+  }
+
+  return `${availableTargets} Deferred unscoped review comments: ${formatUnscopedCommentCount(unscopedCommentCount)}.`;
 }
 
 export function registerFixPrCommand(platform: Platform): void {
@@ -245,16 +236,18 @@ export function registerFixPrCommand(platform: Platform): void {
         const targetOptions = buildCommentTargetOptions(
           workspaceTargets,
           clusteredComments.commentsByTargetId,
-          clusteredComments.unscopedComments.length,
         );
 
         if (targetOptions.length === 0) {
-          notifyWarning(ctx, "No actionable comments found", "PR comments were fetched but could not be assigned to a package or root target");
+          const detail = clusteredComments.unscopedComments.length > 0
+            ? `PR comments were fetched but only ${formatUnscopedCommentCount(clusteredComments.unscopedComments.length)} could not be assigned to a workspace target`
+            : "PR comments were fetched but could not be assigned to a package or root target";
+          notifyWarning(ctx, "No actionable comments found", detail);
           return;
         }
 
         if (!requestedTarget && !ctx.hasUI && targetOptions.length > 1) {
-          notifyError(ctx, "Multiple comment targets found", buildAvailableTargetDetail(targetOptions));
+          notifyError(ctx, "Multiple comment targets found", buildAvailableTargetDetail(targetOptions, clusteredComments.unscopedComments.length));
           return;
         }
 
@@ -264,7 +257,7 @@ export function registerFixPrCommand(platform: Platform): void {
         });
         if (!selectedTarget) {
           if (requestedTarget) {
-            notifyError(ctx, "Target has no review comments", buildAvailableTargetDetail(targetOptions));
+            notifyError(ctx, "Target has no review comments", buildAvailableTargetDetail(targetOptions, clusteredComments.unscopedComments.length));
           }
           return;
         }
@@ -275,7 +268,7 @@ export function registerFixPrCommand(platform: Platform): void {
           return;
         }
 
-        let activeSession = findActiveFixPrSession(platform.paths, selectedTarget);
+        let activeSession = findActiveFixPrSession(platform.paths, selectedTarget, repo, prNumber);
         if (activeSession && ctx.hasUI) {
           const choice = await ctx.ui.select(
             "Fix-PR Session",
@@ -339,7 +332,38 @@ export function registerFixPrCommand(platform: Platform): void {
           targetOptions,
           clusteredComments.commentsByTargetId,
           selectedTarget,
+          clusteredComments.unscopedComments.length,
         );
+
+        const assessmentResult = await runFixPrAssessment({
+          createAgentSession: platform.createAgentSession,
+          paths: platform.paths,
+          cwd: ctx.cwd,
+          comments: selectedComments,
+          repo,
+          prNumber,
+          selectedTargetLabel: describeTarget(selectedTarget),
+          model: resolved.model,
+          thinkingLevel: resolved.thinkingLevel,
+        });
+        if (assessmentResult.status === "blocked") {
+          notifyError(ctx, "Fix-PR assessment failed", assessmentResult.error);
+          return;
+        }
+        const assessment = assessmentResult.output;
+        const unresolvedAssessmentCount = countUnresolvedAssessments(assessment);
+        const workBatches = groupAssessmentsIntoBatches(assessment);
+        ledger.assessment = assessment;
+        updateFixPrSession(platform.paths, selectedTarget, ledger);
+
+        if (unresolvedAssessmentCount > 0) {
+          notifyWarning(
+            ctx,
+            "Unresolved comments remain",
+            `${formatCommentCount(unresolvedAssessmentCount)} for ${describeTarget(selectedTarget)} still need rejection or investigation handling before this run can be considered complete.`,
+          );
+        }
+
         const prompt = buildFixPrOrchestratorPrompt({
           prNumber,
           repo,
@@ -352,6 +376,8 @@ export function registerFixPrCommand(platform: Platform): void {
           taskModel,
           selectedTargetLabel: describeTarget(selectedTarget),
           deferredCommentsSummary,
+          assessment,
+          workBatches,
         });
 
         platform.sendMessage(

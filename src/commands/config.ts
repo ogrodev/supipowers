@@ -1,25 +1,21 @@
 import { isDeepStrictEqual } from "node:util";
 import type { Platform, PlatformContext } from "../platform/types.js";
 import { DEFAULT_CONFIG } from "../config/defaults.js";
-import { formatConfigErrors, inspectConfig, updateConfig } from "../config/loader.js";
+import { formatConfigErrors, inspectConfig, inspectConfigAtScope, updateConfig } from "../config/loader.js";
 import type { InspectionLoadResult } from "../config/schema.js";
 import { validateQualityGates } from "../config/schema.js";
 import { createWorkflowProgress } from "../platform/progress.js";
 import {
+  formatGateProposal,
   setupGates,
   summarizeEnabledGates,
   type GateSetupMode,
   type SetupGatesProgressEvent,
 } from "../quality/setup.js";
-import type { ConfigScope, QualityGatesConfig, SupipowersConfig, WorkspaceTarget } from "../types.js";
+import type { ConfigScope, QualityGatesConfig, SetupProposal, SupipowersConfig } from "../types.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
-import {
-  buildWorkspaceTargetOptionLabel,
-  selectWorkspaceTarget,
-  type WorkspaceTargetOption,
-} from "../workspace/selector.js";
-import { findWorkspaceTargetForPath } from "../workspace/path-mapping.js";
-import { discoverWorkspaceTargets, toWorkspaceRelativeDir } from "../workspace/targets.js";
+import { resolveRepoRoot } from "../workspace/repo-root.js";
+import { discoverWorkspaceTargets } from "../workspace/targets.js";
 
 const FRAMEWORK_OPTIONS = [
   { value: "", label: "not set — auto-detect on first /supi:qa run" },
@@ -50,7 +46,7 @@ export interface SettingDef {
 export interface ConfigScopeSelection {
   scope: ConfigScope;
   repoRoot: string;
-  workspaceTarget: WorkspaceTarget | null;
+  isMonorepo: boolean;
 }
 
 export interface ConfigScopeView {
@@ -58,7 +54,6 @@ export interface ConfigScopeView {
   inspection: InspectionLoadResult;
   globalInspection: InspectionLoadResult;
   rootInspection: InspectionLoadResult;
-  workspaceInspection: InspectionLoadResult | null;
 }
 
 export interface ConfigCommandDependencies {
@@ -87,18 +82,13 @@ function describeInspection(inspection: InspectionLoadResult, config: Supipowers
 
 function getConfigResolutionOptions(selection: ConfigScopeSelection): {
   repoRoot: string;
-  workspaceRelativeDir: string | null;
 } {
-  return {
-    repoRoot: selection.repoRoot,
-    workspaceRelativeDir: selection.workspaceTarget?.relativeDir ?? null,
-  };
+  return { repoRoot: selection.repoRoot };
 }
 
 function getConfigMutationOptions(selection: ConfigScopeSelection): {
   scope: ConfigScope;
   repoRoot: string;
-  workspaceRelativeDir: string | null;
 } {
   return {
     scope: selection.scope,
@@ -107,7 +97,7 @@ function getConfigMutationOptions(selection: ConfigScopeSelection): {
 }
 
 function getSelectionCwd(selection: ConfigScopeSelection): string {
-  return selection.workspaceTarget?.packageDir ?? selection.repoRoot;
+  return selection.repoRoot;
 }
 
 function configPathForSelection(selection: ConfigScopeSelection): string {
@@ -116,40 +106,15 @@ function configPathForSelection(selection: ConfigScopeSelection): string {
       return "~/.omp/supipowers/config.json";
     case "root":
       return ".omp/supipowers/config.json";
-    case "workspace":
-      if (!selection.workspaceTarget) {
-        throw new Error("Workspace config scope requires a workspace target.");
-      }
-      return `.omp/supipowers/workspaces/${selection.workspaceTarget.relativeDir}/config.json`;
   }
 }
 
-function scopeLabel(scope: ConfigScope): string {
-  switch (scope) {
-    case "global":
-      return "global";
-    case "root":
-      return "root";
-    case "workspace":
-      return "workspace";
-  }
+function repositoryScopeLabel(selection: ConfigScopeSelection): string {
+  return selection.isMonorepo ? "monorepo repository" : "repository";
 }
 
 function selectionSummary(selection: ConfigScopeSelection): string {
-  if (selection.scope !== "workspace") {
-    return `${scopeLabel(selection.scope)} — ${configPathForSelection(selection)}`;
-  }
-
-  if (!selection.workspaceTarget) {
-    return "workspace — target required";
-  }
-
-  return [
-    "workspace",
-    selection.workspaceTarget.name,
-    selection.workspaceTarget.relativeDir,
-    configPathForSelection(selection),
-  ].join(" — ");
+  return `${selection.scope === "global" ? "global" : repositoryScopeLabel(selection)} — ${configPathForSelection(selection)}`;
 }
 
 function getNestedValue(value: unknown, key: string): unknown {
@@ -171,27 +136,13 @@ function describeSettingProvenance(view: ConfigScopeView, key: string): string {
   const defaultValue = getNestedValue(DEFAULT_CONFIG, key);
   const globalValue = getNestedValue(currentConfig(view.globalInspection), key);
   const rootValue = getNestedValue(currentConfig(view.rootInspection), key);
-  const workspaceValue = view.workspaceInspection
-    ? getNestedValue(currentConfig(view.workspaceInspection), key)
-    : rootValue;
 
   switch (view.selection.scope) {
     case "global":
       return isDeepStrictEqual(globalValue, defaultValue) ? "default" : "overridden in global";
     case "root":
       if (!isDeepStrictEqual(rootValue, globalValue)) {
-        return "overridden in root";
-      }
-      if (!isDeepStrictEqual(globalValue, defaultValue)) {
-        return "inherited from global";
-      }
-      return "default";
-    case "workspace":
-      if (!isDeepStrictEqual(workspaceValue, rootValue)) {
-        return "overridden in workspace";
-      }
-      if (!isDeepStrictEqual(rootValue, globalValue)) {
-        return "inherited from root";
+        return "overridden in repository";
       }
       if (!isDeepStrictEqual(globalValue, defaultValue)) {
         return "inherited from global";
@@ -215,7 +166,7 @@ function parseRevisedQualityGates(raw: string): QualityGatesConfig {
 }
 
 function buildQualityGateSetupHelpText(
-  proposal: QualityGatesConfig,
+  proposal: SetupProposal,
   scopeSelection: ConfigScopeSelection,
   mode: GateSetupMode,
 ): string {
@@ -226,7 +177,7 @@ function buildQualityGateSetupHelpText(
   return [
     intro,
     "",
-    JSON.stringify(proposal, null, 2),
+    formatGateProposal(proposal),
     "",
     `Will write to ${configPathForSelection(scopeSelection)}`,
   ].join("\n");
@@ -237,7 +188,7 @@ async function saveQualityGateProposal(
   paths: Platform["paths"],
   deps: ConfigCommandDependencies,
   selection: ConfigScopeSelection,
-  proposal: QualityGatesConfig,
+  proposal: SetupProposal,
   mode: GateSetupMode,
 ): Promise<"saved" | "cancelled"> {
   let nextProposal = proposal;
@@ -260,21 +211,24 @@ async function saveQualityGateProposal(
     if (choice === "Revise") {
       const revised = await ctx.ui.input(
         "Edit quality.gates JSON",
-        { value: JSON.stringify(nextProposal, null, 2) },
+        { value: JSON.stringify(nextProposal.gates, null, 2) },
       );
       if (!revised) {
         continue;
       }
 
       try {
-        nextProposal = parseRevisedQualityGates(revised);
+        nextProposal = {
+          ...nextProposal,
+          gates: parseRevisedQualityGates(revised),
+        };
       } catch (error) {
         ctx.ui.notify((error as Error).message, "error");
       }
       continue;
     }
 
-    deps.updateConfig(paths, selectionCwd, { quality: { gates: nextProposal } }, mutationOptions);
+    deps.updateConfig(paths, selectionCwd, { quality: { gates: nextProposal.gates } }, mutationOptions);
     return "saved";
   }
 }
@@ -328,26 +282,17 @@ export function buildConfigScopeView(
   platform: Platform,
   cwd: string,
   selection: ConfigScopeSelection,
-  deps: Pick<ConfigCommandDependencies, "inspectConfig"> = CONFIG_COMMAND_DEPENDENCIES,
 ): ConfigScopeView {
   const resolutionOptions = getConfigResolutionOptions(selection);
-  const globalInspection = deps.inspectConfig(platform.paths, cwd, { repoRoot: selection.repoRoot, workspaceRelativeDir: null });
-  const rootInspection = deps.inspectConfig(platform.paths, cwd, { repoRoot: selection.repoRoot, workspaceRelativeDir: null });
-  const workspaceInspection = selection.workspaceTarget
-    ? deps.inspectConfig(platform.paths, cwd, resolutionOptions)
-    : null;
-  const inspection = selection.scope === "global"
-    ? globalInspection
-    : selection.scope === "root"
-      ? rootInspection
-      : workspaceInspection ?? rootInspection;
+  const globalInspection = inspectConfigAtScope(platform.paths, cwd, "global", resolutionOptions);
+  const rootInspection = inspectConfigAtScope(platform.paths, cwd, "root", resolutionOptions);
+  const inspection = selection.scope === "global" ? globalInspection : rootInspection;
 
   return {
     selection,
     inspection,
     globalInspection,
     rootInspection,
-    workspaceInspection,
   };
 }
 
@@ -397,7 +342,7 @@ export function buildSettings(
             paths,
             deps,
             view.selection,
-            result.proposal.gates,
+            result.proposal,
             mode,
           );
           return saveResult === "saved" ? "saved" : null;
@@ -461,71 +406,34 @@ export function buildSettings(
   ];
 }
 
-async function resolveRepoRoot(platform: Platform, cwd: string): Promise<string> {
-  try {
-    const result = await platform.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
-    if (result.code === 0) {
-      const repoRoot = result.stdout.trim();
-      if (repoRoot.length > 0) {
-        return repoRoot;
-      }
-    }
-  } catch {
-    // Fall back to cwd when not inside a git worktree.
-  }
 
-  return cwd;
+function repositoryChoiceLabel(selection: ConfigScopeSelection): string {
+  return `${selection.isMonorepo ? "Monorepo repository" : "Repository"} — ${configPathForSelection({ ...selection, scope: "root" })}`;
 }
 
 async function selectConfigScope(
   ctx: PlatformContext,
   selection: ConfigScopeSelection,
-  workspaceTargets: WorkspaceTarget[],
 ): Promise<ConfigScopeSelection | null> {
-  const workspaceOptions = workspaceTargets
-    .filter((target) => target.kind === "workspace")
-    .map((target) => ({
-      target,
-      changed: false,
-      label: buildWorkspaceTargetOptionLabel(
-        { target, changed: false } satisfies WorkspaceTargetOption,
-        target.id === selection.workspaceTarget?.id ? ["current"] : [],
-      ),
-    }));
+  const repositoryChoice = repositoryChoiceLabel(selection);
   const scopeChoices = [
     `Global — ${configPathForSelection({ ...selection, scope: "global" })}`,
-    `Root — ${configPathForSelection({ ...selection, scope: "root" })}`,
-    ...(workspaceOptions.length > 0 ? ["Workspace — select target"] : []),
+    repositoryChoice,
     "Cancel",
   ];
 
   const choice = await ctx.ui.select("Config scope", scopeChoices, {
-    helpText: "Choose which config layer to inspect and edit.",
+    helpText: selection.isMonorepo
+      ? "Choose whether to edit global defaults or the shared repository config for this monorepo."
+      : "Choose whether to edit global defaults or this repository's config.",
   });
   if (!choice || choice === "Cancel") {
     return null;
   }
 
-  if (choice.startsWith("Global")) {
-    return { ...selection, scope: "global" };
-  }
-
-  if (choice.startsWith("Root")) {
-    return { ...selection, scope: "root" };
-  }
-
-  const workspaceTarget = await selectWorkspaceTarget(ctx, workspaceOptions, null, {
-    title: "Workspace config target",
-    helpText: "Pick one workspace whose config scope should be edited.",
-  });
-  if (!workspaceTarget) {
-    return null;
-  }
-
   return {
     ...selection,
-    scope: "workspace",
-    workspaceTarget,
+    scope: choice.startsWith("Global") ? "global" : "root",
   };
 }
 
@@ -540,18 +448,16 @@ export async function runConfigMenu(
   }
 
   const repoRoot = await resolveRepoRoot(platform, ctx.cwd);
-  const workspaceTargets = discoverWorkspaceTargets(repoRoot, resolvePackageManager(repoRoot).id);
-  const inferredTarget = workspaceTargets.length > 0
-    ? findWorkspaceTargetForPath(workspaceTargets, toWorkspaceRelativeDir(repoRoot, ctx.cwd))
-    : null;
+  const isMonorepo = discoverWorkspaceTargets(repoRoot, resolvePackageManager(repoRoot).id)
+    .some((target) => target.kind === "workspace");
   let selection: ConfigScopeSelection = {
-    scope: inferredTarget?.kind === "workspace" ? "workspace" : "root",
+    scope: "root",
     repoRoot,
-    workspaceTarget: inferredTarget?.kind === "workspace" ? inferredTarget : null,
+    isMonorepo,
   };
 
   while (true) {
-    const view = buildConfigScopeView(platform, ctx.cwd, selection, deps);
+    const view = buildConfigScopeView(platform, ctx.cwd, selection);
     const settings = buildSettings(platform, ctx, view, deps);
     const scopeChoice = `Config scope: ${selectionSummary(selection)}`;
     const options = [scopeChoice, ...settings.map((setting) => `${setting.label}: ${setting.get()}`), "Done"];
@@ -560,7 +466,9 @@ export async function runConfigMenu(
       "Supipowers Settings",
       options,
       {
-        helpText: `Editing ${selectionSummary(selection)}. Changes write to ${configPathForSelection(selection)}. Esc to close.`,
+        helpText: selection.scope === "root" && selection.isMonorepo
+          ? `Editing ${selectionSummary(selection)}. Changes apply to every workspace in this monorepo. Esc to close.`
+          : `Editing ${selectionSummary(selection)}. Changes write to ${configPathForSelection(selection)}. Esc to close.`,
       },
     );
 
@@ -569,7 +477,7 @@ export async function runConfigMenu(
     }
 
     if (choice === scopeChoice) {
-      const nextSelection = await selectConfigScope(ctx, selection, workspaceTargets);
+      const nextSelection = await selectConfigScope(ctx, selection);
       if (nextSelection) {
         selection = nextSelection;
       }

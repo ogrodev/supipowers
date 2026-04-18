@@ -30,7 +30,7 @@ import { parseTags, computeActiveServers } from "./mcp/activation.js";
 import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
 import { registerPlanApprovalHook } from "./planning/approval-flow.js";
 import { registerPlanningSystemPromptHook } from "./planning/system-prompt.js";
-import { registerPlanningAskTool } from "./planning/planning-ask-tool.js";
+import { registerPlanningAskTool, registerPlanningAskToolGuard } from "./planning/planning-ask-tool.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -38,7 +38,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi": (platform, ctx) => handleSupi(platform, ctx),
   "supi:config": (platform, ctx) => handleConfig(platform, ctx),
   "supi:status": (platform, ctx) => handleStatus(platform, ctx),
-  "supi:review": (platform, ctx) => handleAiReview(platform, ctx),
+  "supi:review": (platform, ctx, args) => handleAiReview(platform, ctx, args),
   "supi:update": (platform, ctx) => handleUpdate(platform, ctx),
   "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
@@ -88,6 +88,7 @@ export function bootstrap(platform: Platform): void {
   // Register plan approval flow (agent_end hook for plan approval UI)
   registerPlanApprovalHook(platform);
   registerPlanningAskTool(platform);
+  registerPlanningAskToolGuard(platform);
 
 
   // Intercept TUI-only commands at the input level — this runs BEFORE
