@@ -1,5 +1,6 @@
 ---
 created: 2026-04-16
+updated: 2026-04-17
 tags: [monorepo, planning, orchestration, commands]
 ---
 
@@ -7,7 +8,7 @@ tags: [monorepo, planning, orchestration, commands]
 
 ## Goal
 
-Make the monorepo-sensitive Supipowers commands package-aware without creating nine separate design dialects. The initiative should land as one coordinated program with a shared foundation first, then parallel command tracks that reuse the same target-resolution, path-mapping, config-layering, and state-namespacing primitives.
+Make monorepo-sensitive Supipowers commands package-aware without creating multiple incompatible models. Commands should reuse one shared workspace layer for target discovery, path mapping, state layout, and repository-level config.
 
 ## Commands in scope
 
@@ -30,9 +31,9 @@ Supporting wave:
    - Reuse the release monorepo work as the proving ground.
    - Extract generic workspace primitives out of `src/release/*` before other commands import them.
 
-2. One target per invocation in the first monorepo wave.
-   - This keeps UX and failure modes understandable.
-   - Cross-package batch behavior is explicitly deferred unless a command already has a safe grouping model.
+2. Commands choose the safest UX for their domain.
+   - `/supi:checks` now supports batch `All` because sequential per-target runs and per-target reports make that grouping safe.
+   - Other commands can stay single-target until their own grouping model is proven.
 
 3. Root package remains first-class.
    - Monorepo support must not demote classic single-package or root-package flows.
@@ -40,8 +41,9 @@ Supporting wave:
 4. Repo-wide safety can stay repo-wide.
    - Package-specific execution should not silently weaken whole-repo checks where safety matters.
 
-5. Support commands follow core interfaces.
-   - `status`, `config`, and `agents` should consume the shared monorepo layer after the core execution commands establish the required shape.
+5. Support commands must tell the truth about shared config.
+   - `/supi:config` and related UX should expose the same repository-level config model the execution commands consume.
+   - Hidden workspace config layers for general settings are out of scope.
 
 ## Recommended wave model
 
@@ -62,7 +64,7 @@ Once Wave 0 contracts are stable, these tracks can run in parallel:
 - Track E: [`05-commit.md`](./05-commit.md)
 - Track F: [`06-fix-pr.md`](./06-fix-pr.md)
 
-### Wave 2 — Supporting UX and override layers
+### Wave 2 — Supporting UX
 
 These should follow the core interface work:
 
@@ -81,8 +83,8 @@ The setup step should establish these reusable structures once:
 - shared target lock registry
 - shared path-to-package mapping
 - shared package-scoped git diff/log helpers
-- shared state/config path namespacing
-- config layering extension for root/workspace overrides
+- shared target-scoped state paths for reports and other runtime artifacts
+- shared repository config model for general Supipowers settings
 
 ## Parallelization boundaries
 
@@ -96,7 +98,7 @@ The setup step should establish these reusable structures once:
 ### Should remain sequential
 
 - shared target/config/state contracts before command adoption
-- support-command UX work before config merge semantics are finalized
+- support-command UX work before config semantics are finalized
 - any migration of release internals to shared workspace modules before other commands import those modules
 
 ## Expected deliverable set
@@ -108,7 +110,7 @@ The setup step should establish these reusable structures once:
 ## Success criteria for the overall program
 
 - monorepo-aware commands reuse one shared workspace layer instead of re-implementing discovery and path mapping
-- each command can operate on a selected package without leaking unrelated package state
 - root-package behavior remains correct
-- support commands expose the same package model the execution commands use
+- `/supi:checks` can batch across root + workspaces when that is the safest default
+- support commands expose the same shared repository config model that execution commands use
 - no command has to import release-only semantics to become monorepo-aware

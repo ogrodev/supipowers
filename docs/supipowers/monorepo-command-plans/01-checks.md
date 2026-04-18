@@ -1,116 +1,62 @@
 ---
 created: 2026-04-16
+updated: 2026-04-17
 tags: [monorepo, checks, quality-gates]
 ---
 
 # `/supi:checks` monorepo plan
 
-## Goal
+## Status
 
-Make `/supi:checks` operate on a selected package target instead of assuming one repo-wide cwd for scope discovery, gate execution, config lookup, and report persistence.
+The original one-target-per-invocation plan is superseded.
 
-## Current monorepo-sensitive assumptions
+`/supi:checks` now follows the accepted monorepo UX:
+- default to `All` in monorepos
+- `All` means root target plus every workspace target
+- run those targets sequentially
+- keep per-target report storage
+- load general Supipowers config from global + repository scopes only
 
-Observed in:
-- `src/commands/review.ts`
-- `src/quality/runner.ts`
+## Current design
 
-Current behavior assumes:
-- one `ctx.cwd`
-- one flat changed-file list
-- one flat all-files fallback via `git ls-files`
-- one effective config
-- one report output path
+### Target model
 
-## Design direction
-
-### Invocation model
-
-First monorepo wave should use one target per invocation.
-
-Behavior:
-- auto-select the only publishable/owned target when obvious
-- accept `--target <package>`
-- otherwise show a target picker with changed packages first
-
-### Scope model
-
-`discoverReviewScope` should stop returning one flat repo-wide scope. It should either:
-- accept a selected `WorkspaceTarget`, or
-- receive a package filter derived from shared path mapping
+- Single-package repo: run the root target with no extra ceremony.
+- Monorepo: show `All` first in the picker and make it the default selection.
+- `--target <package>` still narrows execution to one target.
+- `--target all` explicitly requests batch mode for non-interactive runs.
 
 ### Execution model
 
-Gate execution should run with the selected package root as the execution context while keeping repo-root git access where needed for changed-file discovery.
+- Resolve workspace targets from the repo root.
+- Reuse the existing per-target quality runner.
+- Run `All` sequentially: root target first, then each workspace target.
+- Save one report per target in the existing target-scoped state directory.
+- Finish with one aggregated summary that lists per-target status and report paths.
 
-### Reporting model
+### Config model
 
-Reports should be package-scoped by default, with the option to add an aggregate summary later.
+`/supi:checks` no longer consumes workspace-level general config overrides.
 
-## Dependencies on shared foundation
+Only these scopes apply:
+1. built-in defaults
+2. `~/.omp/supipowers/config.json`
+3. `<repo>/.omp/supipowers/config.json`
 
-Required before implementation:
-- shared `WorkspaceTarget`
-- target picker / `--target` helper
-- changed-file-to-package mapping
-- package-scoped git diff/file discovery helpers
-- config layering extension if workspace overrides are supported in the first wave
-- package-scoped state/report path builder
+## What changed from the original plan
 
-## Suggested parallel workstreams
+The earlier draft assumed:
+- one target per invocation
+- changed-target auto-selection instead of batch default
+- optional workspace config consumption
 
-### Agent A — Command flow and target selection
-
-Files:
-- `src/commands/review.ts`
-- `src/types.ts`
-- `tests/commands/review.test.ts`
-
-Scope:
-- add target resolution
-- add `--target`
-- thread selected target into quality runner
-
-### Agent B — Runner scope and gate context
-
-Files:
-- `src/quality/runner.ts`
-- gate-related tests under `tests/quality/`
-
-Scope:
-- partition scope by package
-- run gates against selected target root
-- preserve per-gate parallelism
-
-### Agent C — Reporting and workspace config consumption
-
-Files:
-- `src/commands/review.ts`
-- `src/config/loader.ts`
-- storage/report tests
-
-Scope:
-- package-scoped report output
-- package label in summaries and fix prompts
-- workspace override consumption if foundation exposes it
+Those assumptions are no longer accurate.
 
 ## Acceptance criteria
 
-- `/supi:checks --target <package>` runs only against the selected package
-- interactive selection ranks changed packages first
-- changed-file and all-files discovery exclude unrelated packages for package-targeted runs
-- gate commands execute in the selected package root
-- reports clearly identify the package they belong to
-- root/single-package behavior still works without monorepo-specific ceremony
-
-## Risks
-
-- the local `ReviewScope` shape in `src/quality/runner.ts` diverges from the review pipeline’s scope type and could fork further if changed carelessly
-- per-package config overrides can create surprising differences between packages unless surfaced clearly in output
-- aggregate reporting should not block first-wave package-scoped correctness
-
-## Explicit non-goals for this wave
-
-- multi-package batch checks in one invocation
-- cross-package aggregate dashboards beyond a simple follow-up summary
-- command-specific config UI changes
+- `/supi:checks` defaults to `All` in monorepos.
+- `All` runs the root target and every workspace target.
+- `--target <package>` still works for single-target runs.
+- `--target all` works without the picker.
+- Reports remain target-scoped.
+- Repository config is shared across every monorepo target.

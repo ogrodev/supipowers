@@ -83,7 +83,7 @@ Most commands steer the AI session. These are TUI-only — they open native dial
 
 **Planning.** `/supi:plan` steers the AI through planning phases (scope → decompose → estimate → verify), saves the result to `.omp/supipowers/plans/`, and presents an approval UI. On approval, tasks execute in the same session.
 
-**Quality gates.** `/supi:checks` runs deterministic quality gates. Six gates are available: `lsp-diagnostics`, `lint`, `typecheck`, `format`, `test-suite`, and `build`. Each gate can be enabled independently via `/supi:config` or `.omp/supipowers/config.json`. Gates report issues with severity levels.
+**Quality gates.** `/supi:checks` runs deterministic quality gates. Six gates are available: `lsp-diagnostics`, `lint`, `typecheck`, `format`, `test-suite`, and `build`. Each gate can be enabled independently via `/supi:config` or the shared repository config at `.omp/supipowers/config.json`. In monorepos, `/supi:checks` defaults to `All`, which runs the root target plus every workspace target sequentially; use `--target <package>` to narrow the run or `--target all` to request the batch mode explicitly. Gates report issues with severity levels.
 
 **AI code review.** `/supi:review` runs a programmatic AI review pipeline with configurable depth (quick, deep, or multi-agent). It uses headless agent sessions with structured JSON validation, always validates findings before user action, writes the current validated findings to a session `findings.md` document, and then presents three next-step choices: `Fix now`, `Document only`, or `Discuss before fixing`.
 
@@ -127,7 +127,7 @@ Use `/supi:agents` to inspect the merged set that will actually run.
 
 ## Quality gates
 
-`/supi:checks` runs deterministic quality gates. Each gate is independently configurable in `quality.gates` via `/supi:config` or the config JSON files:
+`/supi:checks` runs deterministic quality gates. Each gate is independently configurable in `quality.gates` via `/supi:config` or the shared config JSON files:
 
 | Gate               | What it checks                  | Config type       |
 | ------------------ | ------------------------------- | ----------------- |
@@ -138,7 +138,7 @@ Use `/supi:agents` to inspect the merged set that will actually run.
 | `test-suite`       | Test runner                     | enabled + command |
 | `build`            | Build verification              | enabled + command |
 
-Gates default to disabled. Enable them per-project in `.omp/supipowers/config.json` or globally in `~/.omp/supipowers/config.json`.
+Gates default to disabled. Enable them globally in `~/.omp/supipowers/config.json` or per-repository in `.omp/supipowers/config.json`. In monorepos, the repository config is shared by the root target and every workspace, and `/supi:checks` defaults to `All` (root target + every workspace target).
 
 ## Configuration
 
@@ -148,12 +148,13 @@ Gates default to disabled. Enable them per-project in `.omp/supipowers/config.js
 
 Opens an interactive settings screen. Toggles flip instantly, selects open a picker, text fields open an input dialog.
 
-Configuration is a three-layer deep-merge (lowest to highest priority):
+Configuration uses built-in defaults plus two user-managed override layers:
 
 1. Built-in defaults
 2. `~/.omp/supipowers/config.json` — global overrides
-3. `.omp/supipowers/config.json` — per-project overrides
+3. `.omp/supipowers/config.json` — repository overrides
 
+`/supi:config` exposes only `Global` and `Repository`. In monorepos, the repository config is shared across every workspace; there are no per-workspace Supipowers config files for general settings.
 
 ## Release channels
 
