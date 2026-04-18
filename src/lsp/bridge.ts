@@ -1,91 +1,21 @@
 // src/lsp/bridge.ts
 import type { GateExecutionContext, GateIssue } from "../types.js";
-import { runStructuredAgentSession } from "../quality/ai-session.js";
-import { stripMarkdownCodeFence } from "../text.js";
+import { parseStructuredOutput, runWithOutputValidation, type ReliabilityReporter } from "../ai/structured-output.js";
+import { renderSchemaText } from "../ai/schema-text.js";
+import {
+  LspDiagnosticsResultsSchema,
+  type LspDiagnostic,
+  type LspDiagnosticsResults,
+} from "./contracts.js";
 
-export interface DiagnosticsResult {
-  file: string;
-  diagnostics: Diagnostic[];
-}
+const LSP_DIAGNOSTICS_SCHEMA_TEXT = renderSchemaText(LspDiagnosticsResultsSchema);
 
-export interface Diagnostic {
-  severity: "error" | "warning" | "info" | "hint";
-  message: string;
-  line: number;
-  column: number;
-}
-
-function isDiagnostic(value: unknown): value is Diagnostic {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    ["error", "warning", "info", "hint"].includes((value as Diagnostic).severity) &&
-    typeof (value as Diagnostic).message === "string" &&
-    typeof (value as Diagnostic).line === "number" &&
-    typeof (value as Diagnostic).column === "number"
-  );
-}
-
-function isDiagnosticsResult(value: unknown): value is DiagnosticsResult {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as DiagnosticsResult).file === "string" &&
-    Array.isArray((value as DiagnosticsResult).diagnostics) &&
-    (value as DiagnosticsResult).diagnostics.every((diagnostic) => isDiagnostic(diagnostic))
-  );
-}
-
-function normalizeDiagnosticSeverity(severity: Diagnostic["severity"]): GateIssue["severity"] {
+function normalizeDiagnosticSeverity(severity: LspDiagnostic["severity"]): GateIssue["severity"] {
   return severity === "hint" ? "info" : severity;
 }
 
-function formatDiagnosticDetail(diagnostic: Diagnostic): string | undefined {
+function formatDiagnosticDetail(diagnostic: LspDiagnostic): string | undefined {
   return diagnostic.column > 0 ? `column ${diagnostic.column}` : undefined;
-}
-
-function extractJsonArray(raw: string): unknown | null {
-  const trimmed = raw.trim();
-
-  // 1. Try direct parse (no fence)
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed)) return parsed;
-  } catch {}
-
-  // 2. Strip markdown code fence and retry
-  const stripped = stripMarkdownCodeFence(trimmed);
-  if (stripped !== trimmed) {
-    try {
-      const parsed = JSON.parse(stripped);
-      if (Array.isArray(parsed)) return parsed;
-    } catch {}
-  }
-
-  // 3. Extract first JSON array from prose via bracket matching
-  const start = trimmed.indexOf("[");
-  if (start === -1) return null;
-
-  let depth = 0;
-  for (let i = start; i < trimmed.length; i++) {
-    if (trimmed[i] === "[") depth++;
-    else if (trimmed[i] === "]") depth--;
-    if (depth === 0) {
-      try {
-        const parsed = JSON.parse(trimmed.slice(start, i + 1));
-        if (Array.isArray(parsed)) return parsed;
-      } catch {}
-      break;
-    }
-  }
-
-  return null;
-}
-
-function parseLspDiagnosticsResults(raw: string): DiagnosticsResult[] | null {
-  const parsed = extractJsonArray(raw);
-  if (!Array.isArray(parsed)) return null;
-  return parsed.every((entry) => isDiagnosticsResult(entry)) ? parsed : null;
 }
 
 /**
@@ -112,8 +42,8 @@ export function buildLspDiagnosticsPrompt(
     "You are collecting structured LSP diagnostics for a review quality gate.",
     ...scopeInstruction,
     "",
-    "Return JSON only as an array with this exact shape:",
-    '[{"file":"path/to/file.ts","diagnostics":[{"severity":"error|warning|info|hint","message":"text","line":1,"column":1}]}]',
+    "Return JSON only matching this schema:",
+    LSP_DIAGNOSTICS_SCHEMA_TEXT,
     "",
     "Rules:",
     "- Do not wrap the JSON in markdown fences.",
@@ -128,29 +58,28 @@ export async function collectLspDiagnostics(options: {
   fileScope: GateExecutionContext["fileScope"];
   createAgentSession: GateExecutionContext["createAgentSession"];
   reviewModel?: GateExecutionContext["reviewModel"];
+  reliability?: ReliabilityReporter;
 }): Promise<GateIssue[]> {
-  const sessionResult = await runStructuredAgentSession(options.createAgentSession, {
+  const result = await runWithOutputValidation<LspDiagnosticsResults>(options.createAgentSession, {
     cwd: options.cwd,
     prompt: buildLspDiagnosticsPrompt(options.scopeFiles, options.fileScope),
+    schema: LSP_DIAGNOSTICS_SCHEMA_TEXT,
+    parse: (raw) => parseStructuredOutput<LspDiagnosticsResults>(raw, LspDiagnosticsResultsSchema),
     model: options.reviewModel?.model,
     thinkingLevel: options.reviewModel?.thinkingLevel ?? null,
     timeoutMs: 120_000,
+    reliability: options.reliability,
   });
 
-  if (sessionResult.status !== "ok") {
-    throw new Error(sessionResult.error);
+  if (result.status === "blocked") {
+    throw new Error(`LSP diagnostics integration failed: ${result.error}`);
   }
 
-  const parsed = parseLspDiagnosticsResults(sessionResult.finalText);
-  if (!parsed) {
-    throw new Error("LSP diagnostics integration returned invalid JSON.");
-  }
-
-  return parsed.flatMap((result) =>
-    result.diagnostics.map<GateIssue>((diagnostic) => ({
+  return result.output.flatMap((entry) =>
+    entry.diagnostics.map<GateIssue>((diagnostic) => ({
       severity: normalizeDiagnosticSeverity(diagnostic.severity),
       message: diagnostic.message,
-      file: result.file,
+      file: entry.file,
       line: diagnostic.line,
       detail: formatDiagnosticDetail(diagnostic),
     })),
