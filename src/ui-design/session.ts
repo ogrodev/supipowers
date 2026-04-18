@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { applyModelOverride } from "../config/model-resolver.js";
@@ -14,6 +15,7 @@ import type { Manifest, ManifestStatus, UiDesignSession } from "./types.js";
 
 let activeSession: UiDesignSession | null = null;
 let activeCleanup: (() => Promise<void>) | null = null;
+let lastProgressFingerprint: string | null = null;
 
 const MANIFEST_STATUSES = new Set<ManifestStatus>([
   "in-progress",
@@ -76,6 +78,53 @@ export function createSessionDir(paths: PlatformPaths, cwd: string, sessionId: s
   return dir;
 }
 
+function snapshotSessionProgress(sessionDir: string): string | null {
+  if (!fs.existsSync(sessionDir)) return null;
+
+  const hash = createHash("sha256");
+
+  const visit = (currentDir: string): void => {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const absolutePath = path.join(currentDir, entry.name);
+      const relativePath = path.relative(sessionDir, absolutePath);
+      const stats = fs.statSync(absolutePath);
+
+      if (entry.isDirectory()) {
+        hash.update(`dir:${relativePath}:${stats.mtimeMs}\n`);
+        visit(absolutePath);
+        continue;
+      }
+
+      hash.update(`file:${relativePath}:${stats.size}:${stats.mtimeMs}\n`);
+    }
+  };
+
+  try {
+    visit(sessionDir);
+    return hash.digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+function markSessionProgress(sessionDir: string): void {
+  lastProgressFingerprint = snapshotSessionProgress(sessionDir);
+}
+
+function sessionMadeProgress(sessionDir: string): boolean {
+  const nextFingerprint = snapshotSessionProgress(sessionDir);
+  if (nextFingerprint === null || nextFingerprint === lastProgressFingerprint) {
+    return false;
+  }
+
+  lastProgressFingerprint = nextFingerprint;
+  return true;
+}
+
+
 export function startUiDesignTracking(
   session: UiDesignSession,
   cleanup: () => Promise<void>,
@@ -84,6 +133,7 @@ export function startUiDesignTracking(
   const previousCleanup = activeCleanup;
   activeSession = session;
   activeCleanup = cleanup;
+  markSessionProgress(session.dir);
   if (previousCleanup) {
     // Fire-and-forget: we already replaced the active references, so a
     // failing previous cleanup cannot leak state into the new session.
@@ -94,6 +144,7 @@ export function startUiDesignTracking(
 export function cancelUiDesignTracking(_reason: string): void {
   activeSession = null;
   activeCleanup = null;
+  lastProgressFingerprint = null;
 }
 
 export function isUiDesignActive(): boolean {
@@ -112,6 +163,7 @@ export async function stopActiveUiDesignSession(): Promise<void> {
   await runCleanup();
   activeSession = null;
   activeCleanup = null;
+  lastProgressFingerprint = null;
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -569,6 +621,7 @@ async function resumeSession(
   session: UiDesignSession,
   steerMessage: string,
 ): Promise<void> {
+  markSessionProgress(session.dir);
   if (session.resolvedModel) {
     await applyModelOverride(platform, ctx, "ui-design", session.resolvedModel);
   }
@@ -737,12 +790,18 @@ export function registerUiDesignApprovalHook(platform: Platform): void {
       return;
     }
 
-    // Resume-eligible statuses
+    // Auto-continue while the director is still producing new artifacts. Only
+    // interrupt the user once a turn ends without any session-local progress.
     if (
       manifest.status === "in-progress" ||
       manifest.status === "critiquing" ||
       manifest.status === "awaiting-review"
     ) {
+      if (sessionMadeProgress(sessionDir)) {
+        await resumeSession(platform, ctx, session, RESUME_STEER_TEMPLATE(sessionDir));
+        return;
+      }
+
       const choice = await ctx.ui.select(
         `ui-design session paused (${manifest.status}) — what next?`,
         ["Resume session", "Discard session"],

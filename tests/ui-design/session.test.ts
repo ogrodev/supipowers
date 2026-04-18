@@ -448,6 +448,55 @@ describe("ui-design session — approval hook terminal branches", () => {
 });
 
 describe("ui-design session — resume branches", () => {
+  test("in-progress auto-resumes when the session artifacts changed since tracking started", async () => {
+    const sessionDir = path.join(tmpDir, "resume-progress");
+    writeManifest(sessionDir, baseManifest({ status: "in-progress" }));
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+
+    writeManifest(sessionDir, baseManifest({
+      status: "in-progress",
+      scope: "page",
+      topic: "landing refined",
+    }));
+
+    const sendMessage = mock(() => {});
+    const select = mock(async () => "Discard session");
+    const { handler, ctx } = registerHookWithPlatform({ select, sendMessage });
+    await handler({}, ctx);
+
+    expect(select).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(extractSteerText(sendMessage)).toContain("Continue the /supi:ui-design run");
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(isUiDesignActive()).toBe(true);
+  });
+
+  test("after an auto-resume, a later unchanged turn prompts instead of looping", async () => {
+    const sessionDir = path.join(tmpDir, "resume-progress-once");
+    writeManifest(sessionDir, baseManifest({ status: "in-progress" }));
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+
+    writeManifest(sessionDir, baseManifest({
+      status: "in-progress",
+      scope: "page",
+      topic: "landing refined",
+    }));
+
+    const sendMessage = mock(() => {});
+    const select = mock(async () => null);
+    const { handler, ctx } = registerHookWithPlatform({ select, sendMessage });
+
+    await handler({}, ctx);
+    await handler({}, ctx);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(isUiDesignActive()).toBe(true);
+  });
+
   for (const status of ["in-progress", "critiquing", "awaiting-review"] as const) {
     test(`${status} + 'Resume session' sends focused steer, leaves tracking active`, async () => {
       const sessionDir = path.join(tmpDir, `resume-${status}`);
