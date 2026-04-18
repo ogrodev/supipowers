@@ -122,23 +122,63 @@ describe("session CRUD", () => {
     cleanup();
   });
 
-  test("findActiveFixPrSession finds running session", () => {
+  test("findActiveFixPrSession finds newest running session for the same PR", () => {
     setup();
     const workspaceTarget = target(tmpDir);
-    const ledger = makeLedger({ status: "running" });
-    createFixPrSession(paths, workspaceTarget, ledger);
-    const found = findActiveFixPrSession(paths, workspaceTarget);
+    const older = makeLedger({
+      id: "fpr-20260312-143000-a1b2",
+      status: "running",
+      repo: "owner/repo",
+      prNumber: 42,
+    });
+    const newer = makeLedger({
+      id: "fpr-20260312-143001-c3d4",
+      status: "running",
+      repo: "owner/repo",
+      prNumber: 42,
+    });
+    createFixPrSession(paths, workspaceTarget, older);
+    createFixPrSession(paths, workspaceTarget, newer);
+    const found = findActiveFixPrSession(paths, workspaceTarget, "owner/repo", 42);
     expect(found).not.toBeNull();
-    expect(found!.id).toBe(ledger.id);
+    expect(found!.id).toBe(newer.id);
     cleanup();
   });
 
-  test("findActiveFixPrSession returns null when no running sessions", () => {
+  test("findActiveFixPrSession ignores running sessions for a different PR or repo", () => {
+    setup();
+    const workspaceTarget = target(tmpDir);
+    createFixPrSession(paths, workspaceTarget, makeLedger({
+      id: "fpr-20260312-143000-a1b2",
+      status: "running",
+      repo: "owner/repo",
+      prNumber: 99,
+    }));
+    createFixPrSession(paths, workspaceTarget, makeLedger({
+      id: "fpr-20260312-143001-c3d4",
+      status: "running",
+      repo: "other/repo",
+      prNumber: 42,
+    }));
+    const found = findActiveFixPrSession(paths, workspaceTarget, "owner/repo", 42);
+    expect(found).toBeNull();
+    cleanup();
+  });
+
+  test("findActiveFixPrSession returns null when no matching running sessions exist", () => {
     setup();
     const workspaceTarget = target(tmpDir);
     const ledger = makeLedger({ status: "completed" });
     createFixPrSession(paths, workspaceTarget, ledger);
-    const found = findActiveFixPrSession(paths, workspaceTarget);
+    const found = findActiveFixPrSession(paths, workspaceTarget, "owner/repo", 42);
+    expect(found).toBeNull();
+    cleanup();
+  });
+
+  test("findActiveFixPrSession returns null when there are no sessions", () => {
+    setup();
+    const workspaceTarget = target(tmpDir);
+    const found = findActiveFixPrSession(paths, workspaceTarget, "owner/repo", 42);
     expect(found).toBeNull();
     cleanup();
   });
