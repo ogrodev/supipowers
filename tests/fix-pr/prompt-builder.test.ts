@@ -1,8 +1,34 @@
 
 import { buildFixPrOrchestratorPrompt } from "../../src/fix-pr/prompt-builder.js";
 import { DEFAULT_FIX_PR_CONFIG } from "../../src/fix-pr/config.js";
+import type { FixPrAssessmentBatch, FixPrWorkBatch } from "../../src/fix-pr/contracts.js";
 
 const SAMPLE_COMMENTS = '{"id":1,"path":"src/foo.ts","line":10,"body":"This needs fixing","user":"reviewer"}\n{"id":2,"path":"src/bar.ts","line":20,"body":"Add error handling","user":"reviewer"}';
+
+const SAMPLE_ASSESSMENT: FixPrAssessmentBatch = {
+  assessments: [
+    {
+      commentId: 1,
+      verdict: "apply",
+      rationale: "Matches actual code behaviour.",
+      affectedFiles: ["src/foo.ts"],
+      rippleEffects: [],
+      verificationPlan: "bun test src/foo.test.ts",
+    },
+    {
+      commentId: 2,
+      verdict: "reject",
+      rationale: "Reviewer misread the diff.",
+      affectedFiles: [],
+      rippleEffects: [],
+      verificationPlan: "N/A",
+    },
+  ],
+};
+
+const SAMPLE_BATCHES: FixPrWorkBatch[] = [
+  { id: "batch-1", commentIds: [1], affectedFiles: ["src/foo.ts"] },
+];
 
 function buildDefaultPrompt() {
   return buildFixPrOrchestratorPrompt({
@@ -17,6 +43,8 @@ function buildDefaultPrompt() {
     taskModel: "claude-sonnet-4-6",
     selectedTargetLabel: "@repo/pkg — packages/pkg",
     deferredCommentsSummary: null,
+    assessment: SAMPLE_ASSESSMENT,
+    workBatches: SAMPLE_BATCHES,
   });
 }
 
@@ -55,19 +83,20 @@ describe("buildFixPrOrchestratorPrompt", () => {
     expect(result.toLowerCase()).toContain("verify before implementing");
   });
 
-  test("includes assessment step", () => {
+  test("includes assessment step referencing the validated artifact", () => {
     const result = buildDefaultPrompt();
     expect(result.toLowerCase()).toContain("assess");
     expect(result.toLowerCase()).toContain("verdict");
-    expect(result).toContain("ACCEPT");
-    expect(result).toContain("REJECT");
-    expect(result).toContain("INVESTIGATE");
+    expect(result).toContain("FixPrAssessmentBatchSchema");
+    expect(result).toContain("\"verdict\": \"apply\"");
+    expect(result).toContain("\"verdict\": \"reject\"");
   });
 
-  test("includes grouping step", () => {
+  test("includes grouping step with work batches", () => {
     const result = buildDefaultPrompt();
     expect(result.toLowerCase()).toContain("group");
     expect(result.toLowerCase()).toContain("parallel");
+    expect(result).toContain("batch-1");
   });
 
   test("includes plan step", () => {
@@ -141,6 +170,8 @@ describe("buildFixPrOrchestratorPrompt", () => {
       taskModel: "claude-sonnet-4-6",
       selectedTargetLabel: "@repo/pkg — packages/pkg",
       deferredCommentsSummary: "2 comments deferred to repo root",
+      assessment: SAMPLE_ASSESSMENT,
+      workBatches: SAMPLE_BATCHES,
     });
     expect(noAnswer.toLowerCase()).toContain("do not reply");
   });

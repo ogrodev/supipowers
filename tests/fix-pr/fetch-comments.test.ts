@@ -185,7 +185,7 @@ describe("fetchPrComments", () => {
     expect(call2[2]).toEqual({ cwd: "/work" });
   });
 
-  test("clusters comments by workspace target and keeps root comments visible", () => {
+  test("clusters pathless review comments separately in monorepos", () => {
     const repoRoot = createWorkspaceRepo(tmpDir);
     const targets = discoverWorkspaceTargets(repoRoot, "bun");
     const clustered = clusterPrCommentsByTarget(targets, [
@@ -197,7 +197,7 @@ describe("fetchPrComments", () => {
 
     expect(clustered.commentsByTargetId.get("pkg-a")?.map((comment) => comment.id)).toEqual([1]);
     expect(clustered.commentsByTargetId.get("pkg-b")?.map((comment) => comment.id)).toEqual([2]);
-    expect(clustered.commentsByTargetId.get("repo-root")?.map((comment) => comment.id)).toEqual([3, 4]);
+    expect(clustered.commentsByTargetId.get("repo-root")?.map((comment) => comment.id)).toEqual([3]);
     expect(clustered.unscopedComments.map((comment) => comment.id)).toEqual([4]);
   });
 
