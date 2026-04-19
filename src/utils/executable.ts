@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const WINDOWS_EXECUTABLE_EXTENSIONS = [".exe", ".cmd", ".bat", ""];
+const DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS = [".exe", ".cmd", ".bat", ""];
 const POSIX_EXECUTABLE_EXTENSIONS = [""];
 
 export interface ExecutableSearchOptions {
@@ -9,11 +9,22 @@ export interface ExecutableSearchOptions {
   localDirs?: string[];
   preferLocal?: boolean;
   searchPath?: string;
+  pathext?: string;
 }
 
-function executableExtensions(): string[] {
+function windowsExecutableExtensions(pathext?: string): string[] {
+  const ordered = (pathext ?? process.env.PATHEXT ?? "")
+    .split(";")
+    .map((ext) => ext.trim())
+    .filter(Boolean)
+    .map((ext) => (ext.startsWith(".") ? ext.toLowerCase() : `.${ext.toLowerCase()}`));
+
+  return [...new Set([...ordered, ...DEFAULT_WINDOWS_EXECUTABLE_EXTENSIONS])];
+}
+
+function executableExtensions(options: ExecutableSearchOptions): string[] {
   return process.platform === "win32"
-    ? WINDOWS_EXECUTABLE_EXTENSIONS
+    ? windowsExecutableExtensions(options.pathext)
     : POSIX_EXECUTABLE_EXTENSIONS;
 }
 
@@ -43,9 +54,10 @@ export function findExecutable(
   options: ExecutableSearchOptions = {},
 ): string | null {
   const seen = new Set<string>();
+  const extensions = executableExtensions(options);
 
   for (const directory of resolveSearchDirectories(options)) {
-    for (const extension of executableExtensions()) {
+    for (const extension of extensions) {
       const candidate = path.join(directory, `${executable}${extension}`);
       if (seen.has(candidate)) {
         continue;

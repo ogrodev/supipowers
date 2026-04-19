@@ -1,14 +1,21 @@
 import { spawnSync } from "node:child_process";
 import type { ExecOptions, ExecResult, Platform } from "../../platform/types.js";
+import { findExecutable } from "../../utils/executable.js";
 
 export function runCliCommand(
   command: string,
   args: string[],
   options?: ExecOptions,
 ): ExecResult {
-  const result = spawnSync(command, args, {
+  const env = options?.env ? { ...process.env, ...options.env } : process.env;
+  const resolvedCommand = findExecutable(command, {
+    searchPath: env.PATH,
+    pathext: env.PATHEXT,
+  }) ?? command;
+
+  const result = spawnSync(resolvedCommand, args, {
     cwd: options?.cwd,
-    env: options?.env ? { ...process.env, ...options.env } : process.env,
+    env,
     encoding: "utf8",
   });
 

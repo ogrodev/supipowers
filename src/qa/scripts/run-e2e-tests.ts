@@ -56,7 +56,7 @@ function resolvePlaywrightBinary(cwd: string): string | null {
   return findExecutable("playwright-cli", {
     cwd,
     localDirs: [path.join("node_modules", ".bin")],
-    preferLocal: false,
+    preferLocal: true,
   });
 }
 
