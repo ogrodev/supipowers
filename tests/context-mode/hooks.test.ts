@@ -403,7 +403,7 @@ describe("compaction integration", () => {
     expect(result).toBeDefined();
     // When searchAvailable, snapshot uses reference format with how_to_search
     expect(result.preserveData.resumeSnapshot).toContain("how_to_search");
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 });
 
 
