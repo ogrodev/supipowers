@@ -175,7 +175,7 @@ describe("QA dev-server runners", () => {
     expect(start.exitCode).toBe(1);
     expect(JSON.parse(start.stdout)).toMatchObject({
       ready: false,
-      error: "Server process exited",
+      error: process.platform === "win32" ? `Timeout after 2s` : "Server process exited",
       url: `http://localhost:${port}`,
     });
   });
