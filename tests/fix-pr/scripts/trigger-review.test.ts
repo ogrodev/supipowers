@@ -28,24 +28,29 @@ function installFakeGh(binDir: string): void {
   );
 
   if (process.platform === "win32") {
+    const runnerPs1Path = path.join(binDir, "gh-runner.ps1");
+    fs.writeFileSync(
+      runnerPs1Path,
+      [
+        'param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)',
+        'if ($env:GH_ARGS_FILE) { Add-Content -Path $env:GH_ARGS_FILE -Value ($Args -join " ") }',
+        '$joined = $Args -join " "',
+        'if ($joined -like "*/requested_reviewers*") {',
+        '  if ($env:GH_STDOUT) { [Console]::Out.Write($env:GH_STDOUT) }',
+        '  if ($env:GH_STDERR) { [Console]::Error.Write($env:GH_STDERR) }',
+        '  $exitCode = if ($env:GH_REQUESTED_REVIEWERS_EXIT_CODE) { [int]$env:GH_REQUESTED_REVIEWERS_EXIT_CODE } elseif ($env:GH_EXIT_CODE) { [int]$env:GH_EXIT_CODE } else { 0 }',
+        '  exit $exitCode',
+        '}',
+        'if ($env:GH_STDOUT) { [Console]::Out.Write($env:GH_STDOUT) }',
+        'if ($env:GH_STDERR) { [Console]::Error.Write($env:GH_STDERR) }',
+        '$exitCode = if ($env:GH_COMMENT_EXIT_CODE) { [int]$env:GH_COMMENT_EXIT_CODE } elseif ($env:GH_EXIT_CODE) { [int]$env:GH_EXIT_CODE } else { 0 }',
+        'exit $exitCode',
+        '',
+      ].join("\r\n"),
+    );
     fs.writeFileSync(
       path.join(binDir, "gh.cmd"),
-      [
-        "@echo off",
-        "setlocal",
-        'if defined GH_ARGS_FILE >> "%GH_ARGS_FILE%" echo %*',
-        'set "ARGS=%*"',
-        'echo(%ARGS%| findstr /C:"/requested_reviewers" >nul',
-        'if %errorlevel%==0 (',
-        '  if defined GH_STDOUT <nul set /p "=%GH_STDOUT%"',
-        '  if defined GH_STDERR 1>&2 <nul set /p "=%GH_STDERR%"',
-        '  exit /b %GH_REQUESTED_REVIEWERS_EXIT_CODE%',
-        ')',
-        'if defined GH_STDOUT <nul set /p "=%GH_STDOUT%"',
-        'if defined GH_STDERR 1>&2 <nul set /p "=%GH_STDERR%"',
-        'exit /b %GH_COMMENT_EXIT_CODE%',
-        "",
-      ].join("\r\n"),
+      `@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\\gh-runner.ps1" %*\r\n`,
     );
     return;
   }

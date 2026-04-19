@@ -100,17 +100,17 @@ describe("QA dev-server runners", () => {
       ].join("\n"),
     );
 
-    const serverCommandPath = path.join(appDir, process.platform === "win32" ? "start-server.cmd" : "start-server.sh");
+    let devCommand: string;
     if (process.platform === "win32") {
+      const serverCommandPath = path.join(appDir, "start-server.ps1");
       fs.writeFileSync(
         serverCommandPath,
-        [`@echo off`, `"${process.execPath}" "${serverScriptPath}" %1`, ``].join("\r\n"),
+        [`param([int]$Port)`, `& \"${process.execPath}\" \"${serverScriptPath}\" $Port`, ``].join("\r\n"),
       );
+      devCommand = `powershell -NoProfile -ExecutionPolicy Bypass -File \"${serverCommandPath}\" ${port}`;
+    } else {
+      devCommand = `\"${process.execPath}\" \"${serverScriptPath}\" ${port}`;
     }
-
-    const devCommand = process.platform === "win32"
-      ? `"${serverCommandPath}" ${port}`
-      : `"${process.execPath}" "${serverScriptPath}" ${port}`;
 
     const start = runRunner(
       START_RUNNER_PATH,
@@ -153,17 +153,17 @@ describe("QA dev-server runners", () => {
     const exitScriptPath = path.join(appDir, "exit.js");
     fs.writeFileSync(exitScriptPath, "process.exit(0);\n");
 
-    const exitCommandPath = path.join(appDir, process.platform === "win32" ? "exit.cmd" : "exit.sh");
+    let devCommand: string;
     if (process.platform === "win32") {
+      const exitCommandPath = path.join(appDir, "exit.ps1");
       fs.writeFileSync(
         exitCommandPath,
-        [`@echo off`, `"${process.execPath}" "${exitScriptPath}"`, ``].join("\r\n"),
+        [`& \"${process.execPath}\" \"${exitScriptPath}\"`, ``].join("\r\n"),
       );
+      devCommand = `powershell -NoProfile -ExecutionPolicy Bypass -File \"${exitCommandPath}\"`;
+    } else {
+      devCommand = `\"${process.execPath}\" \"${exitScriptPath}\"`;
     }
-
-    const devCommand = process.platform === "win32"
-      ? `"${exitCommandPath}"`
-      : `"${process.execPath}" "${exitScriptPath}"`;
 
     const start = runRunner(
       START_RUNNER_PATH,

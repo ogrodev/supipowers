@@ -33,28 +33,30 @@ function installFakeGh(binDir: string): void {
   );
 
   if (process.platform === "win32") {
+    const runnerPs1Path = path.join(binDir, "gh-runner.ps1");
+    fs.writeFileSync(
+      runnerPs1Path,
+      [
+        'param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)',
+        'if ($env:GH_ARGS_FILE) { Add-Content -Path $env:GH_ARGS_FILE -Value ($Args -join " ") }',
+        '$joined = $Args -join " "',
+        'if ($joined -like "*/comments*") {',
+        '  if ($env:GH_INLINE_OUTPUT) { [Console]::Out.Write($env:GH_INLINE_OUTPUT) }',
+        '  if ($env:GH_INLINE_STDERR) { [Console]::Error.Write($env:GH_INLINE_STDERR) }',
+        '  exit $(if ($env:GH_INLINE_EXIT_CODE) { [int]$env:GH_INLINE_EXIT_CODE } else { 0 })',
+        '}',
+        'if ($joined -like "*/reviews*") {',
+        '  if ($env:GH_REVIEW_OUTPUT) { [Console]::Out.Write($env:GH_REVIEW_OUTPUT) }',
+        '  if ($env:GH_REVIEW_STDERR) { [Console]::Error.Write($env:GH_REVIEW_STDERR) }',
+        '  exit $(if ($env:GH_REVIEW_EXIT_CODE) { [int]$env:GH_REVIEW_EXIT_CODE } else { 0 })',
+        '}',
+        'exit $(if ($env:GH_EXIT_CODE) { [int]$env:GH_EXIT_CODE } else { 0 })',
+        '',
+      ].join("\r\n"),
+    );
     fs.writeFileSync(
       path.join(binDir, "gh.cmd"),
-      [
-        "@echo off",
-        "setlocal",
-        'if defined GH_ARGS_FILE >> "%GH_ARGS_FILE%" echo %*',
-        'set "ARGS=%*"',
-        'echo(%ARGS%| findstr /C:"/comments" >nul',
-        'if %errorlevel%==0 (',
-        '  if defined GH_INLINE_OUTPUT <nul set /p "=%GH_INLINE_OUTPUT%"',
-        '  if defined GH_INLINE_STDERR 1>&2 <nul set /p "=%GH_INLINE_STDERR%"',
-        '  exit /b %GH_INLINE_EXIT_CODE%',
-        ')',
-        'echo(%ARGS%| findstr /C:"/reviews" >nul',
-        'if %errorlevel%==0 (',
-        '  if defined GH_REVIEW_OUTPUT <nul set /p "=%GH_REVIEW_OUTPUT%"',
-        '  if defined GH_REVIEW_STDERR 1>&2 <nul set /p "=%GH_REVIEW_STDERR%"',
-        '  exit /b %GH_REVIEW_EXIT_CODE%',
-        ')',
-        'exit /b %GH_EXIT_CODE%',
-        "",
-      ].join("\r\n"),
+      `@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\\gh-runner.ps1" %*\r\n`,
     );
     return;
   }

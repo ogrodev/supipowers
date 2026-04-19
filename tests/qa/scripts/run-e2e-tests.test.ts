@@ -23,17 +23,22 @@ function installFakePlaywright(binDir: string): void {
   );
 
   if (process.platform === "win32") {
+    const runnerPs1Path = path.join(binDir, "playwright-cli-runner.ps1");
+    fs.writeFileSync(
+      runnerPs1Path,
+      [
+        'param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)',
+        'if ($env:PW_ARGS_FILE) { Set-Content -Path $env:PW_ARGS_FILE -Value ($Args -join " ") }',
+        'if ($env:PW_STDOUT) { [Console]::Out.Write($env:PW_STDOUT) }',
+        'if ($env:PW_STDERR) { [Console]::Error.Write($env:PW_STDERR) }',
+        '$exitCode = if ($env:PW_EXIT_CODE) { [int]$env:PW_EXIT_CODE } else { 0 }',
+        'exit $exitCode',
+        '',
+      ].join("\r\n"),
+    );
     fs.writeFileSync(
       path.join(binDir, "playwright-cli.cmd"),
-      [
-        "@echo off",
-        "setlocal",
-        'if defined PW_ARGS_FILE > "%PW_ARGS_FILE%" echo %*',
-        'if defined PW_STDOUT <nul set /p "=%PW_STDOUT%"',
-        'if defined PW_STDERR 1>&2 <nul set /p "=%PW_STDERR%"',
-        'exit /b %PW_EXIT_CODE%',
-        "",
-      ].join("\r\n"),
+      `@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0\\playwright-cli-runner.ps1" %*\r\n`,
     );
     return;
   }
