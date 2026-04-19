@@ -6,7 +6,7 @@ import { notifyInfo } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { createModelBridge, resolveModelForAction } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
-import { selectReviewScope, type ReviewWorkspaceSelection } from "../review/scope.js";
+import { selectReviewScope } from "../review/scope.js";
 import { loadMergedReviewAgents } from "../review/agent-loader.js";
 import { runQuickReview, runDeepReview } from "../review/runner.js";
 import { runMultiAgentReview, type MultiAgentAgentResult } from "../review/multi-agent-runner.js";
@@ -96,7 +96,11 @@ interface ParsedAiReviewArgs {
   requestedTarget: string | null;
 }
 
-interface ReviewTargetChoice extends ReviewWorkspaceSelection {}
+interface ReviewTargetChoice {
+  repoRoot: string;
+  target: WorkspaceTarget | null;
+  targets: WorkspaceTarget[];
+}
 
 function parseAiReviewArgs(args?: string): ParsedAiReviewArgs {
   return {
@@ -106,6 +110,27 @@ function parseAiReviewArgs(args?: string): ParsedAiReviewArgs {
 
 function buildReviewTargetSummary(target: WorkspaceTarget): string {
   return `${target.name} (${target.relativeDir})`;
+}
+
+function buildReviewTargetOption(target: WorkspaceTarget): WorkspaceTargetOption {
+  return {
+    target,
+    changed: false,
+    label: target.kind === "root"
+      ? `${buildWorkspaceTargetOptionLabel({ target, changed: false })} — root only`
+      : buildWorkspaceTargetOptionLabel({ target, changed: false }),
+  };
+}
+
+function buildAllReviewTargetLabel(targets: WorkspaceTarget[]): string {
+  const workspaceCount = targets.filter((target) => target.kind === "workspace").length;
+  return workspaceCount === 0
+    ? "All — root target"
+    : `All — root + ${workspaceCount} workspace${workspaceCount === 1 ? "" : "s"}`;
+}
+
+function isMonorepoTargets(targets: WorkspaceTarget[]): boolean {
+  return targets.some((target) => target.kind === "workspace");
 }
 
 async function selectReviewTarget(
@@ -130,25 +155,57 @@ async function selectReviewTarget(
         private: true,
         packageManager: packageManager.id,
       } satisfies WorkspaceTarget];
-  const selectedTarget = await selectWorkspaceTarget(
-    ctx,
-    targets.map((target) => ({
-      target,
-      changed: false,
-      label: buildWorkspaceTargetOptionLabel({ target, changed: false } satisfies WorkspaceTargetOption),
-    })),
-    requestedTarget,
-    {
-      title: "Review target",
-      helpText: "Pick one package or the root scope for this review run.",
-    },
-  );
+  const options = targets.map(buildReviewTargetOption);
 
-  if (requestedTarget && !selectedTarget) {
-    throw new Error(`Review target not found: ${requestedTarget}`);
+  if (requestedTarget?.toLowerCase() === "all") {
+    return { repoRoot, target: null, targets };
   }
 
-  return selectedTarget ? { target: selectedTarget, targets } : null;
+  if (requestedTarget) {
+    const selectedTarget = await selectWorkspaceTarget(
+      ctx,
+      options,
+      requestedTarget,
+      {
+        title: "Review target",
+        helpText: "Pick one package to narrow the review, or use --target all to review the root target and every workspace.",
+      },
+    );
+    if (!selectedTarget) {
+      throw new Error(`Review target not found: ${requestedTarget}`);
+    }
+    return { repoRoot, target: selectedTarget, targets };
+  }
+
+  if (!isMonorepoTargets(targets)) {
+    const selectedTarget = await selectWorkspaceTarget(
+      ctx,
+      options,
+      null,
+      {
+        title: "Review target",
+        helpText: "Pick the target to review.",
+      },
+    );
+    return selectedTarget ? { repoRoot, target: selectedTarget, targets } : null;
+  }
+
+  const allLabel = buildAllReviewTargetLabel(targets);
+  const labels = [allLabel, ...options.map((option) => option.label ?? buildWorkspaceTargetOptionLabel(option))];
+  const choice = await ctx.ui.select("Review target", labels, {
+    initialIndex: 0,
+    helpText: "All reviews the root target and every workspace. Choose a single target to narrow the review.",
+  });
+  if (!choice) {
+    return null;
+  }
+  if (choice === allLabel) {
+    return { repoRoot, target: null, targets };
+  }
+
+  const selectedIndex = labels.indexOf(choice) - 1;
+  const selectedTarget = selectedIndex >= 0 ? options[selectedIndex]?.target ?? null : null;
+  return selectedTarget ? { repoRoot, target: selectedTarget, targets } : null;
 }
 
 
@@ -930,8 +987,9 @@ async function runAiReviewSession(
     return;
   }
   const reviewTarget = selectedReviewTarget;
+  const scopeSelection = reviewTarget.target ? { target: reviewTarget.target, targets: reviewTarget.targets } : null;
 
-  const scope = await deps.selectReviewScope(platform, ctx, reviewTarget);
+  const scope = await deps.selectReviewScope(platform, ctx, scopeSelection);
   if (!scope) {
     return;
   }
@@ -943,8 +1001,8 @@ async function runAiReviewSession(
 
   const loadedAgents = level === "multi-agent"
     ? await deps.loadReviewAgents(platform.paths, ctx.cwd, {
-        repoRoot: reviewTarget.target.repoRoot,
-        workspaceRelativeDir: reviewTarget.target.kind === "workspace" ? reviewTarget.target.relativeDir : null,
+        repoRoot: reviewTarget.repoRoot,
+        workspaceRelativeDir: reviewTarget.target?.kind === "workspace" ? reviewTarget.target.relativeDir : null,
       })
     : null;
   const agents = loadedAgents?.agents ?? [];
