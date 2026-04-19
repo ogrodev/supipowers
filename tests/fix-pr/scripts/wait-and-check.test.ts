@@ -35,7 +35,26 @@ function installFakeGh(binDir: string): void {
   if (process.platform === "win32") {
     fs.writeFileSync(
       path.join(binDir, "gh.cmd"),
-      `@echo off\r\n"${process.execPath}" "%~dp0\\gh-runner.js" %*\r\n`,
+      [
+        "@echo off",
+        "setlocal",
+        'if defined GH_ARGS_FILE >> "%GH_ARGS_FILE%" echo %*',
+        'set "ARGS=%*"',
+        'echo(%ARGS%| findstr /C:"/comments" >nul',
+        'if %errorlevel%==0 (',
+        '  if defined GH_INLINE_OUTPUT <nul set /p "=%GH_INLINE_OUTPUT%"',
+        '  if defined GH_INLINE_STDERR 1>&2 <nul set /p "=%GH_INLINE_STDERR%"',
+        '  exit /b %GH_INLINE_EXIT_CODE%',
+        ')',
+        'echo(%ARGS%| findstr /C:"/reviews" >nul',
+        'if %errorlevel%==0 (',
+        '  if defined GH_REVIEW_OUTPUT <nul set /p "=%GH_REVIEW_OUTPUT%"',
+        '  if defined GH_REVIEW_STDERR 1>&2 <nul set /p "=%GH_REVIEW_STDERR%"',
+        '  exit /b %GH_REVIEW_EXIT_CODE%',
+        ')',
+        'exit /b %GH_EXIT_CODE%',
+        "",
+      ].join("\r\n"),
     );
     return;
   }

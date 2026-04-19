@@ -100,7 +100,17 @@ describe("QA dev-server runners", () => {
       ].join("\n"),
     );
 
-    const devCommand = `"${process.execPath}" "${serverScriptPath}" ${port}`;
+    const serverCommandPath = path.join(appDir, process.platform === "win32" ? "start-server.cmd" : "start-server.sh");
+    if (process.platform === "win32") {
+      fs.writeFileSync(
+        serverCommandPath,
+        [`@echo off`, `"${process.execPath}" "${serverScriptPath}" %1`, ``].join("\r\n"),
+      );
+    }
+
+    const devCommand = process.platform === "win32"
+      ? `"${serverCommandPath}" ${port}`
+      : `"${process.execPath}" "${serverScriptPath}" ${port}`;
 
     const start = runRunner(
       START_RUNNER_PATH,
@@ -143,7 +153,17 @@ describe("QA dev-server runners", () => {
     const exitScriptPath = path.join(appDir, "exit.js");
     fs.writeFileSync(exitScriptPath, "process.exit(0);\n");
 
-    const devCommand = `"${process.execPath}" "${exitScriptPath}"`;
+    const exitCommandPath = path.join(appDir, process.platform === "win32" ? "exit.cmd" : "exit.sh");
+    if (process.platform === "win32") {
+      fs.writeFileSync(
+        exitCommandPath,
+        [`@echo off`, `"${process.execPath}" "${exitScriptPath}"`, ``].join("\r\n"),
+      );
+    }
+
+    const devCommand = process.platform === "win32"
+      ? `"${exitCommandPath}"`
+      : `"${process.execPath}" "${exitScriptPath}"`;
 
     const start = runRunner(
       START_RUNNER_PATH,

@@ -30,7 +30,22 @@ function installFakeGh(binDir: string): void {
   if (process.platform === "win32") {
     fs.writeFileSync(
       path.join(binDir, "gh.cmd"),
-      `@echo off\r\n"${process.execPath}" "%~dp0\\gh-runner.js" %*\r\n`,
+      [
+        "@echo off",
+        "setlocal",
+        'if defined GH_ARGS_FILE >> "%GH_ARGS_FILE%" echo %*',
+        'set "ARGS=%*"',
+        'echo(%ARGS%| findstr /C:"/requested_reviewers" >nul',
+        'if %errorlevel%==0 (',
+        '  if defined GH_STDOUT <nul set /p "=%GH_STDOUT%"',
+        '  if defined GH_STDERR 1>&2 <nul set /p "=%GH_STDERR%"',
+        '  exit /b %GH_REQUESTED_REVIEWERS_EXIT_CODE%',
+        ')',
+        'if defined GH_STDOUT <nul set /p "=%GH_STDOUT%"',
+        'if defined GH_STDERR 1>&2 <nul set /p "=%GH_STDERR%"',
+        'exit /b %GH_COMMENT_EXIT_CODE%',
+        "",
+      ].join("\r\n"),
     );
     return;
   }
@@ -95,7 +110,7 @@ describe("trigger-review.ts", () => {
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout)).toEqual({ triggered: true, reviewer: "coderabbit" });
 
-    const calls = fs.readFileSync(argsFile, "utf-8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    const calls = fs.readFileSync(argsFile, "utf-8").trim().split(/\r?\n/);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("repos/owner/repo/issues/42/comments");
     expect(calls[0]).toContain("body=@coderabbit review");
@@ -115,7 +130,7 @@ describe("trigger-review.ts", () => {
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout)).toEqual({ triggered: true, reviewer: "copilot" });
 
-    const calls = fs.readFileSync(argsFile, "utf-8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    const calls = fs.readFileSync(argsFile, "utf-8").trim().split(/\r?\n/);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("repos/owner/repo/pulls/42/requested_reviewers");
     expect(calls[0]).toContain("reviewers[]=copilot");
