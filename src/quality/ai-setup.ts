@@ -24,8 +24,12 @@ export function buildAiSetupPrompt(projectFacts: ProjectFacts, proposal: SetupPr
     "",
     "Rules:",
     "- Prefer commands that already exist in package.json scripts.",
+    "- Command-driven gates must use canonical target-aware runs. When enabled, return runs with command + target selectors instead of a single command string.",
     "- packageScripts contains only commands shared across every discovered target; use targets to inspect package-specific scripts.",
-    "- /supi:checks runs commands from each target's package root, so do not generalize a command that only works in one package.",
+    "- /supi:checks All must cover the root target and every workspace target deterministically.",
+    "- /supi:checks runs commands from each target's package root, so add target-specific runs when root/shared commands do not cover a package.",
+    "- Use target.scope all-targets only when the same command truly works for every target.",
+    "- Use target.scope root, all-workspaces, or workspace with relativeDir when coverage differs by target.",
     "- Never invent a mutating format command such as --write or lint --fix.",
     "- Prefer checks that verify correctness during review: lsp, lint, typecheck, format check, tests, and build.",
     "- Keep deterministic suggestions unless you have repository evidence to improve them.",
@@ -41,6 +45,7 @@ export function buildAiSetupPrompt(projectFacts: ProjectFacts, proposal: SetupPr
       ? ["", "Deterministic baseline notes:", ...proposal.notes.map((note) => `- ${note}`)]
       : []),
   ].join("\n");
+
 }
 
 export async function suggestQualityGatesWithAi(input: {

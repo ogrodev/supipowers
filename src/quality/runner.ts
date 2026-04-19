@@ -191,6 +191,7 @@ function createGateExecutionContext(
     changedFiles: scope.changedFiles,
     scopeFiles: scope.scopeFiles,
     fileScope: scope.fileScope,
+    target: input.target,
     exec,
     execShell: createExecShell(exec),
     getLspDiagnostics:
