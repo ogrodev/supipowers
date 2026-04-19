@@ -35,7 +35,7 @@ function installFakeGh(binDir: string): void {
   if (process.platform === "win32") {
     fs.writeFileSync(
       path.join(binDir, "gh.cmd"),
-      `@echo off\r\n"${process.execPath}" run "%~dp0\\gh-runner.js" -- %*\r\n`,
+      `@echo off\r\n"${process.execPath}" "%~dp0\\gh-runner.js" %*\r\n`,
     );
     return;
   }

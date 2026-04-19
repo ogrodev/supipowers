@@ -100,7 +100,7 @@ describe("QA dev-server runners", () => {
       ].join("\n"),
     );
 
-    const devCommand = `"${process.execPath}" run "${serverScriptPath}" -- ${port}`;
+    const devCommand = `"${process.execPath}" "${serverScriptPath}" ${port}`;
 
     const start = runRunner(
       START_RUNNER_PATH,
@@ -143,7 +143,7 @@ describe("QA dev-server runners", () => {
     const exitScriptPath = path.join(appDir, "exit.js");
     fs.writeFileSync(exitScriptPath, "process.exit(0);\n");
 
-    const devCommand = `"${process.execPath}" run "${exitScriptPath}"`;
+    const devCommand = `"${process.execPath}" "${exitScriptPath}"`;
 
     const start = runRunner(
       START_RUNNER_PATH,

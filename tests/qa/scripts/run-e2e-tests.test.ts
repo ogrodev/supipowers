@@ -25,7 +25,7 @@ function installFakePlaywright(binDir: string): void {
   if (process.platform === "win32") {
     fs.writeFileSync(
       path.join(binDir, "playwright-cli.cmd"),
-      `@echo off\r\n"${process.execPath}" run "%~dp0\\playwright-cli-runner.js" -- %*\r\n`,
+      `@echo off\r\n"${process.execPath}" "%~dp0\\playwright-cli-runner.js" %*\r\n`,
     );
     return;
   }

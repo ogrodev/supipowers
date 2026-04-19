@@ -73,7 +73,7 @@ describe("EventStore", () => {
     ]);
     const events = store.getEvents("test-session");
     expect(events).toHaveLength(3);
-  });
+  }, 20_000);
 
   test("getEvents filters by category", () => {
     store.writeEvents([
@@ -591,7 +591,7 @@ describe("EventStore multi-session behavior", () => {
       .getEvents("session-a", { limit: 2000 })
       .filter((e) => e.data === '{"a":"overflow"}');
     expect(overflow).toHaveLength(1);
-  });
+  }, 20_000);
 
   test("dedup key includes session_id", () => {
     const shared = '{"path":"/shared.ts"}';

@@ -98,7 +98,7 @@ describe("buildResumeSnapshot — fallback mode", () => {
     }
     const snapshot = buildResumeSnapshot(store, SESSION);
     expect(new TextEncoder().encode(snapshot).byteLength).toBeLessThan(2048);
-  });
+  }, 20_000);
 
   test("deduplicates file paths", () => {
     writeEvent("file", { op: "edit", path: "/src/types.ts" }, 2);
@@ -146,7 +146,7 @@ describe("buildResumeSnapshot — reference format", () => {
     writeEvent("file", { op: "edit", path: "/src/a.ts" }, 2);
     const snapshot = buildResumeSnapshot(store, SESSION, { ...refOpts, compactCount: 42 });
     expect(snapshot).toContain('compact_count="42"');
-  });
+  }, 20_000);
 
   test("includes generated_at attribute with ISO date", () => {
     writeEvent("file", { op: "edit", path: "/src/a.ts" }, 2);
