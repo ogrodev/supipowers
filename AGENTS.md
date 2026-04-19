@@ -191,6 +191,14 @@ bunx supipowers
 
 Peer dependencies (`@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-ai`, `@oh-my-pi/pi-tui`, `@sinclair/typebox`) are provided by the OMP host; they are devDependencies only for type-checking during development.
 
+### Multi-OS compatibility
+
+- Develop supipowers with a cross-platform mindset at all times: **macOS, Linux, and Windows** are first-class targets.
+- Do not assume POSIX-only shells, paths, environment variable syntax, or filesystem behavior unless the code is explicitly platform-gated.
+- Prefer platform-neutral APIs, workspace helpers, and path utilities over hardcoded separators, shell-specific commands, or OS-specific assumptions.
+- When adding automation, persistence, subprocess execution, or path handling, think through how it behaves on Windows as well as Unix-like systems.
+
+
 ---
 
 ## Code Conventions & Patterns
