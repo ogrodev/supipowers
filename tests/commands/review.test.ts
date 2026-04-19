@@ -185,7 +185,7 @@ describe("handleChecks", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const deps = createDependencies(
-      createConfig({ quality: { gates: { "lint": { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { "lint": { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
     );
 
     await expect(handleChecks(platform, ctx, "--only lint --skip test-suite", deps)).rejects.toThrow(
@@ -197,7 +197,7 @@ describe("handleChecks", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const deps = createDependencies(
-      createConfig({ quality: { gates: { "lint": { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { "lint": { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
     );
 
     await expect(handleChecks(platform, ctx, "--only does-not-exist", deps)).rejects.toThrow(/unknown gate/i);
@@ -235,7 +235,7 @@ describe("handleChecks", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const recoveredConfig = createConfig({
-      quality: { gates: { "test-suite": { enabled: true, command: "bun test" } } },
+      quality: { gates: { "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] } } },
     });
     const deps = createDependencies(recoveredConfig);
     deps.loadConfig = mock()
@@ -289,7 +289,7 @@ describe("handleChecks", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const recoveredConfig = createConfig({
-      quality: { gates: { "lint": { enabled: true, command: "eslint ." } } },
+      quality: { gates: { "lint": { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } },
     });
     const deps = createDependencies(recoveredConfig);
     deps.loadConfig = mock()
@@ -396,7 +396,7 @@ describe("handleChecks", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const deps = createDependencies(
-      createConfig({ quality: { gates: { "lint": { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { "lint": { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
     );
     deps.loadConfig = mock(() => {
       throw new Error("quality.gates.lint.command: Expected union value");
@@ -446,7 +446,7 @@ describe("handleChecks", () => {
       packageDir: "/repo/packages/beta",
     });
     const deps = createDependencies(
-      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
       createReport(),
       [rootTarget, alphaTarget, betaTarget],
     );
@@ -500,7 +500,7 @@ describe("handleChecks", () => {
       packageDir: "/repo/packages/alpha",
     });
     const deps = createDependencies(
-      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
       createReport(),
       [rootTarget, alphaTarget],
     );
@@ -525,7 +525,7 @@ describe("handleChecks", () => {
       packageDir: "/repo/packages/beta",
     });
     const deps = createDependencies(
-      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
       createReport(),
       [rootTarget, workspaceTarget],
     );
@@ -565,7 +565,7 @@ describe("handleChecks", () => {
       packageDir: "/repo/packages/beta",
     });
     const deps = createDependencies(
-      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
       createReport(),
       [rootTarget, alphaTarget, betaTarget],
     );
@@ -607,7 +607,7 @@ describe("handleChecks", () => {
         quality: {
           gates: {
             "lsp-diagnostics": { enabled: true },
-            "lint": { enabled: true, command: "eslint ." },
+            "lint": { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
           },
         },
       }),
@@ -660,7 +660,7 @@ describe("handleChecks", () => {
         quality: {
           gates: {
             "lsp-diagnostics": { enabled: true },
-            "test-suite": { enabled: true, command: "bun test" },
+            "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] },
           },
         },
       }),
@@ -891,7 +891,7 @@ describe("handleChecks fix-offer", () => {
       overallStatus: "failed",
     });
     const deps = createDependencies(
-      createConfig({ quality: { gates: { typecheck: { enabled: true, command: "tsc --noEmit" }, build: { enabled: true, command: "tsc" } } } }),
+      createConfig({ quality: { gates: { typecheck: { enabled: true, runs: [{ command: "tsc --noEmit", target: { scope: "all-targets" } }] }, build: { enabled: true, runs: [{ command: "tsc", target: { scope: "all-targets" } }] } } } }),
       failedReport,
     );
 
@@ -916,7 +916,7 @@ describe("handleChecks fix-offer", () => {
     const platform = createPlatform();
     const ctx = createContext();
     const deps = createDependencies(
-      createConfig({ quality: { gates: { build: { enabled: true, command: "tsc" } } } }),
+      createConfig({ quality: { gates: { build: { enabled: true, runs: [{ command: "tsc", target: { scope: "all-targets" } }] } } } }),
       createReport({ overallStatus: "passed" }),
     );
 
@@ -939,7 +939,7 @@ describe("handleChecks fix-offer", () => {
       overallStatus: "failed",
     });
     const deps = createDependencies(
-      createConfig({ quality: { gates: { lint: { enabled: true, command: "eslint ." } } } }),
+      createConfig({ quality: { gates: { lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] } } } }),
       failedReport,
     );
 

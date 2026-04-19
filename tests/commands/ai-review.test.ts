@@ -440,6 +440,66 @@ describe("runAiReviewSessionForTest", () => {
     }
   });
 
+  test("supports --target all for monorepo-wide review", async () => {
+    const fixture = createMonorepoFixture();
+    try {
+      const platform = createPlatform();
+      const ctx = createContext({
+        cwd: fixture.repoRoot,
+        includeCustom: false,
+        selectResponses: ["Quick — fast high-signal review"],
+      });
+      const selectedTargets: Array<WorkspaceTarget | null> = [];
+      const deps = createDependencies({
+        reviewOutput: OUTPUT_WITHOUT_FINDINGS,
+        selectedTargets,
+      });
+
+      await runAiReviewSessionForTest(platform, ctx, deps, "--target all");
+
+      expect(deps.selectReviewScope).toHaveBeenCalledWith(platform, ctx, null);
+      expect(selectedTargets.length).toBeGreaterThan(0);
+      expect(selectedTargets.every((target) => target === null)).toBeTrue();
+      const detail = (deps.notifyInfo as any).mock.calls.at(-1)?.[2];
+      expect(typeof detail).toBe("string");
+      expect(detail).not.toContain("target:");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test("offers an explicit All option when reviewing from a monorepo root", async () => {
+    const fixture = createMonorepoFixture();
+    try {
+      const platform = createPlatform();
+      const ctx = createContext({
+        cwd: fixture.repoRoot,
+        includeCustom: false,
+        selectResponses: ["All — root + 2 workspaces", "Quick — fast high-signal review"],
+      });
+      const selectedTargets: Array<WorkspaceTarget | null> = [];
+      const deps = createDependencies({
+        reviewOutput: OUTPUT_WITHOUT_FINDINGS,
+        selectedTargets,
+      });
+
+      await runAiReviewSessionForTest(platform, ctx, deps);
+
+      expect(ctx.ui.select).toHaveBeenCalledWith(
+        "Review target",
+        expect.arrayContaining(["All — root + 2 workspaces"]),
+        expect.objectContaining({
+          helpText: expect.stringContaining("All reviews the root target and every workspace"),
+        }),
+      );
+      expect(deps.selectReviewScope).toHaveBeenCalledWith(platform, ctx, null);
+      expect(selectedTargets.length).toBeGreaterThan(0);
+      expect(selectedTargets.every((target) => target === null)).toBeTrue();
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   test("loads review agents with the selected workspace context", async () => {
     const fixture = createMonorepoFixture();
     try {
