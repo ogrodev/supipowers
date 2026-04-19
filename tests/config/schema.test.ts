@@ -79,6 +79,39 @@ describe("validateConfig", () => {
     expect(result).toEqual({ valid: true, errors: [] });
   });
 
+  test("accepts target-aware command gate runs", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      quality: {
+        gates: {
+          lint: {
+            enabled: true,
+            runs: [
+              { command: "eslint .", target: { scope: "all-targets" } },
+              { command: "eslint .", target: { scope: "workspace", relativeDir: "packages/web" } },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  test("rejects legacy single-command gate shape without migration", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      quality: {
+        gates: {
+          lint: { enabled: true, command: "eslint ." },
+        },
+      },
+    } as unknown);
+
+    expect(result.valid).toBe(false);
+  });
+
+
   test("rejects release.tagFormat without exactly one ${version} placeholder", () => {
     const missingPlaceholder = validateConfig({
       ...DEFAULT_CONFIG,

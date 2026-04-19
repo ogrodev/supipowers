@@ -126,8 +126,15 @@ describe("config command settings", () => {
       updateConfig: mock(updateConfig),
       setupGates: mock(async () => ({
         status: "invalid" as const,
-        proposal: { gates: { "test-suite": { enabled: true } } as any },
-        errors: ["test-suite.command: Expected string"],
+        proposal: {
+          gates: {
+            "test-suite": {
+              enabled: true,
+              runs: [{ command: "bun test", target: { scope: "all-targets" } }],
+            },
+          },
+        },
+        errors: ["test-suite.runs: Expected array"],
       })),
     };
 
@@ -137,7 +144,7 @@ describe("config command settings", () => {
 
     await qualitySetting.set(tmpDir, "Run AI-assisted setup");
 
-    expect(ctx.ui.notify).toHaveBeenCalledWith("test-suite.command: Expected string", "error");
+    expect(ctx.ui.notify).toHaveBeenCalledWith("test-suite.runs: Expected array", "error");
     expect(readProjectConfig(localPaths, tmpDir)).toEqual(originalConfig);
   });
 
@@ -154,8 +161,16 @@ describe("config command settings", () => {
       setupGates: mock(async () => ({
         status: "proposed" as const,
         proposal: {
-          gates: { "lsp-diagnostics": { enabled: true } },
-          notes: ["Typecheck: Detected typecheck commands in workspace targets only."],
+          gates: {
+            typecheck: {
+              enabled: true,
+              runs: [
+                { command: "tsc --noEmit", target: { scope: "root" } },
+                { command: "tsc --build", target: { scope: "all-workspaces" } },
+              ],
+            },
+          },
+          notes: ["Typecheck: Deterministic setup found distinct root and workspace runs."],
         },
       })),
     };
@@ -173,7 +188,17 @@ describe("config command settings", () => {
 
     expect(result).toBe("saved");
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({
-      quality: { gates: { "lsp-diagnostics": { enabled: true } } },
+      quality: {
+        gates: {
+          typecheck: {
+            enabled: true,
+            runs: [
+              { command: "tsc --noEmit", target: { scope: "root" } },
+              { command: "tsc --build", target: { scope: "all-workspaces" } },
+            ],
+          },
+        },
+      },
     });
     expect(fs.existsSync(localPaths.global("config.json"))).toBe(false);
     expect(deps.setupGates).toHaveBeenCalledWith(
@@ -186,7 +211,7 @@ describe("config command settings", () => {
       "Quality gate setup",
       ["Accept", "Revise", "Cancel"],
       expect.objectContaining({
-        helpText: expect.stringContaining("workspace targets only"),
+        helpText: expect.stringContaining("all-workspaces"),
       }),
     );
   });

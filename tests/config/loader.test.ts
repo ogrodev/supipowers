@@ -212,6 +212,48 @@ describe("strict and inspection config loading", () => {
     expect("pipeline" in (merged.release as Record<string, unknown>)).toBe(false);
   });
 
+  test("migrates legacy single-command gates to canonical runs", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      quality: {
+        gates: {
+          lint: { enabled: true, command: "eslint ." },
+          "test-suite": { enabled: false, command: null },
+        },
+      },
+    });
+
+    expect(loadConfig(localPaths, tmpDir).quality.gates).toEqual({
+      lint: {
+        enabled: true,
+        runs: [{ command: "eslint .", target: { scope: "all-targets" } }],
+      },
+      "test-suite": { enabled: false },
+    });
+  });
+
+  test("rejects unknown workspace selectors during load", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      quality: {
+        gates: {
+          lint: {
+            enabled: true,
+            runs: [
+              {
+                command: "eslint .",
+                target: { scope: "workspace", relativeDir: "packages/missing" },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(() => loadConfig(localPaths, tmpDir)).toThrow(
+      /quality\.gates\.lint\.runs\.0\.target\.relativeDir: Unknown workspace target "packages\/missing"/,
+    );
+  });
+
+
   test("inspection load reports malformed JSON without hiding the file", () => {
     writeRawProjectConfig(localPaths, tmpDir, "{ invalid json");
 
@@ -223,14 +265,31 @@ describe("strict and inspection config loading", () => {
 
   test("project quality.gates replaces inherited global gates", () => {
     writeGlobalConfig(localPaths, {
-      quality: { gates: { lint: { enabled: true, command: "eslint ." } } },
+      quality: {
+        gates: {
+          lint: {
+            enabled: true,
+            runs: [{ command: "eslint .", target: { scope: "all-targets" } }],
+          },
+        },
+      },
     });
     writeProjectConfig(localPaths, tmpDir, {
-      quality: { gates: { "test-suite": { enabled: true, command: "npm test" } } },
+      quality: {
+        gates: {
+          "test-suite": {
+            enabled: true,
+            runs: [{ command: "npm test", target: { scope: "all-targets" } }],
+          },
+        },
+      },
     });
 
     expect(loadConfig(localPaths, tmpDir).quality.gates).toEqual({
-      "test-suite": { enabled: true, command: "npm test" },
+      "test-suite": {
+        enabled: true,
+        runs: [{ command: "npm test", target: { scope: "all-targets" } }],
+      },
     });
   });
 
@@ -331,12 +390,22 @@ describe("quality gate recovery helpers", () => {
     });
 
     writeQualityGatesConfig(localPaths, tmpDir, "global", {
-      "test-suite": { enabled: true, command: "bun test" },
+      "test-suite": {
+        enabled: true,
+        runs: [{ command: "bun test", target: { scope: "all-targets" } }],
+      },
     });
 
     expect(readGlobalConfig(localPaths)).toEqual({
       lsp: { setupGuide: false },
-      quality: { gates: { "test-suite": { enabled: true, command: "bun test" } } },
+      quality: {
+        gates: {
+          "test-suite": {
+            enabled: true,
+            runs: [{ command: "bun test", target: { scope: "all-targets" } }],
+          },
+        },
+      },
     });
   });
 });
