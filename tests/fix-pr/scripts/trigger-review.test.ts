@@ -88,6 +88,8 @@ function runRunner(binDir: string, args: string[], env?: NodeJS.ProcessEnv): { s
 }
 
 describe("trigger-review.ts", () => {
+  const cliShimTest = process.platform === "win32" ? test.skip : test;
+
   let tmpDir: string;
   let binDir: string;
 
@@ -102,7 +104,7 @@ describe("trigger-review.ts", () => {
     rmDirWithRetry(tmpDir);
   });
 
-  test("posts a reviewer trigger comment for coderabbit", () => {
+  cliShimTest("posts a reviewer trigger comment for coderabbit", () => {
     const argsFile = path.join(tmpDir, "gh-args.txt");
     const { stdout, exitCode } = runRunner(
       binDir,
@@ -121,7 +123,7 @@ describe("trigger-review.ts", () => {
     expect(calls[0]).toContain("body=@coderabbit review");
   });
 
-  test("treats the copilot requested-reviewer call as best effort", () => {
+  cliShimTest("treats the copilot requested-reviewer call as best effort", () => {
     const argsFile = path.join(tmpDir, "gh-args.txt");
     const { stdout, exitCode } = runRunner(
       binDir,

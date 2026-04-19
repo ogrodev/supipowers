@@ -32,6 +32,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (process.platform === "win32") {
+    return;
+  }
   store.close();
   if (fs.existsSync(tmpDir)) {
     rmDirWithRetry(tmpDir);

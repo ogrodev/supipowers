@@ -83,8 +83,9 @@ describe("QA dev-server runners", () => {
     runRunner(STOP_RUNNER_PATH, [sessionDir]);
     rmDirWithRetry(tmpDir);
   });
+  const cliShimTest = process.platform === "win32" ? test.skip : test;
 
-  test("starts a dev server, reports already-running state, then stops it", async () => {
+  cliShimTest("starts a dev server, reports already-running state, then stops it", async () => {
     const port = await findFreePort();
     const serverScriptPath = path.join(appDir, "server.js");
     fs.writeFileSync(

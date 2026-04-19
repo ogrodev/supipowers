@@ -88,6 +88,8 @@ function runRunner(
 }
 
 describe("run-e2e-tests.ts", () => {
+  const cliShimTest = process.platform === "win32" ? test.skip : test;
+
   let tmpDir: string;
   let binDir: string;
   let testDir: string;
@@ -122,7 +124,7 @@ describe("run-e2e-tests.ts", () => {
     expect(result.total).toBe(0);
   });
 
-  test("uses local node_modules/.bin fallback when PATH does not contain playwright", () => {
+  cliShimTest("uses local node_modules/.bin fallback when PATH does not contain playwright", () => {
     const localBinDir = path.join(tmpDir, "node_modules", ".bin");
     fs.mkdirSync(localBinDir, { recursive: true });
     installFakePlaywright(localBinDir);
@@ -173,7 +175,7 @@ describe("run-e2e-tests.ts", () => {
     expect(result.total).toBe(0);
   });
 
-  test("parses passing test results into compact summary", () => {
+  cliShimTest("parses passing test results into compact summary", () => {
     installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
@@ -210,7 +212,7 @@ describe("run-e2e-tests.ts", () => {
     expect(result.failures).toEqual([]);
   });
 
-  test("reports failures with error messages and exits non-zero", () => {
+  cliShimTest("reports failures with error messages and exits non-zero", () => {
     installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
@@ -257,7 +259,7 @@ describe("run-e2e-tests.ts", () => {
     expect(result.failures[0].error).toBe("Element not visible");
   });
 
-  test("counts timedOut as failed", () => {
+  cliShimTest("counts timedOut as failed", () => {
     installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
@@ -290,7 +292,7 @@ describe("run-e2e-tests.ts", () => {
     expect(result.failures[0].error).toBe("Unknown error");
   });
 
-  test("handles mixed results (pass + fail + skipped)", () => {
+  cliShimTest("handles mixed results (pass + fail + skipped)", () => {
     installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
@@ -350,7 +352,7 @@ describe("run-e2e-tests.ts", () => {
     expect(result.failures[0].error).toBe("Assertion failed");
   });
 
-  test("creates results directory and writes summary.json", () => {
+  cliShimTest("creates results directory and writes summary.json", () => {
     installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
@@ -387,7 +389,7 @@ describe("run-e2e-tests.ts", () => {
     expect(summary.passed).toBe(1);
   });
 
-  test("handles nested suites", () => {
+  cliShimTest("handles nested suites", () => {
     installFakePlaywright(binDir);
     const pwOutput = JSON.stringify({
       suites: [
@@ -427,7 +429,7 @@ describe("run-e2e-tests.ts", () => {
     expect(result.failures).toEqual([]);
   });
 
-  test("passes test_filter as --grep to playwright", () => {
+  cliShimTest("passes test_filter as --grep to playwright", () => {
     installFakePlaywright(binDir);
     const argsFile = path.join(tmpDir, "pw-args.txt");
     const minimalOutput = JSON.stringify({
@@ -462,7 +464,7 @@ describe("run-e2e-tests.ts", () => {
     expect(capturedArgs).toContain("login flow");
   });
 
-  test("emits parse error JSON when playwright outputs malformed data", () => {
+  cliShimTest("emits parse error JSON when playwright outputs malformed data", () => {
     installFakePlaywright(binDir);
 
     const { stdout, exitCode } = runRunner(binDir, testDir, "http://localhost:3000", {

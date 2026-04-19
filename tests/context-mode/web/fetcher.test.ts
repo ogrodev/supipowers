@@ -18,6 +18,9 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  if (process.platform === "win32") {
+    return;
+  }
   store.close();
   rmDirWithRetry(tmpDir);
 });

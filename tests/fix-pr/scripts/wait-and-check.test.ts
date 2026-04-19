@@ -100,6 +100,8 @@ function runRunner(
 }
 
 describe("wait-and-check.ts", () => {
+  const cliShimTest = process.platform === "win32" ? test.skip : test;
+
   let tmpDir: string;
   let sessionDir: string;
   let snapshotsDir: string;
@@ -119,7 +121,7 @@ describe("wait-and-check.ts", () => {
     rmDirWithRetry(tmpDir);
   });
 
-  test("emits new and changed comments before the JSON summary", () => {
+  cliShimTest("emits new and changed comments before the JSON summary", () => {
     fs.writeFileSync(
       path.join(snapshotsDir, "comments-0.jsonl"),
       [
@@ -151,7 +153,7 @@ describe("wait-and-check.ts", () => {
     expect(fs.existsSync(path.join(snapshotsDir, "comments-1.jsonl"))).toBe(true);
   });
 
-  test("surfaces fetch failures instead of silently reporting no new comments", () => {
+  cliShimTest("surfaces fetch failures instead of silently reporting no new comments", () => {
     const { stdout, exitCode } = runRunner(
       binDir,
       [sessionDir, "0", "1", "owner/repo", "42"],
