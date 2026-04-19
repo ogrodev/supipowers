@@ -167,7 +167,7 @@ describe("runQualityGates", () => {
       target: targets.root,
       workspaceTargets: [targets.root],
       gates: {
-        lint: { enabled: true, command: "eslint ." },
+        lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
         "lsp-diagnostics": { enabled: true },
       },
       filters: {},
@@ -194,8 +194,8 @@ describe("runQualityGates", () => {
       workspaceTargets: [targets.root],
       gates: {
         "lsp-diagnostics": { enabled: true },
-        lint: { enabled: true, command: "eslint ." },
-        "test-suite": { enabled: false, command: null },
+        lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
+        "test-suite": { enabled: false },
       },
       filters: { skip: ["lint"] },
       reviewModel: { model: "claude-opus-4-6", thinkingLevel: null, source: "action" },
@@ -222,7 +222,7 @@ describe("runQualityGates", () => {
       workspaceTargets: [targets.root],
       gates: {
         "lsp-diagnostics": { enabled: true },
-        lint: { enabled: true, command: "eslint ." },
+        lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
       },
       filters: { skip: ["lint"] },
       reviewModel: defaultReviewModel,
@@ -266,7 +266,7 @@ describe("runQualityGates", () => {
       target: targets.alpha,
       workspaceTargets: [targets.root, targets.alpha, targets.beta],
       gates: {
-        lint: { enabled: true, command: "eslint ." },
+        lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
       },
       filters: {},
       reviewModel: defaultReviewModel,
@@ -313,7 +313,7 @@ describe("runQualityGates", () => {
       target: targets.alpha,
       workspaceTargets: [targets.root, targets.alpha, targets.beta],
       gates: {
-        lint: { enabled: true, command: "eslint ." },
+        lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
       },
       filters: {},
       reviewModel: defaultReviewModel,
@@ -349,7 +349,7 @@ describe("runQualityGates", () => {
       target: targets.alpha,
       workspaceTargets: [targets.root, targets.alpha, targets.beta],
       gates: {
-        lint: { enabled: true, command: "eslint ." },
+        lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
       },
       filters: {},
       reviewModel: defaultReviewModel,

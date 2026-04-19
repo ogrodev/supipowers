@@ -85,7 +85,12 @@ const BASELINE_FACTS: ProjectFacts = {
 };
 
 const BASELINE_PROPOSAL: SetupProposal = {
-  gates: { "test-suite": { enabled: true, command: "bun test" } },
+  gates: {
+    "test-suite": {
+      enabled: true,
+      runs: [{ command: "bun test", target: { scope: "all-targets" } }],
+    },
+  },
 };
 
 describe("buildAiSetupPrompt", () => {
@@ -99,9 +104,13 @@ describe("buildAiSetupPrompt", () => {
     expect(prompt).toContain("test-suite");
     expect(prompt).toContain("build");
     expect(prompt).toContain("enabled:");
+    expect(prompt).toContain("runs:");
+    expect(prompt).toContain("all-targets");
+    expect(prompt).toContain("workspace");
     expect(prompt).toContain("bun test");
     expect(prompt).toContain("shared across every discovered target");
-    expect(prompt).toContain("package root");
+    expect(prompt).toContain("/supi:checks All must cover the root target and every workspace target deterministically");
+    expect(prompt).toContain("add target-specific runs");
     expect(prompt).toContain("Deterministic baseline notes:");
     expect(prompt).toContain("workspace targets only");
   });
@@ -110,9 +119,18 @@ describe("buildAiSetupPrompt", () => {
 describe("suggestQualityGatesWithAi", () => {
   test("parses a valid QualityGatesConfig payload", async () => {
     const valid = JSON.stringify({
-      lint: { enabled: true, command: "eslint ." },
-      typecheck: { enabled: true, command: "tsc --noEmit" },
-      "test-suite": { enabled: true, command: "bun test" },
+      lint: {
+        enabled: true,
+        runs: [{ command: "eslint .", target: { scope: "all-targets" } }],
+      },
+      typecheck: {
+        enabled: true,
+        runs: [{ command: "tsc --noEmit", target: { scope: "all-workspaces" } }],
+      },
+      "test-suite": {
+        enabled: true,
+        runs: [{ command: "bun test", target: { scope: "all-targets" } }],
+      },
     });
     const { platform, calls } = createFakePlatform([valid]);
 
@@ -125,15 +143,23 @@ describe("suggestQualityGatesWithAi", () => {
 
     expect(calls).toHaveLength(1);
     expect(result).toEqual({
-      lint: { enabled: true, command: "eslint ." },
-      typecheck: { enabled: true, command: "tsc --noEmit" },
-      "test-suite": { enabled: true, command: "bun test" },
+      lint: { enabled: true, runs: [{ command: "eslint .", target: { scope: "all-targets" } }] },
+      typecheck: {
+        enabled: true,
+        runs: [{ command: "tsc --noEmit", target: { scope: "all-workspaces" } }],
+      },
+      "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] },
     });
   });
 
   test("retries with validator feedback when first output fails schema", async () => {
-    const invalid = JSON.stringify({ lint: { enabled: true } }); // missing command
-    const valid = JSON.stringify({ "test-suite": { enabled: true, command: "bun test" } });
+    const invalid = JSON.stringify({ lint: { enabled: true } }); // missing runs
+    const valid = JSON.stringify({
+      "test-suite": {
+        enabled: true,
+        runs: [{ command: "bun test", target: { scope: "all-targets" } }],
+      },
+    });
     const { platform, calls, prompts } = createFakePlatform([invalid, valid]);
 
     const result = await suggestQualityGatesWithAi({
@@ -144,9 +170,14 @@ describe("suggestQualityGatesWithAi", () => {
     });
 
     expect(calls).toHaveLength(2);
-    expect(result).toEqual({ "test-suite": { enabled: true, command: "bun test" } });
-    // The second prompt must embed the previous invalid output + the schema.
+    expect(result).toEqual({
+      "test-suite": {
+        enabled: true,
+        runs: [{ command: "bun test", target: { scope: "all-targets" } }],
+      },
+    });
     expect(prompts[1]).toContain("enabled:");
+    expect(prompts[1]).toContain("runs");
     expect(prompts[1]).toContain("lint");
   });
 
@@ -166,7 +197,10 @@ describe("suggestQualityGatesWithAi", () => {
 
   test("throws on schema mismatch with field-level message", async () => {
     const badPayload = JSON.stringify({
-      lint: { enabled: "yes", command: "eslint" },
+      lint: {
+        enabled: true,
+        runs: [{ command: "eslint", target: { scope: "workspace" } }],
+      },
     });
     const { platform } = createFakePlatform([badPayload, badPayload, badPayload]);
 

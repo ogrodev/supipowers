@@ -14,6 +14,18 @@ function createContext(options?: {
     changedFiles: ["src/example.ts"],
     scopeFiles: ["src/example.ts"],
     fileScope: "changed-files",
+    target: {
+      id: "project",
+      name: "project",
+      kind: "root",
+      repoRoot: "/tmp/project",
+      packageDir: "/tmp/project",
+      manifestPath: "/tmp/project/package.json",
+      relativeDir: ".",
+      version: "1.0.0",
+      private: true,
+      packageManager: "bun",
+    },
     exec: async () => ({ stdout: "", stderr: "", code: 0 }),
     execShell: async () => ({ stdout: "", stderr: "", code: 0 }),
     getLspDiagnostics: async () => {

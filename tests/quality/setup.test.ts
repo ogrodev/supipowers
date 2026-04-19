@@ -10,6 +10,9 @@ import {
   setupGates,
 } from "../../src/quality/setup.js";
 
+import type { QualityGatesConfig } from "../../src/types.js";
+
+
 function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
   return {
     dotDir: ".omp",
@@ -106,7 +109,7 @@ describe("setupGates", () => {
       throw new Error("Expected a proposed setup result");
     }
     expect(result.proposal).toMatchObject({
-      gates: { "test-suite": { enabled: true, command: "bun test" } },
+      gates: { "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] } },
     });
   });
 
@@ -173,11 +176,110 @@ describe("setupGates", () => {
     if (result.status !== "proposed") {
       throw new Error("Expected a proposed setup result");
     }
-    expect(result.proposal.gates["typecheck"]).toEqual({ enabled: true, command: "tsc --noEmit" });
+    expect(result.proposal.gates["typecheck"]).toEqual({ enabled: true, runs: [{ command: "tsc --noEmit", target: { scope: "all-targets" } }] });
     expect(result.proposal.notes).toEqual(
       expect.arrayContaining([expect.stringContaining("shared across all targets")]),
     );
   });
+
+  test("deterministic setup emits target-aware runs when root and workspace coverage differ", async () => {
+    writePackageJson(tmpDir, {
+      name: "repo-root",
+      private: true,
+      workspaces: ["packages/*"],
+      scripts: { test: "bun test", build: "bun run build:root" },
+      packageManager: "bun@1.3.10",
+    });
+    writePackageJson(path.join(tmpDir, "packages", "web"), {
+      name: "web",
+      scripts: { test: "bun test", build: "bun run build:workspace" },
+    });
+    writePackageJson(path.join(tmpDir, "packages", "api"), {
+      name: "api",
+      scripts: { test: "bun test", build: "bun run build:workspace" },
+    });
+
+    const result = await setupGates(
+      createPlatform(localPaths),
+      tmpDir,
+      createInspection(),
+      { mode: "deterministic" },
+    );
+
+    expect(result.status).toBe("proposed");
+    if (result.status !== "proposed") {
+      throw new Error("Expected a proposed setup result");
+    }
+    expect(result.proposal.gates.build).toEqual({
+      enabled: true,
+      runs: [
+        { command: "bun run build:root", target: { scope: "root" } },
+        { command: "bun run build:workspace", target: { scope: "all-workspaces" } },
+      ],
+    });
+  });
+
+  test("accepts target-aware AI-assisted proposals", async () => {
+    writePackageJson(tmpDir, {
+      name: "repo-root",
+      private: true,
+      workspaces: ["packages/*"],
+      scripts: { test: "bun test" },
+      packageManager: "bun@1.3.10",
+    });
+    writePackageJson(path.join(tmpDir, "packages", "web"), {
+      name: "web",
+      scripts: { typecheck: "tsc --noEmit", test: "bun test" },
+    });
+    writePackageJson(path.join(tmpDir, "packages", "api"), {
+      name: "api",
+      scripts: { typecheck: "tsc --build packages/api/tsconfig.json", test: "bun test" },
+    });
+
+    const result = await setupGates(
+      createPlatform(localPaths),
+      tmpDir,
+      createInspection(),
+      { mode: "ai-assisted" },
+      {
+        suggestWithAi: mock(async (): Promise<QualityGatesConfig> => ({
+          typecheck: {
+            enabled: true,
+            runs: [
+              { command: "tsc --noEmit", target: { scope: "workspace", relativeDir: "packages/web" } },
+              {
+                command: "tsc --build packages/api/tsconfig.json",
+                target: { scope: "workspace", relativeDir: "packages/api" },
+              },
+            ],
+          },
+        })),
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "proposed",
+      proposal: {
+        gates: {
+          typecheck: {
+            enabled: true,
+            runs: [
+              { command: "tsc --noEmit", target: { scope: "workspace", relativeDir: "packages/web" } },
+              {
+                command: "tsc --build packages/api/tsconfig.json",
+                target: { scope: "workspace", relativeDir: "packages/api" },
+              },
+            ],
+          },
+        },
+        notes: expect.arrayContaining([
+          expect.stringContaining("workspace targets only"),
+          expect.stringContaining("shared across all targets"),
+        ]),
+      },
+    });
+  });
+
 
   test("passes per-target package scripts to AI-assisted setup in monorepos", async () => {
     writePackageJson(tmpDir, {
@@ -203,9 +305,14 @@ describe("setupGates", () => {
       createInspection(),
       { mode: "ai-assisted" },
       {
-        suggestWithAi: mock(async ({ projectFacts }) => {
+        suggestWithAi: mock(async ({ projectFacts }): Promise<QualityGatesConfig> => {
           receivedFacts = projectFacts;
-          return { typecheck: { enabled: true, command: "tsc --noEmit" } };
+          return {
+            typecheck: {
+              enabled: true,
+              runs: [{ command: "tsc --noEmit", target: { scope: "all-targets" } }],
+            },
+          };
         }),
       },
     );
@@ -249,7 +356,7 @@ describe("interactivelySaveGateSetup", () => {
     } as any;
 
     await interactivelySaveGateSetup(ctx, localPaths, tmpDir, {
-      gates: { "test-suite": { enabled: true, command: "bun test" } },
+      gates: { "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] } },
     });
 
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({ lsp: { setupGuide: false } });
@@ -278,12 +385,12 @@ describe("interactivelySaveGateSetup", () => {
     } as any;
 
     await interactivelySaveGateSetup(ctx, localPaths, tmpDir, {
-      gates: { "test-suite": { enabled: true, command: "bun test" } },
+      gates: { "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] } },
     });
 
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({
       lsp: { setupGuide: false },
-      quality: { gates: { "test-suite": { enabled: true, command: "bun test" } } },
+      quality: { gates: { "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] } } },
     });
   });
 
@@ -337,7 +444,7 @@ describe("interactivelySaveGateSetup", () => {
     } as any;
 
     await interactivelySaveGateSetup(ctx, localPaths, tmpDir, {
-      gates: { "test-suite": { enabled: true, command: "bun test" } },
+      gates: { "test-suite": { enabled: true, runs: [{ command: "bun test", target: { scope: "all-targets" } }] } },
     });
 
     expect(readProjectConfig(localPaths, tmpDir)).toEqual({
