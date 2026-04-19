@@ -271,10 +271,22 @@ export interface LspDiagnosticsGateConfig {
   enabled: boolean;
 }
 
+/** Canonical target selectors for command-driven quality-gate runs. */
+export type CommandGateRunTarget =
+  | { scope: "all-targets" }
+  | { scope: "root" }
+  | { scope: "all-workspaces" }
+  | { scope: "workspace"; relativeDir: string };
+
+export interface CommandGateRun {
+  command: string;
+  target: CommandGateRunTarget;
+}
+
 /** Shared config for command-driven gates. */
 export type CommandGateConfig =
-  | { enabled: false; command?: string | null }
-  | { enabled: true; command: string };
+  | { enabled: false }
+  | { enabled: true; runs: CommandGateRun[] };
 
 export type LintGateConfig = CommandGateConfig;
 export type TypecheckGateConfig = CommandGateConfig;
@@ -331,6 +343,7 @@ export interface GateExecutionContext {
   changedFiles: string[];
   scopeFiles: string[];
   fileScope: "changed-files" | "all-files";
+  target: WorkspaceTarget;
   exec: (cmd: string, args: string[], opts?: ExecOptions) => Promise<ExecResult>;
   execShell: (command: string, opts?: ExecOptions) => Promise<ExecResult>;
   getLspDiagnostics: (

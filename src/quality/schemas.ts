@@ -9,18 +9,53 @@ export const LspDiagnosticsGateConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const CommandGateRunTargetSchema = Type.Union([
+  Type.Object(
+    {
+      scope: Type.Literal("all-targets"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      scope: Type.Literal("root"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      scope: Type.Literal("all-workspaces"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      scope: Type.Literal("workspace"),
+      relativeDir: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const CommandGateRunSchema = Type.Object(
+  {
+    command: Type.String({ minLength: 1 }),
+    target: CommandGateRunTargetSchema,
+  },
+  { additionalProperties: false },
+);
+
 export const CommandGateConfigSchema = Type.Union([
   Type.Object(
     {
       enabled: Type.Literal(false),
-      command: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     },
     { additionalProperties: false },
   ),
   Type.Object(
     {
       enabled: Type.Literal(true),
-      command: Type.String({ minLength: 1 }),
+      runs: Type.Array(CommandGateRunSchema, { minItems: 1 }),
     },
     { additionalProperties: false },
   ),

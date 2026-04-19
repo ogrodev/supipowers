@@ -2,12 +2,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
+  CommandGateId,
   ConfigScope,
   SupipowersConfig,
   ReleaseChannel,
   QualityGatesConfig,
 } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
+import { resolvePackageManager } from "../workspace/package-manager.js";
+import {
+  discoverWorkspaceTargets,
+  normalizeWorkspaceRelativePath,
+} from "../workspace/targets.js";
 import { getRootConfigPath } from "../workspace/state-paths.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
 import {
@@ -187,6 +193,93 @@ function normalizeReleaseChannels(
   return [];
 }
 
+const COMMAND_GATE_IDS: CommandGateId[] = ["lint", "typecheck", "format", "test-suite", "build"];
+
+function createAllTargetsRun(command: string): { command: string; target: { scope: "all-targets" } } {
+  return {
+    command,
+    target: { scope: "all-targets" },
+  };
+}
+
+function normalizeCommandGateRunTarget(target: unknown): unknown {
+  const record = asRecord(target);
+  if (!record || typeof record.scope !== "string") {
+    return target;
+  }
+
+  switch (record.scope) {
+    case "all-targets":
+    case "root":
+    case "all-workspaces":
+      return { scope: record.scope };
+    case "workspace":
+      return {
+        scope: "workspace",
+        relativeDir:
+          typeof record.relativeDir === "string"
+            ? normalizeWorkspaceRelativePath(record.relativeDir.trim())
+            : record.relativeDir,
+      };
+    default:
+      return target;
+  }
+}
+
+function normalizeCommandGateRuns(runs: unknown): unknown {
+  if (!Array.isArray(runs)) {
+    return runs;
+  }
+
+  return runs.map((run) => {
+    const record = asRecord(run);
+    if (!record) {
+      return run;
+    }
+
+    return {
+      ...record,
+      command: typeof record.command === "string" ? record.command.trim() : record.command,
+      target: normalizeCommandGateRunTarget(record.target),
+    };
+  });
+}
+
+function migrateCommandGateConfig(config: unknown): unknown {
+  const record = asRecord(config);
+  if (!record) {
+    return config;
+  }
+
+  if (record.enabled === false) {
+    return { enabled: false };
+  }
+
+  if (record.enabled !== true) {
+    return config;
+  }
+
+  if (Array.isArray(record.runs)) {
+    return {
+      enabled: true,
+      runs: normalizeCommandGateRuns(record.runs),
+    };
+  }
+
+  const legacyCommand =
+    typeof record.command === "string" && record.command.trim().length > 0
+      ? record.command.trim()
+      : null;
+  if (legacyCommand) {
+    return {
+      enabled: true,
+      runs: [createAllTargetsRun(legacyCommand)],
+    };
+  }
+
+  return { enabled: true };
+}
+
 function legacyGatesFromProfile(
   profileName: string | null,
   legacyTestCommand: string | null,
@@ -198,7 +291,10 @@ function legacyGatesFromProfile(
   }
 
   if (legacyTestCommand) {
-    gates["test-suite"] = { enabled: true, command: legacyTestCommand };
+    gates["test-suite"] = {
+      enabled: true,
+      runs: [createAllTargetsRun(legacyTestCommand)],
+    };
   }
 
   return Object.keys(gates).length > 0 ? gates : null;
@@ -241,6 +337,12 @@ function migrateConfig(config: Record<string, unknown>): Record<string, unknown>
     if (gates) {
       // Strip legacy ai-review gate — removed from the schema in the checks/review split.
       delete gates["ai-review"];
+
+      for (const gateId of COMMAND_GATE_IDS) {
+        if (gateId in gates) {
+          gates[gateId] = migrateCommandGateConfig(gates[gateId]);
+        }
+      }
     }
     if (!gates || Object.keys(gates).length === 0) {
       const legacyGates = legacyGatesFromProfile(legacyProfile, legacyTestCommand);
@@ -248,7 +350,10 @@ function migrateConfig(config: Record<string, unknown>): Record<string, unknown>
         quality.gates = legacyGates as unknown as Record<string, unknown>;
       }
     } else if (legacyTestCommand && !("test-suite" in gates)) {
-      gates["test-suite"] = { enabled: true, command: legacyTestCommand };
+      gates["test-suite"] = {
+        enabled: true,
+        runs: [createAllTargetsRun(legacyTestCommand)],
+      };
       quality.gates = gates;
     }
     migrated.quality = quality;
@@ -296,12 +401,70 @@ function readConfigLayers(
   });
 }
 
+function collectCommandGateSelectorValidationErrors(
+  config: Record<string, unknown>,
+  repoRoot: string,
+): ConfigValidationError[] {
+  const quality = asRecord(config.quality);
+  const gates = asRecord(quality?.gates);
+  if (!gates) {
+    return [];
+  }
+
+  const workspaceRelativeDirs = new Set(
+    discoverWorkspaceTargets(repoRoot, resolvePackageManager(repoRoot).id)
+      .filter((target) => target.kind === "workspace")
+      .map((target) => target.relativeDir),
+  );
+
+  const errors: ConfigValidationError[] = [];
+  for (const gateId of COMMAND_GATE_IDS) {
+    const gateConfig = asRecord(gates[gateId]);
+    if (!gateConfig || gateConfig.enabled !== true || !Array.isArray(gateConfig.runs)) {
+      continue;
+    }
+
+    gateConfig.runs.forEach((run, index) => {
+      const target = asRecord(asRecord(run)?.target);
+      if (target?.scope !== "workspace") {
+        return;
+      }
+
+      const relativeDir =
+        typeof target.relativeDir === "string"
+          ? normalizeWorkspaceRelativePath(target.relativeDir)
+          : null;
+      if (relativeDir && workspaceRelativeDirs.has(relativeDir)) {
+        return;
+      }
+
+      errors.push({
+        path: `quality.gates.${gateId}.runs.${index}.target.relativeDir`,
+        message: `Unknown workspace target "${String(target.relativeDir)}"`,
+      });
+    });
+  }
+
+  return errors;
+}
+
+function collectAllValidationErrors(
+  config: Record<string, unknown>,
+  repoRoot: string,
+): ConfigValidationError[] {
+  return [
+    ...collectConfigValidationErrors(config),
+    ...collectCommandGateSelectorValidationErrors(config, repoRoot),
+  ];
+}
+
 function inspectScopeConfig(
   paths: PlatformPaths,
   cwd: string,
   scope: ConfigScope,
   options?: ConfigResolutionOptions,
- ): ScopedConfigInspection {
+): ScopedConfigInspection {
+  const { repoRoot } = resolveConfigContext(cwd, options);
   const filePath = getConfigPath(paths, cwd, scope, options);
   const readResult = readJsonFile(scope, filePath);
   if (readResult.error) {
@@ -320,7 +483,7 @@ function inspectScopeConfig(
 
   const hasOwnQualityGates = !!readResult.data && hasOwnNestedProperty(readResult.data, "quality", "gates");
   const mergedConfig = mergeConfigLayers(DEFAULT_CONFIG, readResult.data);
-  const validationErrors = collectConfigValidationErrors(mergedConfig);
+  const validationErrors = collectAllValidationErrors(mergedConfig, repoRoot);
   const qualityGateValidationErrors = hasOwnQualityGates
     ? validationErrors.filter((error) => error.path === "quality.gates" || error.path.startsWith("quality.gates."))
     : [];
@@ -435,7 +598,10 @@ export function formatConfigErrors(result: InspectionLoadResult): string {
   return messages.join("\n") || "Unknown config error";
 }
 
-function buildInspectionLoadResult(layers: ResolvedConfigLayerRead[]): InspectionLoadResult {
+function buildInspectionLoadResult(
+  layers: ResolvedConfigLayerRead[],
+  repoRoot: string,
+): InspectionLoadResult {
   const mergedConfig = mergeConfigLayers(
     DEFAULT_CONFIG,
     ...layers.map((layer) => layer.readResult.data),
@@ -443,7 +609,7 @@ function buildInspectionLoadResult(layers: ResolvedConfigLayerRead[]): Inspectio
   const parseErrors = layers
     .map((layer) => layer.readResult.error)
     .filter((error): error is ConfigParseError => error !== null);
-  const validationErrors = collectConfigValidationErrors(mergedConfig);
+  const validationErrors = collectAllValidationErrors(mergedConfig, repoRoot);
 
   return {
     mergedConfig,
@@ -462,13 +628,14 @@ export function inspectConfigAtScope(
   scope: ConfigScope,
   options?: ConfigResolutionOptions,
 ): InspectionLoadResult {
+  const { repoRoot } = resolveConfigContext(cwd, options);
   const layers = readConfigLayers(paths, cwd, options).filter((layer) =>
     scope === "global"
       ? layer.scope === "global"
       : layer.scope === "global" || layer.scope === "root",
   );
 
-  return buildInspectionLoadResult(layers);
+  return buildInspectionLoadResult(layers, repoRoot);
 }
 
 export function inspectConfig(
@@ -476,7 +643,8 @@ export function inspectConfig(
   cwd: string,
   options?: ConfigResolutionOptions,
 ): InspectionLoadResult {
-  return buildInspectionLoadResult(readConfigLayers(paths, cwd, options));
+  const { repoRoot } = resolveConfigContext(cwd, options);
+  return buildInspectionLoadResult(readConfigLayers(paths, cwd, options), repoRoot);
 }
 
 /** Load config with global -> repository layering over defaults. */
@@ -494,8 +662,9 @@ export function loadConfig(
   return result.effectiveConfig;
 }
 
-function assertValidConfig(data: unknown): void {
-  const validationErrors = collectConfigValidationErrors(data);
+function assertValidConfig(data: unknown, repoRoot: string): void {
+  const record = asRecord(data);
+  const validationErrors = record ? collectAllValidationErrors(record, repoRoot) : collectConfigValidationErrors(data);
 
   if (validationErrors.length === 0) {
     return;
@@ -508,7 +677,6 @@ function assertValidConfig(data: unknown): void {
   );
 }
 
-
 /** Save a full config document to the selected scope. */
 export function saveConfig(
   paths: PlatformPaths,
@@ -516,7 +684,8 @@ export function saveConfig(
   config: SupipowersConfig,
   options?: ConfigMutationOptions,
  ): void {
-  assertValidConfig(config);
+  const { repoRoot } = resolveConfigContext(cwd, options);
+  assertValidConfig(config, repoRoot);
 
   const scope = options?.scope ?? "root";
   const configPath = getConfigPath(paths, cwd, scope, options);
@@ -531,6 +700,7 @@ export function updateConfig(
   updates: Record<string, unknown>,
   options?: ConfigMutationOptions,
  ): SupipowersConfig {
+  const { repoRoot } = resolveConfigContext(cwd, options);
   const scope = options?.scope ?? "root";
   const configPath = getConfigPath(paths, cwd, scope, options);
   const current = readJsonFile(scope, configPath);
@@ -548,7 +718,7 @@ export function updateConfig(
     DEFAULT_CONFIG,
     ...layers.map((layer) => layer.scope === scope ? nextScopeData : layer.readResult.data),
   );
-  assertValidConfig(mergedConfig);
+  assertValidConfig(mergedConfig, repoRoot);
 
   writeRawConfigFile(configPath, nextScopeData);
   return mergedConfig as unknown as SupipowersConfig;
