@@ -254,7 +254,7 @@ describe("buildResumeSnapshot — reference format", () => {
     const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
     expect(snapshot).toContain("<git>");
     expect(snapshot).toContain("git push origin main");
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 
   test("cwd section from cwd events", () => {
     writeEvent("cwd", { cwd: "/Users/dev/project" }, 4);
