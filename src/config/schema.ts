@@ -1,11 +1,12 @@
-// src/config/schema.ts
 import type { TSchema } from "@sinclair/typebox";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { SupipowersConfig } from "../types.js";
 import { QualityGatesSchema } from "../quality/schemas.js";
+import { UltraPlanConfigSchema } from "../ultraplan/contracts.js";
 
 const TAG_FORMAT_PATTERN = "^(?:(?!\\$\\{version\\}).)*\\$\\{version\\}(?:(?!\\$\\{version\\}).)*$";
+
 
 export const ConfigSchema = Type.Object(
   {
@@ -46,6 +47,7 @@ export const ConfigSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
+    ultraplan: UltraPlanConfigSchema,
     contextMode: Type.Object(
       {
         enabled: Type.Boolean(),

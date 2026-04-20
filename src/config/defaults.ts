@@ -18,6 +18,10 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     tagFormat: "v${version}",
     customChannels: {},
   },
+  ultraplan: {
+    slots: {},
+    reviewGates: {},
+  },
   contextMode: {
     enabled: true,
     compressionThreshold: 4096,
@@ -31,5 +35,5 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   },
   mcp: {
     closeSessionsOnExit: false,
-  },
+  }
 };
