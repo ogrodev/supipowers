@@ -543,6 +543,7 @@ export interface SupipowersConfig {
     /** User-defined custom release channels keyed by channel ID */
     customChannels: Record<string, CustomChannelConfig>;
   };
+  ultraplan: UltraPlanConfig;
   contextMode: ContextModeConfig;
   mcp: McpManagementConfig;
 }
@@ -646,6 +647,81 @@ export type UltraPlanAgentSlotName =
   | "infrastructure-tester"
   | "infrastructure-domain-reviewer"
   | "infrastructure-stack-reviewer";
+export type UltraPlanReviewerSlotName = Extract<
+  UltraPlanAgentSlotName,
+  `${UltraPlanStackId}-domain-reviewer` | `${UltraPlanStackId}-stack-reviewer`
+>;
+export type UltraPlanSlotOverride = {
+  agentName?: string;
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
+};
+export interface UltraPlanReviewGatePolicy {
+  enabled: boolean;
+}
+export interface UltraPlanConfig {
+  slots: Partial<Record<UltraPlanAgentSlotName, UltraPlanSlotOverride>>;
+  reviewGates: Partial<Record<UltraPlanReviewerSlotName, UltraPlanReviewGatePolicy>>;
+}
+export interface UltraPlanAgentDefinitionFrontmatter {
+  name: string;
+  description: string;
+  supportedSlots: UltraPlanAgentSlotName[];
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
+  focus?: string;
+}
+
+export type UltraPlanAgentDefinitionSource = "built-in" | "global";
+export interface UltraPlanAgentDefinition extends UltraPlanAgentDefinitionFrontmatter {
+  prompt: string;
+  filePath: string;
+  source: UltraPlanAgentDefinitionSource;
+}
+
+export type UltraPlanSelectionSource = "default" | "project";
+export type UltraPlanResolvedValueSource = "project" | "global" | "built-in" | "unset";
+export interface ResolvedUltraPlanSlotBinding {
+  slot: UltraPlanAgentSlotName;
+  agentType: UltraPlanAgentType;
+  agentName: string;
+  model: string | null;
+  thinkingLevel: ThinkingLevel | null;
+  selectionSource: UltraPlanSelectionSource;
+  definitionSource: UltraPlanAgentDefinitionSource;
+  modelSource: UltraPlanResolvedValueSource;
+  thinkingLevelSource: UltraPlanResolvedValueSource;
+  definitionPath: string | null;
+}
+
+export interface ResolvedUltraPlanCatalog {
+  slots: Record<UltraPlanAgentSlotName, ResolvedUltraPlanSlotBinding | null>;
+  reviewGates: Partial<Record<UltraPlanReviewerSlotName, UltraPlanReviewGatePolicy>>;
+}
+export type UltraPlanCatalogErrorCode =
+  | "missing-built-in-definition"
+  | "required-slot-unresolved"
+  | "unsupported-slot"
+  | "invalid-agent-definition"
+  | "duplicate-agent-name"
+  | "reserved-agent-name"
+  | "invalid-config"
+  | "catalog-io";
+
+export interface UltraPlanCatalogError {
+  slot: UltraPlanAgentSlotName | null;
+  code: UltraPlanCatalogErrorCode;
+  message: string;
+  path: string | null;
+}
+
+export type UltraPlanCatalogLoadResult =
+  | { ok: true; value: ResolvedUltraPlanCatalog }
+  | { ok: false; value: ResolvedUltraPlanCatalog; errors: UltraPlanCatalogError[] };
+
+
+
+
 export type UltraPlanProofType = "test" | "command" | "review" | "artifact";
 export type UltraPlanBlockerScope = "session" | "stack" | "domain" | "scenario";
 export type UltraPlanRecoveryMode = "retry" | "await-user" | "manual";
