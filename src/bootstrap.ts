@@ -22,6 +22,7 @@ import { registerOptimizeContextCommand, handleOptimizeContext } from "./command
 import { registerCommitCommand, handleCommit } from "./commands/commit.js";
 import { registerGenerateCommand } from "./commands/generate.js";
 import { registerAgentsCommand, handleAgents } from "./commands/agents.js";
+import { registerUltraplanCommand, handleUltraplan } from "./commands/ultraplan.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { loadMcpRegistry } from "./mcp/config.js";
@@ -56,6 +57,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:release": (platform, ctx, args) => handleRelease(platform, ctx, args),
   "supi:checks": (platform, ctx, args) => handleChecksCommand(platform, ctx, args),
   "supi:agents": (platform, ctx, args) => handleAgents(platform, ctx, args),
+  "supi:ultraplan": (platform, ctx, args) => handleUltraplan(platform, ctx, args),
 };
 
 let pendingTags: string[] = [];
@@ -91,6 +93,7 @@ export function bootstrap(platform: Platform): void {
   registerGenerateCommand(platform);
   registerAgentsCommand(platform);
   registerUiDesignCommand(platform);
+  registerUltraplanCommand(platform);
 
 
   // Register plan approval flow (agent_end hook for plan approval UI)
