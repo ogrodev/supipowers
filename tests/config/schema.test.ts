@@ -1,11 +1,88 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { validateConfig } from "../../src/config/schema.js";
+import type { SupipowersConfig, UltraPlanReviewerSlotName, UltraPlanSlotOverride } from "../../src/types.js";
+
+const rootUltraPlanConfigFixture = {
+  ...DEFAULT_CONFIG,
+  ultraplan: {
+    slots: {
+      "backend-tester": {
+        agentName: "integration-breaker",
+      },
+    },
+    reviewGates: {
+      "frontend-domain-reviewer": {
+        enabled: true,
+      },
+    },
+  },
+} satisfies SupipowersConfig;
+
+const sparseUltraPlanOverride = {
+  thinkingLevel: "low",
+} satisfies UltraPlanSlotOverride;
+
+const invalidReviewerGateSlots = {
+  // @ts-expect-error reviewer gates are reviewer-slot only
+  "frontend-executor": { enabled: true },
+} satisfies Partial<Record<UltraPlanReviewerSlotName, { enabled: boolean }>>;
+
+void rootUltraPlanConfigFixture;
+void sparseUltraPlanOverride;
+void invalidReviewerGateSlots;
+
 
 describe("validateConfig", () => {
   test("accepts the default config", () => {
     expect(validateConfig(DEFAULT_CONFIG)).toEqual({ valid: true, errors: [] });
   });
+
+  test("accepts ultraplan slot overrides for named agents", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      ultraplan: {
+        slots: {
+          "backend-tester": {
+            agentName: "integration-breaker",
+          },
+        },
+      },
+    } as unknown);
+
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  test("accepts ultraplan slot overrides with only thinkingLevel", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      ultraplan: {
+        slots: {
+          "frontend-executor": {
+            thinkingLevel: "low",
+          },
+        },
+      },
+    } as unknown);
+
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  test("rejects ultraplan reviewer gates for executor slots", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      ultraplan: {
+        reviewGates: {
+          "frontend-executor": {
+            enabled: true,
+          },
+        },
+      },
+    } as unknown);
+
+    expect(result.valid).toBe(false);
+  });
+
 
   test("rejects unknown gate ids", () => {
     const result = validateConfig({

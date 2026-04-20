@@ -14,7 +14,41 @@ import {
 } from "../../src/config/loader.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { createPaths } from "../../src/platform/types.js";
-import type { ReviewReport } from "../../src/types.js";
+import type {
+  ReviewReport,
+  SupipowersConfig,
+  UltraPlanReviewGatePolicy,
+  UltraPlanSlotOverride,
+} from "../../src/types.js";
+
+const typedUltraPlanProjectConfig = {
+  ...DEFAULT_CONFIG,
+  ultraplan: {
+    slots: {
+      "backend-tester": {
+        agentName: "integration-breaker",
+      },
+    },
+    reviewGates: {
+      "frontend-stack-reviewer": {
+        enabled: true,
+      },
+    },
+  },
+} satisfies SupipowersConfig;
+
+const typedUltraPlanThinkingOnlyOverride = {
+  thinkingLevel: "medium",
+} satisfies UltraPlanSlotOverride;
+
+const typedUltraPlanReviewGatePolicy = {
+  enabled: false,
+} satisfies UltraPlanReviewGatePolicy;
+
+void typedUltraPlanProjectConfig;
+void typedUltraPlanThinkingOnlyOverride;
+void typedUltraPlanReviewGatePolicy;
+
 
 const paths = createPaths(".omp");
 
@@ -123,7 +157,8 @@ describe("loadConfig", () => {
   });
 
   test("returns defaults when no config files exist", () => {
-    const config = loadConfig(paths, tmpDir);
+    const localPaths = createTestPaths(tmpDir);
+    const config = loadConfig(localPaths, tmpDir);
     expect(config).toEqual(DEFAULT_CONFIG);
   });
 
@@ -135,13 +170,14 @@ describe("loadConfig", () => {
   });
 
   test("merges project config over defaults", () => {
+    const localPaths = createTestPaths(tmpDir);
     const configDir = path.join(tmpDir, ".omp", "supipowers");
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, "config.json"),
       JSON.stringify({ contextMode: { compressionThreshold: 8192 } }),
     );
-    const config = loadConfig(paths, tmpDir);
+    const config = loadConfig(localPaths, tmpDir);
     expect(config.contextMode.compressionThreshold).toBe(8192);
     expect(config.contextMode.enabled).toBe(true);
   });
@@ -159,6 +195,106 @@ describe("strict and inspection config loading", () => {
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  test("strict load accepts root ultraplan slot mappings", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      ultraplan: {
+        slots: {
+          "backend-tester": {
+            agentName: "integration-breaker",
+          },
+          "frontend-executor": {
+            thinkingLevel: "low",
+          },
+        },
+      },
+    });
+
+    expect(loadConfig(localPaths, tmpDir).ultraplan).toEqual({
+      slots: {
+        "backend-tester": {
+          agentName: "integration-breaker",
+        },
+        "frontend-executor": {
+          thinkingLevel: "low",
+        },
+      },
+      reviewGates: {},
+    });
+  });
+
+  test("strict load rejects root ultraplan reviewer gates for executor slots", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      ultraplan: {
+        reviewGates: {
+          "frontend-executor": {
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    expect(() => loadConfig(localPaths, tmpDir)).toThrow(/ultraplan\.reviewGates/);
+  });
+
+
+  test("strict load rejects global ultraplan mappings", () => {
+    writeGlobalConfig(localPaths, {
+      ultraplan: {
+        slots: {
+          "backend-tester": {
+            agentName: "integration-breaker",
+          },
+        },
+      },
+    });
+
+    expect(() => loadConfig(localPaths, tmpDir)).toThrow(/ultraplan/);
+  });
+
+  test("strict load rejects any global ultraplan subtree", () => {
+    writeGlobalConfig(localPaths, {
+      ultraplan: {
+        slots: {
+          "backend-tester": {},
+        },
+      },
+    });
+
+    expect(() => loadConfig(localPaths, tmpDir)).toThrow(/ultraplan/);
+  });
+
+
+  test("strict load keeps root ultraplan config sparse and unresolved", () => {
+    writeGlobalConfig(localPaths, {
+      lsp: {
+        setupGuide: false,
+      },
+    });
+    writeProjectConfig(localPaths, tmpDir, {
+      ultraplan: {
+        slots: {
+          "frontend-executor": {
+            thinkingLevel: "low",
+          },
+        },
+      },
+    });
+
+    expect(loadConfig(localPaths, tmpDir)).toMatchObject({
+      lsp: { setupGuide: false },
+      ultraplan: {
+        slots: {
+          "frontend-executor": {
+            thinkingLevel: "low",
+          },
+        },
+        reviewGates: {},
+      },
+    });
+    expect(loadConfig(localPaths, tmpDir).ultraplan.slots["frontend-executor"]?.agentName).toBeUndefined();
+  });
+
 
   test("strict load rejects invalid quality gate config", () => {
     writeProjectConfig(localPaths, tmpDir, {
@@ -442,6 +578,40 @@ describe("saveConfig / updateConfig", () => {
     expect(saved.version).toBe("1.0.0");
   });
 
+  test("saveConfig rejects non-empty ultraplan policy in global scope", () => {
+    const localPaths = createTestPaths(tmpDir);
+
+    expect(() =>
+      saveConfig(
+        localPaths,
+        tmpDir,
+        {
+          ...DEFAULT_CONFIG,
+          ultraplan: {
+            slots: {
+              "backend-tester": {
+                agentName: "integration-breaker",
+              },
+            },
+            reviewGates: {},
+          },
+        },
+        { scope: "global" },
+      ),
+    ).toThrow(/ultraplan/);
+  });
+
+  test("saveConfig allows empty default ultraplan in global scope and omits it on disk", () => {
+    const localPaths = createTestPaths(tmpDir);
+
+    saveConfig(localPaths, tmpDir, DEFAULT_CONFIG, { scope: "global" });
+
+    const saved = readGlobalConfig(localPaths) as Record<string, unknown>;
+    expect(saved.ultraplan).toBeUndefined();
+    expect((saved.release as Record<string, unknown>).tagFormat).toBe("v${version}");
+  });
+
+
   test("saveConfig rejects invalid release.tagFormat", () => {
     expect(() =>
       saveConfig(paths, tmpDir, {
@@ -455,11 +625,12 @@ describe("saveConfig / updateConfig", () => {
   });
 
   test("updateConfig deep-merges and persists", () => {
-    const updated = updateConfig(paths, tmpDir, { contextMode: { compressionThreshold: 8192 } });
+    const localPaths = createTestPaths(tmpDir);
+    const updated = updateConfig(localPaths, tmpDir, { contextMode: { compressionThreshold: 8192 } });
     expect(updated.contextMode.compressionThreshold).toBe(8192);
     expect(updated.contextMode.enabled).toBe(true);
 
-    const reloaded = loadConfig(paths, tmpDir);
+    const reloaded = loadConfig(localPaths, tmpDir);
     expect(reloaded.contextMode.compressionThreshold).toBe(8192);
   });
 
@@ -490,6 +661,47 @@ describe("saveConfig / updateConfig", () => {
     expect(updated.contextMode.compressionThreshold).toBe(8192);
     expect(updated.qa.e2e).toBe(true);
   });
+
+  test("updateConfig rejects non-empty ultraplan policy in global scope", () => {
+    const localPaths = createTestPaths(tmpDir);
+
+    expect(() =>
+      updateConfig(
+        localPaths,
+        tmpDir,
+        {
+          ultraplan: {
+            reviewGates: {
+              "backend-domain-reviewer": {
+                enabled: false,
+              },
+            },
+          },
+        },
+        { scope: "global" },
+      ),
+    ).toThrow(/ultraplan/);
+  });
+
+  test("updateConfig omits empty ultraplan data when writing global scope", () => {
+    const localPaths = createTestPaths(tmpDir);
+
+    updateConfig(
+      localPaths,
+      tmpDir,
+      {
+        ultraplan: {
+          slots: {},
+        },
+      },
+      { scope: "global" },
+    );
+
+    const saved = readGlobalConfig(localPaths) as Record<string, unknown>;
+    expect(saved.ultraplan).toBeUndefined();
+    expect(loadConfig(localPaths, tmpDir).release.tagFormat).toBe("v${version}");
+  });
+
 
   test("updateConfig rejects invalid release.tagFormat", () => {
     expect(() => updateConfig(paths, tmpDir, { release: { tagFormat: "fixed-tag" } })).toThrow(
