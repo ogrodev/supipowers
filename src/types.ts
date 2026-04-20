@@ -608,3 +608,260 @@ export interface ReliabilitySummary {
   /** Most recent record timestamp, or null when empty. */
   lastRecordedAt: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Ultraplan (Phase 1 substrate)
+// ---------------------------------------------------------------------------
+
+export type UltraPlanStackId = "frontend" | "backend" | "infrastructure";
+export type UltraPlanScenarioLevel = "unit" | "integration" | "e2e";
+export type UltraPlanApplicability = "applicable" | "not-applicable";
+export type UltraPlanSessionState = "ready" | "running" | "blocked" | "awaiting-user" | "complete" | "discarded";
+export type UltraPlanSessionBucket = "pending" | "ongoing" | "idle" | "done";
+export type UltraPlanScenarioStatus =
+  | "planned"
+  | "red-running"
+  | "red-proved"
+  | "green-running"
+  | "green-proved"
+  | "in-review"
+  | "review-passed"
+  | "blocked"
+  | "done";
+export type UltraPlanReviewStatus = "pending" | "running" | "passed" | "failed" | "blocked";
+export type UltraPlanExecutionPhase = "red" | "green" | "review" | "waiting" | "complete";
+export type UltraPlanCursorTargetType = "scenario" | "domain-review" | "stack-review" | "session";
+export type UltraPlanCursorStatus = UltraPlanScenarioStatus | UltraPlanReviewStatus | UltraPlanSessionState;
+export type UltraPlanAgentType = "built-in" | "named";
+export type UltraPlanAgentSlotName =
+  | "frontend-executor"
+  | "frontend-tester"
+  | "frontend-domain-reviewer"
+  | "frontend-stack-reviewer"
+  | "backend-executor"
+  | "backend-tester"
+  | "backend-domain-reviewer"
+  | "backend-stack-reviewer"
+  | "infrastructure-executor"
+  | "infrastructure-tester"
+  | "infrastructure-domain-reviewer"
+  | "infrastructure-stack-reviewer";
+export type UltraPlanProofType = "test" | "command" | "review" | "artifact";
+export type UltraPlanBlockerScope = "session" | "stack" | "domain" | "scenario";
+export type UltraPlanRecoveryMode = "retry" | "await-user" | "manual";
+
+export interface UltraPlanProgressSummary {
+  total: number;
+  terminal: number;
+  blocked: number;
+}
+
+export interface UltraPlanAffectedUnitRef {
+  stack: UltraPlanStackId | null;
+  domainId: string | null;
+  level: UltraPlanScenarioLevel | null;
+  scenarioId: string | null;
+}
+
+export interface UltraPlanProofEvidence {
+  summary: string;
+  command?: string;
+  outputRef?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UltraPlanProof {
+  type: UltraPlanProofType;
+  phase: UltraPlanExecutionPhase;
+  recordedAt: string;
+  actor: string;
+  evidence: UltraPlanProofEvidence;
+  artifactRef: string;
+}
+
+export interface UltraPlanBlocker {
+  code: string;
+  message: string;
+  scope: UltraPlanBlockerScope;
+  affected: UltraPlanAffectedUnitRef;
+  recoverable: boolean;
+  recoveryMode: UltraPlanRecoveryMode;
+  nextAction: string;
+  retryable: boolean;
+  detectedAt: string;
+  details?: Record<string, unknown>;
+}
+
+export interface UltraPlanAgentBinding {
+  slot: UltraPlanAgentSlotName;
+  agentType: UltraPlanAgentType;
+  agentName: string;
+  model: string | null;
+  thinkingLevel: ThinkingLevel | null;
+}
+
+export interface UltraPlanAgentSlots {
+  executor: UltraPlanAgentBinding;
+  tester: UltraPlanAgentBinding;
+  domainReviewEnabled: boolean;
+  stackReviewEnabled: boolean;
+  domainReviewer?: UltraPlanAgentBinding;
+  stackReviewer?: UltraPlanAgentBinding;
+}
+
+export interface UltraPlanScenario {
+  id: string;
+  title: string;
+  stack: UltraPlanStackId;
+  domainId: string;
+  level: UltraPlanScenarioLevel;
+  status: UltraPlanScenarioStatus;
+  steps: string[];
+  assignedSlots: UltraPlanAgentSlotName[];
+  proofs: UltraPlanProof[];
+  dependencies?: string[];
+  blocker?: UltraPlanBlocker | null;
+}
+
+export interface UltraPlanDomainReviewGate {
+  enabled: boolean;
+  status: UltraPlanReviewStatus;
+}
+
+export interface UltraPlanDomain {
+  id: string;
+  name: string;
+  unit: UltraPlanScenario[];
+  integration: UltraPlanScenario[];
+  e2e: UltraPlanScenario[];
+  review: UltraPlanDomainReviewGate;
+  progress: UltraPlanProgressSummary;
+}
+
+export interface UltraPlanStack {
+  stack: UltraPlanStackId;
+  applicability: UltraPlanApplicability;
+  domains: UltraPlanDomain[];
+  status: UltraPlanSessionState;
+  agentSlots: UltraPlanAgentSlots;
+  progress: UltraPlanProgressSummary;
+}
+
+export interface UltraPlanCursor {
+  targetType: UltraPlanCursorTargetType;
+  stack: UltraPlanStackId | null;
+  domainId: string | null;
+  level: UltraPlanScenarioLevel | null;
+  scenarioId: string | null;
+  phase: UltraPlanExecutionPhase;
+  status: UltraPlanCursorStatus;
+  summary: string;
+}
+
+export interface UltraPlanDomainReview {
+  stack: UltraPlanStackId;
+  domainId: string;
+  reviewerSlot: UltraPlanAgentSlotName;
+  status: UltraPlanReviewStatus;
+  startedAt: string;
+  completedAt?: string;
+  summary: string;
+  artifactRef: string;
+}
+
+export interface UltraPlanStackReview {
+  stack: UltraPlanStackId;
+  reviewerSlot: UltraPlanAgentSlotName;
+  status: UltraPlanReviewStatus;
+  startedAt: string;
+  completedAt?: string;
+  summary: string;
+  artifactRef: string;
+}
+
+export interface UltraPlanAuthoredArtifact {
+  sessionId: string;
+  title: string;
+  goal: string;
+  createdAt: string;
+  updatedAt: string;
+  stacks: UltraPlanStack[];
+}
+
+export interface UltraPlanManifestAuthoredRefs {
+  json: string;
+  markdown?: string;
+}
+
+export interface UltraPlanManifestStackSummary {
+  stack: UltraPlanStackId;
+  applicability: UltraPlanApplicability;
+  progress: UltraPlanProgressSummary;
+  domainCount: number;
+  terminalDomainCount: number;
+}
+
+export interface UltraPlanManifestReviewReference {
+  type: "domain" | "stack";
+  stack: UltraPlanStackId;
+  domainId: string | null;
+  path: string;
+  status: UltraPlanReviewStatus;
+}
+
+export interface UltraPlanManifest {
+  sessionId: string;
+  projectName: string;
+  title: string;
+  authored: UltraPlanManifestAuthoredRefs;
+  state: UltraPlanSessionState;
+  cursor: UltraPlanCursor | null;
+  lastCompleted: UltraPlanCursor | null;
+  progress: UltraPlanProgressSummary;
+  stacks: UltraPlanManifestStackSummary[];
+  blocker: UltraPlanBlocker | null;
+  reviews: UltraPlanManifestReviewReference[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UltraPlanIndexEntry {
+  sessionId: string;
+  title: string;
+  state: UltraPlanSessionState;
+  bucket: UltraPlanSessionBucket;
+  createdAt: string;
+  updatedAt: string;
+  cursor: UltraPlanCursor | null;
+  idleReason: string | null;
+}
+
+export interface UltraPlanIndex {
+  sessions: UltraPlanIndexEntry[];
+}
+
+export interface UltraPlanStorageError {
+  kind: "missing" | "invalid-json" | "validation-error" | "io";
+  path: string;
+  message: string;
+  details?: string[];
+}
+
+export type UltraPlanStorageResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: UltraPlanStorageError };
+
+export interface UltraPlanSessionSummary {
+  sessionId: string;
+  projectName: string;
+  title: string;
+  state: UltraPlanSessionState;
+  createdAt: string;
+  updatedAt: string;
+  cursor: UltraPlanCursor | null;
+  lastCompleted: UltraPlanCursor | null;
+  blocker: UltraPlanBlocker | null;
+  progress: UltraPlanProgressSummary;
+  stacks: UltraPlanManifestStackSummary[];
+  reviews: UltraPlanManifestReviewReference[];
+}
