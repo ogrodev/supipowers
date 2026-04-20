@@ -176,6 +176,36 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function hasUltraPlanConfig(config: Record<string, unknown> | null): boolean {
+  return !!config && Object.prototype.hasOwnProperty.call(config, "ultraplan");
+}
+
+function hasMeaningfulUltraPlanPolicy(config: Record<string, unknown> | null): boolean {
+  const ultraplan = asRecord(config?.ultraplan);
+  if (!ultraplan) {
+    return false;
+  }
+
+  const slots = asRecord(ultraplan.slots);
+  if (slots && Object.values(slots).some((override) => {
+    const slotOverride = asRecord(override);
+    return !!slotOverride && (
+      typeof slotOverride.agentName === "string"
+      || typeof slotOverride.model === "string"
+      || typeof slotOverride.thinkingLevel === "string"
+    );
+  })) {
+    return true;
+  }
+
+  const reviewGates = asRecord(ultraplan.reviewGates);
+  return !!reviewGates && Object.values(reviewGates).some((policy) => {
+    const reviewGate = asRecord(policy);
+    return !!reviewGate && typeof reviewGate.enabled === "boolean";
+  });
+}
+
+
 function normalizeReleaseChannels(
   existingChannels: unknown,
   pipeline: string | null,
@@ -448,6 +478,23 @@ function collectCommandGateSelectorValidationErrors(
   return errors;
 }
 
+function collectScopeValidationErrors(
+  config: Record<string, unknown> | null,
+  scope: ConfigScope,
+): ConfigValidationError[] {
+  if (scope !== "global" || !hasUltraPlanConfig(config)) {
+    return [];
+  }
+
+  return [
+    {
+      path: "ultraplan",
+      message: "Only repository config may define ultraplan",
+    },
+  ];
+}
+
+
 function collectAllValidationErrors(
   config: Record<string, unknown>,
   repoRoot: string,
@@ -483,7 +530,10 @@ function inspectScopeConfig(
 
   const hasOwnQualityGates = !!readResult.data && hasOwnNestedProperty(readResult.data, "quality", "gates");
   const mergedConfig = mergeConfigLayers(DEFAULT_CONFIG, readResult.data);
-  const validationErrors = collectAllValidationErrors(mergedConfig, repoRoot);
+  const validationErrors = [
+    ...collectAllValidationErrors(mergedConfig, repoRoot),
+    ...collectScopeValidationErrors(readResult.data, scope),
+  ];
   const qualityGateValidationErrors = hasOwnQualityGates
     ? validationErrors.filter((error) => error.path === "quality.gates" || error.path.startsWith("quality.gates."))
     : [];
@@ -528,13 +578,21 @@ function writeRawConfigFile(filePath: string, config: Record<string, unknown>): 
   fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n");
 }
 
+export function inspectConfigScopes(
+  paths: PlatformPaths,
+  cwd: string,
+  options?: ConfigResolutionOptions,
+ ): ScopedConfigInspection[] {
+  return getInspectionScopes().map((scope) => inspectScopeConfig(paths, cwd, scope, options));
+}
+
 export function inspectQualityGateRecovery(
   paths: PlatformPaths,
   cwd: string,
   options?: ConfigResolutionOptions,
  ): QualityGateRecoveryInspection {
   return {
-    scopes: getInspectionScopes().map((scope) => inspectScopeConfig(paths, cwd, scope, options)),
+    scopes: inspectConfigScopes(paths, cwd, options),
   };
 }
 
@@ -609,7 +667,10 @@ function buildInspectionLoadResult(
   const parseErrors = layers
     .map((layer) => layer.readResult.error)
     .filter((error): error is ConfigParseError => error !== null);
-  const validationErrors = collectAllValidationErrors(mergedConfig, repoRoot);
+  const validationErrors = [
+    ...collectAllValidationErrors(mergedConfig, repoRoot),
+    ...layers.flatMap((layer) => collectScopeValidationErrors(layer.readResult.data, layer.scope)),
+  ];
 
   return {
     mergedConfig,
@@ -662,16 +723,50 @@ export function loadConfig(
   return result.effectiveConfig;
 }
 
-function assertValidConfig(data: unknown, repoRoot: string): void {
+// Global scope never persists UltraPlan policy; writes only keep the shared config surface it may own.
+function omitUnsupportedUltraPlanFromGlobalWrite(
+  config: Record<string, unknown>,
+  scope: ConfigScope,
+ ): Record<string, unknown> {
+  if (scope !== "global") {
+    return config;
+  }
+
+  const { ultraplan: _ultraplan, ...scoped } = config;
+  return scoped;
+}
+
+function prepareScopedConfigWrite(
+  fullConfig: unknown,
+  scopeData: Record<string, unknown>,
+  repoRoot: string,
+  scope: ConfigScope,
+ ): Record<string, unknown> {
+  const persistedScopeData = omitUnsupportedUltraPlanFromGlobalWrite(scopeData, scope);
+  const validatedScopeData = scope === "global" && !hasMeaningfulUltraPlanPolicy(scopeData)
+    ? persistedScopeData
+    : scopeData;
+
+  assertValidConfig(fullConfig, repoRoot, scope, validatedScopeData);
+  return persistedScopeData;
+}
+
+function assertValidConfig(
+  data: unknown,
+  repoRoot: string,
+  scope?: ConfigScope,
+  scopeData?: Record<string, unknown> | null,
+): void {
   const record = asRecord(data);
   const validationErrors = record ? collectAllValidationErrors(record, repoRoot) : collectConfigValidationErrors(data);
+  const scopeValidationErrors = scope ? collectScopeValidationErrors(scopeData ?? null, scope) : [];
 
-  if (validationErrors.length === 0) {
+  if (validationErrors.length === 0 && scopeValidationErrors.length === 0) {
     return;
   }
 
   throw new Error(
-    validationErrors
+    [...validationErrors, ...scopeValidationErrors]
       .map((error) => `${error.path}: ${error.message}`)
       .join("\n"),
   );
@@ -685,12 +780,16 @@ export function saveConfig(
   options?: ConfigMutationOptions,
  ): void {
   const { repoRoot } = resolveConfigContext(cwd, options);
-  assertValidConfig(config, repoRoot);
-
   const scope = options?.scope ?? "root";
+  const rawConfig = prepareScopedConfigWrite(
+    config,
+    config as unknown as Record<string, unknown>,
+    repoRoot,
+    scope,
+  );
   const configPath = getConfigPath(paths, cwd, scope, options);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  fs.writeFileSync(configPath, JSON.stringify(rawConfig, null, 2) + "\n");
 }
 
 /** Update specific config fields in the selected raw scope. */
@@ -713,13 +812,14 @@ export function updateConfig(
     updates,
   );
 
+  const scopedLayerData = omitUnsupportedUltraPlanFromGlobalWrite(nextScopeData, scope);
   const layers = readConfigLayers(paths, cwd, options);
   const mergedConfig = mergeConfigLayers(
     DEFAULT_CONFIG,
-    ...layers.map((layer) => layer.scope === scope ? nextScopeData : layer.readResult.data),
+    ...layers.map((layer) => layer.scope === scope ? scopedLayerData : layer.readResult.data),
   );
-  assertValidConfig(mergedConfig, repoRoot);
+  const rawConfig = prepareScopedConfigWrite(mergedConfig, nextScopeData, repoRoot, scope);
 
-  writeRawConfigFile(configPath, nextScopeData);
+  writeRawConfigFile(configPath, rawConfig);
   return mergedConfig as unknown as SupipowersConfig;
 }
