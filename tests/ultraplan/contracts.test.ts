@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ULTRAPLAN_AGENT_SLOT_NAMES,
+  ULTRAPLAN_REVIEWER_SLOT_NAMES,
+  isResolvedUltraPlanCatalog,
+  isResolvedUltraPlanSlotBinding,
+  isUltraPlanAgentDefinitionFrontmatter,
   isUltraPlanAgentSlots,
   isUltraPlanAuthoredArtifact,
   isUltraPlanBlocker,
@@ -233,8 +238,49 @@ const indexEntry = {
 const index = {
   sessions: [indexEntry],
 };
+const agentDefinitionFrontmatter = {
+  name: "integration-breaker",
+  description: "Adversarial integration and regression tester",
+  supportedSlots: ["backend-tester", "infrastructure-tester"],
+  model: "anthropic/claude-sonnet-4-20250514",
+  thinkingLevel: "low",
+  focus: "integration failures, regression pressure",
+};
+
+const resolvedSlotBinding = {
+  slot: "backend-tester",
+  agentType: "named",
+  agentName: "integration-breaker",
+  model: "anthropic/claude-sonnet-4-20250514",
+  thinkingLevel: "low",
+  selectionSource: "project",
+  definitionSource: "global",
+  modelSource: "project",
+  thinkingLevelSource: "global",
+  definitionPath: "/tmp/global-agents/integration-breaker.md",
+};
+
+const resolvedCatalog = {
+  slots: Object.fromEntries(
+    ULTRAPLAN_AGENT_SLOT_NAMES.map((slot) => [slot, slot === "backend-tester" ? resolvedSlotBinding : null]),
+  ),
+  reviewGates: {
+    "backend-domain-reviewer": { enabled: true },
+  },
+};
+
+
 
 describe("ultraplan contracts", () => {
+  test("derives reviewer slots from the canonical slot list", () => {
+    const expectedReviewerSlots = ULTRAPLAN_AGENT_SLOT_NAMES.filter(
+      (slot): slot is (typeof ULTRAPLAN_REVIEWER_SLOT_NAMES)[number] =>
+        slot.endsWith("-domain-reviewer") || slot.endsWith("-stack-reviewer"),
+    );
+
+    expect(ULTRAPLAN_REVIEWER_SLOT_NAMES).toEqual(expectedReviewerSlots);
+  });
+
   test("accepts valid canonical phase-1 artifacts", () => {
     expect(isUltraPlanProof(proof)).toBe(true);
     expect(isUltraPlanBlocker(blocker)).toBe(true);
@@ -305,6 +351,39 @@ describe("ultraplan contracts", () => {
     ).toBe(true);
   });
 
+
+
+  test("accepts agent definition frontmatter with optional model defaults", () => {
+    expect(isUltraPlanAgentDefinitionFrontmatter(agentDefinitionFrontmatter)).toBe(true);
+    expect(
+      isUltraPlanAgentDefinitionFrontmatter({
+        ...agentDefinitionFrontmatter,
+        supportedSlots: ["backend-unknown"],
+      }),
+    ).toBe(false);
+  });
+
+  test("requires truthful resolved binding provenance fields", () => {
+    expect(isResolvedUltraPlanSlotBinding(resolvedSlotBinding)).toBe(true);
+    expect(
+      isResolvedUltraPlanSlotBinding({
+        ...resolvedSlotBinding,
+        selectionSource: "global",
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects resolved catalogs whose review gates target executor slots", () => {
+    expect(isResolvedUltraPlanCatalog(resolvedCatalog)).toBe(true);
+    expect(
+      isResolvedUltraPlanCatalog({
+        ...resolvedCatalog,
+        reviewGates: {
+          "frontend-executor": { enabled: true },
+        },
+      }),
+    ).toBe(false);
+  });
 
 
   test("rejects artifacts missing required fields", () => {
