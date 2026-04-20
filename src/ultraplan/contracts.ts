@@ -1,7 +1,11 @@
 import { Type, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
+  ResolvedUltraPlanCatalog,
+  ResolvedUltraPlanSlotBinding,
   ThinkingLevel,
+  UltraPlanAgentDefinitionFrontmatter,
+  UltraPlanAgentSlotName,
   UltraPlanAgentSlots,
   UltraPlanAuthoredArtifact,
   UltraPlanBlocker,
@@ -12,12 +16,16 @@ import type {
   UltraPlanIndexEntry,
   UltraPlanManifest,
   UltraPlanProof,
+  UltraPlanReviewerSlotName,
   UltraPlanScenario,
   UltraPlanStack,
   UltraPlanStackReview,
 } from "../types.js";
 
 export type {
+  ResolvedUltraPlanCatalog,
+  ResolvedUltraPlanSlotBinding,
+  UltraPlanAgentDefinitionFrontmatter,
   UltraPlanAgentSlots,
   UltraPlanAuthoredArtifact,
   UltraPlanBlocker,
@@ -71,6 +79,33 @@ export const ULTRAPLAN_AGENT_SLOT_NAMES = [
   "infrastructure-stack-reviewer",
 ] as const;
 export const ULTRAPLAN_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies ThinkingLevel[];
+function isUltraPlanReviewerSlotName(slot: UltraPlanAgentSlotName): slot is UltraPlanReviewerSlotName {
+  return slot.endsWith("-domain-reviewer") || slot.endsWith("-stack-reviewer");
+}
+export const ULTRAPLAN_REVIEWER_SLOT_NAMES: readonly UltraPlanReviewerSlotName[] = ULTRAPLAN_AGENT_SLOT_NAMES.filter(
+  isUltraPlanReviewerSlotName,
+);
+export const ULTRAPLAN_SELECTION_SOURCES = ["default", "project"] as const;
+export const ULTRAPLAN_DEFINITION_SOURCES = ["built-in", "global"] as const;
+export const ULTRAPLAN_RESOLVED_VALUE_SOURCES = [
+  "project",
+  "global",
+  "built-in",
+  "unset",
+] as const;
+
+function keyedObject(keys: readonly string[], valueSchema: TSchema) {
+  return Type.Object(
+    Object.fromEntries(keys.map((key) => [key, valueSchema])) as Record<string, TSchema>,
+    { additionalProperties: false },
+  );
+}
+
+function sparseKeyedObject(keys: readonly string[], valueSchema: TSchema) {
+  return Type.Partial(keyedObject(keys, valueSchema));
+}
+
+
 
 function literalUnion<const TValue extends readonly string[]>(values: TValue) {
   return Type.Union(values.map((value) => Type.Literal(value)));
@@ -155,6 +190,75 @@ export const UltraPlanAgentSlotsSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const UltraPlanSlotOverrideSchema = Type.Object(
+  {
+    agentName: Type.Optional(Type.String({ minLength: 1 })),
+    model: Type.Optional(Type.String({ minLength: 1 })),
+    thinkingLevel: Type.Optional(literalUnion(ULTRAPLAN_THINKING_LEVELS)),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanReviewGatePolicySchema = Type.Object(
+  {
+    enabled: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanConfigSchema = Type.Object(
+  {
+    slots: Type.Optional(sparseKeyedObject(ULTRAPLAN_AGENT_SLOT_NAMES, UltraPlanSlotOverrideSchema)),
+    reviewGates: Type.Optional(
+      sparseKeyedObject(ULTRAPLAN_REVIEWER_SLOT_NAMES, UltraPlanReviewGatePolicySchema),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanAgentDefinitionFrontmatterSchema = Type.Object(
+  {
+    name: Type.String({ minLength: 1 }),
+    description: Type.String({ minLength: 1 }),
+    supportedSlots: Type.Array(literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES), { minItems: 1 }),
+    model: Type.Optional(Type.String({ minLength: 1 })),
+    thinkingLevel: Type.Optional(literalUnion(ULTRAPLAN_THINKING_LEVELS)),
+    focus: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+export const ResolvedUltraPlanSlotBindingSchema = Type.Object(
+  {
+    slot: literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES),
+    agentType: literalUnion(ULTRAPLAN_AGENT_TYPES),
+    agentName: Type.String({ minLength: 1 }),
+    model: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    thinkingLevel: Type.Union([literalUnion(ULTRAPLAN_THINKING_LEVELS), Type.Null()]),
+    selectionSource: literalUnion(ULTRAPLAN_SELECTION_SOURCES),
+    definitionSource: literalUnion(ULTRAPLAN_DEFINITION_SOURCES),
+    modelSource: literalUnion(ULTRAPLAN_RESOLVED_VALUE_SOURCES),
+    thinkingLevelSource: literalUnion(ULTRAPLAN_RESOLVED_VALUE_SOURCES),
+    definitionPath: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const ResolvedUltraPlanCatalogSchema = Type.Object(
+  {
+    slots: keyedObject(
+      ULTRAPLAN_AGENT_SLOT_NAMES,
+      Type.Union([ResolvedUltraPlanSlotBindingSchema, Type.Null()]),
+    ),
+    reviewGates: sparseKeyedObject(
+      ULTRAPLAN_REVIEWER_SLOT_NAMES,
+      UltraPlanReviewGatePolicySchema,
+    ),
+  },
+  { additionalProperties: false },
+);
+
 
 const ULTRAPLAN_NON_TERMINAL_SCENARIO_STATUSES = [
   "planned",
@@ -474,6 +578,21 @@ export function validateUltraPlanAuthoredArtifact(value: unknown) {
 
   return validation;
 }
+
+export function isUltraPlanAgentDefinitionFrontmatter(
+  value: unknown,
+ ): value is UltraPlanAgentDefinitionFrontmatter {
+  return Value.Check(UltraPlanAgentDefinitionFrontmatterSchema, value);
+}
+
+export function isResolvedUltraPlanSlotBinding(value: unknown): value is ResolvedUltraPlanSlotBinding {
+  return Value.Check(ResolvedUltraPlanSlotBindingSchema, value);
+}
+
+export function isResolvedUltraPlanCatalog(value: unknown): value is ResolvedUltraPlanCatalog {
+  return Value.Check(ResolvedUltraPlanCatalogSchema, value);
+}
+
 
 export function isUltraPlanProof(value: unknown): value is UltraPlanProof {
   return Value.Check(UltraPlanProofSchema, value);
