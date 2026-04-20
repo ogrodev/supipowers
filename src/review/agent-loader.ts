@@ -11,7 +11,7 @@ import type {
   ReviewAgentDefinition,
   ReviewAgentsConfig,
 } from "../types.js";
-import { normalizeLineEndings } from "../text.js";
+import { parseMarkdownFrontmatter } from "../markdown-frontmatter.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
 import { resolveRepoRootFromFs } from "../workspace/repo-root.js";
 import {
@@ -158,55 +158,27 @@ async function importYamlFile(filePath: string): Promise<unknown> {
   return imported.default;
 }
 
-function parseFrontmatter(frontmatter: string, filePath: string): ReviewAgentDefinition {
-  const metadata: Record<string, unknown> = {};
-
-  for (const line of frontmatter.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    const separator = trimmed.indexOf(":");
-    if (separator === -1) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, separator).trim();
-    const value = trimmed.slice(separator + 1).trim();
-    metadata[key] = value;
-  }
-
-  const errors = formatValidationErrors(collectValidationErrors(ReviewAgentFrontmatterSchema, metadata),);
+export function parseReviewAgentMarkdown(content: string, filePath: string): ReviewAgentDefinition {
+  const { frontmatter, body } = parseMarkdownFrontmatter(content, filePath);
+  const errors = formatValidationErrors(
+    collectValidationErrors(ReviewAgentFrontmatterSchema, frontmatter),
+  );
   if (errors.length > 0) {
     throw new Error(`Invalid agent frontmatter in ${filePath}: ${errors.join("; ")}`);
   }
 
-  return {
-    name: String(metadata.name),
-    description: String(metadata.description),
-    focus: typeof metadata.focus === "string" ? metadata.focus : null,
-    prompt: "",
-    filePath,
+  const parsed = frontmatter as {
+    name: string;
+    description: string;
+    focus?: string;
   };
-}
-
-export function parseReviewAgentMarkdown(content: string, filePath: string): ReviewAgentDefinition {
-  const normalized = normalizeLineEndings(content);
-  const match = normalized.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!match) {
-    throw new Error(`Review agent file ${filePath} is missing YAML frontmatter.`);
-  }
-
-  const definition = parseFrontmatter(match[1], filePath);
-  const prompt = match[2]?.trim();
-  if (!prompt) {
-    throw new Error(`Review agent file ${filePath} has an empty prompt body.`);
-  }
 
   return {
-    ...definition,
-    prompt,
+    name: parsed.name,
+    description: parsed.description,
+    focus: parsed.focus ?? null,
+    prompt: body,
+    filePath,
   };
 }
 
