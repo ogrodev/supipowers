@@ -253,6 +253,27 @@ describe("ultraplan catalog loading", () => {
     );
   });
 
+  test("top-level catalog ignores empty global ultraplan stubs", () => {
+    writeGlobalConfig({
+      ultraplan: {
+        slots: {
+          "backend-tester": {},
+        },
+      },
+    });
+
+    const result = loadUltraPlanAgentCatalog(paths, projectDir);
+    const catalog = expectCatalogSuccess(result);
+
+    expect(catalog.slots["backend-tester"]).toMatchObject({
+      slot: "backend-tester",
+      agentType: "built-in",
+      agentName: "backend-tester",
+      selectionSource: "default",
+    });
+  });
+
+
   test("top-level catalog load preserves repository config paths on validation errors", () => {
     writeProjectConfig({
       ultraplan: {

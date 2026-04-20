@@ -252,7 +252,7 @@ describe("strict and inspection config loading", () => {
     expect(() => loadConfig(localPaths, tmpDir)).toThrow(/ultraplan/);
   });
 
-  test("strict load rejects any global ultraplan subtree", () => {
+  test("strict load ignores empty global ultraplan stubs", () => {
     writeGlobalConfig(localPaths, {
       ultraplan: {
         slots: {
@@ -261,7 +261,9 @@ describe("strict and inspection config loading", () => {
       },
     });
 
-    expect(() => loadConfig(localPaths, tmpDir)).toThrow(/ultraplan/);
+    const config = loadConfig(localPaths, tmpDir);
+
+    expect(config.ultraplan).toEqual(DEFAULT_CONFIG.ultraplan);
   });
 
 

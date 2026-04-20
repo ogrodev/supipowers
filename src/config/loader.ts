@@ -176,10 +176,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function hasUltraPlanConfig(config: Record<string, unknown> | null): boolean {
-  return !!config && Object.prototype.hasOwnProperty.call(config, "ultraplan");
-}
-
 function hasMeaningfulUltraPlanPolicy(config: Record<string, unknown> | null): boolean {
   const ultraplan = asRecord(config?.ultraplan);
   if (!ultraplan) {
@@ -203,6 +199,23 @@ function hasMeaningfulUltraPlanPolicy(config: Record<string, unknown> | null): b
     const reviewGate = asRecord(policy);
     return !!reviewGate && typeof reviewGate.enabled === "boolean";
   });
+}
+
+function omitMeaninglessUltraPlanFromGlobalRead(
+  config: Record<string, unknown> | null,
+  scope: ConfigScope,
+ ): Record<string, unknown> | null {
+  if (
+    scope !== "global"
+    || !config
+    || !Object.prototype.hasOwnProperty.call(config, "ultraplan")
+    || hasMeaningfulUltraPlanPolicy(config)
+  ) {
+    return config;
+  }
+
+  const { ultraplan: _ultraplan, ...scoped } = config;
+  return scoped;
 }
 
 
@@ -423,10 +436,14 @@ function readConfigLayers(
  ): ResolvedConfigLayerRead[] {
   return getInspectionScopes().map((scope) => {
     const filePath = getConfigPath(paths, cwd, scope, options);
+    const readResult = readJsonFile(scope, filePath);
     return {
       scope,
       path: filePath,
-      readResult: readJsonFile(scope, filePath),
+      readResult: {
+        ...readResult,
+        data: omitMeaninglessUltraPlanFromGlobalRead(readResult.data, scope),
+      },
     };
   });
 }
@@ -482,7 +499,7 @@ function collectScopeValidationErrors(
   config: Record<string, unknown> | null,
   scope: ConfigScope,
 ): ConfigValidationError[] {
-  if (scope !== "global" || !hasUltraPlanConfig(config)) {
+  if (scope !== "global" || !hasMeaningfulUltraPlanPolicy(config)) {
     return [];
   }
 
@@ -529,7 +546,8 @@ function inspectScopeConfig(
   }
 
   const hasOwnQualityGates = !!readResult.data && hasOwnNestedProperty(readResult.data, "quality", "gates");
-  const mergedConfig = mergeConfigLayers(DEFAULT_CONFIG, readResult.data);
+  const scopeData = omitMeaninglessUltraPlanFromGlobalRead(readResult.data, scope);
+  const mergedConfig = mergeConfigLayers(DEFAULT_CONFIG, scopeData);
   const validationErrors = [
     ...collectAllValidationErrors(mergedConfig, repoRoot),
     ...collectScopeValidationErrors(readResult.data, scope),
