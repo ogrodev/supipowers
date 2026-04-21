@@ -2,12 +2,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../../src/platform/types.js";
 import type {
+  ResolvedUltraPlanCatalog,
+  ResolvedUltraPlanSlotBinding,
+  UltraPlanAgentSlotName,
   UltraPlanAttemptRecord,
   UltraPlanAuthoredArtifact,
   UltraPlanHookObservation,
   UltraPlanLaunchContext,
   UltraPlanManifest,
   UltraPlanProof,
+  UltraPlanReviewerSlotName,
   UltraPlanRuntimeTracker,
   UltraPlanScenario,
   UltraPlanScenarioLevel,
@@ -315,4 +319,42 @@ export function seedLegacyRepoLocalSession(
     fs.writeFileSync(target, body);
   }
   return legacyDir;
+}
+
+const ULTRAPLAN_ALL_SLOT_NAMES: readonly UltraPlanAgentSlotName[] = [
+  "frontend-executor",
+  "frontend-tester",
+  "frontend-domain-reviewer",
+  "frontend-stack-reviewer",
+  "backend-executor",
+  "backend-tester",
+  "backend-domain-reviewer",
+  "backend-stack-reviewer",
+  "infrastructure-executor",
+  "infrastructure-tester",
+  "infrastructure-domain-reviewer",
+  "infrastructure-stack-reviewer",
+];
+
+export function makeCatalogFixture(opts: {
+  reviewGates?: Partial<Record<UltraPlanReviewerSlotName, { enabled: boolean }>>;
+  slotNulls?: UltraPlanAgentSlotName[];
+} = {}): ResolvedUltraPlanCatalog {
+  const nulls = new Set(opts.slotNulls ?? []);
+  const slots = {} as ResolvedUltraPlanCatalog["slots"];
+  for (const slot of ULTRAPLAN_ALL_SLOT_NAMES) {
+    slots[slot] = nulls.has(slot) ? null : ({
+      slot,
+      agentType: "built-in",
+      agentName: slot,
+      model: null,
+      thinkingLevel: null,
+      selectionSource: "default",
+      definitionSource: "built-in",
+      modelSource: "unset",
+      thinkingLevelSource: "unset",
+      definitionPath: null,
+    } satisfies ResolvedUltraPlanSlotBinding);
+  }
+  return { slots, reviewGates: opts.reviewGates ?? {} };
 }

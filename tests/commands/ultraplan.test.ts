@@ -29,6 +29,12 @@ function seedGlobalIndex(paths: ReturnType<typeof createTestPaths>, cwd: string,
   fs.writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\n`);
 }
 
+function writeGlobalConfig(paths: ReturnType<typeof createTestPaths>, data: unknown): void {
+  const configPath = paths.global("config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`);
+}
+
 function seedCanonicalGlobalSession(
   paths: ReturnType<typeof createTestPaths>,
   cwd: string,
@@ -137,5 +143,179 @@ describe("loadVisibleSessions — migration integration", () => {
     }
     // migration.json was written.
     expect(fs.existsSync(getUltraplanMigrationRecordPath(paths, cwd, sessionId))).toBe(true);
+  });
+});
+
+
+import { handleUltraplan } from "../../src/commands/ultraplan.js";
+import { mock } from "bun:test";
+
+function createUltraplanCtx(overrides: {
+  hasUI?: boolean;
+  selectResponses?: Array<string | null>;
+  inputResponses?: Array<string | null>;
+} = {}) {
+  const selectResponses = overrides.selectResponses ?? [];
+  const inputResponses = overrides.inputResponses ?? [];
+  let sIdx = 0;
+  let iIdx = 0;
+  const select = mock(async () => {
+    const v = selectResponses[sIdx] ?? null;
+    sIdx += 1;
+    return v;
+  });
+  const input = mock(async () => {
+    const v = inputResponses[iIdx] ?? null;
+    iIdx += 1;
+    return v;
+  });
+  const notify = mock(() => {});
+  const confirm = mock(async () => true);
+
+  return {
+    cwd: "",
+    hasUI: overrides.hasUI ?? true,
+    ui: { select, input, notify, confirm },
+    select, input, notify, confirm,
+  };
+}
+
+describe("handleUltraplan bare-call", () => {
+  test("hasUI:true + undefined args routes to runUltraPlanAuthoringWizard (input prompted)", async () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const platform = { paths } as any;
+    const ctx = createUltraplanCtx({ hasUI: true, inputResponses: [null] });
+    ctx.cwd = cwd;
+    await handleUltraplan(platform, ctx, undefined);
+    // Wizard was engaged: the input prompt fired.
+    expect(ctx.input).toHaveBeenCalled();
+  });
+
+  test("hasUI:false + undefined args emits a warning notify", async () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const platform = { paths } as any;
+    const ctx = createUltraplanCtx({ hasUI: false });
+    ctx.cwd = cwd;
+    await handleUltraplan(platform, ctx, undefined);
+    const warnings = ctx.notify.mock.calls.filter((c: unknown[]) => c[1] === "warning");
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("catalog preflight failures surface an error notify instead of failing silently", async () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    writeGlobalConfig(paths, {
+      ultraplan: {
+        slots: {
+          "backend-tester": {
+            agentName: "integration-breaker",
+          },
+        },
+      },
+    });
+    const platform = { paths } as any;
+    const ctx = createUltraplanCtx({ hasUI: true });
+    ctx.cwd = cwd;
+
+    await handleUltraplan(platform, ctx, undefined);
+
+    const errors: unknown[][] = ctx.notify.mock.calls.filter((c: unknown[]) => c[1] === "error");
+    expect(errors).toHaveLength(1);
+    expect(String(errors[0][0])).toContain("Ultraplan authoring cannot start");
+    expect(String(errors[0][0])).toContain("Only repository config may define ultraplan");
+    expect(ctx.input).not.toHaveBeenCalled();
+  });
+
+  test("empty-string args routes identically to undefined", async () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const platform = { paths } as any;
+    const ctx = createUltraplanCtx({ hasUI: true, inputResponses: [null] });
+    ctx.cwd = cwd;
+    await handleUltraplan(platform, ctx, "");
+    expect(ctx.input).toHaveBeenCalled();
+  });
+});
+
+describe("handleUltraplan regressions", () => {
+  test("/supi:ultraplan next still emits the deferred stub notify", async () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const platform = { paths } as any;
+    const ctx = createUltraplanCtx({ hasUI: true });
+    ctx.cwd = cwd;
+    await handleUltraplan(platform, ctx, "next");
+    const nextNotifies = ctx.notify.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes("next is not implemented in this phase"),
+    );
+    expect(nextNotifies.length).toBe(1);
+  });
+
+  test("subcommand-completions list is unchanged (run, status, next)", async () => {
+    // Load the command registration and verify the SUBCOMMANDS list shape via the registered handler
+    const calls: Array<{ name: string; opts: any }> = [];
+    const platform = {
+      paths: createTestPaths(tmpDir),
+      registerCommand(name: string, opts: any) { calls.push({ name, opts }); },
+    } as any;
+    const { registerUltraplanCommand } = await import("../../src/commands/ultraplan.js");
+    registerUltraplanCommand(platform);
+    const registered = calls.find((c) => c.name === "supi:ultraplan");
+    expect(registered).toBeDefined();
+    const completions = registered!.opts.getArgumentCompletions("");
+    expect(completions).toEqual([
+      { value: "run ", label: "run", description: "Inspect an existing ultraplan session" },
+      { value: "status ", label: "status", description: "Show status for an ultraplan session" },
+      { value: "next ", label: "next", description: "Deferred to a later ultraplan phase" },
+    ]);
+  });
+});
+
+describe("handleUltraplan end-to-end integration", () => {
+  test("author a minimal session via handleUltraplan → manifest + index reflect the new session", async () => {
+    const { loadUltraPlanIndex, loadUltraPlanManifest } = await import("../../src/ultraplan/storage.js");
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const platform = { paths } as any;
+    const ctx = createUltraplanCtx({
+      hasUI: true,
+      inputResponses: ["test", "a session", "auth", "login"],
+      selectResponses: [
+        "applicable", "not-applicable", "not-applicable",
+        "+ Add domain", "✓ Done with frontend domains",
+        "+ Add unit scenario", "✓ Done with unit",
+        "✓ Done with integration", "✓ Done with e2e",
+        "✓ Approve & save",
+      ],
+    });
+    ctx.cwd = cwd;
+
+    await handleUltraplan(platform, ctx, undefined);
+
+    const indexResult = loadUltraPlanIndex(paths, cwd);
+    expect(indexResult.ok).toBe(true);
+    if (!indexResult.ok) return;
+    expect(indexResult.value.sessions).toHaveLength(1);
+    const sessionId = indexResult.value.sessions[0].sessionId;
+
+    expect(fs.existsSync(getUltraplanAuthoredJsonPath(paths, cwd, sessionId))).toBe(true);
+    expect(fs.existsSync(getUltraplanManifestPath(paths, cwd, sessionId))).toBe(true);
+    expect(fs.existsSync(getUltraplanIndexPath(paths, cwd))).toBe(true);
+
+    const manifestResult = loadUltraPlanManifest(paths, cwd, sessionId);
+    expect(manifestResult.ok).toBe(true);
+    if (!manifestResult.ok) return;
+    expect(manifestResult.value.state).toBe("ready");
+    expect(manifestResult.value.cursor?.targetType).toBe("scenario");
+    expect(manifestResult.value.cursor?.phase).toBe("red");
+    expect(manifestResult.value.cursor?.status).toBe("planned");
+
+    const successNotifies: unknown[][] = ctx.notify.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).toLowerCase().includes("saved"),
+    );
+    expect(successNotifies.length).toBe(1);
+    expect(String(successNotifies[0][0])).toContain("test");
   });
 });

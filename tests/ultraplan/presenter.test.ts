@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { UltraPlanCursor, UltraPlanSessionSummary } from "../../src/types.js";
 import type { UltraPlanResolvedCursor, UltraPlanVisibleSession } from "../../src/ultraplan/session-selection.js";
 import { buildUltraPlanPickerOptions, renderUltraPlanStatus } from "../../src/ultraplan/presenter.js";
-import { makeUltraPlanAuthored, makeUltraPlanScenario, makeUltraPlanStack } from "./fixtures.js";
+import { makeCatalogFixture, makeUltraPlanAuthored, makeUltraPlanScenario, makeUltraPlanStack } from "./fixtures.js";
 
 const authored = makeUltraPlanAuthored({
   stacks: [makeUltraPlanStack({
@@ -262,5 +262,176 @@ describe("ultraplan presenter — slice-2 blocker surfacing", () => {
     const [opt] = buildUltraPlanPickerOptions([visible]);
     expect(opt.description).toContain("migration-conflict");
     expect(opt.description).toContain("manual");
+  });
+});
+
+import {
+  addDomain,
+  addScenario,
+  buildInitialAuthoredDraft,
+  setStackApplicability,
+} from "../../src/ultraplan/authoring-draft.js";
+import { renderUltraPlanAuthoredDraft } from "../../src/ultraplan/presenter.js";
+const RENDER_CREATED_AT = new Date("2026-04-21T12:00:00.000Z");
+
+function must<T>(r: { ok: true; draft: T } | { ok: false; reason: unknown }): T {
+  if (!r.ok) throw new Error("expected ok");
+  return r.draft;
+}
+
+
+describe("renderUltraPlanAuthoredDraft", () => {
+  test("renders frontend populated, backend empty-domain, infrastructure not-applicable", () => {
+    let draft = buildInitialAuthoredDraft({
+      sessionId: "up-render-1",
+      title: "Checkout redesign",
+      goal: "Users can complete checkout on mobile",
+      createdAt: RENDER_CREATED_AT,
+      catalog: makeCatalogFixture(),
+    });
+    // frontend: auth domain + 1 scenario per level
+    const r1 = addDomain(draft, "frontend", { id: "auth", name: "Authentication" });
+    draft = must(r1);
+    const r2 = addScenario(draft, { stack: "frontend", domainId: "auth", level: "unit" }, { id: "login", title: "Login renders" });
+    draft = must(r2);
+    const r3 = addScenario(draft, { stack: "frontend", domainId: "auth", level: "integration" }, { id: "flow", title: "Login flow completes" });
+    draft = must(r3);
+    const r4 = addScenario(draft, { stack: "frontend", domainId: "auth", level: "e2e" }, { id: "e2e-login", title: "End-to-end login" });
+    draft = must(r4);
+    // backend: 1 empty domain (non-persist-ready but must still render)
+    const r5 = addDomain(draft, "backend", { id: "profiles", name: "Profiles" });
+    draft = must(r5);
+    // infrastructure: not-applicable
+    const r6 = setStackApplicability(draft, "infrastructure", "not-applicable");
+    draft = must(r6);
+
+    const EXPECTED = [
+      "Session: Checkout redesign",
+      "Goal: Users can complete checkout on mobile",
+      "",
+      "## frontend (applicable)",
+      "  executor: frontend-executor",
+      "  tester: frontend-tester",
+      "  domain reviewer: frontend-domain-reviewer",
+      "  stack reviewer: frontend-stack-reviewer",
+      "",
+      "  Domain: auth — Authentication",
+      "    unit:",
+      "      - login: Login renders",
+      "    integration:",
+      "      - flow: Login flow completes",
+      "    e2e:",
+      "      - e2e-login: End-to-end login",
+      "",
+      "## backend (applicable)",
+      "  executor: backend-executor",
+      "  tester: backend-tester",
+      "  domain reviewer: backend-domain-reviewer",
+      "  stack reviewer: backend-stack-reviewer",
+      "",
+      "  Domain: profiles — Profiles",
+      "    unit: —",
+      "    integration: —",
+      "    e2e: —",
+      "",
+      "## infrastructure (not-applicable)",
+      "",
+      "Readiness blockers:",
+      "  - backend.profiles has no scenarios (edit backend.profiles.scenarios)",
+    ].join("\n");
+
+    expect(renderUltraPlanAuthoredDraft(draft).join("\n")).toBe(EXPECTED);
+  });
+});
+
+describe("renderUltraPlanAuthoredDraft — edge cases", () => {
+  test("all three stacks not-applicable renders header lines only and readiness blocker", () => {
+    let draft = buildInitialAuthoredDraft({
+      sessionId: "up-all-na",
+      title: "Empty",
+      goal: "Nothing",
+      createdAt: RENDER_CREATED_AT,
+      catalog: makeCatalogFixture(),
+    });
+    draft = must(setStackApplicability(draft, "frontend", "not-applicable"));
+    draft = must(setStackApplicability(draft, "backend", "not-applicable"));
+    draft = must(setStackApplicability(draft, "infrastructure", "not-applicable"));
+
+    const out = renderUltraPlanAuthoredDraft(draft).join("\n");
+    // Session title + goal block
+    expect(out).toContain("Session: Empty");
+    expect(out).toContain("Goal: Nothing");
+    // Three header-only not-applicable lines
+    expect(out).toContain("## frontend (not-applicable)");
+    expect(out).toContain("## backend (not-applicable)");
+    expect(out).toContain("## infrastructure (not-applicable)");
+    // Readiness block
+    expect(out).toContain("Readiness blockers:");
+    expect(out).toContain("No applicable stacks");
+  });
+
+  test("omits reviewer lines when reviewer gates disable those bindings", () => {
+    let draft = buildInitialAuthoredDraft({
+      sessionId: "up-no-reviewers",
+      title: "No reviewers",
+      goal: "x",
+      createdAt: RENDER_CREATED_AT,
+      catalog: makeCatalogFixture({
+        reviewGates: {
+          "frontend-domain-reviewer": { enabled: false },
+          "frontend-stack-reviewer": { enabled: false },
+        },
+        slotNulls: ["frontend-domain-reviewer", "frontend-stack-reviewer"],
+      }),
+    });
+    draft = must(setStackApplicability(draft, "backend", "not-applicable"));
+    draft = must(setStackApplicability(draft, "infrastructure", "not-applicable"));
+    draft = must(addDomain(draft, "frontend", { id: "auth", name: "Auth" }));
+    draft = must(addScenario(draft, { stack: "frontend", domainId: "auth", level: "unit" }, { id: "login", title: "Login" }));
+
+    const out = renderUltraPlanAuthoredDraft(draft).join("\n");
+    expect(out).toContain("  executor: frontend-executor");
+    expect(out).toContain("  tester: frontend-tester");
+    expect(out).not.toContain("domain reviewer:");
+    expect(out).not.toContain("stack reviewer:");
+    expect(out).not.toContain("Readiness blockers:");
+  });
+
+  test("empty unit[] + populated integration[] renders unit em-dash then integration scenarios", () => {
+    let draft = buildInitialAuthoredDraft({
+      sessionId: "up-int",
+      title: "Mix",
+      goal: "x",
+      createdAt: RENDER_CREATED_AT,
+      catalog: makeCatalogFixture(),
+    });
+    draft = must(setStackApplicability(draft, "backend", "not-applicable"));
+    draft = must(setStackApplicability(draft, "infrastructure", "not-applicable"));
+    draft = must(addDomain(draft, "frontend", { id: "auth", name: "Auth" }));
+    draft = must(addScenario(draft, { stack: "frontend", domainId: "auth", level: "integration" }, { id: "flow", title: "Login flow" }));
+    const out = renderUltraPlanAuthoredDraft(draft).join("\n");
+    expect(out).toContain("    unit: —");
+    expect(out).toContain("    integration:");
+    expect(out).toContain("      - flow: Login flow");
+    expect(out).toContain("    e2e: —");
+    // Persist-ready; no blocker section
+    expect(out).not.toContain("Readiness blockers:");
+  });
+
+  test("non-ready draft appends readiness blockers section with targeted edit label", () => {
+    let draft = buildInitialAuthoredDraft({
+      sessionId: "up-blocker",
+      title: "Blocked",
+      goal: "x",
+      createdAt: RENDER_CREATED_AT,
+      catalog: makeCatalogFixture(),
+    });
+    draft = must(setStackApplicability(draft, "backend", "not-applicable"));
+    draft = must(setStackApplicability(draft, "infrastructure", "not-applicable"));
+    draft = must(addDomain(draft, "frontend", { id: "auth", name: "Auth" }));
+    // No scenarios → empty-domain blocker
+    const out = renderUltraPlanAuthoredDraft(draft).join("\n");
+    expect(out).toContain("Readiness blockers:");
+    expect(out).toContain("edit frontend.auth.scenarios");
   });
 });

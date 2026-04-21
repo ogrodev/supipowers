@@ -1,6 +1,7 @@
 ---
 name: ultraplan-remaining-slices-audit
 created: 2026-04-19
+updated: 2026-04-21
 status: draft
 tags: [ultraplan, audit, planning, roadmap]
 ---
@@ -9,7 +10,7 @@ tags: [ultraplan, audit, planning, roadmap]
 
 ## Goal
 
-Capture where the ultraplan implementation currently stands after slices 1 and 3, what remains for slices 2, 4, 5, and 6, the dependency order between those slices, and a low-effort checklist of the next phases.
+Capture where the ultraplan implementation currently stands after slices 1, 2, 3, and 4, what remains for slices 5 and 6, the dependency order between those slices, and a low-effort checklist of the next phases.
 
 ## Scope
 
@@ -23,7 +24,7 @@ Read skill://harness-engineering to have context of the mindset of a good harnes
 
 ## Current state
 
-The codebase currently has slices 1 and 3 implemented.
+The codebase currently has slices 1, 2, 3, and 4 implemented.
 
 Slice 1 substrate in code:
 
@@ -33,7 +34,7 @@ Slice 1 substrate in code:
 - deterministic session bucketing and cursor recompute logic exist
 - presenter helpers exist for picker/status output
 - `/supi:ultraplan run` and `/supi:ultraplan status` command scaffolding exist
-- bare `/supi:ultraplan` and `/supi:ultraplan next` are intentionally deferred
+- bare `/supi:ultraplan next` is still intentionally deferred to a later phase
 
 Slice 3 substrate in code:
 
@@ -41,8 +42,18 @@ Slice 3 substrate in code:
 - bundled built-in agent definitions exist for all 12 reserved slots
 - global custom UltraPlan agent discovery exists under `~/.omp/supipowers/ultraplan-agents/`
 - deterministic slot resolution with provenance and fail-closed required-role behavior exists in `src/ultraplan/agent-catalog.ts`
+- global stub files that omit meaningful ultraplan policy are tolerated rather than rejected during config load (`src/config/loader.ts`)
 
-## Completed substrate from slices 1 and 3
+Slice 4 substrate in code:
+
+- bare `/supi:ultraplan` now launches a deterministic in-extension authoring wizard (no LLM in the loop) that produces a schema-valid `{authored.json, manifest.json, index.json}` triad gated by explicit user approval
+- pure draft ops live in `src/ultraplan/authoring-draft.ts` (applicability, domain, scenario, projections, readiness gate)
+- single persistence boundary in `src/ultraplan/authoring-persist.ts` owns `loadUltraPlanIndex`, debris/collision detection, atomic `authored.json → manifest.json → index.json` write, and reverse-order rollback
+- wizard in `src/ultraplan/authoring-wizard.ts` orchestrates preflight, title/goal, per-stack applicability, per-stack domain loop, per-domain scenario loop, review, and persist with typed cancellation semantics
+- `renderUltraPlanAuthoredDraft` in `src/ultraplan/presenter.ts` drives the review screen with deterministic output and readiness-blocker annotations
+- approved sessions round-trip through `loadUltraPlanIndex` / `loadUltraPlanSessionSummary` / `getVisibleUltraPlanSessions` / `resolveUltraPlanCurrentCursor` and appear in `/supi:ultraplan run` and `/supi:ultraplan status` with `state: "ready"` and a red/planned cursor
+
+## Completed substrate from slices 1, 2, 3, and 4
 
 | Capability                                         | Status | Existing implementation |
 | -------------------------------------------------- | ------ | ----------------------- |
@@ -54,61 +65,44 @@ Slice 3 substrate in code:
 | `/supi:ultraplan run` / `status` command shell     | Done   | `src/commands/ultraplan.ts`, `src/bootstrap.ts` |
 | Root-only ultraplan config surface                 | Done   | `src/types.ts`, `src/config/schema.ts`, `src/config/loader.ts` |
 | Specialized agent catalog + built-in defaults      | Done   | `src/ultraplan/agent-catalog.ts`, `src/ultraplan/default-agents/` |
-## Remaining slices
+| Authoring wizard (draft + persist + review)        | Done   | `src/ultraplan/authoring-draft.ts`, `src/ultraplan/authoring-persist.ts`, `src/ultraplan/authoring-wizard.ts`, `src/ultraplan/presenter.ts` |
 
-### Slice 2 — Hook tracker + recovery engine — Not started in code
+## Slice-by-slice status
 
-Purpose:
-
-- make runtime truth authoritative instead of model narration
-- observe hook events and mutate scenario/session state only from evidence
-- implement blocker classification and recovery policy
-
-Must cover:
-
-- `session_start`, `before_agent_start`, `tool_call`, `tool_result`, `agent_end`, `session_shutdown`
-- event correlation to exactly one `(session, stack, domain, level, scenario, phase, role)` transition attempt
-- proof extraction and idempotent scenario/status mutation
-- deterministic auto-repair for safe cases such as stale cursor / stale derived state
-- structured blockers for non-safe cases
-
-Still missing in code:
-
-- runtime tracker state
-- correlation metadata handling
-- proof parsers
-- manifest mutation from hook evidence
-- auto / assisted / manual recovery flow
-### Slice 3 — Specialized agent catalog substrate — Implemented
+### Slice 2 — Hook tracker + recovery engine — Implemented
 
 Implemented in code:
 
+- runtime tracker, migration record, hooks log, and pending-mutation storage seams exist in `src/ultraplan/runtime/tracker-storage.ts`
+- structured runtime blocker factories exist in `src/ultraplan/runtime/blockers.ts`
+- migration engine exists in `src/ultraplan/runtime/migration.ts` and fails closed with `migration-unsafe` / `migration-conflict` blockers
+- hook bridge in `src/ultraplan/runtime/hook-bridge.ts` wires `session_start`, `before_agent_start`, `tool_call`, `tool_result`, `agent_end`, and `session_shutdown` into the runtime pipeline
+- pure reducer in `src/ultraplan/runtime/reducer.ts` owns replay dedupe, legal transition handling, proof/blocker precedence, and interrupted-attempt classification
+- deterministic repair engine in `src/ultraplan/runtime/repair.ts` covers safe auto-repair cases and emits `unsafe-repair-required` when deterministic recovery would lie about runtime truth
+
+Current boundary: Slice 2 runtime substrate exists, but real execution wiring still lands in Slice 5.
+
+### Slice 3 — Specialized agent catalog substrate — Implemented
+
+Implemented in code:
 - all 12 reserved role slots are represented in the built-in catalog
 - root-only project `ultraplan` config supports slot mapping and per-slot `model` / `thinkingLevel` overrides
 - bundled built-in definitions live under `src/ultraplan/default-agents/`
 - global custom agent definitions load from `~/.omp/supipowers/ultraplan-agents/`
 - precedence resolution is `project-local mapping -> global custom agent -> built-in default`
-- catalog resolution substrate implements fail-closed required slots and disabled reviewers resolving to `null`, but no current runtime command path consumes the catalog yet
+- empty or policy-less global ultraplan stubs are stripped before merge/validation, so a bare `~/.omp/supipowers/config.json` no longer breaks catalog resolution
+- catalog resolution substrate implements fail-closed required slots and disabled reviewers resolving to `null`; Slice 4 authoring now consumes the resolved bindings and Slice 5 will extend that into real execution
 
-### Slice 4 — Authoring flow
+### Slice 4 — Authoring flow — Implemented
 
-Purpose:
+Implemented in code:
 
-- make bare `/supi:ultraplan` create a valid authored ultraplan session
-
-Must cover:
-
-- interactive authoring flow for the stack triad (`frontend`, `backend`, `infrastructure`)
-- domain and scenario authoring with explicit `unit[]`, `integration[]`, and `e2e[]` ordering
-- writing validated `authored.json`, `manifest.json`, and `index.json` entries
-- user-facing review/approval before persistence
-
-Not yet implemented:
-
-- authoring prompt/phase sequence
-- interactive authoring UX
-- authored artifact creation from the command path
-- review loop for authored sessions
+- bare `/supi:ultraplan` now launches a deterministic in-extension authoring wizard (no LLM in the loop) via `src/commands/ultraplan.ts` → `src/ultraplan/authoring-wizard.ts`
+- pure draft ops live in `src/ultraplan/authoring-draft.ts` (applicability, domain, scenario, projections, readiness gate)
+- single persistence boundary in `src/ultraplan/authoring-persist.ts` owns `loadUltraPlanIndex`, debris/collision detection, atomic `authored.json → manifest.json → index.json` write, and reverse-order rollback
+- interactive authoring covers the stack triad, per-stack applicability, per-stack domain loop, per-domain scenario loop for `unit[]` / `integration[]` / `e2e[]`, a review screen rendered by `renderUltraPlanAuthoredDraft`, and an explicit approve/discard gate
+- authored artifacts are schema-valid against the Slice-1 contracts and immediately pick up through `/supi:ultraplan run` and `/supi:ultraplan status`
+- seeded catalog from Slice 3 feeds `stack.agentSlots` at draft construction; reviewer bindings only materialize when the corresponding review gate is enabled
 
 ### Slice 5 — Execution orchestration
 
@@ -168,7 +162,7 @@ The stable sequencing is:
 
 - Slice 2 should land before real execution, because execution needs runtime-owned proof and recovery semantics.
 - Slice 3 has landed and is already available for later authoring/execution work.
-- Slice 4 can be built before slice 5, but authored sessions will still stop at the existing deferred execution boundary until slices 2 and 5 exist.
+- Slice 4 has landed. Authored sessions now exist and are picked up by `/supi:ultraplan run` and `/supi:ultraplan status`, but they still stop at the deferred execution boundary until Slice 5 lands.
 - Slice 5 depends on slices 2, 3, and 4.
 - Slice 6 is optional polish and should remain last.
 
@@ -177,8 +171,8 @@ The stable sequencing is:
 Use this as the low-effort “what’s next” tracker:
 
 - [x] Slice 1 — Data model + storage + picker/status
-- [ ] Slice 2 — Hook tracker + recovery engine
+- [x] Slice 2 — Hook tracker + recovery engine (plan: `.omp/supipowers/plans/2026-04-20-ultraplan-slice-2.md`; specs: `.omp/supipowers/specs/2026-04-19-ultraplan-slice-2-runtime-design.md` + `.omp/supipowers/specs/2026-04-20-ultraplan-slice-2-storage-and-migration-delta.md`)
 - [x] Slice 3 — Specialized agent catalog
-- [ ] Slice 4 — Authoring flow
+- [x] Slice 4 — Authoring flow (plan: `.omp/supipowers/plans/2026-04-21-ultraplan-slice-4.md`; spec: `.omp/supipowers/specs/2026-04-21-ultraplan-slice-4-authoring-flow-design.md`)
 - [ ] Slice 5 — Execution orchestration
 - [ ] Slice 6 — Optional router + advanced UX
