@@ -2,7 +2,12 @@ import type {
   UltraPlanAuthoredArtifact,
   UltraPlanBlocker,
   UltraPlanSessionSummary,
+  UltraPlanStack,
 } from "../types.js";
+import {
+  isDraftReadyToPersist,
+  type UltraPlanAuthoredDraft,
+} from "./authoring-draft.js";
 import {
   getUltraPlanIdleReasonLabel,
   resolveUltraPlanSessionBucket,
@@ -108,4 +113,74 @@ const SLICE_2_SURFACED_BLOCKER_CODES: readonly string[] = [
  */
 function isSlice2SurfacedBlocker(blocker: UltraPlanBlocker | null): blocker is UltraPlanBlocker {
   return blocker !== null && SLICE_2_SURFACED_BLOCKER_CODES.includes(blocker.code);
+}
+
+export function renderUltraPlanAuthoredDraft(draft: UltraPlanAuthoredDraft): string[] {
+  const lines: string[] = [
+    `Session: ${draft.title}`,
+    `Goal: ${draft.goal}`,
+  ];
+
+  for (const stack of draft.stacks) {
+    lines.push("");
+    if (stack.applicability === "not-applicable") {
+      lines.push(`## ${stack.stack} (not-applicable)`);
+      continue;
+    }
+    renderApplicableStack(lines, stack);
+  }
+
+  const readiness = isDraftReadyToPersist(draft);
+  if (!readiness.ok) {
+    lines.push("");
+    lines.push("Readiness blockers:");
+    for (const blocker of readiness.blockers) {
+      lines.push(`  - ${describeBlocker(blocker)}`);
+    }
+  }
+
+  return lines;
+}
+
+function renderApplicableStack(lines: string[], stack: UltraPlanStack): void {
+  lines.push(`## ${stack.stack} (applicable)`);
+  lines.push(`  executor: ${stack.agentSlots.executor.agentName}`);
+  lines.push(`  tester: ${stack.agentSlots.tester.agentName}`);
+  if (stack.agentSlots.domainReviewer) {
+    lines.push(`  domain reviewer: ${stack.agentSlots.domainReviewer.agentName}`);
+  }
+  if (stack.agentSlots.stackReviewer) {
+    lines.push(`  stack reviewer: ${stack.agentSlots.stackReviewer.agentName}`);
+  }
+
+  for (const domain of stack.domains) {
+    lines.push("");
+    lines.push(`  Domain: ${domain.id} — ${domain.name}`);
+    for (const level of ["unit", "integration", "e2e"] as const) {
+      const scenarios = domain[level];
+      if (scenarios.length === 0) {
+        lines.push(`    ${level}: —`);
+        continue;
+      }
+      lines.push(`    ${level}:`);
+      for (const scenario of scenarios) {
+        lines.push(`      - ${scenario.id}: ${scenario.title}`);
+      }
+    }
+  }
+}
+
+function describeBlocker(blocker: { code: string; stack?: string; domainId?: string; slot?: string }): string {
+  switch (blocker.code) {
+    case "empty-session":
+      return "No applicable stacks (edit applicability)";
+    case "empty-applicable-stack":
+      return `${blocker.stack} has no domains (edit ${blocker.stack}.domains)`;
+    case "empty-domain":
+      return `${blocker.stack}.${blocker.domainId} has no scenarios (edit ${blocker.stack}.${blocker.domainId}.scenarios)`;
+    case "missing-required-slot":
+      return `${blocker.stack} is missing required slot ${blocker.slot}`;
+    default:
+      return blocker.code;
+  }
 }
