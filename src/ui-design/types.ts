@@ -10,7 +10,7 @@ import type { ResolvedModel } from "../types.js";
 
 export type UiDesignScope = "page" | "flow" | "component";
 
-export type UiDesignBackendId = "local-html";
+export type UiDesignBackendId = "local-html" | "pencil-mcp";
 
 export type ScanFieldStatus = "ok" | "missing" | "error";
 
@@ -72,6 +72,8 @@ export interface UiDesignSession {
   topic?: string;
   backend: UiDesignBackendId;
   companionUrl: string;
+  /** Absolute path to the .pen file. Populated only for `pencil-mcp` sessions. */
+  penFilePath?: string;
   resolvedModel?: ResolvedModel;
 }
 
@@ -89,4 +91,6 @@ export interface Manifest {
   sections: string[];
   page: string;
   critique?: { fixableCount: number; advisoryCount: number; fixIterations: number };
+  /** Absolute path to the .pen file. Populated only for `pencil-mcp` sessions. */
+  penFilePath?: string;
 }

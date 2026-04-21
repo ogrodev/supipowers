@@ -941,3 +941,211 @@ export interface UltraPlanSessionSummary {
   stacks: UltraPlanManifestStackSummary[];
   reviews: UltraPlanManifestReviewReference[];
 }
+
+// ---------------------------------------------------------------------------
+// UltraPlan Slice-2 runtime contracts
+// ---------------------------------------------------------------------------
+
+export type UltraPlanHookEventName =
+  | "session_start"
+  | "before_agent_start"
+  | "tool_call"
+  | "tool_result"
+  | "agent_end"
+  | "session_shutdown";
+
+export type UltraPlanActorKind = "slot" | "main-orchestrator";
+
+export type UltraPlanSourceAgent = "main" | "sub-agent";
+
+export type UltraPlanAttemptOutcome =
+  | "advanced"
+  | "blocked"
+  | "interrupted"
+  | "noop";
+
+export type UltraPlanMutationKind =
+  | "noop"
+  | "start-attempt"
+  | "stage-observation"
+  | "advance"
+  | "block"
+  | "interrupt"
+  | "repair"
+  | "complete";
+
+export type UltraPlanRuntimeBlockerCode =
+  | "correlation-ambiguous"
+  | "proof-missing"
+  | "proof-invalid"
+  | "conflicting-evidence"
+  | "interrupted-attempt"
+  | "persistence-failure"
+  | "unsafe-repair-required"
+  | "migration-unsafe"
+  | "migration-conflict";
+
+export interface UltraPlanLaunchContext {
+  attemptId: string;
+  attemptKey: string;
+  sourceAgent: UltraPlanSourceAgent;
+  launchedAt: string;
+}
+
+export interface UltraPlanObservationTarget {
+  targetType: UltraPlanCursorTargetType;
+  stack: UltraPlanStackId | null;
+  domainId: string | null;
+  level: UltraPlanScenarioLevel | null;
+  scenarioId: string | null;
+  phase: UltraPlanExecutionPhase;
+  resolvedSlot: string | null;
+}
+
+export interface UltraPlanObservationCorrelationFailure {
+  reason: string;
+  details?: Record<string, unknown>;
+}
+
+export interface UltraPlanHookObservation {
+  sessionId: string;
+  hookEvent: UltraPlanHookEventName;
+  actorKind: UltraPlanActorKind;
+  attemptId: string | null;
+  attemptKey: string | null;
+  sourceAgent: UltraPlanSourceAgent;
+  occurredAt: string;
+  causationId: string | null;
+  fingerprint: string;
+  target: UltraPlanObservationTarget | null;
+  correlationFailure: UltraPlanObservationCorrelationFailure | null;
+  payloadSummary: string;
+}
+
+export interface UltraPlanProofCandidateTarget {
+  targetType: UltraPlanCursorTargetType;
+  stack: UltraPlanStackId | null;
+  domainId: string | null;
+  level: UltraPlanScenarioLevel | null;
+  scenarioId: string | null;
+}
+
+export interface UltraPlanProofCandidate {
+  phase: UltraPlanExecutionPhase;
+  type: UltraPlanProofType;
+  target: UltraPlanProofCandidateTarget;
+  evidence: UltraPlanProofEvidence;
+  artifactRef: string | null;
+  observationFingerprint: string;
+  fingerprint: string;
+}
+
+export interface UltraPlanBlockerCandidate {
+  blocker: UltraPlanBlocker;
+  observationFingerprint: string;
+}
+
+export interface UltraPlanAttemptRecord {
+  attemptId: string;
+  attemptKey: string;
+  launchContext: UltraPlanLaunchContext;
+  cursorSnapshot: UltraPlanCursor | null;
+  observations: UltraPlanHookObservation[];
+  proofCandidates: UltraPlanProofCandidate[];
+  blockerCandidates: UltraPlanBlockerCandidate[];
+  outcome: UltraPlanAttemptOutcome | null;
+  startedAt: string;
+  finalizedAt: string | null;
+}
+
+export interface UltraPlanScenarioStatusUpdate {
+  stack: UltraPlanStackId;
+  domainId: string;
+  level: UltraPlanScenarioLevel;
+  scenarioId: string;
+  nextStatus: UltraPlanScenarioStatus;
+  appendProof?: UltraPlanProof;
+}
+
+export interface UltraPlanReviewStatusUpdate {
+  type: "domain" | "stack";
+  stack: UltraPlanStackId;
+  domainId: string | null;
+  nextStatus: UltraPlanReviewStatus;
+  artifactRef: string | null;
+}
+
+export interface UltraPlanBlockerUpdate {
+  scope: UltraPlanBlockerScope;
+  nextValue: UltraPlanBlocker | null;
+  clearedByObservationFingerprint: string | null;
+}
+
+export type UltraPlanRepairAction =
+  | { op: "recompute-cursor"; reason: string }
+  | { op: "recompute-progress"; reason: string }
+  | { op: "clear-active-attempt"; reason: string }
+  | { op: "convert-active-to-interrupted"; attemptId: string; reason: string }
+  | { op: "clear-blocker"; scope: UltraPlanBlockerScope; clearedByObservationFingerprint: string };
+
+export interface UltraPlanTrackerAttemptFinalization {
+  attemptId: string;
+  outcome: UltraPlanAttemptOutcome;
+  finalizedAt: string;
+}
+
+export interface UltraPlanMutationPlan {
+  kind: UltraPlanMutationKind;
+  rationale: string;
+  appendObservationFingerprint: string | null;
+  scenarioStatusUpdate: UltraPlanScenarioStatusUpdate | null;
+  reviewStatusUpdate: UltraPlanReviewStatusUpdate | null;
+  blockerUpdate: UltraPlanBlockerUpdate | null;
+  cursorUpdate: UltraPlanCursor | null;
+  sessionStateUpdate: UltraPlanSessionState | null;
+  trackerAttemptFinalization: UltraPlanTrackerAttemptFinalization | null;
+  recomputeProgress: boolean;
+  repairActions: UltraPlanRepairAction[];
+  notes: string[];
+}
+
+export interface UltraPlanPendingMutation {
+  attemptId: string;
+  mutationPlan: UltraPlanMutationPlan;
+  expectedManifestFingerprint: string;
+  stagedAt: string;
+}
+
+export interface UltraPlanRuntimeTracker {
+  version: 1;
+  sessionId: string;
+  activeAttempt: UltraPlanAttemptRecord | null;
+  finalizedAttempts: UltraPlanAttemptRecord[];
+  appliedFingerprints: string[];
+  pendingMutation: UltraPlanPendingMutation | null;
+  updatedAt: string;
+}
+
+export interface UltraPlanRepairDetails {
+  reason: string;
+  actions: UltraPlanRepairAction[];
+}
+
+export type UltraPlanReducerAction =
+  | { kind: "session_started"; observation: UltraPlanHookObservation; nowIso: string }
+  | { kind: "attempt_started"; observation: UltraPlanHookObservation; launchContext: UltraPlanLaunchContext }
+  | { kind: "observation_staged"; observation: UltraPlanHookObservation }
+  | { kind: "attempt_finalized"; observation: UltraPlanHookObservation; nowIso: string }
+  | { kind: "session_shutdown"; observation: UltraPlanHookObservation; nowIso: string }
+  | { kind: "repair_applied"; nowIso: string; details: UltraPlanRepairDetails };
+
+export type UltraPlanSessionMigrationKind = "copied" | "reconciled-no-op";
+
+export interface UltraPlanSessionMigrationRecord {
+  migratedAt: string;
+  legacyPath: string;
+  fingerprintBefore: string;
+  fingerprintAfter: string;
+  legacyRenamedTo: string | null;
+  kind: UltraPlanSessionMigrationKind;
+}

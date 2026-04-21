@@ -175,3 +175,92 @@ describe("ultraplan presenter", () => {
     expect(renderUltraPlanStatus(session, authored, resolved)).toContain("Idle reason: Awaiting user: Need product sign-off");
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// Slice-2 blocker surfacing (migration-unsafe, migration-conflict, interrupted-attempt)
+// ---------------------------------------------------------------------------
+
+function makeSummaryWithBlocker(
+  state: UltraPlanSessionSummary["state"],
+  title: string,
+  blocker: UltraPlanSessionSummary["blocker"],
+): UltraPlanSessionSummary {
+  const base = makeSummary(state, title);
+  return { ...base, blocker, progress: { ...base.progress, blocked: blocker ? 1 : 0 } };
+}
+
+describe("ultraplan presenter — slice-2 blocker surfacing", () => {
+  test("renderUltraPlanStatus surfaces migration-unsafe recovery metadata", () => {
+    const session = makeSummaryWithBlocker("blocked", "Broken session", {
+      code: "migration-unsafe",
+      message: "legacy manifest failed validation",
+      scope: "session",
+      affected: { stack: null, domainId: null, level: null, scenarioId: null },
+      recoverable: true,
+      recoveryMode: "manual",
+      nextAction: "Inspect /abs/legacy and repair manually",
+      retryable: false,
+      detectedAt: "2026-04-20T12:00:00.000Z",
+    });
+    const output = renderUltraPlanStatus(session, authored, resolved);
+    expect(output).toContain("Blocker: migration-unsafe");
+    expect(output).toContain("Recovery: manual");
+    expect(output).toContain("Inspect /abs/legacy and repair manually");
+  });
+
+  test("renderUltraPlanStatus surfaces migration-conflict recovery metadata", () => {
+    const session = makeSummaryWithBlocker("blocked", "Conflicted session", {
+      code: "migration-conflict",
+      message: "legacy and global differ",
+      scope: "session",
+      affected: { stack: null, domainId: null, level: null, scenarioId: null },
+      recoverable: true,
+      recoveryMode: "manual",
+      nextAction: "Decide which side is canonical",
+      retryable: false,
+      detectedAt: "2026-04-20T12:00:00.000Z",
+    });
+    const output = renderUltraPlanStatus(session, authored, resolved);
+    expect(output).toContain("Blocker: migration-conflict");
+    expect(output).toContain("Decide which side is canonical");
+  });
+
+  test("renderUltraPlanStatus surfaces interrupted-attempt recovery metadata", () => {
+    const session = makeSummaryWithBlocker("blocked", "Interrupted session", {
+      code: "interrupted-attempt",
+      message: "attempt att-001 was interrupted",
+      scope: "scenario",
+      affected: { stack: "frontend", domainId: "auth", level: "unit", scenarioId: "scenario-b" },
+      recoverable: true,
+      recoveryMode: "retry",
+      nextAction: "Retry the attempt with a fresh launch",
+      retryable: true,
+      detectedAt: "2026-04-19T12:30:00.000Z",
+    });
+    const output = renderUltraPlanStatus(session, authored, resolved);
+    expect(output).toContain("Blocker: interrupted-attempt");
+    expect(output).toContain("Recovery: retry");
+  });
+
+  test("buildUltraPlanPickerOptions surfaces blocker code and recovery for slice-2 blockers", () => {
+    const visible = {
+      ...makeSummaryWithBlocker("blocked", "Conflicted session", {
+        code: "migration-conflict",
+        message: "conflict",
+        scope: "session",
+        affected: { stack: null, domainId: null, level: null, scenarioId: null },
+        recoverable: true,
+        recoveryMode: "manual",
+        nextAction: "Decide canonical side",
+        retryable: false,
+        detectedAt: "2026-04-20T12:00:00.000Z",
+      }),
+      bucket: "idle" as const,
+      idleReasonLabel: "Blocked: conflict",
+    };
+    const [opt] = buildUltraPlanPickerOptions([visible]);
+    expect(opt.description).toContain("migration-conflict");
+    expect(opt.description).toContain("manual");
+  });
+});

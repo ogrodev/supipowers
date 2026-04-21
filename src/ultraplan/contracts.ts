@@ -4,20 +4,38 @@ import type {
   ResolvedUltraPlanCatalog,
   ResolvedUltraPlanSlotBinding,
   ThinkingLevel,
+  UltraPlanActorKind,
   UltraPlanAgentDefinitionFrontmatter,
   UltraPlanAgentSlotName,
   UltraPlanAgentSlots,
+  UltraPlanAttemptOutcome,
+  UltraPlanAttemptRecord,
   UltraPlanAuthoredArtifact,
   UltraPlanBlocker,
+  UltraPlanBlockerCandidate,
+  UltraPlanBlockerScope,
   UltraPlanCursor,
   UltraPlanDomain,
   UltraPlanDomainReview,
+  UltraPlanHookEventName,
+  UltraPlanHookObservation,
   UltraPlanIndex,
   UltraPlanIndexEntry,
+  UltraPlanLaunchContext,
   UltraPlanManifest,
+  UltraPlanMutationKind,
+  UltraPlanMutationPlan,
+  UltraPlanPendingMutation,
   UltraPlanProof,
+  UltraPlanProofCandidate,
+  UltraPlanReducerAction,
+  UltraPlanRepairAction,
   UltraPlanReviewerSlotName,
+  UltraPlanRuntimeTracker,
   UltraPlanScenario,
+  UltraPlanSessionMigrationKind,
+  UltraPlanSessionMigrationRecord,
+  UltraPlanSourceAgent,
   UltraPlanStack,
   UltraPlanStackReview,
 } from "../types.js";
@@ -25,18 +43,36 @@ import type {
 export type {
   ResolvedUltraPlanCatalog,
   ResolvedUltraPlanSlotBinding,
+  UltraPlanActorKind,
   UltraPlanAgentDefinitionFrontmatter,
   UltraPlanAgentSlots,
+  UltraPlanAttemptOutcome,
+  UltraPlanAttemptRecord,
   UltraPlanAuthoredArtifact,
   UltraPlanBlocker,
+  UltraPlanBlockerCandidate,
+  UltraPlanBlockerScope,
   UltraPlanCursor,
   UltraPlanDomain,
   UltraPlanDomainReview,
+  UltraPlanHookEventName,
+  UltraPlanHookObservation,
   UltraPlanIndex,
   UltraPlanIndexEntry,
+  UltraPlanLaunchContext,
   UltraPlanManifest,
+  UltraPlanMutationKind,
+  UltraPlanMutationPlan,
+  UltraPlanPendingMutation,
   UltraPlanProof,
+  UltraPlanProofCandidate,
+  UltraPlanReducerAction,
+  UltraPlanRepairAction,
+  UltraPlanRuntimeTracker,
   UltraPlanScenario,
+  UltraPlanSessionMigrationKind,
+  UltraPlanSessionMigrationRecord,
+  UltraPlanSourceAgent,
   UltraPlanStack,
   UltraPlanStackReview,
 } from "../types.js";
@@ -645,4 +681,530 @@ export function isUltraPlanIndexEntry(value: unknown): value is UltraPlanIndexEn
 
 export function isUltraPlanIndex(value: unknown): value is UltraPlanIndex {
   return Value.Check(UltraPlanIndexSchema, value);
+}
+
+
+// ---------------------------------------------------------------------------
+// Slice 2 runtime contracts: hook observations, attempts, tracker, reducer,
+// mutation plan, migration record.
+// ---------------------------------------------------------------------------
+
+export const ULTRAPLAN_HOOK_EVENT_NAMES = [
+  "session_start",
+  "before_agent_start",
+  "tool_call",
+  "tool_result",
+  "agent_end",
+  "session_shutdown",
+] as const;
+
+export const ULTRAPLAN_ACTOR_KINDS = ["slot", "main-orchestrator"] as const;
+export const ULTRAPLAN_SOURCE_AGENTS = ["main", "sub-agent"] as const;
+export const ULTRAPLAN_ATTEMPT_OUTCOMES = ["advanced", "blocked", "interrupted", "noop"] as const;
+export const ULTRAPLAN_MUTATION_KINDS = [
+  "noop",
+  "start-attempt",
+  "stage-observation",
+  "advance",
+  "block",
+  "interrupt",
+  "repair",
+  "complete",
+] as const;
+export const ULTRAPLAN_MIGRATION_KINDS = ["copied", "reconciled-no-op"] as const;
+export const ULTRAPLAN_RUNTIME_BLOCKER_CODES = [
+  "correlation-ambiguous",
+  "proof-missing",
+  "proof-invalid",
+  "conflicting-evidence",
+  "interrupted-attempt",
+  "persistence-failure",
+  "unsafe-repair-required",
+  "migration-unsafe",
+  "migration-conflict",
+] as const;
+
+export const UltraPlanLaunchContextSchema = Type.Object(
+  {
+    attemptId: Type.String({ minLength: 1 }),
+    attemptKey: Type.String({ minLength: 1 }),
+    sourceAgent: literalUnion(ULTRAPLAN_SOURCE_AGENTS),
+    launchedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanObservationTargetSchema = Type.Object(
+  {
+    targetType: literalUnion(ULTRAPLAN_CURSOR_TARGETS),
+    stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
+    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    level: Type.Union([literalUnion(ULTRAPLAN_LEVELS), Type.Null()]),
+    scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    phase: literalUnion(ULTRAPLAN_EXECUTION_PHASES),
+    resolvedSlot: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanObservationCorrelationFailureSchema = Type.Object(
+  {
+    reason: Type.String({ minLength: 1 }),
+    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanHookObservationSchema = Type.Object(
+  {
+    sessionId: Type.String({ minLength: 1 }),
+    hookEvent: literalUnion(ULTRAPLAN_HOOK_EVENT_NAMES),
+    actorKind: literalUnion(ULTRAPLAN_ACTOR_KINDS),
+    attemptId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    attemptKey: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    sourceAgent: literalUnion(ULTRAPLAN_SOURCE_AGENTS),
+    occurredAt: Type.String({ minLength: 1 }),
+    causationId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    fingerprint: Type.String({ minLength: 1 }),
+    target: Type.Union([UltraPlanObservationTargetSchema, Type.Null()]),
+    correlationFailure: Type.Union([UltraPlanObservationCorrelationFailureSchema, Type.Null()]),
+    payloadSummary: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanProofCandidateTargetSchema = Type.Object(
+  {
+    targetType: literalUnion(ULTRAPLAN_CURSOR_TARGETS),
+    stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
+    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    level: Type.Union([literalUnion(ULTRAPLAN_LEVELS), Type.Null()]),
+    scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanProofCandidateSchema = Type.Object(
+  {
+    phase: literalUnion(ULTRAPLAN_EXECUTION_PHASES),
+    type: literalUnion(ULTRAPLAN_PROOF_TYPES),
+    target: UltraPlanProofCandidateTargetSchema,
+    evidence: UltraPlanProofEvidenceSchema,
+    artifactRef: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    observationFingerprint: Type.String({ minLength: 1 }),
+    fingerprint: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanBlockerCandidateSchema = Type.Object(
+  {
+    blocker: UltraPlanBlockerSchema,
+    observationFingerprint: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanAttemptRecordSchema = Type.Object(
+  {
+    attemptId: Type.String({ minLength: 1 }),
+    attemptKey: Type.String({ minLength: 1 }),
+    launchContext: UltraPlanLaunchContextSchema,
+    cursorSnapshot: Type.Union([UltraPlanCursorSchema, Type.Null()]),
+    observations: Type.Array(UltraPlanHookObservationSchema),
+    proofCandidates: Type.Array(UltraPlanProofCandidateSchema),
+    blockerCandidates: Type.Array(UltraPlanBlockerCandidateSchema),
+    outcome: Type.Union([literalUnion(ULTRAPLAN_ATTEMPT_OUTCOMES), Type.Null()]),
+    startedAt: Type.String({ minLength: 1 }),
+    finalizedAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanScenarioStatusUpdateSchema = Type.Object(
+  {
+    stack: literalUnion(ULTRAPLAN_STACKS),
+    domainId: Type.String({ minLength: 1 }),
+    level: literalUnion(ULTRAPLAN_LEVELS),
+    scenarioId: Type.String({ minLength: 1 }),
+    nextStatus: literalUnion(ULTRAPLAN_SCENARIO_STATUSES),
+    appendProof: Type.Optional(UltraPlanProofSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanReviewStatusUpdateSchema = Type.Object(
+  {
+    type: literalUnion(["domain", "stack"] as const),
+    stack: literalUnion(ULTRAPLAN_STACKS),
+    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    nextStatus: literalUnion(ULTRAPLAN_REVIEW_STATUSES),
+    artifactRef: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanBlockerUpdateSchema = Type.Object(
+  {
+    scope: literalUnion(ULTRAPLAN_BLOCKER_SCOPES),
+    nextValue: Type.Union([UltraPlanBlockerSchema, Type.Null()]),
+    clearedByObservationFingerprint: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanRepairActionSchema = Type.Union([
+  Type.Object(
+    {
+      op: Type.Literal("recompute-cursor"),
+      reason: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      op: Type.Literal("recompute-progress"),
+      reason: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      op: Type.Literal("clear-active-attempt"),
+      reason: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      op: Type.Literal("convert-active-to-interrupted"),
+      attemptId: Type.String({ minLength: 1 }),
+      reason: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      op: Type.Literal("clear-blocker"),
+      scope: literalUnion(ULTRAPLAN_BLOCKER_SCOPES),
+      clearedByObservationFingerprint: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const UltraPlanTrackerAttemptFinalizationSchema = Type.Object(
+  {
+    attemptId: Type.String({ minLength: 1 }),
+    outcome: literalUnion(ULTRAPLAN_ATTEMPT_OUTCOMES),
+    finalizedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanMutationPlanSchema = Type.Object(
+  {
+    kind: literalUnion(ULTRAPLAN_MUTATION_KINDS),
+    rationale: Type.String({ minLength: 1 }),
+    appendObservationFingerprint: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    scenarioStatusUpdate: Type.Union([UltraPlanScenarioStatusUpdateSchema, Type.Null()]),
+    reviewStatusUpdate: Type.Union([UltraPlanReviewStatusUpdateSchema, Type.Null()]),
+    blockerUpdate: Type.Union([UltraPlanBlockerUpdateSchema, Type.Null()]),
+    cursorUpdate: Type.Union([UltraPlanCursorSchema, Type.Null()]),
+    sessionStateUpdate: Type.Union([literalUnion(ULTRAPLAN_SESSION_STATES), Type.Null()]),
+    trackerAttemptFinalization: Type.Union([UltraPlanTrackerAttemptFinalizationSchema, Type.Null()]),
+    recomputeProgress: Type.Boolean(),
+    repairActions: Type.Array(UltraPlanRepairActionSchema),
+    notes: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanPendingMutationSchema = Type.Object(
+  {
+    attemptId: Type.String({ minLength: 1 }),
+    mutationPlan: UltraPlanMutationPlanSchema,
+    expectedManifestFingerprint: Type.String({ minLength: 1 }),
+    stagedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanRuntimeTrackerSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    sessionId: Type.String({ minLength: 1 }),
+    activeAttempt: Type.Union([UltraPlanAttemptRecordSchema, Type.Null()]),
+    finalizedAttempts: Type.Array(UltraPlanAttemptRecordSchema),
+    appliedFingerprints: Type.Array(Type.String({ minLength: 1 })),
+    pendingMutation: Type.Union([UltraPlanPendingMutationSchema, Type.Null()]),
+    updatedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanRepairDetailsSchema = Type.Object(
+  {
+    reason: Type.String({ minLength: 1 }),
+    actions: Type.Array(UltraPlanRepairActionSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanReducerActionSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("session_started"),
+      observation: UltraPlanHookObservationSchema,
+      nowIso: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("attempt_started"),
+      observation: UltraPlanHookObservationSchema,
+      launchContext: UltraPlanLaunchContextSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("observation_staged"),
+      observation: UltraPlanHookObservationSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("attempt_finalized"),
+      observation: UltraPlanHookObservationSchema,
+      nowIso: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("session_shutdown"),
+      observation: UltraPlanHookObservationSchema,
+      nowIso: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("repair_applied"),
+      nowIso: Type.String({ minLength: 1 }),
+      details: UltraPlanRepairDetailsSchema,
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const UltraPlanSessionMigrationRecordSchema = Type.Object(
+  {
+    migratedAt: Type.String({ minLength: 1 }),
+    legacyPath: Type.String({ minLength: 1 }),
+    fingerprintBefore: Type.String({ minLength: 1 }),
+    fingerprintAfter: Type.String({ minLength: 1 }),
+    legacyRenamedTo: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    kind: literalUnion(ULTRAPLAN_MIGRATION_KINDS),
+  },
+  { additionalProperties: false },
+);
+
+// ---------------------------------------------------------------------------
+// Semantic validators for contracts that express invariants above schema.
+// ---------------------------------------------------------------------------
+
+const PROOF_REQUIRED_SCENARIO_STATUSES = new Set<UltraPlanScenario["status"]>([
+  "red-proved",
+  "green-proved",
+  "review-passed",
+  "done",
+]);
+
+function getUltraPlanAttemptRecordSemanticErrors(attempt: UltraPlanAttemptRecord): string[] {
+  const errors: string[] = [];
+  // Finalized attempts must pair outcome with finalizedAt, and vice versa.
+  const hasOutcome = attempt.outcome !== null;
+  const hasFinalizedAt = attempt.finalizedAt !== null;
+  if (hasOutcome !== hasFinalizedAt) {
+    errors.push(
+      "attempt record outcome and finalizedAt must both be null or both be set",
+    );
+  }
+  return errors;
+}
+
+function getUltraPlanMutationPlanSemanticErrors(plan: UltraPlanMutationPlan): string[] {
+  const errors: string[] = [];
+
+  const advancesScenarioWithProof = plan.scenarioStatusUpdate?.appendProof !== undefined;
+  const advancesReviewToPassed = plan.reviewStatusUpdate?.nextStatus === "passed";
+  const setsNewBlocker = plan.blockerUpdate !== null && plan.blockerUpdate.nextValue !== null;
+  const advancesToProofRequiredStatus = plan.scenarioStatusUpdate
+    ? PROOF_REQUIRED_SCENARIO_STATUSES.has(plan.scenarioStatusUpdate.nextStatus)
+    : false;
+
+  // Rule 1: a single plan must not simultaneously advance with proof and set a new blocker.
+  if ((advancesScenarioWithProof || advancesReviewToPassed) && setsNewBlocker) {
+    errors.push(
+      "mutation plan cannot both advance with proof and set a new blocker in one attempt finalization",
+    );
+  }
+
+  // Rule 2: advancement to a proof-required scenario status must include appendProof.
+  if (plan.scenarioStatusUpdate && advancesToProofRequiredStatus && plan.scenarioStatusUpdate.appendProof === undefined) {
+    errors.push(
+      `scenario advancement to ${plan.scenarioStatusUpdate.nextStatus} must include appendProof`,
+    );
+  }
+
+  // Rule 3: a review advancement to passed must include an artifactRef for downstream validation.
+  if (plan.reviewStatusUpdate && plan.reviewStatusUpdate.nextStatus === "passed"
+    && plan.reviewStatusUpdate.artifactRef === null) {
+    errors.push(
+      "review advancement to passed must reference the validated review artifact",
+    );
+  }
+
+  // Rule 4: a review update referring to a stack-level target must not carry a domainId.
+  if (plan.reviewStatusUpdate && plan.reviewStatusUpdate.type === "stack"
+    && plan.reviewStatusUpdate.domainId !== null) {
+    errors.push("stack review update must have domainId null");
+  }
+
+  // Rule 5: kind must be consistent with the update envelope.
+  if (plan.kind === "advance" && !plan.scenarioStatusUpdate && !plan.reviewStatusUpdate && !plan.sessionStateUpdate) {
+    errors.push("advance mutation plan must carry at least one status update");
+  }
+  if (plan.kind === "block" && !setsNewBlocker) {
+    errors.push("block mutation plan must set a non-null blocker");
+  }
+  if (plan.kind === "noop" && (plan.scenarioStatusUpdate || plan.reviewStatusUpdate || setsNewBlocker || plan.cursorUpdate || plan.sessionStateUpdate)) {
+    errors.push("noop mutation plan must not carry any state update");
+  }
+
+  return errors;
+}
+
+function getUltraPlanRuntimeTrackerSemanticErrors(tracker: UltraPlanRuntimeTracker): string[] {
+  const errors: string[] = [];
+  if (tracker.activeAttempt) {
+    errors.push(...getUltraPlanAttemptRecordSemanticErrors(tracker.activeAttempt));
+  }
+  for (const finalized of tracker.finalizedAttempts) {
+    if (finalized.outcome === null || finalized.finalizedAt === null) {
+      errors.push(`finalized attempt ${finalized.attemptId} must have outcome and finalizedAt set`);
+    }
+    errors.push(...getUltraPlanAttemptRecordSemanticErrors(finalized));
+  }
+  if (tracker.pendingMutation) {
+    errors.push(...getUltraPlanMutationPlanSemanticErrors(tracker.pendingMutation.mutationPlan));
+  }
+  // Dedupe invariant: appliedFingerprints must not contain duplicates.
+  const seen = new Set<string>();
+  for (const fp of tracker.appliedFingerprints) {
+    if (seen.has(fp)) {
+      errors.push(`duplicate applied fingerprint ${fp}`);
+    }
+    seen.add(fp);
+  }
+  return errors;
+}
+
+function getUltraPlanSessionMigrationRecordSemanticErrors(record: UltraPlanSessionMigrationRecord): string[] {
+  const errors: string[] = [];
+  if (record.fingerprintBefore.trim().length === 0) {
+    errors.push("fingerprintBefore must be a non-empty string");
+  }
+  if (record.fingerprintAfter.trim().length === 0) {
+    errors.push("fingerprintAfter must be a non-empty string");
+  }
+  // legacyPath must be absolute. Windows drive letters like "C:\path" are absolute; POSIX absolute paths start with "/".
+  if (!isAbsolutePathToken(record.legacyPath)) {
+    errors.push(`legacyPath must be absolute, received ${record.legacyPath}`);
+  }
+  if (record.legacyRenamedTo !== null && !isAbsolutePathToken(record.legacyRenamedTo)) {
+    errors.push(`legacyRenamedTo must be absolute when present, received ${record.legacyRenamedTo}`);
+  }
+  return errors;
+}
+
+function isAbsolutePathToken(candidate: string): boolean {
+  if (typeof candidate !== "string" || candidate.length === 0) return false;
+  if (candidate.startsWith("/")) return true;
+  // Windows drive-rooted paths: "C:\\" or "C:/".
+  return /^[A-Za-z]:[\/\\]/.test(candidate);
+}
+
+export function validateUltraPlanRuntimeTracker(value: unknown) {
+  const validation = buildValidationResult<UltraPlanRuntimeTracker>(UltraPlanRuntimeTrackerSchema, value);
+  if (!validation.ok) {
+    return validation;
+  }
+  const semanticErrors = getUltraPlanRuntimeTrackerSemanticErrors(validation.value);
+  if (semanticErrors.length > 0) {
+    return { ok: false, errors: semanticErrors } as const;
+  }
+  return validation;
+}
+
+export function validateUltraPlanSessionMigrationRecord(value: unknown) {
+  const validation = buildValidationResult<UltraPlanSessionMigrationRecord>(UltraPlanSessionMigrationRecordSchema, value);
+  if (!validation.ok) {
+    return validation;
+  }
+  const semanticErrors = getUltraPlanSessionMigrationRecordSemanticErrors(validation.value);
+  if (semanticErrors.length > 0) {
+    return { ok: false, errors: semanticErrors } as const;
+  }
+  return validation;
+}
+
+export function isUltraPlanLaunchContext(value: unknown): value is UltraPlanLaunchContext {
+  return Value.Check(UltraPlanLaunchContextSchema, value);
+}
+
+export function isUltraPlanHookObservation(value: unknown): value is UltraPlanHookObservation {
+  return Value.Check(UltraPlanHookObservationSchema, value);
+}
+
+export function isUltraPlanProofCandidate(value: unknown): value is UltraPlanProofCandidate {
+  return Value.Check(UltraPlanProofCandidateSchema, value);
+}
+
+export function isUltraPlanBlockerCandidate(value: unknown): value is UltraPlanBlockerCandidate {
+  return Value.Check(UltraPlanBlockerCandidateSchema, value);
+}
+
+export function isUltraPlanAttemptRecord(value: unknown): value is UltraPlanAttemptRecord {
+  if (!Value.Check(UltraPlanAttemptRecordSchema, value)) return false;
+  return getUltraPlanAttemptRecordSemanticErrors(value as UltraPlanAttemptRecord).length === 0;
+}
+
+export function isUltraPlanMutationPlan(value: unknown): value is UltraPlanMutationPlan {
+  if (!Value.Check(UltraPlanMutationPlanSchema, value)) return false;
+  return getUltraPlanMutationPlanSemanticErrors(value as UltraPlanMutationPlan).length === 0;
+}
+
+export function isUltraPlanPendingMutation(value: unknown): value is UltraPlanPendingMutation {
+  return Value.Check(UltraPlanPendingMutationSchema, value);
+}
+
+export function isUltraPlanRuntimeTracker(value: unknown): value is UltraPlanRuntimeTracker {
+  return validateUltraPlanRuntimeTracker(value).ok;
+}
+
+export function isUltraPlanReducerAction(value: unknown): value is UltraPlanReducerAction {
+  return Value.Check(UltraPlanReducerActionSchema, value);
+}
+
+export function isUltraPlanSessionMigrationRecord(value: unknown): value is UltraPlanSessionMigrationRecord {
+  return validateUltraPlanSessionMigrationRecord(value).ok;
+}
+
+export function isUltraPlanRepairAction(value: unknown): value is UltraPlanRepairAction {
+  return Value.Check(UltraPlanRepairActionSchema, value);
 }

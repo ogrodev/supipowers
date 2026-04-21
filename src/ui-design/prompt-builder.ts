@@ -5,6 +5,9 @@ export interface UiDesignKickoffOptions {
   sessionDir: string;
   companionUrl: string;
   contextScanSummary: string;
+  /** When set, the kickoff cites this .pen path and instructs the director
+   *  to `mcp_pencil_open_document` it at the start of Phase 2. */
+  penFilePath?: string;
 }
 
 /**
@@ -18,12 +21,16 @@ export function buildUiDesignKickoffPrompt(opts: UiDesignKickoffOptions): string
     "",
     `Session directory: \`${opts.sessionDir}\``,
     `Companion URL: ${opts.companionUrl}`,
-    "",
-    "## Context Scan",
-    "",
-    opts.contextScanSummary.trim(),
-    "",
   ];
+
+  if (opts.penFilePath) {
+    lines.push(`Target .pen file: \`${opts.penFilePath}\``);
+    lines.push(
+      "At the start of Phase 2, call `mcp_pencil_open_document` on the target .pen file. Every subsequent `mcp_pencil_*` call MUST pass the same `filePath`.",
+    );
+  }
+
+  lines.push("", "## Context Scan", "", opts.contextScanSummary.trim(), "");
 
   if (opts.topic) {
     lines.push(`Design target: ${opts.topic}`, "");

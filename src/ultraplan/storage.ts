@@ -6,6 +6,8 @@ import type {
   UltraPlanDomainReview,
   UltraPlanIndex,
   UltraPlanManifest,
+  UltraPlanRuntimeTracker,
+  UltraPlanSessionMigrationRecord,
   UltraPlanSessionSummary,
   UltraPlanStackId,
   UltraPlanStackReview,
@@ -28,6 +30,12 @@ import {
   getUltraplanSessionDir,
   getUltraplanStackReviewPath,
 } from "./project-paths.js";
+import {
+  loadMigrationRecord,
+  loadTracker,
+  saveMigrationRecord,
+  saveTrackerAtomic,
+} from "./runtime/tracker-storage.js";
 
 function success<T>(value: T): UltraPlanStorageResult<T> {
   return { ok: true, value };
@@ -308,4 +316,46 @@ export function loadUltraPlanSessionSummary(
     stacks: manifestValue.stacks,
     reviews: manifestValue.reviews,
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Runtime tracker + migration record wrappers (Slice 2 / 1.4).
+// These delegate to `runtime/tracker-storage.ts` so the storage module stays
+// the single public entry point for session-level persistence while the tracker
+// module owns durability details.
+// ---------------------------------------------------------------------------
+
+export function saveUltraPlanRuntimeTracker(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  tracker: UltraPlanRuntimeTracker,
+): UltraPlanStorageResult<string> {
+  return saveTrackerAtomic(paths, cwd, sessionId, tracker);
+}
+
+export function loadUltraPlanRuntimeTracker(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): UltraPlanStorageResult<UltraPlanRuntimeTracker> {
+  return loadTracker(paths, cwd, sessionId);
+}
+
+export function saveUltraPlanSessionMigrationRecord(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  record: UltraPlanSessionMigrationRecord,
+): UltraPlanStorageResult<string> {
+  return saveMigrationRecord(paths, cwd, sessionId, record);
+}
+
+export function loadUltraPlanSessionMigrationRecord(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): UltraPlanStorageResult<UltraPlanSessionMigrationRecord> {
+  return loadMigrationRecord(paths, cwd, sessionId);
 }

@@ -1,4 +1,8 @@
-import type { UltraPlanAuthoredArtifact, UltraPlanSessionSummary } from "../types.js";
+import type {
+  UltraPlanAuthoredArtifact,
+  UltraPlanBlocker,
+  UltraPlanSessionSummary,
+} from "../types.js";
 import {
   getUltraPlanIdleReasonLabel,
   resolveUltraPlanSessionBucket,
@@ -16,10 +20,17 @@ export function buildUltraPlanPickerOptions(sessions: UltraPlanVisibleSession[])
   return sessions.map((session) => ({
     value: session.sessionId,
     label: `[${session.bucket}] ${session.title}`,
-    description: session.idleReasonLabel
-      ? `Idle: ${session.idleReasonLabel}`
-      : `Current: ${session.cursor?.summary ?? "No active cursor"}`,
+    description: describePickerSession(session),
   }));
+}
+
+function describePickerSession(session: UltraPlanVisibleSession): string {
+  if (isSlice2SurfacedBlocker(session.blocker)) {
+    const idle = session.idleReasonLabel ?? `Blocked: ${session.blocker.message}`;
+    return `${idle} — ${session.blocker.code} (${session.blocker.recoveryMode})`;
+  }
+  if (session.idleReasonLabel) return `Idle: ${session.idleReasonLabel}`;
+  return `Current: ${session.cursor?.summary ?? "No active cursor"}`;
 }
 
 export function renderUltraPlanStatus(
@@ -48,9 +59,14 @@ export function renderUltraPlanStatus(
 
   if (idleReason) {
     lines.push(`Idle reason: ${idleReason}`);
-  } else if (resolved.cursor.targetType === "session" && resolved.cursor.status === "complete") {
+  }
+  if (isSlice2SurfacedBlocker(session.blocker)) {
+    lines.push(`Blocker: ${session.blocker.code}`);
+    lines.push(`Recovery: ${session.blocker.recoveryMode}`);
+    lines.push(`Next action: ${session.blocker.nextAction}`);
+  } else if (!idleReason && resolved.cursor.targetType === "session" && resolved.cursor.status === "complete") {
     lines.push("Next action: None — session complete");
-  } else {
+  } else if (!idleReason) {
     lines.push(`Next action: Resume ${resolved.cursor.summary}`);
   }
 
@@ -77,4 +93,19 @@ function formatDomainProgress(authored: UltraPlanAuthoredArtifact, resolved: Ult
       || scenario.status === "done").length;
 
   return `${domain.id} ${terminalCount}/${scenarios.length} scenarios terminal`;
+}
+
+const SLICE_2_SURFACED_BLOCKER_CODES: readonly string[] = [
+  "migration-unsafe",
+  "migration-conflict",
+  "interrupted-attempt",
+];
+
+/**
+ * Slice-2 migration and interrupted-attempt blockers carry recovery metadata (recoveryMode,
+ * nextAction) that the picker and status surfaces must expose. Other blockers (legacy
+ * session-level codes) continue to use the generic idle-reason path.
+ */
+function isSlice2SurfacedBlocker(blocker: UltraPlanBlocker | null): blocker is UltraPlanBlocker {
+  return blocker !== null && SLICE_2_SURFACED_BLOCKER_CODES.includes(blocker.code);
 }

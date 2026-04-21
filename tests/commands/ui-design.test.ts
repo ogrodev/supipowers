@@ -361,4 +361,196 @@ describe("handleUiDesign", () => {
     expect(firstCleanup).toHaveBeenCalledTimes(1);
     expect(secondCleanup).toHaveBeenCalledTimes(0);
   });
+
+  test("wizard offers pencil-mcp as available when Pencil MCP tools are detected", async () => {
+    const platform = createPlatform();
+    (platform as any).getActiveTools = mock(() => [
+      "mcp_pencil_batch_design",
+      "mcp_pencil_batch_get",
+      "mcp_pencil_open_document",
+    ]);
+    const state: { offered: string[] | null } = { offered: null };
+    const ctx = createContext({
+      ui: {
+        select: mock(async (_title: string, options: string[]) => {
+          state.offered = options;
+          return null; // user bails — we only assert the options list
+        }),
+        input: mock(async () => null),
+        notify: mock(),
+      },
+    });
+    const deps = createDeps({ loadUiDesignConfig: mock(() => null) });
+
+    await handleUiDesign(platform, ctx, undefined, deps);
+
+    expect(state.offered).not.toBeNull();
+    const labels = state.offered as unknown as string[];
+    const pencilLabel = labels.find((l) => l.startsWith("pencil-mcp"));
+    expect(pencilLabel).toBeDefined();
+    expect(pencilLabel).toContain("Drive a .pen file via the Pencil MCP server");
+  });
+
+  test("wizard marks pencil-mcp as not connected when Pencil MCP tools are absent", async () => {
+    const platform = createPlatform();
+    const state: { offered: string[] | null } = { offered: null };
+    const ctx = createContext({
+      ui: {
+        select: mock(async (_title: string, options: string[]) => {
+          state.offered = options;
+          return null;
+        }),
+        input: mock(async () => null),
+        notify: mock(),
+      },
+    });
+    const deps = createDeps({ loadUiDesignConfig: mock(() => null) });
+
+    await handleUiDesign(platform, ctx, undefined, deps);
+
+    const labels = state.offered as unknown as string[];
+    const pencilLabel = labels.find((l) => l.startsWith("pencil-mcp"));
+    expect(pencilLabel).toBeDefined();
+    expect(pencilLabel).toContain("not connected");
+  });
+
+  test("pencil-mcp flow: selects a .pen file, passes penFilePath to getBackend + manifest", async () => {
+    const platform = createPlatform();
+    (platform as any).getActiveTools = mock(() => [
+      "mcp_pencil_batch_design",
+      "mcp_pencil_batch_get",
+    ]);
+    // Pre-create a .pen file in the tmp repo so the selector discovers it.
+    const penAbs = path.join(tmpDir, "designs", "home.pen");
+    fs.mkdirSync(path.dirname(penAbs), { recursive: true });
+    fs.writeFileSync(penAbs, "");
+
+    const ctx = createContext({
+      ui: {
+        // headless path: we test with hasUI:false so the selector picks the first
+        // alphabetical entry deterministically without asking.
+        select: mock(async () => null),
+        input: mock(async () => null),
+        notify: mock(),
+      },
+      hasUI: false,
+    });
+
+    const captured: { startSessionArgs: any; getBackendArgs: any[] | null } = {
+      startSessionArgs: null,
+      getBackendArgs: null,
+    };
+    const deps = createDeps({
+      loadUiDesignConfig: mock(() => ({ backend: "pencil-mcp" as const })),
+      getBackend: mock((...args: any[]) => {
+        captured.getBackendArgs = args;
+        return {
+          id: "pencil-mcp" as const,
+          startSession: mock(async (opts: any) => {
+            captured.startSessionArgs = opts;
+            return { url: `file://${opts.penFilePath}`, cleanup: mock(async () => {}) };
+          }),
+          artifactUrl: mock(() => null),
+          finalize: mock(async () => {}),
+        };
+      }) as any,
+    });
+
+    await handleUiDesign(platform, ctx, undefined, deps);
+
+    expect(captured.getBackendArgs?.[0]).toBe("pencil-mcp");
+    expect(typeof captured.getBackendArgs?.[1]?.getActiveTools).toBe("function");
+    expect(captured.startSessionArgs?.penFilePath).toBe(penAbs);
+
+    const sessionDir = path.join(tmpDir, ".omp", "supipowers", "ui-design", "uidesign-20260418-120000-abcd");
+    const manifest = JSON.parse(fs.readFileSync(path.join(sessionDir, "manifest.json"), "utf-8"));
+    expect(manifest.backend).toBe("pencil-mcp");
+    expect(manifest.penFilePath).toBe(penAbs);
+
+    expect(deps.setUiDesignPromptOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ backend: "pencil-mcp", penFilePath: penAbs }),
+    );
+  });
+
+  test("loadUiDesignPromptAssets receives backend context for pencil sessions", async () => {
+    const platform = createPlatform();
+    (platform as any).getActiveTools = mock(() => [
+      "mcp_pencil_batch_design",
+      "mcp_pencil_batch_get",
+    ]);
+    const ctx = createContext({ hasUI: false });
+    const loadUiDesignPromptAssets = mock(() => ({}));
+    const deps = createDeps({
+      loadUiDesignConfig: mock(() => ({ backend: "pencil-mcp" as const })),
+      loadUiDesignPromptAssets,
+      getBackend: mock(() => ({
+        id: "pencil-mcp" as const,
+        startSession: mock(async () => ({ url: "file:///x", cleanup: mock(async () => {}) })),
+        artifactUrl: mock(() => null),
+        finalize: mock(async () => {}),
+      })) as any,
+    });
+
+    await handleUiDesign(platform, ctx, undefined, deps);
+
+    expect(loadUiDesignPromptAssets).toHaveBeenCalledWith({ backend: "pencil-mcp" });
+  });
+
+  test("wizard survives when platform.getActiveTools throws", async () => {
+    const platform = createPlatform();
+    (platform as any).getActiveTools = mock(() => {
+      throw new Error("tool bridge unavailable");
+    });
+    const state: { offered: string[] | null } = { offered: null };
+    const ctx = createContext({
+      ui: {
+        select: mock(async (_title: string, options: string[]) => {
+          state.offered = options;
+          return null;
+        }),
+        input: mock(async () => null),
+        notify: mock(),
+      },
+    });
+    const deps = createDeps({ loadUiDesignConfig: mock(() => null) });
+
+    await handleUiDesign(platform, ctx, undefined, deps);
+
+    const labels = state.offered as unknown as string[];
+    expect(labels).toBeDefined();
+    expect(labels.some((l) => l.startsWith("local-html"))).toBe(true);
+    const pencilLabel = labels.find((l) => l.startsWith("pencil-mcp"));
+    expect(pencilLabel).toContain("not connected");
+    // Must not have surfaced an error banner — the wizard kept going.
+    expect(deps.notifyError).not.toHaveBeenCalled();
+  });
+
+  test("pencil flow removes the session dir when the user cancels .pen selection", async () => {
+    const platform = createPlatform();
+    (platform as any).getActiveTools = mock(() => [
+      "mcp_pencil_batch_design",
+      "mcp_pencil_batch_get",
+    ]);
+    // Pre-create a .pen so the selector would have non-trivial options, but
+    // cancel the prompt — we want to exercise the cleanup path.
+    fs.mkdirSync(path.join(tmpDir, "designs"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "designs", "home.pen"), "");
+    const ctx = createContext({
+      ui: {
+        select: mock(async () => null), // user cancels the .pen picker
+        input: mock(async () => null),
+        notify: mock(),
+      },
+    });
+    const deps = createDeps({
+      loadUiDesignConfig: mock(() => ({ backend: "pencil-mcp" as const })),
+    });
+
+    await handleUiDesign(platform, ctx, undefined, deps);
+
+    const sessionDir = path.join(tmpDir, ".omp", "supipowers", "ui-design", "uidesign-20260418-120000-abcd");
+    expect(fs.existsSync(sessionDir)).toBe(false);
+    expect(deps.notifyInfo).toHaveBeenCalledWith(ctx, "ui-design cancelled", "No .pen file selected");
+    expect(platform.sendUserMessage).not.toHaveBeenCalled();
+  });
 });

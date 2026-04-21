@@ -48,6 +48,8 @@ interface CompletionProof {
   approvalRecordPath: string;
   approvalDecision: UiDesignReviewDecision | null;
   critique: NonNullable<Manifest["critique"]>;
+  /** Set only for pencil-mcp sessions; records the absolute .pen path audited. */
+  penFilePath?: string;
 }
 
 const RESUME_STEER_TEMPLATE = (sessionDir: string): string =>
@@ -64,6 +66,20 @@ const REPAIR_COMPLETE_STEER_TEMPLATE = (sessionDir: string, completionIssues: st
     `Read \`${path.join(sessionDir, "manifest.json")}\`, \`${path.join(sessionDir, "page.html")}\`, \`${path.join(sessionDir, "critique.md")}\`, and \`${path.join(sessionDir, "screen-review.html")}\` if present, then resume the first incomplete review/finalization phase and rewrite the manifest truthfully.`,
   ].join(" ");
 
+const REPAIR_COMPLETE_STEER_TEMPLATE_PENCIL = (
+  sessionDir: string,
+  penFilePath: string | undefined,
+  completionIssues: string[],
+): string => {
+  const penInstruction = penFilePath
+    ? `Re-open \`${penFilePath}\` via \`mcp_pencil_open_document\` and inspect`
+    : "The manifest is missing `penFilePath` — read `manifest.json`, restore the absolute .pen path, then inspect";
+  return [
+    "Continue the /supi:ui-design run.",
+    `The manifest at \`${path.join(sessionDir, "manifest.json")}\` claims \`status: \"complete\"\` but completion validation failed: ${completionIssues.join(", ")}.`,
+    `${penInstruction} \`${path.join(sessionDir, "node-manifest.json")}\`, \`${path.join(sessionDir, "critique.md")}\`, and \`${path.join(sessionDir, "screen-review.png")}\` if present, then resume the first incomplete review/finalization phase and rewrite the manifest truthfully.`,
+  ].join(" ");
+};
 export function generateUiDesignSessionId(): string {
   const now = new Date();
   const date = now.toISOString().slice(0, 10).replace(/-/g, "");
@@ -197,7 +213,8 @@ function isManifest(value: unknown): value is Manifest {
     (record.scope === undefined || record.scope === "page" || record.scope === "flow" || record.scope === "component") &&
     (record.topic === undefined || typeof record.topic === "string") &&
     (record.approvedAt === undefined || typeof record.approvedAt === "string") &&
-    (record.critique === undefined || isCritiqueSummary(record.critique))
+    (record.critique === undefined || isCritiqueSummary(record.critique)) &&
+    (record.penFilePath === undefined || typeof record.penFilePath === "string")
   );
 }
 
@@ -320,7 +337,13 @@ export function recordUiDesignReviewApproval(
 
   const selected = normalizeReviewDecision(selectedLabel);
   if (!selected || !hasReviewDecisionSet(options)) return;
-  if (!fs.existsSync(path.join(session.dir, "screen-review.html"))) return;
+  // Require a review artifact matching the active backend. Pencil sessions
+  // produce a PNG exported from the .pen file; local-html produces an HTML
+  // companion page. Either satisfies the completion gate.
+  const reviewArtifact = session.backend === "pencil-mcp"
+    ? "screen-review.png"
+    : "screen-review.html";
+  if (!fs.existsSync(path.join(session.dir, reviewArtifact))) return;
 
   const record: UiDesignReviewApprovalRecord = {
     question,
@@ -526,12 +549,51 @@ function sameCritiqueSummary(
   );
 }
 
-function validateCompletionProof(
+interface NodeManifest {
+  pageNodeId: string;
+  sectionNodeIds: string[];
+  componentNodeIds: string[];
+}
+
+function isNodeManifest(value: unknown): value is NodeManifest {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.pageNodeId !== "string" || record.pageNodeId.length === 0) return false;
+  if (!isStringArray(record.sectionNodeIds)) return false;
+  if (!isStringArray(record.componentNodeIds)) return false;
+  return (
+    record.sectionNodeIds.every((id) => typeof id === "string" && id.length > 0) &&
+    record.componentNodeIds.every((id) => typeof id === "string" && id.length > 0)
+  );
+}
+
+function validateCritiqueFromFile(
+  critiquePath: string,
+  manifestCritique: Manifest["critique"],
+  issues: string[],
+): { fixableCount: number; advisoryCount: number } {
+  let critique = {
+    fixableCount: manifestCritique?.fixableCount ?? 0,
+    advisoryCount: manifestCritique?.advisoryCount ?? 0,
+  };
+  if (!fs.existsSync(critiquePath)) {
+    issues.push("critique.md");
+    return critique;
+  }
+  const critiqueContent = readTextFile(critiquePath);
+  if (critiqueContent === null) {
+    issues.push("critique.md unreadable");
+    return critique;
+  }
+  critique = parseCritiqueSummary(critiqueContent, issues);
+  return critique;
+}
+
+function validateLocalHtmlCompletion(
   sessionDir: string,
   manifest: Manifest,
-): { issues: string[]; validatedManifest: Manifest } {
-  const issues: string[] = [];
-
+  issues: string[],
+): { fixableCount: number; advisoryCount: number; approval: UiDesignReviewApprovalRecord | null } {
   validateSessionTextArtifact(sessionDir, "context.md", issues);
   validateSessionHtmlArtifact(sessionDir, "screen-decomposition.html", issues);
   validateSessionJsonArtifact(sessionDir, "decomposition.json", issues);
@@ -547,21 +609,11 @@ function validateCompletionProof(
 
   validateTrackedComponentArtifacts(sessionDir, manifest, issues);
 
-  const critiquePath = path.join(sessionDir, "critique.md");
-  let critique = {
-    fixableCount: manifest.critique?.fixableCount ?? 0,
-    advisoryCount: manifest.critique?.advisoryCount ?? 0,
-  };
-  if (!fs.existsSync(critiquePath)) {
-    issues.push("critique.md");
-  } else {
-    const critiqueContent = readTextFile(critiquePath);
-    if (critiqueContent === null) {
-      issues.push("critique.md unreadable");
-    } else {
-      critique = parseCritiqueSummary(critiqueContent, issues);
-    }
-  }
+  const critique = validateCritiqueFromFile(
+    path.join(sessionDir, "critique.md"),
+    manifest.critique,
+    issues,
+  );
 
   validateSessionHtmlArtifact(sessionDir, "screen-review.html", issues);
 
@@ -572,9 +624,75 @@ function validateCompletionProof(
     issues.push(`${REVIEW_APPROVAL_FILE} selected ${approval.selected}`);
   }
 
+  return { ...critique, approval };
+}
+
+function validatePencilMcpCompletion(
+  sessionDir: string,
+  manifest: Manifest,
+  issues: string[],
+): { fixableCount: number; advisoryCount: number; approval: UiDesignReviewApprovalRecord | null } {
+  validateSessionTextArtifact(sessionDir, "context.md", issues);
+  validateSessionJsonArtifact(sessionDir, "decomposition.json", issues);
+
+  // penFilePath may live outside sessionDir; validate the raw absolute path.
+  if (!manifest.penFilePath || typeof manifest.penFilePath !== "string") {
+    issues.push("manifest.penFilePath missing");
+  } else if (!fs.existsSync(manifest.penFilePath)) {
+    issues.push(`penFilePath missing on disk: ${manifest.penFilePath}`);
+  }
+
+  const nodeManifestPath = requireSessionArtifact(sessionDir, "node-manifest.json", issues);
+  if (nodeManifestPath) {
+    const raw = readTextFile(nodeManifestPath);
+    if (raw === null) {
+      issues.push("node-manifest.json unreadable");
+    } else {
+      try {
+        const parsed = JSON.parse(raw);
+        if (!isNodeManifest(parsed)) {
+          issues.push("node-manifest.json is malformed (expected pageNodeId + sectionNodeIds + componentNodeIds)");
+        }
+      } catch {
+        issues.push("node-manifest.json is not valid JSON");
+      }
+    }
+  }
+
+  const critique = validateCritiqueFromFile(
+    path.join(sessionDir, "critique.md"),
+    manifest.critique,
+    issues,
+  );
+
+  const screenReviewPath = requireSessionArtifact(sessionDir, "screen-review.png", issues);
+  // requireSessionArtifact already pushes the missing-artifact issue; no further check.
+  void screenReviewPath;
+
+  const approval = readReviewApprovalRecord(sessionDir);
+  if (!approval) {
+    issues.push(REVIEW_APPROVAL_FILE);
+  } else if (approval.selected !== "approve") {
+    issues.push(`${REVIEW_APPROVAL_FILE} selected ${approval.selected}`);
+  }
+
+  return { ...critique, approval };
+}
+
+function validateCompletionProof(
+  sessionDir: string,
+  manifest: Manifest,
+): { issues: string[]; validatedManifest: Manifest } {
+  const issues: string[] = [];
+
+  const result = manifest.backend === "pencil-mcp"
+    ? validatePencilMcpCompletion(sessionDir, manifest, issues)
+    : validateLocalHtmlCompletion(sessionDir, manifest, issues);
+  const { approval } = result;
+
   const critiqueSummary = {
-    fixableCount: critique.fixableCount,
-    advisoryCount: critique.advisoryCount,
+    fixableCount: result.fixableCount,
+    advisoryCount: result.advisoryCount,
     fixIterations: manifest.critique?.fixIterations ?? 0,
   };
   const validatedManifest: Manifest = {
@@ -583,16 +701,18 @@ function validateCompletionProof(
     critique: critiqueSummary,
   };
 
+  const isPencil = manifest.backend === "pencil-mcp";
   writeCompletionProof(sessionDir, {
     valid: issues.length === 0,
     validatedAt: new Date().toISOString(),
     issues: [...issues],
-    page: manifest.page,
+    page: isPencil ? "<pen node page>" : manifest.page,
     critiquePath: "critique.md",
-    reviewPath: "screen-review.html",
+    reviewPath: isPencil ? "screen-review.png" : "screen-review.html",
     approvalRecordPath: REVIEW_APPROVAL_FILE,
     approvalDecision: approval?.selected ?? null,
     critique: critiqueSummary,
+    ...(isPencil && manifest.penFilePath ? { penFilePath: manifest.penFilePath } : {}),
   });
 
   return { issues, validatedManifest };
@@ -742,11 +862,17 @@ export function registerUiDesignApprovalHook(platform: Platform): void {
           ["Resume session", "Discard session"],
         );
         if (choice === "Resume session") {
+          // Pencil manifests always cite pencil artifacts in their repair steer,
+          // even when `penFilePath` is missing — the HTML template would point
+          // at files pencil sessions never produce.
+          const repairSteer = manifest.backend === "pencil-mcp"
+            ? REPAIR_COMPLETE_STEER_TEMPLATE_PENCIL(sessionDir, manifest.penFilePath, completion.issues)
+            : REPAIR_COMPLETE_STEER_TEMPLATE(sessionDir, completion.issues);
           await resumeSession(
             platform,
             ctx,
             session,
-            REPAIR_COMPLETE_STEER_TEMPLATE(sessionDir, completion.issues),
+            repairSteer,
           );
           return;
         }

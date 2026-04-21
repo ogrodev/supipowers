@@ -66,6 +66,15 @@ describe("ui-design config", () => {
     expect(loadUiDesignConfig(paths, tmpDir)).toBeNull();
   });
 
+  test("loadUiDesignConfig accepts pencil-mcp backend", () => {
+    const paths = createPaths(".omp");
+    const configPath = paths.project(tmpDir, "ui-design.json");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({ backend: "pencil-mcp" }));
+
+    expect(loadUiDesignConfig(paths, tmpDir)).toEqual({ backend: "pencil-mcp" });
+  });
+
   test("saveUiDesignConfig creates parent directories and writes pretty JSON", () => {
     const paths = createPaths(".omp");
     saveUiDesignConfig(paths, tmpDir, { backend: "local-html", port: 5555 });

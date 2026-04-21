@@ -138,4 +138,62 @@ describe("ui-design system prompt", () => {
     expect(result2?.systemPrompt).toContain("═══Design Director═══");
     cancelUiDesignTracking("test-teardown");
   });
+
+  test("pencil-mcp backend emits the pencil phase table + HARD-GATE penFilePath rule", () => {
+    const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, {
+      ...BASE_OPTIONS,
+      backend: "pencil-mcp" as const,
+      penFilePath: "/Users/me/proj/designs/home.pen",
+    });
+    expect(prompt).toContain("mcp_pencil_open_document");
+    expect(prompt).toContain("mcp_pencil_batch_design");
+    expect(prompt).toContain("node-manifest.json");
+    expect(prompt).toContain("screen-review.png");
+    // The pencil table replaces the HTML table — page.html MUST NOT leak through.
+    expect(prompt).not.toContain("<session>/page.html");
+    // HARD-GATE cites the exact .pen path
+    expect(prompt).toContain("filePath: '/Users/me/proj/designs/home.pen'");
+  });
+
+  test("local-html backend keeps the HTML phase table and does not leak pencil rules", () => {
+    const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, BASE_OPTIONS);
+    expect(prompt).toContain("<session>/page.html");
+    expect(prompt).not.toContain("mcp_pencil_open_document");
+    expect(prompt).not.toContain("screen-review.png");
+  });
+
+  test("pencil-mcp header lists the .pen file path", () => {
+    const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, {
+      ...BASE_OPTIONS,
+      backend: "pencil-mcp" as const,
+      penFilePath: "/abs/design.pen",
+    });
+    expect(prompt).toContain(".pen file: /abs/design.pen");
+  });
+
+  test("pencil Phase 8 references mcp_pencil_batch_design with filePath pinning", () => {
+    const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, {
+      ...BASE_OPTIONS,
+      backend: "pencil-mcp" as const,
+      penFilePath: "/abs/design.pen",
+    });
+    // Phase 8 row must name the actual tool, not the bare `batch_design` alias.
+    expect(prompt).toMatch(/Phase 8.*mcp_pencil_batch_design/);
+    expect(prompt).toMatch(/Phase 8.*filePath/);
+  });
+
+  test("pencil backend without penFilePath keeps the pencil prompt self-consistent", () => {
+    const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, {
+      ...BASE_OPTIONS,
+      backend: "pencil-mcp" as const,
+      // penFilePath deliberately omitted — e.g. fallback from a resumed session
+    });
+    // Must still use the pencil phase table — not the HTML one.
+    expect(prompt).toContain("mcp_pencil_batch_design");
+    expect(prompt).toContain("mcp_pencil_open_document");
+    expect(prompt).not.toContain("<session>/page.html");
+    // HARD-GATE must direct the director to recover the path from manifest.json.
+    expect(prompt).toContain("recorded in `manifest.json` under `penFilePath`");
+  });
+
 });

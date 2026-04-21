@@ -12,6 +12,8 @@ export interface UiDesignSystemPromptOptions {
   sessionDir: string;
   companionUrl: string;
   backend: UiDesignBackendId;
+  /** Absolute path to the .pen file — required when backend is pencil-mcp. */
+  penFilePath?: string;
 }
 
 const NOW_MARKER = "═══════════Now═══════════";
@@ -84,33 +86,8 @@ function buildSubAgentTemplates(templates?: { name: string; content: string }[])
   return out;
 }
 
-function buildDirectorSection(options: UiDesignSystemPromptOptions): string {
+function buildLocalHtmlPhaseTable(): string[] {
   return [
-    "═══Design Director═══",
-    "",
-    "<ui-design-mode>",
-    "You are the Design Director for `/supi:ui-design`.",
-    "Your output is a validated design artifact under the session directory.",
-    "You do NOT write production code. You do NOT exit early. You follow the 9 Design Director phases in order.",
-    ...buildTopicLine(options.topic),
-    `Session directory: ${options.sessionDir}`,
-    `Backend: ${options.backend}`,
-    `Companion URL: ${options.companionUrl}`,
-    "</ui-design-mode>",
-    "",
-    "## HARD-GATE",
-    "",
-    `- All file writes MUST happen inside \`${options.sessionDir}\`. Writing anywhere else is forbidden.`,
-    "- You **MUST NOT** generate production code (`.ts`, `.tsx`, `.vue`, `.svelte`, `.py`) into the user's codebase.",
-    "- You **MUST NOT** call `exit_plan_mode` or `ExitPlanMode` — completion is driven by the agent_end approval hook.",
-    "- You **MUST NOT** use the `ask` tool. Use `planning_ask` for every user question.",
-    "- You **MUST NOT** skip a phase. Each phase's precondition file MUST exist on disk before you advance.",
-    "- You **MUST NOT** declare completion without updating `manifest.json`.",
-    "",
-    "## Context Scan Summary",
-    "",
-    options.contextScanSummary.trim(),
-    "",
     "## Director state machine (9 model-owned phases)",
     "",
     "| # | Phase | Precondition | Output | Manifest status |",
@@ -124,22 +101,143 @@ function buildDirectorSection(options: UiDesignSystemPromptOptions): string {
     "| 7 | Phase 7 — Design-critic pass | `<session>/page.html` exists | `<session>/critique.md` | awaiting-review |",
     "| 8 | Phase 8 — Fix loop (≤2) | `<session>/critique.md` exists | fixes in-place, critic re-run | awaiting-review |",
     "| 9 | Phase 9 — User review gate | fix loop terminated | `<session>/screen-review.html`; planning_ask → approve/request-changes/discard | complete or discarded |",
+  ];
+}
+
+function buildPencilMcpPhaseTable(penPath: string): string[] {
+  return [
+    "## Director state machine (9 model-owned phases)",
     "",
-    "## Parallelism rules",
+    "| # | Phase | Precondition | Output | Manifest status |",
+    "|---|---|---|---|---|",
+    "| 1 | Phase 1 — Scope selection | manifest.json with status=in-progress | planning_ask result → update manifest.scope | in-progress |",
+    `| 2 | Phase 2 — Context review | manifest.scope populated | \`<session>/context.md\`; \`mcp_pencil_open_document\` on \`${penPath}\`; \`mcp_pencil_get_editor_state\` + \`mcp_pencil_batch_get\` to inventory existing content | in-progress |`,
+    "| 3 | Phase 3 — Decomposition | `<session>/context.md` exists | `<session>/decomposition.json` (kebab-case unique names); `mcp_pencil_batch_design` creates a top-level `Decomposition` frame with one child frame per section | in-progress |",
+    "| 4 | Phase 4 — Parallel components | `<session>/decomposition.json` exists | one reusable node per component under a `Components` frame; update `<session>/node-manifest.json.componentNodeIds` | in-progress |",
+    "| 5 | Phase 5 — Section assembly | components present | section frames composed via `mcp_pencil_batch_design`; update `<session>/node-manifest.json.sectionNodeIds` | in-progress |",
+    "| 6 | Phase 6 — Page composition | sections present | page frame assembled; set `<session>/node-manifest.json.pageNodeId` | critiquing |",
+    "| 7 | Phase 7 — Design-critic pass | `pageNodeId` set | `<session>/critique.md` with `## Fixable` + `## Advisory` | awaiting-review |",
+    "| 8 | Phase 8 — Fix loop (≤2) | `<session>/critique.md` exists | `mcp_pencil_batch_design` edits in place (filePath pinned); critic rerun | awaiting-review |",
+    "| 9 | Phase 9 — User review gate | fix loop terminated | `mcp_pencil_export_nodes` writes `<session>/screen-review.png`; planning_ask → approve/request-changes/discard | complete or discarded |",
+  ];
+}
+
+function buildHardGate(options: UiDesignSystemPromptOptions): string[] {
+  const base = [
+    "## HARD-GATE",
     "",
-    "- Phase 4: parallel via a single `task` call with one sub-task per component.",
-    "- Phase 5: serial. Later sections may reference earlier sections.",
-    "- Phase 7: single sub-agent.",
+    `- All file writes MUST happen inside \`${options.sessionDir}\`. Writing anywhere else is forbidden.`,
+    "- You **MUST NOT** generate production code (`.ts`, `.tsx`, `.vue`, `.svelte`, `.py`) into the user's codebase.",
+    "- You **MUST NOT** call `exit_plan_mode` or `ExitPlanMode` — completion is driven by the agent_end approval hook.",
+    "- You **MUST NOT** use the `ask` tool. Use `planning_ask` for every user question.",
+    "- You **MUST NOT** skip a phase. Each phase's precondition file MUST exist on disk before you advance.",
+    "- You **MUST NOT** declare completion without updating `manifest.json`.",
+  ];
+  if (options.backend === "pencil-mcp") {
+    const penPath = options.penFilePath && options.penFilePath.length > 0
+      ? options.penFilePath
+      : null;
+    if (penPath) {
+      base.push(
+        `- Every \`mcp_pencil_*\` call MUST pass \`filePath: '${penPath}'\`. Do not \`mcp_pencil_open_document\` against any other path.`,
+      );
+    } else {
+      base.push(
+        "- Every `mcp_pencil_*` call MUST pass the absolute `filePath` recorded in `manifest.json` under `penFilePath`. Read the manifest before any `mcp_pencil_*` call. Do not `mcp_pencil_open_document` against any other path.",
+      );
+    }
+    base.push(
+      "- You **MUST NOT** call `mcp_pencil_set_variables` or `mcp_pencil_replace_all_matching_properties` unless the user explicitly asks for design-system-wide changes.",
+    );
+  }
+  return base;
+}
+
+function buildDirectorSection(options: UiDesignSystemPromptOptions): string {
+  const isPencil = options.backend === "pencil-mcp";
+  // When the pencil backend is active but the caller failed to pin a path,
+  // keep the prompt self-consistent (pencil phase table + pencil tool routing
+  // + pencil HARD-GATE) and instruct the director to recover the path from
+  // `manifest.json` before any `mcp_pencil_*` write. Mixing an HTML phase
+  // table into a pencil session is never correct.
+  const penPath = options.penFilePath && options.penFilePath.length > 0
+    ? options.penFilePath
+    : isPencil
+      ? "<read manifest.json penFilePath>"
+      : "";
+  const phaseTable = isPencil
+    ? buildPencilMcpPhaseTable(penPath)
+    : buildLocalHtmlPhaseTable();
+  const pencilLines = isPencil ? [`.pen file: ${penPath}`] : [];
+  const parallelismRules = isPencil
+    ? [
+        "## Parallelism rules",
+        "",
+        "- Phase 4: parallel via a single `task` call with one sub-task per component. Each sub-agent inserts its reusable node via `mcp_pencil_batch_design` and records the returned node id under `<session>/components/<name>.node`.",
+        "- Phase 5: serial. Later sections may reference earlier section node ids.",
+        "- Phase 7: single sub-agent.",
+      ]
+    : [
+        "## Parallelism rules",
+        "",
+        "- Phase 4: parallel via a single `task` call with one sub-task per component.",
+        "- Phase 5: serial. Later sections may reference earlier sections.",
+        "- Phase 7: single sub-agent.",
+      ];
+  const collisionSection = isPencil
+    ? [
+        "## Filename collision prevention (Phase 3)",
+        "",
+        "Before writing `decomposition.json`, kebab-case every component name and assert `new Set(names).size === names.length`. On collision, disambiguate and re-check. Do **NOT** invoke `task` until the check passes. Component names become reusable node names inside the `.pen` file, so duplicates collide there too.",
+      ]
+    : [
+        "## Filename collision prevention (Phase 3)",
+        "",
+        "Before writing `decomposition.json`, kebab-case every component name and assert `new Set(names).size === names.length`. On collision, disambiguate and re-check. Do **NOT** invoke `task` until the check passes.",
+      ];
+  const toolRouting = isPencil
+    ? [
+        "## Tool routing",
+        "",
+        "- `planning_ask` — every user question",
+        "- `task` — all sub-agents (Phases 4, 5, 7); never `createAgentSession` directly",
+        "- `read` / `write` / `edit` — session files only (context.md, decomposition.json, node-manifest.json, critique.md)",
+        "- `mcp_pencil_*` — every write to the `.pen` file; always pass `filePath` pinned to the HARD-GATE path",
+      ]
+    : [
+        "## Tool routing",
+        "",
+        "- `planning_ask` — every user question",
+        "- `task` — all sub-agents (Phases 4, 5, 7); never `createAgentSession` directly",
+        "- `read` / `write` / `edit` — session files only",
+      ];
+  return [
+    "═══Design Director═══",
     "",
-    "## Filename collision prevention (Phase 3)",
+    "<ui-design-mode>",
+    "You are the Design Director for `/supi:ui-design`.",
+    "Your output is a validated design artifact under the session directory.",
+    "You do NOT write production code. You do NOT exit early. You follow the 9 Design Director phases in order.",
+    ...buildTopicLine(options.topic),
+    `Session directory: ${options.sessionDir}`,
+    `Backend: ${options.backend}`,
+    `Companion URL: ${options.companionUrl}`,
+    ...pencilLines,
+    "</ui-design-mode>",
     "",
-    "Before writing `decomposition.json`, kebab-case every component name and assert `new Set(names).size === names.length`. On collision, disambiguate and re-check. Do **NOT** invoke `task` until the check passes.",
+    ...buildHardGate(options),
     "",
-    "## Tool routing",
+    "## Context Scan Summary",
     "",
-    "- `planning_ask` — every user question",
-    "- `task` — all sub-agents (Phases 4, 5, 7); never `createAgentSession` directly",
-    "- `read` / `write` / `edit` — session files only",
+    options.contextScanSummary.trim(),
+    "",
+    ...phaseTable,
+    "",
+    ...parallelismRules,
+    "",
+    ...collisionSection,
+    "",
+    ...toolRouting,
     ...buildAdditionalGuidelines(options.skillContent),
     ...buildSubAgentTemplates(options.subAgentTemplates),
   ].join("\n");
@@ -204,6 +302,7 @@ export function registerUiDesignSystemPromptHook(platform: Platform): void {
         contextScanSummary: "Context scan summary unavailable. Read `context.md` if it exists.",
         topic: session.topic,
         scope: session.scope,
+        ...(session.penFilePath ? { penFilePath: session.penFilePath } : {}),
       };
       return { systemPrompt: buildUiDesignSystemPrompt(basePrompt, fallback) };
     }

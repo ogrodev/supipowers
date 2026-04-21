@@ -708,3 +708,44 @@ describe("tool_result with MCP tool names", () => {
     expect(warnCalls.some((c: any[]) => String(c[0]).includes("event extraction failed"))).toBe(false);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// Slice-2 hook bridge wiring
+// ---------------------------------------------------------------------------
+
+describe("registerContextModeHooks — slice-2 hook-bridge integration", () => {
+  beforeEach(() => { _resetCache(); });
+  afterEach(() => { cleanupTrackedContextModeHooks(); });
+
+  test("registers handlers for all six UltraPlan-relevant hooks (session_start, before_agent_start, tool_call, tool_result, agent_end, session_shutdown)", () => {
+    const platform = createMockPlatformWithHandlers();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+
+    // The context-mode hooks + the UltraPlan bridge together must cover all six events.
+    expect(platform._handlers.has("session_start")).toBe(true);
+    expect(platform._handlers.has("before_agent_start")).toBe(true);
+    expect(platform._handlers.has("tool_call")).toBe(true);
+    expect(platform._handlers.has("tool_result")).toBe(true);
+    expect(platform._handlers.has("agent_end")).toBe(true);
+    expect(platform._handlers.has("session_shutdown")).toBe(true);
+  });
+
+  test("src/context-mode/hooks.ts only imports from src/ultraplan/runtime/hook-bridge.ts within the UltraPlan runtime tree", () => {
+    // Static import-surface assertion (delta spec §thin hook bridge rule).
+    const repoRoot = process.cwd();
+    const hooksSrc = fs.readFileSync(path.join(repoRoot, "src", "context-mode", "hooks.ts"), "utf8");
+    const importRe = /from\s+["']([^"']+)["']/g;
+    const offendingImports: string[] = [];
+    for (const match of hooksSrc.matchAll(importRe)) {
+      const specifier = match[1];
+      if (!specifier.includes("/ultraplan/")) continue;
+      if (specifier.endsWith("/ultraplan/runtime/hook-bridge.js")
+        || specifier.endsWith("/ultraplan/runtime/hook-bridge")) {
+        continue;
+      }
+      offendingImports.push(specifier);
+    }
+    expect(offendingImports).toEqual([]);
+  });
+});

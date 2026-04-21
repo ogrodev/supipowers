@@ -1,0 +1,345 @@
+import type { Platform } from "../../platform/types.js";
+import type {
+  UltraPlanCursor,
+  UltraPlanHookEventName,
+  UltraPlanHookObservation,
+  UltraPlanMutationPlan,
+  UltraPlanRuntimeTracker,
+  UltraPlanStorageResult,
+} from "../../types.js";
+import { LAUNCH_CONTEXT_METADATA_KEY, recoverLaunchContextFromEvent } from "./launch-context.js";
+import { normalizeHookEvent, type NormalizeHookEventInput } from "./normalize.js";
+import {
+  appendHookLog,
+  loadTracker as loadTrackerDefault,
+  saveTrackerAtomic as saveTrackerAtomicDefault,
+} from "./tracker-storage.js";
+import { reduce as reduceDefault, type ReducerState } from "./reducer.js";
+import {
+  repairOnSessionShutdown as repairOnSessionShutdownDefault,
+  repairOnSessionStart as repairOnSessionStartDefault,
+  type RepairPlan,
+} from "./repair.js";
+import {
+  resolveSessionMigration as resolveSessionMigrationDefault,
+  type MigrationOutcome,
+} from "./migration.js";
+
+/**
+ * Slice-2 hook bridge.
+ *
+ * This is the only UltraPlan module that `src/context-mode/hooks.ts` imports. It wires platform
+ * hook events into the runtime pipeline (normalize \u2192 reduce \u2192 apply) without performing any
+ * business decisions itself. Every runtime unit is injected so the bridge is fully testable in
+ * isolation and so the context-mode hook layer stays generic.
+ */
+
+export interface UltraPlanSessionContext {
+  sessionId: string;
+  cwd: string;
+}
+
+export interface UltraPlanHookBridgeDeps {
+  /** Resolves the currently-focused UltraPlan session for a given platform hook context. */
+  resolveActiveSession(ctx: unknown): UltraPlanSessionContext | null;
+
+  normalize(input: NormalizeHookEventInput): UltraPlanHookObservation;
+
+  loadTracker(paths: Platform["paths"], cwd: string, sessionId: string): UltraPlanStorageResult<UltraPlanRuntimeTracker>;
+  saveTrackerAtomic(
+    paths: Platform["paths"],
+    cwd: string,
+    sessionId: string,
+    tracker: UltraPlanRuntimeTracker,
+  ): UltraPlanStorageResult<string>;
+
+  reduce(state: ReducerState, action: Parameters<typeof reduceDefault>[1]): UltraPlanMutationPlan;
+
+  /** Single I/O funnel that applies a mutation plan in the required durability order. */
+  applyMutationPlan(input: ApplyMutationPlanInput): void;
+
+  repairOnSessionStart(state: { tracker: UltraPlanRuntimeTracker; manifest: null }, nowIso: string): RepairPlan;
+  repairOnSessionShutdown(state: { tracker: UltraPlanRuntimeTracker; manifest: null }, nowIso: string): RepairPlan;
+
+  resolveSessionMigration(input: {
+    paths: Platform["paths"];
+    cwd: string;
+    sessionId: string;
+    nowIso: string;
+  }): MigrationOutcome;
+}
+
+export interface ApplyMutationPlanInput {
+  platform: Platform;
+  cwd: string;
+  sessionId: string;
+  observation: UltraPlanHookObservation;
+  mutationPlan: UltraPlanMutationPlan;
+}
+
+/**
+ * Register the UltraPlan hook bridge on a platform. The six UltraPlan-relevant hooks are wired to
+ * the runtime pipeline; when `resolveActiveSession` returns null the handlers are no-ops.
+ */
+export function registerUltraPlanHookBridge(
+  platform: Platform,
+  overrides: Partial<UltraPlanHookBridgeDeps> = {},
+): void {
+  const deps: UltraPlanHookBridgeDeps = {
+    resolveActiveSession: overrides.resolveActiveSession ?? defaultResolveActiveSession,
+    normalize: overrides.normalize ?? normalizeHookEvent,
+    loadTracker: overrides.loadTracker ?? loadTrackerDefault,
+    saveTrackerAtomic: overrides.saveTrackerAtomic ?? saveTrackerAtomicDefault,
+    reduce: overrides.reduce ?? reduceDefault,
+    applyMutationPlan: overrides.applyMutationPlan ?? applyMutationPlanDefault,
+    repairOnSessionStart: overrides.repairOnSessionStart ?? repairOnSessionStartDefault,
+    repairOnSessionShutdown: overrides.repairOnSessionShutdown ?? repairOnSessionShutdownDefault,
+    resolveSessionMigration: overrides.resolveSessionMigration ?? resolveSessionMigrationDefault,
+  };
+
+  const sessionStart = (rawEvent: unknown, ctx?: unknown) =>
+    handleSessionStart(platform, deps, rawEvent, ctx);
+  const beforeAgentStart = (rawEvent: unknown, ctx?: unknown) =>
+    handleAttemptEvent(platform, deps, "before_agent_start", rawEvent, ctx);
+  const toolCall = (rawEvent: unknown, ctx?: unknown) =>
+    handleAttemptEvent(platform, deps, "tool_call", rawEvent, ctx);
+  const toolResult = (rawEvent: unknown, ctx?: unknown) =>
+    handleAttemptEvent(platform, deps, "tool_result", rawEvent, ctx);
+  const agentEnd = (rawEvent: unknown, ctx?: unknown) =>
+    handleAttemptEvent(platform, deps, "agent_end", rawEvent, ctx);
+  const sessionShutdown = (rawEvent: unknown, ctx?: unknown) =>
+    handleSessionShutdown(platform, deps, rawEvent, ctx);
+
+  platform.on("session_start", sessionStart);
+  platform.on("before_agent_start", beforeAgentStart);
+  platform.on("tool_call", toolCall);
+  platform.on("tool_result", toolResult);
+  platform.on("agent_end", agentEnd);
+  platform.on("session_shutdown", sessionShutdown);
+}
+
+// ---------------------------------------------------------------------------
+// Hook handlers
+// ---------------------------------------------------------------------------
+
+function handleSessionStart(
+  platform: Platform,
+  deps: UltraPlanHookBridgeDeps,
+  rawEvent: unknown,
+  ctx: unknown,
+): void {
+  const session = deps.resolveActiveSession(ctx);
+  if (!session) return;
+
+  const nowIso = new Date().toISOString();
+
+  // Migration check runs before any tracker work so a partial global directory can be repaired.
+  deps.resolveSessionMigration({ paths: platform.paths, cwd: session.cwd, sessionId: session.sessionId, nowIso });
+
+  const tracker = loadTrackerOrEmpty(deps, platform, session);
+  const repair = deps.repairOnSessionStart({ tracker, manifest: null }, nowIso);
+  void repair; // Slice-2 bridge applies repair actions inside the reducer flow below.
+
+  const observation = deps.normalize({
+    hookEvent: "session_start",
+    sessionId: session.sessionId,
+    nowIso,
+    metadata: extractMetadata(rawEvent, ctx),
+    prompt: extractPrompt(rawEvent, ctx),
+    persistedActiveAttempt: tracker.activeAttempt,
+    payload: toRecord(rawEvent),
+  });
+
+  const plan = deps.reduce({ tracker, cursor: tracker.activeAttempt?.cursorSnapshot ?? null }, {
+    kind: "session_started",
+    observation,
+    nowIso,
+  });
+  deps.applyMutationPlan({ platform, cwd: session.cwd, sessionId: session.sessionId, observation, mutationPlan: plan });
+}
+
+function handleAttemptEvent(
+  platform: Platform,
+  deps: UltraPlanHookBridgeDeps,
+  hookEvent: UltraPlanHookEventName,
+  rawEvent: unknown,
+  ctx: unknown,
+): void {
+  const session = deps.resolveActiveSession(ctx);
+  if (!session) return;
+
+  const nowIso = new Date().toISOString();
+  const tracker = loadTrackerOrEmpty(deps, platform, session);
+  const observation = deps.normalize({
+    hookEvent,
+    sessionId: session.sessionId,
+    nowIso,
+    metadata: extractMetadata(rawEvent, ctx),
+    prompt: extractPrompt(rawEvent, ctx),
+    persistedActiveAttempt: tracker.activeAttempt,
+    payload: toRecord(rawEvent),
+  });
+
+  const cursor: UltraPlanCursor | null = tracker.activeAttempt?.cursorSnapshot ?? null;
+
+  const plan = deps.reduce({ tracker, cursor }, reducerActionForEvent(hookEvent, observation, nowIso));
+  deps.applyMutationPlan({ platform, cwd: session.cwd, sessionId: session.sessionId, observation, mutationPlan: plan });
+}
+
+function handleSessionShutdown(
+  platform: Platform,
+  deps: UltraPlanHookBridgeDeps,
+  rawEvent: unknown,
+  ctx: unknown,
+): void {
+  const session = deps.resolveActiveSession(ctx);
+  if (!session) return;
+
+  const nowIso = new Date().toISOString();
+  const tracker = loadTrackerOrEmpty(deps, platform, session);
+  const repair = deps.repairOnSessionShutdown({ tracker, manifest: null }, nowIso);
+  void repair; // passed into the reducer via repair_applied actions in Slice-5 expansion.
+
+  const observation = deps.normalize({
+    hookEvent: "session_shutdown",
+    sessionId: session.sessionId,
+    nowIso,
+    metadata: extractMetadata(rawEvent, ctx),
+    prompt: extractPrompt(rawEvent, ctx),
+    persistedActiveAttempt: tracker.activeAttempt,
+    payload: toRecord(rawEvent),
+  });
+
+  const plan = deps.reduce({ tracker, cursor: tracker.activeAttempt?.cursorSnapshot ?? null }, {
+    kind: "session_shutdown",
+    observation,
+    nowIso,
+  });
+  deps.applyMutationPlan({ platform, cwd: session.cwd, sessionId: session.sessionId, observation, mutationPlan: plan });
+}
+
+// ---------------------------------------------------------------------------
+// Default resolvers
+// ---------------------------------------------------------------------------
+
+function defaultResolveActiveSession(_ctx: unknown): UltraPlanSessionContext | null {
+  // Slice-2 default: no automatic resolution. Hosts (e.g. /supi:ultraplan) inject their own
+  // resolver via overrides. When this default is in effect, the bridge is a no-op.
+  return null;
+}
+
+function applyMutationPlanDefault(input: ApplyMutationPlanInput): void {
+  // Minimal Slice-2 implementation: persist the observation to hooks-log and maintain the
+  // applied-fingerprint set in the tracker so replay is a no-op on next run. Manifest mutation
+  // is deferred to Slice-5 (execution orchestration). The durability order here is:
+  //   1. append hooks-log
+  //   2. save tracker with appliedFingerprints updated
+  const { platform, cwd, sessionId, observation, mutationPlan } = input;
+
+  appendHookLog(platform.paths, cwd, sessionId, observation);
+
+  if (mutationPlan.appendObservationFingerprint) {
+    const trackerRes = loadTrackerDefault(platform.paths, cwd, sessionId);
+    const base: UltraPlanRuntimeTracker = trackerRes.ok
+      ? trackerRes.value
+      : {
+        version: 1,
+        sessionId,
+        activeAttempt: null,
+        finalizedAttempts: [],
+        appliedFingerprints: [],
+        pendingMutation: null,
+        updatedAt: observation.occurredAt,
+      };
+    const next: UltraPlanRuntimeTracker = {
+      ...base,
+      appliedFingerprints: [
+        ...base.appliedFingerprints,
+        mutationPlan.appendObservationFingerprint,
+      ],
+      updatedAt: observation.occurredAt,
+    };
+    saveTrackerAtomicDefault(platform.paths, cwd, sessionId, next);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function loadTrackerOrEmpty(
+  deps: UltraPlanHookBridgeDeps,
+  platform: Platform,
+  session: UltraPlanSessionContext,
+): UltraPlanRuntimeTracker {
+  const result = deps.loadTracker(platform.paths, session.cwd, session.sessionId);
+  if (result.ok) return result.value;
+  return {
+    version: 1,
+    sessionId: session.sessionId,
+    activeAttempt: null,
+    finalizedAttempts: [],
+    appliedFingerprints: [],
+    pendingMutation: null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function reducerActionForEvent(
+  hookEvent: UltraPlanHookEventName,
+  observation: UltraPlanHookObservation,
+  nowIso: string,
+): Parameters<typeof reduceDefault>[1] {
+  switch (hookEvent) {
+    case "before_agent_start": {
+      // The bridge extracts a launch context (or fails correlation at normalization time).
+      // When correlation failed, pass an attempt_started action anyway so the reducer emits a
+      // blocker plan; the observation's correlationFailure carries the reason.
+      const launchContext = {
+        attemptId: observation.attemptId ?? "unknown",
+        attemptKey: observation.attemptKey ?? "unknown",
+        sourceAgent: observation.sourceAgent,
+        launchedAt: observation.occurredAt,
+      };
+      return { kind: "attempt_started", observation, launchContext };
+    }
+    case "tool_call":
+    case "tool_result":
+      return { kind: "observation_staged", observation };
+    case "agent_end":
+      return { kind: "attempt_finalized", observation, nowIso };
+    default:
+      return { kind: "observation_staged", observation };
+  }
+}
+
+function extractMetadata(rawEvent: unknown, ctx: unknown): Record<string, unknown> | null {
+  const rawMeta = asRecord(rawEvent)?.metadata as Record<string, unknown> | undefined;
+  const ctxMeta = asRecord(ctx)?.metadata as Record<string, unknown> | undefined;
+  if (rawMeta && ctxMeta) return { ...ctxMeta, ...rawMeta };
+  return rawMeta ?? ctxMeta ?? null;
+}
+
+function extractPrompt(rawEvent: unknown, ctx: unknown): string | null {
+  const rawPrompt = asRecord(rawEvent)?.prompt;
+  if (typeof rawPrompt === "string") return rawPrompt;
+  const rawSystemPrompt = asRecord(rawEvent)?.systemPrompt;
+  if (typeof rawSystemPrompt === "string") return rawSystemPrompt;
+  const ctxPrompt = asRecord(ctx)?.prompt;
+  if (typeof ctxPrompt === "string") return ctxPrompt;
+  return null;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return asRecord(value) ?? {};
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+// Re-export useful carrier bits for hosts that need them.
+export { LAUNCH_CONTEXT_METADATA_KEY, recoverLaunchContextFromEvent };

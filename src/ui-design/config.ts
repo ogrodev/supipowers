@@ -4,7 +4,7 @@ import type { PlatformPaths } from "../platform/types.js";
 import type { UiDesignBackendId } from "./types.js";
 
 const CONFIG_FILENAME = "ui-design.json";
-const SUPPORTED_BACKENDS: UiDesignBackendId[] = ["local-html"];
+const SUPPORTED_BACKENDS: UiDesignBackendId[] = ["local-html", "pencil-mcp"];
 
 export interface UiDesignConfig {
   backend: UiDesignBackendId;

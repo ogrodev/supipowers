@@ -28,6 +28,8 @@ import type { Manifest, UiDesignBackendId, UiDesignSession } from "../ui-design/
 import { buildUiDesignKickoffPrompt, renderContextScanSummary } from "../ui-design/prompt-builder.js";
 import { setUiDesignPromptOptions } from "../ui-design/system-prompt.js";
 import type { UiDesignSystemPromptOptions } from "../ui-design/system-prompt.js";
+import { detectPencilMcp } from "../ui-design/backends/pencil-mcp.js";
+import { selectPenFile } from "../ui-design/pen-selector.js";
 import { moduleDir } from "../utils/paths.js";
 import { resolveRepoRoot } from "../workspace/repo-root.js";
 
@@ -44,7 +46,7 @@ interface UiDesignPromptAssets {
 }
 
 interface UiDesignBackendOption {
-  id: UiDesignBackendId | "pencil-mcp" | "figma-mcp" | "paper-mcp";
+  id: UiDesignBackendId | "figma-mcp" | "paper-mcp";
   label: string;
   available: boolean;
 }
@@ -79,16 +81,33 @@ const DEFAULT_DEPS: UiDesignCommandDependencies = {
   loadUiDesignPromptAssets,
 };
 
-const BACKEND_OPTIONS: UiDesignBackendOption[] = [
-  {
-    id: "local-html",
-    label: "local-html — Local HTML mockups in browser companion (recommended for v1)",
-    available: true,
-  },
-  { id: "pencil-mcp", label: "pencil-mcp — coming soon", available: false },
-  { id: "figma-mcp", label: "figma-mcp — coming soon", available: false },
-  { id: "paper-mcp", label: "paper-mcp — coming soon", available: false },
-];
+function buildBackendOptions(platform: Platform): UiDesignBackendOption[] {
+  // Tool introspection is best-effort — if the harness throws, degrade pencil
+  // to unavailable rather than killing the whole wizard.
+  let activeTools: string[] = [];
+  try {
+    activeTools = platform.getActiveTools();
+  } catch {
+    activeTools = [];
+  }
+  const pencilAvailable = detectPencilMcp(activeTools);
+  return [
+    {
+      id: "local-html",
+      label: "local-html — Local HTML mockups in browser companion (recommended for v1)",
+      available: true,
+    },
+    {
+      id: "pencil-mcp",
+      label: pencilAvailable
+        ? "pencil-mcp — Drive a .pen file via the Pencil MCP server"
+        : "pencil-mcp — not connected (start Pencil MCP server and rerun)",
+      available: pencilAvailable,
+    },
+    { id: "figma-mcp", label: "figma-mcp — coming soon", available: false },
+    { id: "paper-mcp", label: "paper-mcp — coming soon", available: false },
+  ];
+}
 
 function findUiDesignSkillDir(): string | null {
   const candidates = [
@@ -105,7 +124,9 @@ function findUiDesignSkillDir(): string | null {
   return null;
 }
 
-function loadUiDesignPromptAssets(): UiDesignPromptAssets {
+function loadUiDesignPromptAssets(
+  options: { backend?: UiDesignBackendId } = {},
+): UiDesignPromptAssets {
   const skillDir = findUiDesignSkillDir();
   if (!skillDir) return {};
 
@@ -119,10 +140,17 @@ function loadUiDesignPromptAssets(): UiDesignPromptAssets {
     skillContent = undefined;
   }
 
+  // Backend-specific sub-agent templates live in a subdir; fall back to the
+  // flat (HTML-assuming) template set when the subdir is missing.
+  const backendSubdir = options.backend === "pencil-mcp" ? "pencil" : null;
+  const candidates = backendSubdir
+    ? [path.join(skillDir, "sub-agent-templates", backendSubdir), path.join(skillDir, "sub-agent-templates")]
+    : [path.join(skillDir, "sub-agent-templates")];
+
   let subAgentTemplates: { name: string; content: string }[] | undefined;
-  const templatesDir = path.join(skillDir, "sub-agent-templates");
-  try {
-    if (fs.existsSync(templatesDir) && fs.statSync(templatesDir).isDirectory()) {
+  for (const templatesDir of candidates) {
+    try {
+      if (!fs.existsSync(templatesDir) || !fs.statSync(templatesDir).isDirectory()) continue;
       const templates = fs
         .readdirSync(templatesDir)
         .filter((entry) => entry.endsWith(".md"))
@@ -133,45 +161,53 @@ function loadUiDesignPromptAssets(): UiDesignPromptAssets {
         }));
       if (templates.length > 0) {
         subAgentTemplates = templates;
+        break;
       }
+    } catch {
+      // Try next candidate
     }
-  } catch {
-    subAgentTemplates = undefined;
   }
 
   return { skillContent, subAgentTemplates };
 }
 
-async function runSetupWizard(ctx: any): Promise<UiDesignConfig | null> {
+async function runSetupWizard(platform: Platform, ctx: any): Promise<UiDesignConfig | null> {
+  const options = buildBackendOptions(platform);
   const choiceLabel = await ctx.ui.select(
     "Design backend",
-    BACKEND_OPTIONS.map((option) => option.label),
+    options.map((option) => option.label),
     {
-      helpText: "Pick a design backend (only local-html is available in v1)",
+      helpText: "Pick a design backend (local-html is always available; pencil-mcp requires the Pencil MCP server)",
     },
   );
   if (!choiceLabel) return null;
 
-  const selected = BACKEND_OPTIONS.find((option) => option.label === choiceLabel);
+  const selected = options.find((option) => option.label === choiceLabel);
   if (!selected) return null;
-  if (!selected.available || selected.id !== "local-html") {
-    ctx.ui.notify("Only local-html is available in v1. Aborting wizard.", "warning");
+  if (!selected.available) {
+    ctx.ui.notify(`Backend '${selected.id}' is not available right now.`, "warning");
+    return null;
+  }
+  if (selected.id !== "local-html" && selected.id !== "pencil-mcp") {
+    ctx.ui.notify(`Backend '${selected.id}' is not wired up yet.`, "warning");
     return null;
   }
 
-  const portStr = await ctx.ui.input(
-    "HTTP port for companion (blank = auto)",
-    "",
-    { helpText: "Leave blank to let the server pick a free port." },
-  );
-  if (portStr == null) return null;
-
   const cfg: UiDesignConfig = { ...DEFAULT_UI_DESIGN_CONFIG, backend: selected.id };
-  const trimmed = String(portStr).trim();
-  if (trimmed) {
-    const port = parseInt(trimmed, 10);
-    if (!Number.isNaN(port) && port > 0) {
-      cfg.port = port;
+
+  if (selected.id === "local-html") {
+    const portStr = await ctx.ui.input(
+      "HTTP port for companion (blank = auto)",
+      "",
+      { helpText: "Leave blank to let the server pick a free port." },
+    );
+    if (portStr == null) return null;
+    const trimmed = String(portStr).trim();
+    if (trimmed) {
+      const port = parseInt(trimmed, 10);
+      if (!Number.isNaN(port) && port > 0) {
+        cfg.port = port;
+      }
     }
   }
 
@@ -210,7 +246,7 @@ export async function handleUiDesign(
         );
         return;
       }
-      config = await runSetupWizard(ctx);
+      config = await runSetupWizard(platform, ctx);
       if (!config) return;
       deps.saveUiDesignConfig(platform.paths, ctx.cwd, config);
       deps.notifyInfo(ctx, "ui-design config saved", `Backend: ${config.backend}`);
@@ -224,16 +260,45 @@ export async function handleUiDesign(
     );
     const contextScanSummary = renderContextScanSummary(contextScan);
 
-    // ── Session + backend ─────────────────────────────────────────────
+    // ── Session + backend ────────────────────────────────────────────
     const sessionId = deps.generateUiDesignSessionId();
     const sessionDir = deps.createSessionDir(platform.paths, ctx.cwd, sessionId);
 
+    // For pencil-mcp: pick the .pen file BEFORE startSession. The selector
+    // accepts the not-yet-created session dir as the parent for the "new"
+    // fallback (the directory itself was just created above for artifacts).
+    let penFilePath: string | undefined;
+    if (config.backend === "pencil-mcp") {
+      const selection = await selectPenFile({ ctx, repoRoot, sessionDir });
+      if (!selection) {
+        // User cancelled before any session artifacts were produced. Remove
+        // the empty session directory we just created so we don't leave
+        // dead `.omp/supipowers/ui-design/<id>` folders behind.
+        try {
+          fs.rmSync(sessionDir, { recursive: true, force: true });
+        } catch {
+          // non-fatal; user can clean up manually
+        }
+        deps.notifyInfo(ctx, "ui-design cancelled", "No .pen file selected");
+        return;
+      }
+      penFilePath = selection.penFilePath;
+      if (selection.kind === "existing") {
+        deps.notifyInfo(ctx, "ui-design pen file selected", penFilePath);
+      } else {
+        deps.notifyInfo(ctx, "ui-design will create a new .pen", penFilePath);
+      }
+    }
+
     let backend: UiDesignBackend;
     try {
-      backend = deps.getBackend(config.backend as UiDesignBackendId);
+      backend = deps.getBackend(config.backend as UiDesignBackendId, {
+        getActiveTools: () => platform.getActiveTools(),
+      });
       startResult = await backend.startSession({
         sessionDir,
         port: config.port,
+        penFilePath,
       });
     } catch (err) {
       const message = err instanceof BackendUnavailableError ? err.message : (err as Error).message;
@@ -253,11 +318,12 @@ export async function handleUiDesign(
       components: [],
       sections: [],
       page: "page.html",
+      ...(penFilePath ? { penFilePath } : {}),
     };
     writeInitialManifest(sessionDir, manifest);
 
     // ── Capture prompt options for the before_agent_start hook ───────
-    const promptAssets = deps.loadUiDesignPromptAssets();
+    const promptAssets = deps.loadUiDesignPromptAssets({ backend: config.backend });
     const promptOptions: UiDesignSystemPromptOptions = {
       dotDirDisplay: platform.paths.dotDirDisplay,
       sessionDir,
@@ -267,6 +333,7 @@ export async function handleUiDesign(
       topic,
       skillContent: promptAssets.skillContent,
       subAgentTemplates: promptAssets.subAgentTemplates,
+      ...(penFilePath ? { penFilePath } : {}),
     };
     deps.setUiDesignPromptOptions(promptOptions);
 
@@ -278,6 +345,7 @@ export async function handleUiDesign(
       companionUrl: startResult.url,
       topic,
       resolvedModel: resolved,
+      ...(penFilePath ? { penFilePath } : {}),
     };
     deps.startUiDesignTracking(session, startResult.cleanup);
 
@@ -287,6 +355,7 @@ export async function handleUiDesign(
       sessionDir,
       companionUrl: startResult.url,
       contextScanSummary,
+      ...(penFilePath ? { penFilePath } : {}),
     });
     platform.sendUserMessage(kickoff);
     cancelPlanTracking();

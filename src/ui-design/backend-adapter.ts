@@ -1,5 +1,6 @@
 import type { UiDesignBackendId } from "./types.js";
 import { createLocalHtmlBackend } from "./backends/local-html.js";
+import { createPencilMcpBackend } from "./backends/pencil-mcp.js";
 
 /**
  * Session-start options passed by the command handler to a backend.
@@ -8,6 +9,8 @@ import { createLocalHtmlBackend } from "./backends/local-html.js";
 export interface BackendStartSessionOptions {
   sessionDir: string;
   port?: number;
+  /** Absolute path to the target .pen file — required for `pencil-mcp`. */
+  penFilePath?: string;
 }
 
 /**
@@ -41,16 +44,35 @@ export class BackendUnavailableError extends Error {
   }
 }
 
+/** Runtime dependencies a backend factory may require. */
+export interface GetBackendDeps {
+  /** Active tool names from the OMP harness. Used by the pencil-mcp backend. */
+  getActiveTools?: () => string[];
+}
+
 /**
- * Resolve a backend by id. Only `local-html` is supported in v1 — future
- * MCP-based backends (pencil, figma, paper) will register through the same
- * factory.
+ * Resolve a backend by id. Local-html has no runtime deps; pencil-mcp needs
+ * the harness's active tool list to validate that the Pencil MCP server is
+ * connected. Additional MCP-based backends (figma, paper) will register
+ * through the same factory.
  */
-export function getBackend(id: UiDesignBackendId): UiDesignBackend {
+export function getBackend(
+  id: UiDesignBackendId,
+  deps: GetBackendDeps = {},
+): UiDesignBackend {
   if (id === "local-html") {
     return createLocalHtmlBackend();
   }
+  if (id === "pencil-mcp") {
+    const getActiveTools = deps.getActiveTools;
+    if (!getActiveTools) {
+      throw new BackendUnavailableError(
+        "Backend 'pencil-mcp' requires `getActiveTools` — pass the OMP platform's tool introspection hook.",
+      );
+    }
+    return createPencilMcpBackend({ getActiveTools });
+  }
   throw new BackendUnavailableError(
-    `Backend '${id}' is not available in v1. Supported: local-html.`,
+    `Backend '${id}' is not available. Supported: local-html, pencil-mcp.`,
   );
 }

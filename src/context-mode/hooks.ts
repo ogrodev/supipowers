@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { registerUltraPlanHookBridge } from "../ultraplan/runtime/hook-bridge.js";
 
 type SessionContextLike = {
   cwd?: string;
@@ -113,6 +114,11 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   if (knowledgeStore) {
     registerContextModeTools(platform, knowledgeStore);
   }
+  // Slice-2: register the UltraPlan hook bridge. The bridge is the only UltraPlan runtime module
+  // this file imports; business decisions (normalization, reducer, migration, repair, tracker
+  // storage) all live inside the bridge. When no canonical UltraPlan session is active, the
+  // bridge's handlers are no-ops.
+  registerUltraPlanHookBridge(platform);
 
   platform.on("session_start", (_event, ctx) => {
     sessionCwd = resolveSessionCwd(ctx as SessionContextLike | undefined);

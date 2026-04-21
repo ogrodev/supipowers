@@ -331,3 +331,89 @@ describe("ultraplan storage", () => {
     });
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// Runtime tracker + session migration record storage (Slice 2 / 1.4).
+// ---------------------------------------------------------------------------
+
+import {
+  loadUltraPlanRuntimeTracker,
+  loadUltraPlanSessionMigrationRecord,
+  saveUltraPlanRuntimeTracker,
+  saveUltraPlanSessionMigrationRecord,
+} from "../../src/ultraplan/storage.js";
+import {
+  getUltraplanMigrationRecordPath,
+  getUltraplanRuntimeTrackerPath,
+} from "../../src/ultraplan/project-paths.js";
+import {
+  makeUltraPlanRuntimeTracker,
+  makeUltraPlanSessionMigrationRecord,
+} from "./fixtures.js";
+
+describe("ultraplan runtime tracker + migration storage", () => {
+  test("saves and loads a runtime tracker under the global-root session directory", () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const sessionId = "up-tracker";
+    const tracker = makeUltraPlanRuntimeTracker({ sessionId });
+
+    const saved = saveUltraPlanRuntimeTracker(paths, cwd, sessionId, tracker);
+    expect(saved.ok).toBe(true);
+
+    // File must land at the global-root canonical path.
+    expect(fs.existsSync(getUltraplanRuntimeTrackerPath(paths, cwd, sessionId))).toBe(true);
+
+    const loaded = loadUltraPlanRuntimeTracker(paths, cwd, sessionId);
+    expect(loaded).toMatchObject({ ok: true, value: tracker });
+  });
+
+  test("loading an absent tracker returns a missing-kind failure (not a throw)", () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const loaded = loadUltraPlanRuntimeTracker(paths, cwd, "up-absent");
+    expect(loaded.ok).toBe(false);
+    if (!loaded.ok) {
+      expect(loaded.error.kind).toBe("missing");
+    }
+  });
+
+  test("rejects saving a malformed runtime tracker", () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const bad = makeUltraPlanRuntimeTracker();
+    // Force a schema-invalid tracker (version must be literal 1).
+    const result = saveUltraPlanRuntimeTracker(paths, cwd, bad.sessionId, { ...bad, version: 99 } as any);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("validation-error");
+    }
+  });
+
+  test("saves and loads a session migration record under the global-root session directory", () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const sessionId = "up-migrated";
+    const record = makeUltraPlanSessionMigrationRecord();
+
+    const saved = saveUltraPlanSessionMigrationRecord(paths, cwd, sessionId, record);
+    expect(saved.ok).toBe(true);
+    expect(fs.existsSync(getUltraplanMigrationRecordPath(paths, cwd, sessionId))).toBe(true);
+
+    const loaded = loadUltraPlanSessionMigrationRecord(paths, cwd, sessionId);
+    expect(loaded).toMatchObject({ ok: true, value: record });
+  });
+
+  test("rejects saving a session migration record with a non-absolute legacy path", () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    const record = makeUltraPlanSessionMigrationRecord({ legacyPath: "relative/path" });
+
+    const saved = saveUltraPlanSessionMigrationRecord(paths, cwd, "up-bad", record);
+    expect(saved.ok).toBe(false);
+    if (!saved.ok) {
+      expect(saved.error.kind).toBe("validation-error");
+    }
+  });
+});

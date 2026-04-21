@@ -1,3 +1,5 @@
+import { recordUiDesignReviewApproval } from "../../src/ui-design/session.js";
+
 import { describe, expect, mock, test, beforeEach, afterEach } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -563,4 +565,354 @@ describe("ui-design session — resume branches", () => {
     expect(cleanup).not.toHaveBeenCalled();
 });
 
+});
+
+describe("ui-design session — pencil-mcp completion validation", () => {
+  function writePencilCompletionArtifacts(
+    dir: string,
+    overrides: {
+      contextMd?: string | null;
+      decompositionJson?: string | null;
+      nodeManifest?: unknown | null;
+      critiqueMd?: string | null;
+      screenReviewPng?: Buffer | null;
+      approvalRecord?:
+        | {
+            selected?: "approve" | "request-changes" | "discard";
+            recordedAt?: string;
+            question?: string;
+            options?: string[];
+          }
+        | null;
+    } = {},
+  ): void {
+    fs.mkdirSync(dir, { recursive: true });
+    if (overrides.contextMd !== null) {
+      fs.writeFileSync(
+        path.join(dir, "context.md"),
+        overrides.contextMd ?? "# Context\n\n- framework: react\n",
+      );
+    }
+    if (overrides.decompositionJson !== null) {
+      fs.writeFileSync(
+        path.join(dir, "decomposition.json"),
+        overrides.decompositionJson ?? JSON.stringify({ components: [], sections: [] }, null, 2),
+      );
+    }
+    if (overrides.nodeManifest !== null) {
+      const nm = overrides.nodeManifest ?? {
+        pageNodeId: "page-1",
+        sectionNodeIds: ["sec-1"],
+        componentNodeIds: ["cmp-1"],
+      };
+      fs.writeFileSync(path.join(dir, "node-manifest.json"), JSON.stringify(nm, null, 2));
+    }
+    if (overrides.critiqueMd !== null) {
+      fs.writeFileSync(
+        path.join(dir, "critique.md"),
+        overrides.critiqueMd ?? "# Critique\n\n## Fixable\n\n- none\n\n## Advisory\n\n- none\n",
+      );
+    }
+    if (overrides.screenReviewPng !== null) {
+      fs.writeFileSync(
+        path.join(dir, "screen-review.png"),
+        overrides.screenReviewPng ?? Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      );
+    }
+    if (overrides.approvalRecord !== null) {
+      const approval = overrides.approvalRecord ?? {};
+      fs.writeFileSync(
+        path.join(dir, "review-approval.json"),
+        JSON.stringify(
+          {
+            question: approval.question ?? "Approve the mockup?",
+            options: approval.options ?? ["approve", "request-changes", "discard"],
+            selected: approval.selected ?? "approve",
+            selectedLabel: approval.selected ?? "approve",
+            recordedAt: approval.recordedAt ?? "2026-04-18T00:05:00.000Z",
+          },
+          null,
+          2,
+        ),
+      );
+    }
+  }
+
+  function pencilManifest(overrides: Partial<Manifest> = {}): Manifest {
+    return {
+      id: "uidesign-20260418-120000-pen1",
+      scope: "page",
+      topic: "landing",
+      backend: "pencil-mcp",
+      status: "complete",
+      acknowledged: false,
+      createdAt: "2026-04-18T00:00:00.000Z",
+      approvedAt: "2026-04-18T00:05:00.000Z",
+      components: [],
+      sections: [],
+      page: "page.html", // unused for pencil sessions but keeps the schema shape
+      ...overrides,
+    };
+  }
+
+  test("happy path: session-local .pen + all artifacts → completion-proof.valid=true", async () => {
+    const sessionDir = path.join(tmpDir, "pen-happy");
+    const penPath = path.join(sessionDir, "design.pen");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(penPath, "");
+    const manifest = pencilManifest({ penFilePath: penPath });
+    writeManifest(sessionDir, manifest);
+    writePencilCompletionArtifacts(sessionDir);
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: penPath }),
+      cleanup,
+    );
+
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Keep artifacts and exit"),
+    });
+    await handler({}, ctx);
+
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(proof.valid).toBe(true);
+    expect(proof.issues).toEqual([]);
+    expect(proof.reviewPath).toBe("screen-review.png");
+    expect(proof.penFilePath).toBe(penPath);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  test("out-of-session .pen path is honored when it exists on disk", async () => {
+    const sessionDir = path.join(tmpDir, "pen-external");
+    const externalPenPath = path.join(tmpDir, "external-design.pen");
+    fs.writeFileSync(externalPenPath, "");
+    const manifest = pencilManifest({ penFilePath: externalPenPath });
+    writeManifest(sessionDir, manifest);
+    writePencilCompletionArtifacts(sessionDir);
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: externalPenPath }),
+      cleanup,
+    );
+
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Keep artifacts and exit"),
+    });
+    await handler({}, ctx);
+
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(proof.valid).toBe(true);
+    expect(proof.penFilePath).toBe(externalPenPath);
+
+    // The external .pen file is NOT deleted by the hook.
+    expect(fs.existsSync(externalPenPath)).toBe(true);
+  });
+
+  test("missing .pen file on disk blocks success actions", async () => {
+    const sessionDir = path.join(tmpDir, "pen-missing");
+    const penPath = path.join(tmpDir, "never-created.pen");
+    const manifest = pencilManifest({ penFilePath: penPath });
+    writeManifest(sessionDir, manifest);
+    writePencilCompletionArtifacts(sessionDir);
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: penPath }),
+      cleanup,
+    );
+
+    const sendMessage = mock(() => {});
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Resume session"),
+      sendMessage,
+    });
+    await handler({}, ctx);
+
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(proof.valid).toBe(false);
+    expect(proof.issues.some((i: string) => i.includes("penFilePath missing on disk"))).toBe(true);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const steer = extractSteerText(sendMessage);
+    expect(steer).toContain("mcp_pencil_open_document");
+    expect(steer).toContain(penPath);
+  });
+
+  test("missing manifest.penFilePath raises an issue", async () => {
+    const sessionDir = path.join(tmpDir, "pen-no-field");
+    const manifest = pencilManifest(); // penFilePath omitted
+    writeManifest(sessionDir, manifest);
+    writePencilCompletionArtifacts(sessionDir);
+    startUiDesignTracking(makeSession(sessionDir, { backend: "pencil-mcp" }), mock(async () => {}));
+
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Resume session"),
+    });
+    await handler({}, ctx);
+
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(proof.valid).toBe(false);
+    expect(proof.issues).toContain("manifest.penFilePath missing");
+  });
+
+  test("missing node-manifest.json is reported", async () => {
+    const sessionDir = path.join(tmpDir, "pen-no-node-manifest");
+    const penPath = path.join(sessionDir, "design.pen");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(penPath, "");
+    const manifest = pencilManifest({ penFilePath: penPath });
+    writeManifest(sessionDir, manifest);
+    writePencilCompletionArtifacts(sessionDir, { nodeManifest: null });
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: penPath }),
+      mock(async () => {}),
+    );
+
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Resume session"),
+    });
+    await handler({}, ctx);
+
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(proof.issues).toContain("node-manifest.json");
+  });
+
+  test("malformed node-manifest.json is reported", async () => {
+    const sessionDir = path.join(tmpDir, "pen-bad-node-manifest");
+    const penPath = path.join(sessionDir, "design.pen");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(penPath, "");
+    const manifest = pencilManifest({ penFilePath: penPath });
+    writeManifest(sessionDir, manifest);
+    writePencilCompletionArtifacts(sessionDir, {
+      nodeManifest: { pageNodeId: "p1" /* missing arrays */ },
+    });
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: penPath }),
+      mock(async () => {}),
+    );
+
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Resume session"),
+    });
+    await handler({}, ctx);
+
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(proof.valid).toBe(false);
+    expect(proof.issues.some((i: string) => i.includes("node-manifest.json is malformed"))).toBe(true);
+  });
+
+  test("missing screen-review.png is reported", async () => {
+    const sessionDir = path.join(tmpDir, "pen-no-png");
+    const penPath = path.join(sessionDir, "design.pen");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(penPath, "");
+    const manifest = pencilManifest({ penFilePath: penPath });
+    writeManifest(sessionDir, manifest);
+    writePencilCompletionArtifacts(sessionDir, { screenReviewPng: null });
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: penPath }),
+      mock(async () => {}),
+    );
+
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Resume session"),
+    });
+    await handler({}, ctx);
+
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(proof.issues).toContain("screen-review.png");
+  });
+});
+
+
+describe("ui-design session — review approval recording across backends", () => {
+  const DECISION_OPTIONS = ["approve", "request-changes", "discard"];
+
+  test("pencil sessions persist the approval record when screen-review.png exists", () => {
+    const sessionDir = path.join(tmpDir, "record-pencil");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, "screen-review.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: path.join(sessionDir, "design.pen") }),
+      mock(async () => {}),
+    );
+
+    recordUiDesignReviewApproval("Approve?", DECISION_OPTIONS, "approve");
+
+    const approvalPath = path.join(sessionDir, "review-approval.json");
+    expect(fs.existsSync(approvalPath)).toBe(true);
+    const approval = JSON.parse(fs.readFileSync(approvalPath, "utf-8"));
+    expect(approval.selected).toBe("approve");
+  });
+
+  test("pencil sessions DO NOT persist approval when only screen-review.html exists", () => {
+    const sessionDir = path.join(tmpDir, "record-pencil-wrong-artifact");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    // wrong artifact for pencil backend — the guard should reject
+    fs.writeFileSync(path.join(sessionDir, "screen-review.html"), "<html></html>");
+    startUiDesignTracking(
+      makeSession(sessionDir, { backend: "pencil-mcp", penFilePath: path.join(sessionDir, "design.pen") }),
+      mock(async () => {}),
+    );
+
+    recordUiDesignReviewApproval("Approve?", DECISION_OPTIONS, "approve");
+
+    expect(fs.existsSync(path.join(sessionDir, "review-approval.json"))).toBe(false);
+  });
+
+  test("local-html sessions still gate on screen-review.html", () => {
+    const sessionDir = path.join(tmpDir, "record-html");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, "screen-review.html"), "<!doctype html><html></html>");
+    startUiDesignTracking(makeSession(sessionDir), mock(async () => {}));
+
+    recordUiDesignReviewApproval("Approve?", DECISION_OPTIONS, "approve");
+
+    expect(fs.existsSync(path.join(sessionDir, "review-approval.json"))).toBe(true);
+  });
+
+  test("local-html sessions do not persist approval on a png-only directory", () => {
+    const sessionDir = path.join(tmpDir, "record-html-wrong");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, "screen-review.png"), Buffer.from([0x89, 0x50]));
+    startUiDesignTracking(makeSession(sessionDir), mock(async () => {}));
+
+    recordUiDesignReviewApproval("Approve?", DECISION_OPTIONS, "approve");
+
+    expect(fs.existsSync(path.join(sessionDir, "review-approval.json"))).toBe(false);
+  });
+});
+
+describe("ui-design session — pencil repair steer template", () => {
+  test("pencil manifest with missing penFilePath still gets the pencil repair steer", async () => {
+    const sessionDir = path.join(tmpDir, "pen-repair-no-path");
+    // backend=pencil-mcp, penFilePath deliberately omitted
+    writeManifest(sessionDir, {
+      id: "x",
+      backend: "pencil-mcp",
+      status: "complete",
+      acknowledged: false,
+      createdAt: "2026-04-18T00:00:00.000Z",
+      components: [],
+      sections: [],
+      page: "page.html",
+    });
+    // Intentionally no pencil artifacts — validation will fail and prompt Resume.
+    startUiDesignTracking(makeSession(sessionDir, { backend: "pencil-mcp" }), mock(async () => {}));
+
+    const sendMessage = mock(() => {});
+    const { handler, ctx } = registerHookWithPlatform({
+      select: mock(async () => "Resume session"),
+      sendMessage,
+    });
+    await handler({}, ctx);
+
+    const steer = extractSteerText(sendMessage);
+    // Must cite pencil-world artifacts, not page.html / screen-review.html.
+    expect(steer).toContain("node-manifest.json");
+    expect(steer).toContain("screen-review.png");
+    expect(steer).not.toContain("page.html");
+    expect(steer).not.toContain("screen-review.html");
+    // Must direct the director to recover the path from manifest.json.
+    expect(steer).toContain("manifest.json");
+  });
 });

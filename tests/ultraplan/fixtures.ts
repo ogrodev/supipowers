@@ -2,12 +2,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../../src/platform/types.js";
 import type {
+  UltraPlanAttemptRecord,
   UltraPlanAuthoredArtifact,
+  UltraPlanHookObservation,
+  UltraPlanLaunchContext,
   UltraPlanManifest,
   UltraPlanProof,
+  UltraPlanRuntimeTracker,
   UltraPlanScenario,
   UltraPlanScenarioLevel,
   UltraPlanScenarioStatus,
+  UltraPlanSessionMigrationRecord,
   UltraPlanStack,
 } from "../../src/types.js";
 
@@ -197,4 +202,117 @@ export function makeUltraPlanManifest(overrides: Partial<UltraPlanManifest> = {}
     updatedAt: "2026-04-19T12:00:00.000Z",
     ...overrides,
   };
+}
+
+
+export function makeUltraPlanHookObservation(
+  overrides: Partial<UltraPlanHookObservation> = {},
+): UltraPlanHookObservation {
+  return {
+    sessionId: "up-123",
+    hookEvent: "tool_result",
+    actorKind: "slot",
+    attemptId: "att-001",
+    attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+    sourceAgent: "sub-agent",
+    occurredAt: "2026-04-19T12:00:01.000Z",
+    causationId: "tool-call-1",
+    fingerprint: "fp-observation-1",
+    target: {
+      targetType: "scenario",
+      stack: "frontend",
+      domainId: "auth",
+      level: "unit",
+      scenarioId: "scenario-login-form-renders",
+      phase: "red",
+      resolvedSlot: "frontend-tester",
+    },
+    correlationFailure: null,
+    payloadSummary: "red-phase tool result",
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanLaunchContext(
+  overrides: Partial<UltraPlanLaunchContext> = {},
+): UltraPlanLaunchContext {
+  return {
+    attemptId: "att-001",
+    attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+    sourceAgent: "sub-agent",
+    launchedAt: "2026-04-19T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanAttemptRecord(
+  overrides: Partial<UltraPlanAttemptRecord> = {},
+): UltraPlanAttemptRecord {
+  return {
+    attemptId: "att-001",
+    attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+    launchContext: makeUltraPlanLaunchContext(),
+    cursorSnapshot: null,
+    observations: [],
+    proofCandidates: [],
+    blockerCandidates: [],
+    outcome: null,
+    startedAt: "2026-04-19T12:00:00.000Z",
+    finalizedAt: null,
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanRuntimeTracker(
+  overrides: Partial<UltraPlanRuntimeTracker> = {},
+): UltraPlanRuntimeTracker {
+  return {
+    version: 1,
+    sessionId: "up-123",
+    activeAttempt: null,
+    finalizedAttempts: [],
+    appliedFingerprints: [],
+    pendingMutation: null,
+    updatedAt: "2026-04-19T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanSessionMigrationRecord(
+  overrides: Partial<UltraPlanSessionMigrationRecord> = {},
+): UltraPlanSessionMigrationRecord {
+  return {
+    migratedAt: "2026-04-20T12:00:00.000Z",
+    legacyPath: "/tmp/legacy-repo/.omp/supipowers/ultraplans/up-123",
+    fingerprintBefore: "sha256:before",
+    fingerprintAfter: "sha256:after",
+    legacyRenamedTo: "/tmp/legacy-repo/.omp/supipowers/ultraplans/up-123.migrated-2026-04-20T12-00-00Z",
+    kind: "copied",
+    ...overrides,
+  };
+}
+
+/**
+ * Seed a legacy repo-local ultraplan session directory under `<repoRoot>/.omp/supipowers/ultraplans/<sessionId>/`.
+ * Returns the absolute path to the seeded session directory.
+ */
+export function seedLegacyRepoLocalSession(
+  repoRoot: string,
+  sessionId: string,
+  contents: {
+    authored: UltraPlanAuthoredArtifact;
+    manifest: UltraPlanManifest;
+    extras?: Record<string, string>;
+  },
+): string {
+  const legacyDir = path.join(repoRoot, ".omp", "supipowers", "ultraplans", sessionId);
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, "authored.json"), `${JSON.stringify(contents.authored, null, 2)}\n`);
+  fs.writeFileSync(path.join(legacyDir, "manifest.json"), `${JSON.stringify(contents.manifest, null, 2)}\n`);
+  for (const [name, body] of Object.entries(contents.extras ?? {})) {
+    const target = path.join(legacyDir, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, body);
+  }
+  return legacyDir;
 }

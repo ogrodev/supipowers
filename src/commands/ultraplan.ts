@@ -8,12 +8,14 @@ import {
   resolveUltraPlanSessionBucket,
   type UltraPlanVisibleSession,
 } from "../ultraplan/session-selection.js";
+import { ULTRAPLAN_AUTHORED_JSON_FILENAME } from "../ultraplan/project-paths.js";
 import {
   loadUltraPlanAuthoredArtifact,
   loadUltraPlanIndex,
   loadUltraPlanManifest,
   loadUltraPlanSessionSummary,
 } from "../ultraplan/storage.js";
+import { resolveSessionMigration } from "../ultraplan/runtime/migration.js";
 
 const SUBCOMMANDS = [
   { name: "run", description: "Inspect an existing ultraplan session" },
@@ -42,7 +44,7 @@ function buildCursorManifest(summary: UltraPlanSessionSummary): UltraPlanManifes
     projectName: summary.projectName,
     title: summary.title,
     authored: {
-      json: "authored.json",
+      json: ULTRAPLAN_AUTHORED_JSON_FILENAME,
     },
     state: summary.state,
     cursor: summary.cursor,
@@ -83,8 +85,30 @@ function loadVisibleSessions(
   const includeDone = options?.includeDone ?? false;
   const sessions: UltraPlanVisibleSession[] = [];
   const failures: VisibleSessionLoadFailure[] = [];
+  const nowIso = new Date().toISOString();
 
   for (const entry of index.value.sessions) {
+    const migration = resolveSessionMigration({
+      paths: platform.paths,
+      cwd,
+      sessionId: entry.sessionId,
+      nowIso,
+    });
+    if (migration.kind === "blocked") {
+      failures.push(formatVisibleSessionFailure(entry.sessionId, {
+        message: migration.blocker.message,
+        details: [
+          `blocker: ${migration.blocker.code}`,
+          `recovery: ${migration.blocker.recoveryMode}`,
+          `next action: ${migration.blocker.nextAction}`,
+        ],
+      }));
+      continue;
+    }
+    if (migration.kind === "skip") {
+      continue;
+    }
+
     const summary = loadUltraPlanSessionSummary(platform.paths, cwd, entry.sessionId);
     if (!summary.ok) {
       failures.push(formatVisibleSessionFailure(entry.sessionId, summary.error));
@@ -259,4 +283,16 @@ export function registerUltraplanCommand(platform: Platform): void {
       await handleUltraplan(platform, ctx, args);
     },
   });
+}
+
+
+/**
+ * Test-only entry point exposing the migration-integrated visible-session loader. Production
+ * code uses the internal `loadVisibleSessions` helper; tests import this wrapper to avoid
+ * reaching through the module boundary.
+ */
+export function loadVisibleSessionsForTesting(
+  input: { platform: Platform; cwd: string; options?: { includeDone?: boolean } },
+): VisibleSessionsLoadResult {
+  return loadVisibleSessions(input.platform, input.cwd, input.options);
 }

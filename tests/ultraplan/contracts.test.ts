@@ -402,3 +402,327 @@ describe("ultraplan contracts", () => {
     expect(isUltraPlanIndex({ sessions: [{ ...indexEntry, state: undefined }] })).toBe(false);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// Slice 2 runtime contracts: hook observation, attempt record, runtime tracker,
+// reducer action, mutation plan, and migration record.
+// ---------------------------------------------------------------------------
+
+import {
+  isUltraPlanHookObservation,
+  isUltraPlanLaunchContext,
+  isUltraPlanAttemptRecord,
+  isUltraPlanReducerAction,
+  isUltraPlanMutationPlan,
+  isUltraPlanRuntimeTracker,
+  isUltraPlanSessionMigrationRecord,
+  validateUltraPlanRuntimeTracker,
+  validateUltraPlanSessionMigrationRecord,
+} from "../../src/ultraplan/contracts.js";
+
+const launchContext = {
+  attemptId: "att-001",
+  attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+  sourceAgent: "sub-agent",
+  launchedAt: "2026-04-19T12:00:00.000Z",
+};
+
+const observationTarget = {
+  targetType: "scenario",
+  stack: "frontend",
+  domainId: "auth",
+  level: "unit",
+  scenarioId: "scenario-login-form-renders",
+  phase: "red",
+  resolvedSlot: "frontend-tester",
+};
+
+const hookObservation = {
+  sessionId: "up-123",
+  hookEvent: "tool_result",
+  actorKind: "slot",
+  attemptId: "att-001",
+  attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+  sourceAgent: "sub-agent",
+  occurredAt: "2026-04-19T12:00:01.000Z",
+  causationId: "tool-call-42",
+  fingerprint: "fp-tool-result-1",
+  target: observationTarget,
+  correlationFailure: null,
+  payloadSummary: "bun test failed in expected red phase",
+};
+
+const proofCandidate = {
+  phase: "red",
+  type: "test",
+  target: {
+    targetType: "scenario",
+    stack: "frontend",
+    domainId: "auth",
+    level: "unit",
+    scenarioId: "scenario-login-form-renders",
+  },
+  evidence: { summary: "red-phase failure proof", command: "bun test" },
+  artifactRef: null,
+  observationFingerprint: "fp-tool-result-1",
+  fingerprint: "proof-fp-1",
+};
+
+const blockerCandidate = {
+  blocker: {
+    code: "proof-missing",
+    message: "Expected red-phase proof; received none",
+    scope: "scenario",
+    affected: {
+      stack: "frontend",
+      domainId: "auth",
+      level: "unit",
+      scenarioId: "scenario-login-form-renders",
+    },
+    recoverable: true,
+    recoveryMode: "retry",
+    nextAction: "Re-run the red-phase test",
+    retryable: true,
+    detectedAt: "2026-04-19T12:01:00.000Z",
+  },
+  observationFingerprint: "fp-tool-result-1",
+};
+
+const cursorRuntime = {
+  targetType: "scenario",
+  stack: "frontend",
+  domainId: "auth",
+  level: "unit",
+  scenarioId: "scenario-login-form-renders",
+  phase: "red",
+  status: "red-running",
+  summary: "frontend / auth / unit / Login form renders required fields",
+};
+
+const attemptRecord = {
+  attemptId: "att-001",
+  attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+  launchContext,
+  cursorSnapshot: cursorRuntime,
+  observations: [hookObservation],
+  proofCandidates: [proofCandidate],
+  blockerCandidates: [],
+  outcome: null,
+  startedAt: "2026-04-19T12:00:00.000Z",
+  finalizedAt: null,
+};
+
+const noopMutationPlan = {
+  kind: "noop",
+  rationale: "Replay of already-applied observation",
+  appendObservationFingerprint: null,
+  scenarioStatusUpdate: null,
+  reviewStatusUpdate: null,
+  blockerUpdate: null,
+  cursorUpdate: null,
+  sessionStateUpdate: null,
+  trackerAttemptFinalization: null,
+  recomputeProgress: false,
+  repairActions: [],
+  notes: [],
+};
+
+const advanceMutationPlan = {
+  ...noopMutationPlan,
+  kind: "advance",
+  rationale: "Red-phase proof matched cursor",
+  appendObservationFingerprint: "fp-tool-result-1",
+  scenarioStatusUpdate: {
+    stack: "frontend",
+    domainId: "auth",
+    level: "unit",
+    scenarioId: "scenario-login-form-renders",
+    nextStatus: "red-proved",
+    appendProof: {
+      type: "test",
+      phase: "red",
+      recordedAt: "2026-04-19T12:00:01.000Z",
+      actor: "frontend-tester",
+      evidence: { summary: "red passed as failed" },
+      artifactRef: "artifact://red-proof",
+    },
+  },
+  cursorUpdate: { ...cursorRuntime, status: "red-proved", phase: "green" },
+  trackerAttemptFinalization: {
+    attemptId: "att-001",
+    outcome: "advanced",
+    finalizedAt: "2026-04-19T12:00:02.000Z",
+  },
+  recomputeProgress: true,
+};
+
+const blockingMutationPlan = {
+  ...noopMutationPlan,
+  kind: "block",
+  rationale: "Conflicting evidence: proof and blocker on same finalization",
+  appendObservationFingerprint: "fp-tool-result-1",
+  blockerUpdate: {
+    scope: "scenario",
+    nextValue: blockerCandidate.blocker,
+    clearedByObservationFingerprint: null,
+  },
+  trackerAttemptFinalization: {
+    attemptId: "att-001",
+    outcome: "blocked",
+    finalizedAt: "2026-04-19T12:00:02.000Z",
+  },
+};
+
+const pendingMutation = {
+  attemptId: "att-001",
+  mutationPlan: advanceMutationPlan,
+  expectedManifestFingerprint: "sha256:abcdef",
+  stagedAt: "2026-04-19T12:00:01.500Z",
+};
+
+const runtimeTracker = {
+  version: 1,
+  sessionId: "up-123",
+  activeAttempt: attemptRecord,
+  finalizedAttempts: [],
+  appliedFingerprints: [],
+  pendingMutation: null,
+  updatedAt: "2026-04-19T12:00:01.000Z",
+};
+
+const reducerAction = {
+  kind: "observation_staged",
+  observation: hookObservation,
+};
+
+const migrationRecord = {
+  migratedAt: "2026-04-20T12:00:00.000Z",
+  legacyPath: "/abs/repo/.omp/supipowers/ultraplans/up-123",
+  fingerprintBefore: "sha256:before",
+  fingerprintAfter: "sha256:after",
+  legacyRenamedTo: "/abs/repo/.omp/supipowers/ultraplans/up-123.migrated-2026-04-20T12-00-00Z",
+  kind: "copied",
+};
+
+describe("ultraplan runtime contracts", () => {
+  test("accepts canonical hook observations and launch contexts", () => {
+    expect(isUltraPlanLaunchContext(launchContext)).toBe(true);
+    expect(isUltraPlanHookObservation(hookObservation)).toBe(true);
+  });
+
+  test("hook observations may be session-scope (no attempt key) but must keep correlationFailure null", () => {
+    const sessionScope = {
+      ...hookObservation,
+      hookEvent: "session_start",
+      actorKind: "main-orchestrator",
+      attemptId: null,
+      attemptKey: null,
+      target: null,
+    };
+    expect(isUltraPlanHookObservation(sessionScope)).toBe(true);
+  });
+
+  test("hook observations carry a correlation failure when ambiguity exists", () => {
+    const failure = {
+      ...hookObservation,
+      attemptId: null,
+      attemptKey: null,
+      target: null,
+      correlationFailure: { reason: "slot-backed event without active attempt" },
+    };
+    expect(isUltraPlanHookObservation(failure)).toBe(true);
+  });
+
+  test("rejects hook observations missing required fields", () => {
+    expect(isUltraPlanHookObservation({ ...hookObservation, sessionId: undefined })).toBe(false);
+    expect(isUltraPlanHookObservation({ ...hookObservation, fingerprint: undefined })).toBe(false);
+    expect(isUltraPlanHookObservation({ ...hookObservation, hookEvent: "unknown_event" })).toBe(false);
+    expect(isUltraPlanHookObservation({ ...hookObservation, actorKind: "executor" })).toBe(false);
+  });
+
+  test("accepts canonical attempt records with active observations and proof candidates", () => {
+    expect(isUltraPlanAttemptRecord(attemptRecord)).toBe(true);
+    expect(isUltraPlanAttemptRecord({ ...attemptRecord, outcome: "interrupted", finalizedAt: "2026-04-19T13:00:00.000Z" })).toBe(true);
+  });
+
+  test("rejects attempt records with mismatched outcome/finalizedAt pairing", () => {
+    // outcome present but finalizedAt missing
+    expect(isUltraPlanAttemptRecord({ ...attemptRecord, outcome: "advanced", finalizedAt: null })).toBe(false);
+    // finalizedAt present but outcome missing
+    expect(isUltraPlanAttemptRecord({ ...attemptRecord, outcome: null, finalizedAt: "2026-04-19T13:00:00.000Z" })).toBe(false);
+  });
+
+  test("runtime tracker round-trips with active attempts, finalized ledger, and dedupe set", () => {
+    expect(isUltraPlanRuntimeTracker(runtimeTracker)).toBe(true);
+
+    const withFinalized = {
+      ...runtimeTracker,
+      activeAttempt: null,
+      finalizedAttempts: [{ ...attemptRecord, outcome: "advanced", finalizedAt: "2026-04-19T12:00:02.000Z" }],
+      appliedFingerprints: ["fp-tool-result-1"],
+    };
+    expect(isUltraPlanRuntimeTracker(withFinalized)).toBe(true);
+    expect(validateUltraPlanRuntimeTracker(withFinalized).ok).toBe(true);
+  });
+
+  test("runtime tracker accepts a pendingMutation and exposes its mutation plan", () => {
+    const staged = { ...runtimeTracker, pendingMutation };
+    const validation = validateUltraPlanRuntimeTracker(staged);
+    expect(validation.ok).toBe(true);
+    if (validation.ok) {
+      expect(validation.value.pendingMutation?.mutationPlan.kind).toBe("advance");
+    }
+  });
+
+  test("runtime tracker rejects an unknown version", () => {
+    expect(isUltraPlanRuntimeTracker({ ...runtimeTracker, version: 99 })).toBe(false);
+  });
+
+  test("reducer actions are a discriminated union", () => {
+    expect(isUltraPlanReducerAction({ kind: "session_started", observation: hookObservation, nowIso: "2026-04-19T12:00:00.000Z" })).toBe(true);
+    expect(isUltraPlanReducerAction({ kind: "attempt_started", observation: hookObservation, launchContext })).toBe(true);
+    expect(isUltraPlanReducerAction(reducerAction)).toBe(true);
+    expect(isUltraPlanReducerAction({ kind: "attempt_finalized", observation: hookObservation, nowIso: "2026-04-19T12:00:02.000Z" })).toBe(true);
+    expect(isUltraPlanReducerAction({ kind: "session_shutdown", observation: hookObservation, nowIso: "2026-04-19T13:00:00.000Z" })).toBe(true);
+    expect(isUltraPlanReducerAction({ kind: "repair_applied", nowIso: "2026-04-19T13:00:00.000Z", details: { reason: "stale cursor", actions: [{ op: "recompute-cursor", reason: "stale" }] } })).toBe(true);
+    expect(isUltraPlanReducerAction({ kind: "unknown", observation: hookObservation })).toBe(false);
+  });
+
+  test("mutation plans accept noop, advance, and block shapes", () => {
+    expect(isUltraPlanMutationPlan(noopMutationPlan)).toBe(true);
+    expect(isUltraPlanMutationPlan(advanceMutationPlan)).toBe(true);
+    expect(isUltraPlanMutationPlan(blockingMutationPlan)).toBe(true);
+  });
+
+  test("mutation plans reject conflicting proof+blocker within one plan", () => {
+    const conflicting = {
+      ...advanceMutationPlan,
+      // Same plan tries to both advance with proof AND set a new blocker.
+      blockerUpdate: blockingMutationPlan.blockerUpdate,
+    };
+    expect(isUltraPlanMutationPlan(conflicting)).toBe(false);
+  });
+
+  test("mutation plans reject terminal scenario advancement without proof", () => {
+    const advanceWithoutProof = {
+      ...advanceMutationPlan,
+      scenarioStatusUpdate: {
+        ...advanceMutationPlan.scenarioStatusUpdate!,
+        appendProof: undefined,
+      },
+    };
+    expect(isUltraPlanMutationPlan(advanceWithoutProof)).toBe(false);
+  });
+
+  test("session migration records validate and require absolute legacyPath + non-empty fingerprints", () => {
+    expect(isUltraPlanSessionMigrationRecord(migrationRecord)).toBe(true);
+    expect(isUltraPlanSessionMigrationRecord({ ...migrationRecord, kind: "reconciled-no-op" })).toBe(true);
+    expect(isUltraPlanSessionMigrationRecord({ ...migrationRecord, legacyRenamedTo: null })).toBe(true);
+
+    expect(validateUltraPlanSessionMigrationRecord({ ...migrationRecord, legacyPath: "relative/path" }).ok).toBe(false);
+    expect(validateUltraPlanSessionMigrationRecord({ ...migrationRecord, fingerprintBefore: "" }).ok).toBe(false);
+    expect(validateUltraPlanSessionMigrationRecord({ ...migrationRecord, fingerprintAfter: "" }).ok).toBe(false);
+    expect(validateUltraPlanSessionMigrationRecord({ ...migrationRecord, kind: "unknown" }).ok).toBe(false);
+  });
+});
