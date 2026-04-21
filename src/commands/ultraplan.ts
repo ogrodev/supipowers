@@ -16,6 +16,7 @@ import {
   loadUltraPlanSessionSummary,
 } from "../ultraplan/storage.js";
 import { resolveSessionMigration } from "../ultraplan/runtime/migration.js";
+import { runUltraPlanAuthoringWizard } from "../ultraplan/authoring-wizard.js";
 
 const SUBCOMMANDS = [
   { name: "run", description: "Inspect an existing ultraplan session" },
@@ -249,7 +250,7 @@ export async function handleUltraplan(platform: Platform, ctx: any, args?: strin
 
   switch (subcommand) {
     case null:
-      notifyInfo(ctx, "/supi:ultraplan authoring is not implemented in this phase");
+      await handleAuthoring(platform, ctx);
       return;
     case "run":
       await handleRun(platform, ctx);
@@ -262,6 +263,43 @@ export async function handleUltraplan(platform: Platform, ctx: any, args?: strin
       return;
     default:
       notifyError(ctx, `Unknown subcommand "${subcommand}"`, `Available: ${SUBCOMMANDS.map((item) => item.name).join(", ")}`);
+  }
+}
+
+function formatAuthoringCatalogErrors(errors: readonly { message: string }[]): string {
+  return errors.map((error) => `- ${error.message}`).join("\n");
+}
+
+async function handleAuthoring(platform: Platform, ctx: any): Promise<void> {
+  if (!ctx.hasUI) {
+    notifyWarning(ctx, "Ultraplan authoring requires interactive mode");
+    return;
+  }
+  const result = await runUltraPlanAuthoringWizard(platform, ctx);
+  if (result.ok) return;
+
+  switch (result.failure.kind) {
+    case "cancelled":
+    case "discarded":
+    case "persist-failed":
+      return;
+    case "catalog-error":
+      notifyError(
+        ctx,
+        "Ultraplan authoring cannot start",
+        formatAuthoringCatalogErrors(result.failure.errors),
+      );
+      return;
+    case "empty-session":
+      notifyWarning(
+        ctx,
+        "Ultraplan authoring is incomplete",
+        "At least one applicable stack with scenarios is required before saving.",
+      );
+      return;
+    case "no-ui":
+      notifyWarning(ctx, "Ultraplan authoring requires interactive mode");
+      return;
   }
 }
 
