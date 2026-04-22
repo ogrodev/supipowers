@@ -106,34 +106,25 @@ Implemented in code:
 
 ### Slice 5 — Execution orchestration
 
-Before start:
-Read skill://mutation-testing so we can properly write tests that would kill mutants
-Read .omp/researches/AutoBE/ to gather more knowledge
+Implemented scope:
 
-Purpose:
+- `/supi:ultraplan run` now executes one selected authored session in strict order instead of stopping at inspect-only status
+- reserved-slot dispatch is wired through the new execution layer (`src/ultraplan/execution/*`) and runtime-owned truth remains in the hook/reducer/apply pipeline
+- runtime-owned pause/completion behavior is deterministic: blocked and awaiting-user sessions stop before dispatch; completed sessions short-circuit cleanly
+- manifest/authored/tracker mutation durability now flows through `src/ultraplan/runtime/apply-mutation.ts` with pending-mutation staging, canonical review-reference validation, and replay-safe logs
+- active-execution fallback, target-hint carriers, `ultraplan_signal`, nested-dispatch blocking, and repair-time pending-mutation reconciliation are all in place
 
-- actually run authored ultraplan work in the required order using specialized agents and hook-governed truth
+Delivered constraints:
 
-Must cover:
-
-- orchestration prompt/runtime contract
-- role-based sub-agent dispatch
-- TDD ownership rules across unit/integration/e2e
-- domain-review and stack-review execution ordering
-- blocked / awaiting-user behavior during real runs
-
-Not yet implemented:
-
-- orchestrator prompt
-- role-based dispatch integration
-- wave/batching/worktree strategy
-- end-to-end run loop over authored sessions
+- single-session orchestration only
+- no batching, waves, or worktree fan-out
+- no `/supi:ultraplan next` router yet
 
 ### Slice 6 — Optional router + advanced UX
 
 Purpose:
 
-- improve usability after the core system is working
+- improve usability after the core single-session execution path is working
 
 May cover:
 
@@ -147,6 +138,15 @@ Not yet implemented:
 - advanced picker polish
 - richer status drilldowns
 
+### Slice 7 — Batched execution + worktree orchestration
+
+Deferred follow-up:
+
+- wave planning across multiple authored sessions
+- batching / fan-out scheduling
+- dedicated worktree orchestration for parallel or isolated execution
+- any execution model that goes beyond the Slice 5 single-session run loop
+
 ## Dependency order
 
 The stable sequencing is:
@@ -155,16 +155,18 @@ The stable sequencing is:
 2. slice 2 — hook tracker + recovery engine
 3. slice 3 — specialized agent catalog
 4. slice 4 — authoring flow
-5. slice 5 — execution orchestration
+5. slice 5 — single-session execution orchestration
 6. slice 6 — optional router + advanced UX
+7. slice 7 — batched execution + worktree orchestration
 
 ## Dependency notes
 
 - Slice 2 should land before real execution, because execution needs runtime-owned proof and recovery semantics.
 - Slice 3 has landed and is already available for later authoring/execution work.
-- Slice 4 has landed. Authored sessions now exist and are picked up by `/supi:ultraplan run` and `/supi:ultraplan status`, but they still stop at the deferred execution boundary until Slice 5 lands.
-- Slice 5 depends on slices 2, 3, and 4.
-- Slice 6 is optional polish and should remain last.
+- Slice 4 has landed. Authored sessions now exist and are picked up by `/supi:ultraplan run` and `/supi:ultraplan status`.
+- Slice 5 has landed for strict single-session orchestration; batching and worktree fan-out remain explicitly deferred to Slice 7.
+- Slice 6 is optional polish and should remain after the core single-session execution path.
+- Slice 7 is intentionally last because it builds on the Slice 5 runtime truth model instead of inventing a parallel executor.
 
 ## Phase checklist
 
@@ -174,5 +176,6 @@ Use this as the low-effort “what’s next” tracker:
 - [x] Slice 2 — Hook tracker + recovery engine (plan: `.omp/supipowers/plans/2026-04-20-ultraplan-slice-2.md`; specs: `.omp/supipowers/specs/2026-04-19-ultraplan-slice-2-runtime-design.md` + `.omp/supipowers/specs/2026-04-20-ultraplan-slice-2-storage-and-migration-delta.md`)
 - [x] Slice 3 — Specialized agent catalog
 - [x] Slice 4 — Authoring flow (plan: `.omp/supipowers/plans/2026-04-21-ultraplan-slice-4.md`; spec: `.omp/supipowers/specs/2026-04-21-ultraplan-slice-4-authoring-flow-design.md`)
-- [ ] Slice 5 — Execution orchestration
+- [x] Slice 5 — Execution orchestration (single-session run loop)
 - [ ] Slice 6 — Optional router + advanced UX
+- [ ] Slice 7 — Batched execution + worktree orchestration
