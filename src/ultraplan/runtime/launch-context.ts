@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
+import {
+  ULTRAPLAN_AGENT_SLOT_NAMES,
+  ULTRAPLAN_CURSOR_TARGETS,
+  ULTRAPLAN_EXECUTION_PHASES,
+  ULTRAPLAN_LEVELS,
+  ULTRAPLAN_STACKS,
+} from "../contracts.js";
 import type {
   UltraPlanAttemptRecord,
   UltraPlanLaunchContext,
   UltraPlanSourceAgent,
 } from "../../types.js";
 import { isUltraPlanLaunchContext } from "../contracts.js";
+import type { UltraPlanTargetHint } from "./normalize.js";
 
 /**
  * Slice-2 cross-hook correlation carrier.
@@ -12,14 +20,17 @@ import { isUltraPlanLaunchContext } from "../contracts.js";
  * The runtime spec §cross-hook carrier requires that every slot-backed launch embed a launch
  * context into both structured metadata and the prompt/assignment text so later hooks can recover
  * the attempt identity even when the platform drops one carrier. This module owns minting,
- * injecting, and recovering that carrier. It is pure — no I/O.
+ * injecting, and recovering those carriers. It is pure — no I/O.
  */
 
 /** The metadata key the bridge uses to carry a structured launch context through platform hooks. */
 export const LAUNCH_CONTEXT_METADATA_KEY = "ultraplanLaunchContext" as const;
-
-/** The prompt marker key. The full line has the form `ULTRAPLAN_LAUNCH_CONTEXT=<json>`. */
+/** Prompt marker line form: `ULTRAPLAN_LAUNCH_CONTEXT=<json>`. */
 export const LAUNCH_CONTEXT_PROMPT_MARKER = "ULTRAPLAN_LAUNCH_CONTEXT" as const;
+/** Structured metadata key for the execution target hint carried alongside launch context. */
+export const TARGET_HINT_METADATA_KEY = "ultraplanTargetHint" as const;
+/** Prompt marker line form: `ULTRAPLAN_TARGET_HINT=<json>`. */
+export const TARGET_HINT_PROMPT_MARKER = "ULTRAPLAN_TARGET_HINT" as const;
 
 export interface MintLaunchContextInput {
   attemptKey: string;
@@ -33,17 +44,6 @@ export interface MintLaunchContextInput {
   inheritFrom?: UltraPlanLaunchContext | null;
 }
 
-/**
- * Mint a launch context. Pure.
- *
- * Identity rules (spec §cross-hook carrier, lines 454–460):
- * - A fresh attempt always mints a new `attemptId` — identity is never reused across retries.
- * - Nested sub-agent work under an active parent attempt inherits the parent's `attemptId` and
- *   `attemptKey` (slice 2 does not model child attempts).
- * - Same-launch replay of a not-yet-finalized launch reuses the current `attemptId` — that is
- *   the responsibility of the caller, who looks up the persisted active attempt first and passes
- *   it via `inheritFrom`.
- */
 export function mintLaunchContext(input: MintLaunchContextInput): UltraPlanLaunchContext {
   const { attemptKey, sourceAgent, nowIso, inheritFrom } = input;
 
@@ -68,20 +68,20 @@ export function mintLaunchContext(input: MintLaunchContextInput): UltraPlanLaunc
  * Inject the exact `ULTRAPLAN_LAUNCH_CONTEXT=<json>` line into a prompt/assignment string.
  *
  * Idempotent: if the prompt already contains a marker line for a context with the same payload,
- * a second injection does not duplicate it. Different payloads are detected by JSON equality.
+ * a second injection does not duplicate it. Different payloads replace the prior marker so the
+ * latest intent wins.
  */
 export function injectLaunchContextIntoPrompt(prompt: string, ctx: UltraPlanLaunchContext): string {
-  const line = buildMarkerLine(ctx);
-  if (prompt.includes(line)) {
-    return prompt;
-  }
-  // If a different marker line already exists, replace it so the most recent intent wins.
-  const existingLineRegex = new RegExp(`^${escapeRegExp(LAUNCH_CONTEXT_PROMPT_MARKER)}=.*$`, "m");
-  if (existingLineRegex.test(prompt)) {
-    return prompt.replace(existingLineRegex, line);
-  }
-  const separator = prompt.endsWith("\n") || prompt.length === 0 ? "" : "\n";
-  return `${prompt}${separator}\n${line}`;
+  return injectJsonCarrierIntoPrompt(prompt, LAUNCH_CONTEXT_PROMPT_MARKER, ctx);
+}
+
+/**
+ * Inject the exact `ULTRAPLAN_TARGET_HINT=<json>` line into a prompt/assignment string.
+ * Mirrors the launch-context carrier semantics so later hooks can recover the execution target
+ * even when platform metadata is dropped.
+ */
+export function injectTargetHintIntoPrompt(prompt: string, hint: UltraPlanTargetHint): string {
+  return injectJsonCarrierIntoPrompt(prompt, TARGET_HINT_PROMPT_MARKER, hint);
 }
 
 export interface RecoverLaunchContextInput {
@@ -93,7 +93,7 @@ export interface RecoverLaunchContextInput {
   persistedActiveAttempt: UltraPlanAttemptRecord | null | undefined;
 }
 
-/**
+/****
  * Recover a launch context from the available carriers.
  *
  * Priority (spec §cross-hook carrier, line 464):
@@ -106,13 +106,23 @@ export function recoverLaunchContextFromEvent(input: RecoverLaunchContextInput):
   const fromMetadata = readMetadataCarrier(input.metadata);
   if (fromMetadata) return fromMetadata;
 
-  const fromPrompt = readPromptCarrier(input.prompt);
+  const fromPrompt = recoverLaunchContextFromPrompt(input.prompt);
   if (fromPrompt) return fromPrompt;
 
   if (input.persistedActiveAttempt && isUltraPlanLaunchContext(input.persistedActiveAttempt.launchContext)) {
     return input.persistedActiveAttempt.launchContext;
   }
   return null;
+}
+
+export function recoverLaunchContextFromPrompt(prompt: string | null | undefined): UltraPlanLaunchContext | null {
+  const candidate = readJsonPromptCarrier(prompt, LAUNCH_CONTEXT_PROMPT_MARKER);
+  return isUltraPlanLaunchContext(candidate) ? candidate : null;
+}
+
+export function recoverTargetHintFromPrompt(prompt: string | null | undefined): UltraPlanTargetHint | null {
+  const candidate = readJsonPromptCarrier(prompt, TARGET_HINT_PROMPT_MARKER);
+  return isUltraPlanTargetHint(candidate) ? candidate : null;
 }
 
 // --- internal helpers ------------------------------------------------------
@@ -123,25 +133,73 @@ function readMetadataCarrier(metadata: RecoverLaunchContextInput["metadata"]): U
   return isUltraPlanLaunchContext(candidate) ? candidate : null;
 }
 
-function readPromptCarrier(prompt: RecoverLaunchContextInput["prompt"]): UltraPlanLaunchContext | null {
+function injectJsonCarrierIntoPrompt(prompt: string, marker: string, payload: unknown): string {
+  const line = buildMarkerLine(marker, payload);
+  if (prompt.includes(line)) {
+    return prompt;
+  }
+
+  const existingLineRegex = new RegExp(`^${escapeRegExp(marker)}=.*$`, "m");
+  if (existingLineRegex.test(prompt)) {
+    return prompt.replace(existingLineRegex, line);
+  }
+
+  const separator = prompt.endsWith("\n") || prompt.length === 0 ? "" : "\n";
+  return `${prompt}${separator}\n${line}`;
+}
+
+function readJsonPromptCarrier(prompt: string | null | undefined, marker: string): unknown {
   if (typeof prompt !== "string" || prompt.length === 0) return null;
-  const lines = prompt.split(/\r?\n/);
-  const prefix = `${LAUNCH_CONTEXT_PROMPT_MARKER}=`;
-  for (const line of lines) {
+  const prefix = `${marker}=`;
+  for (const line of prompt.split(/\r?\n/)) {
     if (!line.startsWith(prefix)) continue;
-    const json = line.slice(prefix.length);
     try {
-      const parsed = JSON.parse(json);
-      if (isUltraPlanLaunchContext(parsed)) return parsed;
+      return JSON.parse(line.slice(prefix.length));
     } catch {
-      // ignore malformed JSON and continue scanning for a valid marker
+      // Ignore malformed JSON and continue scanning for a valid marker.
     }
   }
+
   return null;
 }
 
-function buildMarkerLine(ctx: UltraPlanLaunchContext): string {
-  return `${LAUNCH_CONTEXT_PROMPT_MARKER}=${JSON.stringify(ctx)}`;
+function buildMarkerLine(marker: string, payload: unknown): string {
+  return `${marker}=${JSON.stringify(payload)}`;
+}
+
+function isUltraPlanTargetHint(value: unknown): value is UltraPlanTargetHint {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return isOptionalEnum(candidate.targetType, ULTRAPLAN_CURSOR_TARGETS)
+    && isOptionalNullableEnum(candidate.stack, ULTRAPLAN_STACKS)
+    && isOptionalNullableString(candidate.domainId)
+    && isOptionalNullableEnum(candidate.level, ULTRAPLAN_LEVELS)
+    && isOptionalNullableString(candidate.scenarioId)
+    && isOptionalEnum(candidate.phase, ULTRAPLAN_EXECUTION_PHASES)
+    && isOptionalNullableEnum(candidate.resolvedSlot, ULTRAPLAN_AGENT_SLOT_NAMES)
+    && isOptionalEnum(candidate.actorKind, ["slot"] as const)
+    && isOptionalEnum(candidate.sourceAgent, ["sub-agent"] as const);
+}
+
+function isOptionalEnum<TValue extends string>(
+  value: unknown,
+  allowed: readonly TValue[],
+): value is TValue | undefined {
+  return value === undefined || (typeof value === "string" && allowed.includes(value as TValue));
+}
+
+function isOptionalNullableEnum<TValue extends string>(
+  value: unknown,
+  allowed: readonly TValue[],
+): value is TValue | null | undefined {
+  return value === null || isOptionalEnum(value, allowed);
+}
+
+function isOptionalNullableString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || (typeof value === "string" && value.length > 0);
 }
 
 function escapeRegExp(value: string): string {

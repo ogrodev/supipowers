@@ -3,6 +3,7 @@ import type {
   UltraPlanCursor,
   UltraPlanHookEventName,
   UltraPlanHookObservation,
+  UltraPlanLaunchContext,
   UltraPlanMutationPlan,
   UltraPlanRuntimeTracker,
   UltraPlanStorageResult,
@@ -10,7 +11,6 @@ import type {
 import { LAUNCH_CONTEXT_METADATA_KEY, recoverLaunchContextFromEvent } from "./launch-context.js";
 import { normalizeHookEvent, type NormalizeHookEventInput } from "./normalize.js";
 import {
-  appendHookLog,
   loadTracker as loadTrackerDefault,
   saveTrackerAtomic as saveTrackerAtomicDefault,
 } from "./tracker-storage.js";
@@ -24,6 +24,8 @@ import {
   resolveSessionMigration as resolveSessionMigrationDefault,
   type MigrationOutcome,
 } from "./migration.js";
+import { readActiveUltraPlanExecution } from "./active-execution.js";
+import { applyUltraPlanMutation } from "./apply-mutation.js";
 
 /**
  * Slice-2 hook bridge.
@@ -128,7 +130,7 @@ function handleSessionStart(
   rawEvent: unknown,
   ctx: unknown,
 ): void {
-  const session = deps.resolveActiveSession(ctx);
+  const session = resolveSessionContext(deps, platform, "session_start", rawEvent, ctx);
   if (!session) return;
 
   const nowIso = new Date().toISOString();
@@ -139,6 +141,7 @@ function handleSessionStart(
   const tracker = loadTrackerOrEmpty(deps, platform, session);
   const repair = deps.repairOnSessionStart({ tracker, manifest: null }, nowIso);
   void repair; // Slice-2 bridge applies repair actions inside the reducer flow below.
+
 
   const observation = deps.normalize({
     hookEvent: "session_start",
@@ -165,11 +168,12 @@ function handleAttemptEvent(
   rawEvent: unknown,
   ctx: unknown,
 ): void {
-  const session = deps.resolveActiveSession(ctx);
+  const session = resolveSessionContext(deps, platform, hookEvent, rawEvent, ctx);
   if (!session) return;
 
   const nowIso = new Date().toISOString();
   const tracker = loadTrackerOrEmpty(deps, platform, session);
+  const activeExecution = readActiveUltraPlanExecutionForSession(session);
   const observation = deps.normalize({
     hookEvent,
     sessionId: session.sessionId,
@@ -177,7 +181,9 @@ function handleAttemptEvent(
     metadata: extractMetadata(rawEvent, ctx),
     prompt: extractPrompt(rawEvent, ctx),
     persistedActiveAttempt: tracker.activeAttempt,
-    payload: toRecord(rawEvent),
+    payload: extractPayload(rawEvent),
+    targetHint: extractTargetHint(rawEvent, ctx),
+    fallbackTargetHint: buildFallbackTargetHint(activeExecution),
   });
 
   const cursor: UltraPlanCursor | null = tracker.activeAttempt?.cursorSnapshot ?? null;
@@ -192,13 +198,14 @@ function handleSessionShutdown(
   rawEvent: unknown,
   ctx: unknown,
 ): void {
-  const session = deps.resolveActiveSession(ctx);
+  const session = resolveSessionContext(deps, platform, "session_shutdown", rawEvent, ctx);
   if (!session) return;
 
   const nowIso = new Date().toISOString();
   const tracker = loadTrackerOrEmpty(deps, platform, session);
   const repair = deps.repairOnSessionShutdown({ tracker, manifest: null }, nowIso);
   void repair; // passed into the reducer via repair_applied actions in Slice-5 expansion.
+
 
   const observation = deps.normalize({
     hookEvent: "session_shutdown",
@@ -223,44 +230,11 @@ function handleSessionShutdown(
 // ---------------------------------------------------------------------------
 
 function defaultResolveActiveSession(_ctx: unknown): UltraPlanSessionContext | null {
-  // Slice-2 default: no automatic resolution. Hosts (e.g. /supi:ultraplan) inject their own
-  // resolver via overrides. When this default is in effect, the bridge is a no-op.
   return null;
 }
 
 function applyMutationPlanDefault(input: ApplyMutationPlanInput): void {
-  // Minimal Slice-2 implementation: persist the observation to hooks-log and maintain the
-  // applied-fingerprint set in the tracker so replay is a no-op on next run. Manifest mutation
-  // is deferred to Slice-5 (execution orchestration). The durability order here is:
-  //   1. append hooks-log
-  //   2. save tracker with appliedFingerprints updated
-  const { platform, cwd, sessionId, observation, mutationPlan } = input;
-
-  appendHookLog(platform.paths, cwd, sessionId, observation);
-
-  if (mutationPlan.appendObservationFingerprint) {
-    const trackerRes = loadTrackerDefault(platform.paths, cwd, sessionId);
-    const base: UltraPlanRuntimeTracker = trackerRes.ok
-      ? trackerRes.value
-      : {
-        version: 1,
-        sessionId,
-        activeAttempt: null,
-        finalizedAttempts: [],
-        appliedFingerprints: [],
-        pendingMutation: null,
-        updatedAt: observation.occurredAt,
-      };
-    const next: UltraPlanRuntimeTracker = {
-      ...base,
-      appliedFingerprints: [
-        ...base.appliedFingerprints,
-        mutationPlan.appendObservationFingerprint,
-      ],
-      updatedAt: observation.occurredAt,
-    };
-    saveTrackerAtomicDefault(platform.paths, cwd, sessionId, next);
-  }
+  applyUltraPlanMutation(input);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +256,124 @@ function loadTrackerOrEmpty(
     appliedFingerprints: [],
     pendingMutation: null,
     updatedAt: new Date().toISOString(),
+  };
+}
+
+function resolveSessionContext(
+  deps: UltraPlanHookBridgeDeps,
+  platform: Platform,
+  hookEvent: UltraPlanHookEventName,
+  rawEvent: unknown,
+  ctx: unknown,
+): UltraPlanSessionContext | null {
+  const explicit = deps.resolveActiveSession(ctx);
+  if (explicit) {
+    return explicit;
+  }
+
+  return resolveFallbackSessionContext(deps, platform, hookEvent, rawEvent, ctx);
+}
+
+function resolveFallbackSessionContext(
+  deps: UltraPlanHookBridgeDeps,
+  platform: Platform,
+  hookEvent: UltraPlanHookEventName,
+  rawEvent: unknown,
+  ctx: unknown,
+): UltraPlanSessionContext | null {
+  const activeExecution = readActiveUltraPlanExecution();
+  if (!activeExecution || hookEvent === "session_start") {
+    return null;
+  }
+
+  const launchContext = recoverLaunchContextFromEvent({
+    metadata: extractMetadata(rawEvent, ctx),
+    prompt: extractPrompt(rawEvent, ctx),
+    persistedActiveAttempt: null,
+  });
+  if (launchContext && sameLaunchContext(launchContext, activeExecution.launchContext)) {
+    return { sessionId: activeExecution.sessionId, cwd: activeExecution.cwd };
+  }
+
+  if (hookEvent === "before_agent_start") {
+    return null;
+  }
+
+  const tracker = deps.loadTracker(platform.paths, activeExecution.cwd, activeExecution.sessionId);
+  if (!tracker.ok || !tracker.value.activeAttempt) {
+    return null;
+  }
+
+  if (!sameLaunchContext(tracker.value.activeAttempt.launchContext, activeExecution.launchContext)) {
+    return null;
+  }
+
+  return { sessionId: activeExecution.sessionId, cwd: activeExecution.cwd };
+}
+
+function readActiveUltraPlanExecutionForSession(
+  session: UltraPlanSessionContext,
+ ): ReturnType<typeof readActiveUltraPlanExecution> {
+  const activeExecution = readActiveUltraPlanExecution();
+  if (!activeExecution) {
+    return null;
+  }
+
+  if (activeExecution.sessionId !== session.sessionId || activeExecution.cwd !== session.cwd) {
+    return null;
+  }
+
+  return activeExecution;
+}
+
+function sameLaunchContext(left: UltraPlanLaunchContext, right: UltraPlanLaunchContext): boolean {
+  return left.attemptId === right.attemptId && left.attemptKey === right.attemptKey;
+}
+
+function extractTargetHint(
+  rawEvent: unknown,
+  ctx: unknown,
+): NormalizeHookEventInput["targetHint"] | undefined {
+  const rawHint = asRecord(rawEvent)?.targetHint;
+  if (rawHint && typeof rawHint === "object" && !Array.isArray(rawHint)) {
+    return rawHint as NormalizeHookEventInput["targetHint"];
+  }
+  const ctxHint = asRecord(ctx)?.targetHint;
+  if (ctxHint && typeof ctxHint === "object" && !Array.isArray(ctxHint)) {
+    return ctxHint as NormalizeHookEventInput["targetHint"];
+  }
+  return undefined;
+}
+
+function buildFallbackTargetHint(activeExecution: ReturnType<typeof readActiveUltraPlanExecution>): NormalizeHookEventInput["fallbackTargetHint"] {
+  if (!activeExecution) {
+    return undefined;
+  }
+
+  return {
+    targetType: activeExecution.target.targetType,
+    stack: activeExecution.target.stack,
+    domainId: activeExecution.target.domainId,
+    level: activeExecution.target.level,
+    scenarioId: activeExecution.target.scenarioId,
+    phase: activeExecution.target.phase,
+    resolvedSlot: activeExecution.target.requiredSlot,
+    actorKind: "slot",
+    sourceAgent: "sub-agent",
+  };
+}
+
+function extractPayload(rawEvent: unknown): Record<string, unknown> {
+  const payload = toRecord(rawEvent);
+  const signalPayload = asRecord(asRecord(rawEvent)?.details)?.payload;
+  if (!signalPayload) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    payload: signalPayload,
+    summary: typeof payload.summary === "string" ? payload.summary : payload.payloadSummary,
   };
 }
 

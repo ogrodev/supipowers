@@ -11,7 +11,7 @@ import type {
   UltraPlanSourceAgent,
   UltraPlanStackId,
 } from "../../types.js";
-import { recoverLaunchContextFromEvent } from "./launch-context.js";
+import { recoverLaunchContextFromEvent, recoverTargetHintFromPrompt } from "./launch-context.js";
 
 /**
  * Slice-2 normalization seam.
@@ -55,6 +55,8 @@ export interface NormalizeHookEventInput {
    * session-scope.
    */
   targetHint?: UltraPlanTargetHint;
+  /** Fallback hint from active-execution state when prompt text did not carry one. */
+  fallbackTargetHint?: UltraPlanTargetHint;
 
   /** Optional platform-native event id (tool call id, turn id, agent run id). */
   nativeEventId?: string | null;
@@ -76,11 +78,19 @@ const SESSION_SCOPE_HOOKS: readonly UltraPlanHookEventName[] = [
 
 export function normalizeHookEvent(input: NormalizeHookEventInput): UltraPlanHookObservation {
   const occurredAt = input.occurredAt ?? input.nowIso;
-  const { actorKind, isSessionScope } = classifyActor(input);
-  const sourceAgent = input.targetHint?.sourceAgent
+  const targetHint = resolveTargetHint(input);
+  const launchContext = SESSION_SCOPE_HOOKS.includes(input.hookEvent)
+    ? null
+    : recoverLaunchContextFromEvent({
+        metadata: input.metadata ?? null,
+        prompt: input.prompt ?? null,
+        persistedActiveAttempt: input.persistedActiveAttempt ?? null,
+      });
+  const { actorKind, isSessionScope } = classifyActor(input, targetHint, launchContext);
+  const sourceAgent = targetHint?.sourceAgent
+    ?? launchContext?.sourceAgent
     ?? (isSessionScope ? "main" : "sub-agent");
 
-  // Session-scope observations carry no attempt identity and no target.
   if (isSessionScope) {
     return {
       sessionId: input.sessionId,
@@ -103,13 +113,6 @@ export function normalizeHookEvent(input: NormalizeHookEventInput): UltraPlanHoo
     };
   }
 
-  // Slot-backed observation: require a launch context carrier for correlation.
-  const launchContext = recoverLaunchContextFromEvent({
-    metadata: input.metadata ?? null,
-    prompt: input.prompt ?? null,
-    persistedActiveAttempt: input.persistedActiveAttempt ?? null,
-  });
-
   if (!launchContext) {
     return {
       sessionId: input.sessionId,
@@ -120,17 +123,39 @@ export function normalizeHookEvent(input: NormalizeHookEventInput): UltraPlanHoo
       sourceAgent,
       occurredAt,
       causationId: input.causationId ?? null,
-      // Fingerprint a failed-correlation observation off its native id + payload so replay still
-      // dedupes the failure record rather than appending a new blocker every time.
       fingerprint: computeFingerprint({
         attemptId: null,
         hookEvent: input.hookEvent,
         nativeEventId: input.nativeEventId ?? null,
         payload: input.payload ?? {},
       }),
-      target: buildTargetFromHint(input.targetHint),
+      target: buildTargetFromHint(targetHint),
       correlationFailure: {
         reason: "slot-backed hook event without a resolvable UltraPlan launch context",
+      },
+      payloadSummary: summarizePayload(input.hookEvent, input.payload),
+    };
+  }
+
+  if (!targetHint) {
+    return {
+      sessionId: input.sessionId,
+      hookEvent: input.hookEvent,
+      actorKind,
+      attemptId: launchContext.attemptId,
+      attemptKey: launchContext.attemptKey,
+      sourceAgent,
+      occurredAt,
+      causationId: input.causationId ?? null,
+      fingerprint: computeFingerprint({
+        attemptId: launchContext.attemptId,
+        hookEvent: input.hookEvent,
+        nativeEventId: input.nativeEventId ?? null,
+        payload: input.payload ?? {},
+      }),
+      target: null,
+      correlationFailure: {
+        reason: "slot-backed hook event without a resolvable UltraPlan target hint",
       },
       payloadSummary: summarizePayload(input.hookEvent, input.payload),
     };
@@ -151,7 +176,7 @@ export function normalizeHookEvent(input: NormalizeHookEventInput): UltraPlanHoo
       nativeEventId: input.nativeEventId ?? null,
       payload: input.payload ?? {},
     }),
-    target: buildTargetFromHint(input.targetHint),
+    target: buildTargetFromHint(targetHint),
     correlationFailure: null,
     payloadSummary: summarizePayload(input.hookEvent, input.payload),
   };
@@ -161,21 +186,19 @@ export function normalizeHookEvent(input: NormalizeHookEventInput): UltraPlanHoo
 
 function classifyActor(
   input: NormalizeHookEventInput,
-): { actorKind: UltraPlanActorKind; isSessionScope: boolean } {
+  targetHint: UltraPlanTargetHint | undefined,
+  launchContext: UltraPlanAttemptRecord["launchContext"] | null,
+ ): { actorKind: UltraPlanActorKind; isSessionScope: boolean } {
   if (SESSION_SCOPE_HOOKS.includes(input.hookEvent)) {
     return { actorKind: "main-orchestrator", isSessionScope: true };
   }
-  // Hint-driven classification. When a hint is absent, an attempt-shaped hook (before_agent_start
-  // / tool_call / tool_result / agent_end) without slot context is treated as session-scope.
-  const hint = input.targetHint;
-  if (!hint) {
+  if (targetHint?.actorKind === "main-orchestrator") {
     return { actorKind: "main-orchestrator", isSessionScope: true };
   }
-  if (hint.actorKind === "main-orchestrator") {
-    return { actorKind: "main-orchestrator", isSessionScope: true };
+  if (targetHint || launchContext) {
+    return { actorKind: targetHint?.actorKind ?? "slot", isSessionScope: false };
   }
-  // Slot-backed work: the attempt must correlate to a launch context.
-  return { actorKind: hint.actorKind ?? "slot", isSessionScope: false };
+  return { actorKind: "main-orchestrator", isSessionScope: true };
 }
 
 function buildTargetFromHint(hint: UltraPlanTargetHint | undefined): UltraPlanObservationTarget | null {
@@ -197,6 +220,12 @@ function buildTargetFromHint(hint: UltraPlanTargetHint | undefined): UltraPlanOb
     phase: hint.phase ?? "red",
     resolvedSlot: hint.resolvedSlot ?? null,
   };
+}
+
+function resolveTargetHint(input: NormalizeHookEventInput): UltraPlanTargetHint | undefined {
+  return input.targetHint
+    ?? recoverTargetHintFromPrompt(input.prompt ?? null)
+    ?? input.fallbackTargetHint;
 }
 
 interface FingerprintComponents {

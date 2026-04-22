@@ -31,6 +31,15 @@ export interface ReducerState {
 }
 
 export function reduce(state: ReducerState, action: UltraPlanReducerAction): UltraPlanMutationPlan {
+  if (state.cursor?.targetType === "session" && state.cursor.status === "complete") {
+    return buildPlan({
+      kind: "complete",
+      rationale: "cursor already resolved to session complete",
+      cursorUpdate: state.cursor,
+      sessionStateUpdate: "complete",
+    });
+  }
+
   switch (action.kind) {
     case "session_started":
       return buildPlan({ kind: "noop", rationale: "session_started observed; repair runs separately" });
@@ -61,11 +70,28 @@ function reduceAttemptStarted(
 ): UltraPlanMutationPlan {
   const { observation } = action;
 
-  // Replay dedupe: once the fingerprint is in the applied set, the mutation is a noop.
   if (alreadyApplied(state.tracker, observation.fingerprint)) {
     return buildPlan({
       kind: "noop",
       rationale: `attempt_started observation ${observation.fingerprint} already applied`,
+    });
+  }
+
+  if (state.tracker.activeAttempt) {
+    return buildPlan({
+      kind: "block",
+      rationale: `nested before_agent_start observed while attempt ${state.tracker.activeAttempt.attemptId} is still active`,
+      blockerUpdate: {
+        scope: "session",
+        nextValue: buildUnsafeRepairRequiredBlocker({
+          detectedAt: observation.occurredAt,
+          scope: "session",
+          reason: `active attempt ${state.tracker.activeAttempt.attemptId} must finalize before a new attempt starts`,
+        }),
+        clearedByObservationFingerprint: null,
+      },
+      sessionStateUpdate: "blocked",
+      appendObservationFingerprint: observation.fingerprint,
     });
   }
 
@@ -83,6 +109,7 @@ function reduceAttemptStarted(
         }),
         clearedByObservationFingerprint: null,
       },
+      sessionStateUpdate: "blocked",
       appendObservationFingerprint: observation.fingerprint,
     });
   }
@@ -92,6 +119,7 @@ function reduceAttemptStarted(
     kind: "start-attempt",
     rationale: `legal start: ${cursor.status} -> ${nextStatus}`,
     cursorUpdate: { ...cursor, status: nextStatus, phase: phaseForStatus(nextStatus, cursor.phase) },
+    sessionStateUpdate: "running",
     appendObservationFingerprint: observation.fingerprint,
   });
 }
@@ -156,6 +184,7 @@ function reduceAttemptFinalized(
         clearedByObservationFingerprint: null,
       },
       trackerAttemptFinalization: { attemptId: active.attemptId, outcome: "blocked", finalizedAt: nowIso },
+      sessionStateUpdate: "blocked",
       appendObservationFingerprint: observation.fingerprint,
     });
   }
@@ -205,6 +234,7 @@ function reduceAttemptFinalized(
         clearedByObservationFingerprint: null,
       },
       trackerAttemptFinalization: { attemptId: active.attemptId, outcome: "blocked", finalizedAt: nowIso },
+      sessionStateUpdate: candidate.blocker.recoveryMode === "await-user" ? "awaiting-user" : "blocked",
       appendObservationFingerprint: observation.fingerprint,
     });
   }
@@ -225,8 +255,8 @@ function reduceAttemptFinalized(
       clearedByObservationFingerprint: null,
     },
     trackerAttemptFinalization: { attemptId: active.attemptId, outcome: "interrupted", finalizedAt: nowIso },
+    sessionStateUpdate: "blocked",
     appendObservationFingerprint: observation.fingerprint,
-    // Missing-proof note is useful for the audit trail even when the outcome is interrupted.
     notes: [`missing-proof: ${buildProofMissingBlocker({ detectedAt: nowIso, expectedPhase: inferPhase(cursor) }).message}`],
   });
 }
@@ -259,6 +289,7 @@ function reduceSessionShutdown(
       clearedByObservationFingerprint: null,
     },
     trackerAttemptFinalization: { attemptId: active.attemptId, outcome: "interrupted", finalizedAt: action.nowIso },
+    sessionStateUpdate: "blocked",
     appendObservationFingerprint: action.observation.fingerprint,
   });
 }

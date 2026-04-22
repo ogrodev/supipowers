@@ -2,6 +2,7 @@ import type {
   UltraPlanAttemptRecord,
   UltraPlanBlocker,
   UltraPlanManifest,
+  UltraPlanPendingMutation,
   UltraPlanRepairAction,
   UltraPlanRuntimeTracker,
 } from "../../types.js";
@@ -34,6 +35,8 @@ export interface RepairPlan {
   emittedBlockers: UltraPlanBlocker[];
   /** What the caller should do with the tracker's `activeAttempt`. */
   activeAttemptAction: "leave" | "clear" | "finalize-as-interrupted";
+  /** Resume-time handling for a staged pending mutation. */
+  pendingMutationAction: "leave" | "clear" | "apply-and-clear";
 }
 
 // ---------------------------------------------------------------------------
@@ -44,6 +47,7 @@ export function repairOnSessionStart(state: RepairState, nowIso: string): Repair
   const actions: UltraPlanRepairAction[] = [];
   const emittedBlockers: UltraPlanBlocker[] = [];
   let activeAttemptAction: RepairPlan["activeAttemptAction"] = "leave";
+  let pendingMutationAction: RepairPlan["pendingMutationAction"] = "leave";
 
   const active = state.tracker.activeAttempt;
   if (active) {
@@ -51,8 +55,6 @@ export function repairOnSessionStart(state: RepairState, nowIso: string): Repair
     const hasBlocker = active.blockerCandidates.length > 0;
 
     if (hasProof && hasBlocker) {
-      // Conflicting evidence is not safe to auto-repair. Fail closed: emit a blocker, still
-      // convert the attempt to interrupted so the reducer sees a clean ledger on next finalize.
       emittedBlockers.push(buildUnsafeRepairRequiredBlocker({
         detectedAt: nowIso,
         scope: "scenario",
@@ -71,8 +73,6 @@ export function repairOnSessionStart(state: RepairState, nowIso: string): Repair
       });
       activeAttemptAction = "finalize-as-interrupted";
     } else {
-      // Orphaned in-flight attempt: no committed outcome, no conflicting evidence. Convert to
-      // interrupted — this is explicitly allowed (spec §safe auto-repair).
       actions.push({
         op: "convert-active-to-interrupted",
         attemptId: active.attemptId,
@@ -82,7 +82,10 @@ export function repairOnSessionStart(state: RepairState, nowIso: string): Repair
     }
   }
 
-  // Blocker clearing: clear only when a later proof on the same target exists.
+  const pending = reconcilePendingMutation(state, nowIso);
+  pendingMutationAction = pending.pendingMutationAction;
+  emittedBlockers.push(...pending.emittedBlockers);
+
   const manifestBlocker = state.manifest?.blocker ?? null;
   if (manifestBlocker) {
     const clearedBy = findLaterProofForBlocker(state.tracker, manifestBlocker);
@@ -95,7 +98,7 @@ export function repairOnSessionStart(state: RepairState, nowIso: string): Repair
     }
   }
 
-  return { actions, emittedBlockers, activeAttemptAction };
+  return { actions, emittedBlockers, activeAttemptAction, pendingMutationAction };
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +119,7 @@ export function repairOnSessionShutdown(state: RepairState, nowIso: string): Rep
     activeAttemptAction = "finalize-as-interrupted";
   }
 
-  return { actions, emittedBlockers: [], activeAttemptAction };
+  return { actions, emittedBlockers: [], activeAttemptAction, pendingMutationAction: "leave" };
 }
 
 // ---------------------------------------------------------------------------
@@ -146,4 +149,103 @@ function isLaterThan(candidate: string | null, reference: string): boolean {
   const b = Date.parse(reference);
   if (Number.isNaN(a) || Number.isNaN(b)) return false;
   return a > b;
+}
+
+function reconcilePendingMutation(
+  state: RepairState,
+  nowIso: string,
+): Pick<RepairPlan, "pendingMutationAction" | "emittedBlockers"> {
+  const pending = state.tracker.pendingMutation;
+  if (!pending) {
+    return { pendingMutationAction: "leave", emittedBlockers: [] };
+  }
+
+  if (!state.manifest) {
+    return {
+      pendingMutationAction: "leave",
+      emittedBlockers: [buildUnsafeRepairRequiredBlocker({
+        detectedAt: nowIso,
+        scope: "session",
+        reason: `pending mutation ${pending.attemptId} cannot be reconciled without a manifest snapshot`,
+      })],
+    };
+  }
+
+  if (isPendingMutationReflected(state.manifest, pending)) {
+    return { pendingMutationAction: "clear", emittedBlockers: [] };
+  }
+
+  if (canSafelyApplyPendingMutation(pending)) {
+    return { pendingMutationAction: "apply-and-clear", emittedBlockers: [] };
+  }
+
+  return {
+    pendingMutationAction: "leave",
+    emittedBlockers: [buildUnsafeRepairRequiredBlocker({
+      detectedAt: nowIso,
+      scope: "session",
+      reason: `pending mutation ${pending.attemptId} still requires canonical authored/review reconciliation`,
+    })],
+  };
+}
+
+function isPendingMutationReflected(manifest: UltraPlanManifest, pending: UltraPlanPendingMutation): boolean {
+  const mutationPlan = pending.mutationPlan;
+
+  if (mutationPlan.scenarioStatusUpdate || mutationPlan.recomputeProgress) {
+    return false;
+  }
+
+  const checks: boolean[] = [];
+
+  if (mutationPlan.blockerUpdate) {
+    const nextValue = mutationPlan.blockerUpdate.nextValue;
+    checks.push(nextValue === null
+      ? manifest.blocker === null
+      : JSON.stringify(manifest.blocker) === JSON.stringify(nextValue));
+  }
+
+  if (mutationPlan.cursorUpdate) {
+    checks.push(sameCursor(manifest.cursor, mutationPlan.cursorUpdate));
+  }
+
+  if (mutationPlan.sessionStateUpdate) {
+    checks.push(manifest.state === mutationPlan.sessionStateUpdate);
+  }
+
+  if (mutationPlan.reviewStatusUpdate) {
+    const review = manifest.reviews.find((candidate) =>
+      candidate.type === mutationPlan.reviewStatusUpdate?.type
+      && candidate.stack === mutationPlan.reviewStatusUpdate.stack
+      && candidate.domainId === mutationPlan.reviewStatusUpdate.domainId,
+    );
+    checks.push(
+      review?.status === mutationPlan.reviewStatusUpdate.nextStatus
+        && review.path === mutationPlan.reviewStatusUpdate.artifactRef,
+    );
+  }
+
+  return checks.length > 0 && checks.every(Boolean);
+}
+
+function canSafelyApplyPendingMutation(pending: UltraPlanPendingMutation): boolean {
+  const mutationPlan = pending.mutationPlan;
+  return mutationPlan.scenarioStatusUpdate === null
+    && mutationPlan.reviewStatusUpdate === null
+    && mutationPlan.recomputeProgress === false;
+}
+
+function sameCursor(left: UltraPlanManifest["cursor"], right: UltraPlanManifest["cursor"]): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return left.targetType === right.targetType
+    && left.stack === right.stack
+    && left.domainId === right.domainId
+    && left.level === right.level
+    && left.scenarioId === right.scenarioId
+    && left.phase === right.phase
+    && left.status === right.status
+    && left.summary === right.summary;
 }
