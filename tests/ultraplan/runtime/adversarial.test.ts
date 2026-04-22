@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type {
   UltraPlanAttemptRecord,
   UltraPlanBlockerCandidate,
@@ -11,6 +14,9 @@ import { reduce, type ReducerState } from "../../../src/ultraplan/runtime/reduce
 import { repairOnSessionStart } from "../../../src/ultraplan/runtime/repair.js";
 import { extractProofCandidate } from "../../../src/ultraplan/runtime/proof.js";
 import { normalizeHookEvent } from "../../../src/ultraplan/runtime/normalize.js";
+import { applyUltraPlanMutation } from "../../../src/ultraplan/runtime/apply-mutation.js";
+import { loadUltraPlanManifest, saveUltraPlanAuthoredArtifact, saveUltraPlanManifest } from "../../../src/ultraplan/storage.js";
+import { createTestPaths, createTestRepo, makeUltraPlanAuthored, makeUltraPlanHookObservation, makeUltraPlanManifest, makeUltraPlanMutationPlan, makeUltraPlanScenario, makeUltraPlanStack } from "../fixtures.js";
 
 /**
  * Adversarial families from the approved Slice-2 runtime spec §testing 4. Each family asserts a
@@ -109,6 +115,37 @@ function attemptWith(parts: { proofs?: UltraPlanProofCandidate[]; blockers?: Ult
   };
 }
 
+let tmpDir: string;
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-ultraplan-adversarial-"));
+});
+afterEach(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+function seedCanonicalSession(cwd: string, sessionId: string) {
+  const paths = createTestPaths(tmpDir);
+  const authored = makeUltraPlanAuthored({
+    sessionId,
+    stacks: [makeUltraPlanStack({
+      domains: [{
+        id: "auth",
+        name: "Authentication",
+        unit: [makeUltraPlanScenario("scenario-a", "Auth scenario", "green-proved", "unit", { stack: "frontend", domainId: "auth" })],
+        integration: [],
+        e2e: [],
+        review: { enabled: true, status: "pending" },
+        progress: { total: 1, terminal: 1, blocked: 0 },
+      }],
+      progress: { total: 1, terminal: 1, blocked: 0 },
+    })],
+  });
+  const manifest = makeUltraPlanManifest({ sessionId, progress: { total: 1, terminal: 1, blocked: 0 } });
+  expect(saveUltraPlanAuthoredArtifact(paths, cwd, sessionId, authored).ok).toBe(true);
+  expect(saveUltraPlanManifest(paths, cwd, sessionId, manifest).ok).toBe(true);
+  return { paths, authored };
+}
+
 describe("adversarial — ambiguous correlation", () => {
   test("slot-backed event with no launch-context carrier surfaces a correlation failure (no silent advancement)", () => {
     const obs = normalizeHookEvent({
@@ -200,5 +237,37 @@ describe("adversarial — stale active attempt pointing at terminal work", () =>
       && a.op !== "convert-active-to-interrupted"
       && a.op !== "clear-blocker");
     expect(forbidden).toBe(false);
+  });
+});
+
+describe("adversarial — review artifact validation", () => {
+  test("a wrong canonical review path fails closed and leaves manifest unchanged", () => {
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-adversarial-review";
+    const { paths, authored } = seedCanonicalSession(cwd, sessionId);
+    const observation = makeUltraPlanHookObservation({ fingerprint: "fp-adversarial-review" });
+
+    expect(() => applyUltraPlanMutation({
+      platform: { paths } as any,
+      cwd,
+      sessionId,
+      observation,
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "advance",
+        appendObservationFingerprint: observation.fingerprint,
+        reviewStatusUpdate: {
+          type: "domain",
+          stack: "frontend",
+          domainId: "auth",
+          nextStatus: "passed",
+          artifactRef: "/tmp/not-the-canonical-review.json",
+        },
+      }),
+    })).toThrow();
+
+    const manifestResult = loadUltraPlanManifest(paths, cwd, authored.sessionId);
+    expect(manifestResult.ok).toBe(true);
+    if (!manifestResult.ok) return;
+    expect(manifestResult.value.reviews).toEqual([]);
   });
 });

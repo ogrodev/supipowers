@@ -154,15 +154,22 @@ function createUltraplanCtx(overrides: {
   hasUI?: boolean;
   selectResponses?: Array<string | null>;
   inputResponses?: Array<string | null>;
+  pickFirstSelect?: boolean;
 } = {}) {
   const selectResponses = overrides.selectResponses ?? [];
   const inputResponses = overrides.inputResponses ?? [];
   let sIdx = 0;
   let iIdx = 0;
-  const select = mock(async () => {
-    const v = selectResponses[sIdx] ?? null;
+  const select = mock(async (_title?: string, options?: string[]) => {
+    const explicit = selectResponses[sIdx] ?? null;
     sIdx += 1;
-    return v;
+    if (explicit !== null) {
+      return explicit;
+    }
+    if (overrides.pickFirstSelect && Array.isArray(options) && options.length > 0) {
+      return options[0];
+    }
+    return null;
   });
   const input = mock(async () => {
     const v = inputResponses[iIdx] ?? null;
@@ -270,6 +277,195 @@ describe("handleUltraplan regressions", () => {
       { value: "status ", label: "status", description: "Show status for an ultraplan session" },
       { value: "next ", label: "next", description: "Deferred to a later ultraplan phase" },
     ]);
+  });
+});
+
+describe("handleUltraplan run command", () => {
+  test("run invokes the session runner after selection and renders the paused outcome", async () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-run-pause";
+    seedCanonicalGlobalSession(paths, cwd, sessionId);
+    seedGlobalIndex(paths, cwd, {
+      sessions: [{
+        sessionId,
+        title: "Runnable session",
+        state: "ready",
+        bucket: "pending",
+        createdAt: "2026-04-19T12:00:00.000Z",
+        updatedAt: "2026-04-19T12:00:00.000Z",
+        cursor: null,
+        idleReason: null,
+      }],
+    });
+
+    const prompt = mock(async () => {
+      const manifestPath = getUltraplanManifestPath(paths, cwd, sessionId);
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      manifest.state = "blocked";
+      manifest.blocker = {
+        code: "proof-missing",
+        message: "Need the red-phase proof",
+        scope: "scenario",
+        affected: { stack: "frontend", domainId: "auth", level: "unit", scenarioId: "scenario-a" },
+        recoverable: true,
+        recoveryMode: "retry",
+        nextAction: "Rerun the proof",
+        retryable: true,
+        detectedAt: "2026-04-19T12:05:00.000Z",
+      };
+      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    });
+    const dispose = mock(async () => {});
+    const platform = {
+      paths,
+      createAgentSession: mock(async () => ({ prompt, dispose, subscribe: () => () => {}, state: { messages: [] } })),
+    } as any;
+    const ctx = createUltraplanCtx({ hasUI: true, pickFirstSelect: true });
+    ctx.cwd = cwd;
+
+    await handleUltraplan(platform, ctx, "run");
+
+    expect(platform.createAgentSession).toHaveBeenCalledTimes(1);
+    const infos = ctx.notify.mock.calls.filter((call: unknown[]) => call[1] === "info");
+    const lastInfo = infos[infos.length - 1] as unknown[] | undefined;
+    expect(String(lastInfo?.[0] ?? "")).toContain("Ultraplan paused");
+    expect(String(lastInfo?.[0] ?? "")).toContain("Need the red-phase proof");
+  });
+
+  test("run renders the completed outcome when the dispatched attempt finishes the session", async () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-run-complete";
+    seedCanonicalGlobalSession(paths, cwd, sessionId);
+    seedGlobalIndex(paths, cwd, {
+      sessions: [{
+        sessionId,
+        title: "Runnable session",
+        state: "ready",
+        bucket: "pending",
+        createdAt: "2026-04-19T12:00:00.000Z",
+        updatedAt: "2026-04-19T12:00:00.000Z",
+        cursor: null,
+        idleReason: null,
+      }],
+    });
+
+    const prompt = mock(async () => {
+      const authoredPath = getUltraplanAuthoredJsonPath(paths, cwd, sessionId);
+      const authored = JSON.parse(fs.readFileSync(authoredPath, "utf8"));
+      authored.stacks[0].agentSlots.domainReviewEnabled = false;
+      authored.stacks[0].agentSlots.stackReviewEnabled = false;
+      authored.stacks[0].domains[0].review.enabled = false;
+      for (const scenario of authored.stacks[0].domains[0].unit) {
+        scenario.status = "done";
+        scenario.proofs = [{
+          type: "artifact",
+          phase: "complete",
+          recordedAt: "2026-04-19T12:05:00.000Z",
+          actor: "frontend-executor",
+          evidence: { summary: `Completed ${scenario.id}` },
+          artifactRef: `artifact://${scenario.id}-complete`,
+        }];
+      }
+      fs.writeFileSync(authoredPath, `${JSON.stringify(authored, null, 2)}\n`);
+    });
+    const dispose = mock(async () => {});
+    const platform = {
+      paths,
+      createAgentSession: mock(async () => ({ prompt, dispose, subscribe: () => () => {}, state: { messages: [] } })),
+    } as any;
+    const ctx = createUltraplanCtx({ hasUI: true, pickFirstSelect: true });
+    ctx.cwd = cwd;
+
+    await handleUltraplan(platform, ctx, "run");
+
+    expect(platform.createAgentSession).toHaveBeenCalledTimes(1);
+    const infos = ctx.notify.mock.calls.filter((call: unknown[]) => call[1] === "info");
+    const lastInfo = infos[infos.length - 1] as unknown[] | undefined;
+    expect(String(lastInfo?.[0] ?? "")).toContain("Ultraplan complete");
+    expect(String(lastInfo?.[0] ?? "")).toContain("Current: Session complete");
+  });
+
+  test("pre-run paused sessions render the concise paused output without dispatching", async () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-preblocked";
+    seedCanonicalGlobalSession(paths, cwd, sessionId);
+    const manifestPath = getUltraplanManifestPath(paths, cwd, sessionId);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.state = "blocked";
+    manifest.blocker = {
+      code: "proof-missing",
+      message: "Need the failing proof before resume",
+      scope: "scenario",
+      affected: { stack: "frontend", domainId: "auth", level: "unit", scenarioId: "scenario-a" },
+      recoverable: true,
+      recoveryMode: "retry",
+      nextAction: "Retry the proof",
+      retryable: true,
+      detectedAt: "2026-04-19T12:05:00.000Z",
+    };
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    seedGlobalIndex(paths, cwd, {
+      sessions: [{
+        sessionId,
+        title: "Blocked session",
+        state: "blocked",
+        bucket: "idle",
+        createdAt: "2026-04-19T12:00:00.000Z",
+        updatedAt: "2026-04-19T12:05:00.000Z",
+        cursor: manifest.cursor,
+        idleReason: "Need the failing proof before resume",
+      }],
+    });
+
+    const platform = {
+      paths,
+      createAgentSession: mock(async () => {
+        throw new Error("runner should not dispatch a blocked session");
+      }),
+    } as any;
+    const ctx = createUltraplanCtx({ hasUI: true, pickFirstSelect: true });
+    ctx.cwd = cwd;
+
+    await handleUltraplan(platform, ctx, "run");
+
+    expect(platform.createAgentSession).not.toHaveBeenCalled();
+    const infos = ctx.notify.mock.calls.filter((call: unknown[]) => call[1] === "info");
+    const lastInfo = infos[infos.length - 1] as unknown[] | undefined;
+    expect(String(lastInfo?.[0] ?? "")).toContain("Ultraplan paused");
+    expect(String(lastInfo?.[0] ?? "")).toContain("Need the failing proof before resume");
+  });
+
+  test("status still renders the inspect-style status output", async () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-status";
+    seedCanonicalGlobalSession(paths, cwd, sessionId);
+    seedGlobalIndex(paths, cwd, {
+      sessions: [{
+        sessionId,
+        title: "Status session",
+        state: "ready",
+        bucket: "pending",
+        createdAt: "2026-04-19T12:00:00.000Z",
+        updatedAt: "2026-04-19T12:00:00.000Z",
+        cursor: null,
+        idleReason: null,
+      }],
+    });
+
+    const platform = { paths } as any;
+    const ctx = createUltraplanCtx({ hasUI: true, pickFirstSelect: true });
+    ctx.cwd = cwd;
+
+    await handleUltraplan(platform, ctx, "status");
+
+    const infos = ctx.notify.mock.calls.filter((call: unknown[]) => call[1] === "info");
+    const lastInfo = infos[infos.length - 1] as unknown[] | undefined;
+    expect(String(lastInfo?.[0] ?? "")).toContain("Ultraplan status");
+    expect(String(lastInfo?.[0] ?? "")).toContain("State: ready");
   });
 });
 

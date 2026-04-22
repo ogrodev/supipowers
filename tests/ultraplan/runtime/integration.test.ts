@@ -10,15 +10,34 @@ import type {
 } from "../../../src/types.js";
 import { registerUltraPlanHookBridge, type UltraPlanSessionContext } from "../../../src/ultraplan/runtime/hook-bridge.js";
 import { LAUNCH_CONTEXT_METADATA_KEY } from "../../../src/ultraplan/runtime/launch-context.js";
+import { applyUltraPlanMutation } from "../../../src/ultraplan/runtime/apply-mutation.js";
+import { resolveNextExecutionTarget } from "../../../src/ultraplan/execution/policy.js";
 import {
   getUltraplanAuthoredJsonPath,
+  getUltraplanExecutionLogPath,
   getUltraplanHooksLogPath,
   getUltraplanManifestPath,
   getUltraplanRuntimeTrackerPath,
   getUltraplanSessionDir,
 } from "../../../src/ultraplan/project-paths.js";
-import { loadUltraPlanRuntimeTracker } from "../../../src/ultraplan/storage.js";
-import { createTestPaths, createTestRepo, makeUltraPlanAuthored, makeUltraPlanManifest } from "../fixtures.js";
+import {
+  loadUltraPlanAuthoredArtifact,
+  loadUltraPlanManifest,
+  loadUltraPlanRuntimeTracker,
+} from "../../../src/ultraplan/storage.js";
+import {
+  appendExecutionLog,
+} from "../../../src/ultraplan/runtime/tracker-storage.js";
+import {
+  createTestPaths,
+  createTestRepo,
+  makeUltraPlanAuthored,
+  makeUltraPlanHookObservation,
+  makeUltraPlanManifest,
+  makeUltraPlanMutationPlan,
+  makeUltraPlanScenario,
+  makeUltraPlanStack,
+} from "../fixtures.js";
 
 type Handler = (event: unknown, ctx?: unknown) => unknown;
 
@@ -158,5 +177,213 @@ describe("synthetic hook sequences", () => {
     if (tracker.ok) {
       expect(tracker.value.activeAttempt).toBeNull();
     }
+  });
+});
+
+describe("policy + mutation integration", () => {
+  test("unit work advances from red ownership to green ownership in strict order", () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-progress-unit";
+    const authored = makeUltraPlanAuthored({
+      sessionId,
+      stacks: [makeUltraPlanStack({
+        domains: [{
+          id: "auth",
+          name: "Authentication",
+          unit: [makeUltraPlanScenario("scenario-a", "Unit auth scenario", "planned", "unit", { stack: "frontend", domainId: "auth" })],
+          integration: [],
+          e2e: [],
+          review: { enabled: true, status: "pending" },
+          progress: { total: 1, terminal: 0, blocked: 0 },
+        }],
+        progress: { total: 1, terminal: 0, blocked: 0 },
+      })],
+    });
+    const manifest = makeUltraPlanManifest({ sessionId, progress: { total: 1, terminal: 0, blocked: 0 } });
+    seedSession(paths, cwd, sessionId, authored, manifest);
+
+    let authoredResult = loadUltraPlanAuthoredArtifact(paths, cwd, sessionId);
+    let manifestResult = loadUltraPlanManifest(paths, cwd, sessionId);
+    expect(authoredResult.ok).toBe(true);
+    expect(manifestResult.ok).toBe(true);
+    if (!authoredResult.ok || !manifestResult.ok) return;
+
+    let target = resolveNextExecutionTarget({ paths, cwd, authored: authoredResult.value, manifest: manifestResult.value });
+    expect(target.requiredSlot).toBe("frontend-executor");
+    expect(target.phase).toBe("red");
+
+    const redObservation = makeUltraPlanHookObservation({
+      fingerprint: "fp-unit-red",
+      attemptId: "att-unit-red",
+      attemptKey: "frontend/auth/unit/scenario-a/red",
+      target: {
+        targetType: "scenario",
+        stack: "frontend",
+        domainId: "auth",
+        level: "unit",
+        scenarioId: "scenario-a",
+        phase: "red",
+        resolvedSlot: "frontend-executor",
+      },
+    });
+    applyUltraPlanMutation({
+      platform: { paths } as any,
+      cwd,
+      sessionId,
+      observation: redObservation,
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "advance",
+        appendObservationFingerprint: redObservation.fingerprint,
+        scenarioStatusUpdate: {
+          stack: "frontend",
+          domainId: "auth",
+          level: "unit",
+          scenarioId: "scenario-a",
+          nextStatus: "red-proved",
+          appendProof: {
+            type: "test",
+            phase: "red",
+            recordedAt: redObservation.occurredAt,
+            actor: "frontend-executor",
+            evidence: { summary: "Red proof captured" },
+            artifactRef: "artifact://unit-red",
+          },
+        },
+      }),
+    });
+
+    authoredResult = loadUltraPlanAuthoredArtifact(paths, cwd, sessionId);
+    manifestResult = loadUltraPlanManifest(paths, cwd, sessionId);
+    expect(authoredResult.ok).toBe(true);
+    expect(manifestResult.ok).toBe(true);
+    if (!authoredResult.ok || !manifestResult.ok) return;
+
+    target = resolveNextExecutionTarget({ paths, cwd, authored: authoredResult.value, manifest: manifestResult.value });
+    expect(target.requiredSlot).toBe("frontend-executor");
+    expect(target.phase).toBe("green");
+  });
+
+  test("integration work uses tester for red and executor for green", () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-progress-integration";
+    const authored = makeUltraPlanAuthored({
+      sessionId,
+      stacks: [makeUltraPlanStack({
+        domains: [{
+          id: "auth",
+          name: "Authentication",
+          unit: [],
+          integration: [makeUltraPlanScenario("scenario-int", "Integration auth scenario", "planned", "integration", { stack: "frontend", domainId: "auth" })],
+          e2e: [],
+          review: { enabled: true, status: "pending" },
+          progress: { total: 1, terminal: 0, blocked: 0 },
+        }],
+        progress: { total: 1, terminal: 0, blocked: 0 },
+      })],
+    });
+    const manifest = makeUltraPlanManifest({ sessionId, progress: { total: 1, terminal: 0, blocked: 0 } });
+    seedSession(paths, cwd, sessionId, authored, manifest);
+
+    let authoredResult = loadUltraPlanAuthoredArtifact(paths, cwd, sessionId);
+    let manifestResult = loadUltraPlanManifest(paths, cwd, sessionId);
+    expect(authoredResult.ok).toBe(true);
+    expect(manifestResult.ok).toBe(true);
+    if (!authoredResult.ok || !manifestResult.ok) return;
+
+    let target = resolveNextExecutionTarget({ paths, cwd, authored: authoredResult.value, manifest: manifestResult.value });
+    expect(target.requiredSlot).toBe("frontend-tester");
+    expect(target.phase).toBe("red");
+
+    const redObservation = makeUltraPlanHookObservation({
+      fingerprint: "fp-int-red",
+      attemptId: "att-int-red",
+      attemptKey: "frontend/auth/integration/scenario-int/red",
+      target: {
+        targetType: "scenario",
+        stack: "frontend",
+        domainId: "auth",
+        level: "integration",
+        scenarioId: "scenario-int",
+        phase: "red",
+        resolvedSlot: "frontend-tester",
+      },
+    });
+    applyUltraPlanMutation({
+      platform: { paths } as any,
+      cwd,
+      sessionId,
+      observation: redObservation,
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "advance",
+        appendObservationFingerprint: redObservation.fingerprint,
+        scenarioStatusUpdate: {
+          stack: "frontend",
+          domainId: "auth",
+          level: "integration",
+          scenarioId: "scenario-int",
+          nextStatus: "red-proved",
+          appendProof: {
+            type: "test",
+            phase: "red",
+            recordedAt: redObservation.occurredAt,
+            actor: "frontend-tester",
+            evidence: { summary: "Integration red proof" },
+            artifactRef: "artifact://integration-red",
+          },
+        },
+      }),
+    });
+
+    authoredResult = loadUltraPlanAuthoredArtifact(paths, cwd, sessionId);
+    manifestResult = loadUltraPlanManifest(paths, cwd, sessionId);
+    expect(authoredResult.ok).toBe(true);
+    expect(manifestResult.ok).toBe(true);
+    if (!authoredResult.ok || !manifestResult.ok) return;
+
+    target = resolveNextExecutionTarget({ paths, cwd, authored: authoredResult.value, manifest: manifestResult.value });
+    expect(target.requiredSlot).toBe("frontend-executor");
+    expect(target.phase).toBe("green");
+  });
+
+  test("replay after a pre-tracker crash does not duplicate the execution log entry", () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const sessionId = "up-execution-log-replay";
+    const observation = makeUltraPlanHookObservation({
+      fingerprint: "fp-execution-replay",
+      attemptId: "att-execution-replay",
+      attemptKey: "frontend/auth/unit/scenario-a/red",
+      hookEvent: "tool_result",
+    });
+    const mutationPlan = makeUltraPlanMutationPlan({
+      kind: "stage-observation",
+      appendObservationFingerprint: observation.fingerprint,
+    });
+
+    const firstAppend = appendExecutionLog(paths, cwd, sessionId, {
+      ts: observation.occurredAt,
+      sessionId,
+      attemptId: observation.attemptId,
+      observationFingerprint: observation.fingerprint,
+      hookEvent: observation.hookEvent,
+      mutation: mutationPlan,
+    });
+    expect(firstAppend.ok).toBe(true);
+
+    applyUltraPlanMutation({
+      platform: { paths } as any,
+      cwd,
+      sessionId,
+      observation,
+      mutationPlan,
+    });
+
+    const executionLines = fs.readFileSync(getUltraplanExecutionLogPath(paths, cwd, sessionId), "utf8")
+      .split("\n")
+      .filter(Boolean);
+    expect(executionLines).toHaveLength(1);
+    expect(loadUltraPlanRuntimeTracker(paths, cwd, sessionId).ok).toBe(true);
   });
 });

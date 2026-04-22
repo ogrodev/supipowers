@@ -5,10 +5,13 @@ import type {
 } from "../../../src/types.js";
 import {
   injectLaunchContextIntoPrompt,
+  injectTargetHintIntoPrompt,
   LAUNCH_CONTEXT_METADATA_KEY,
   LAUNCH_CONTEXT_PROMPT_MARKER,
   mintLaunchContext,
   recoverLaunchContextFromEvent,
+  recoverTargetHintFromPrompt,
+  TARGET_HINT_PROMPT_MARKER,
 } from "../../../src/ultraplan/runtime/launch-context.js";
 
 function parentAttempt(overrides: Partial<UltraPlanAttemptRecord> = {}): UltraPlanAttemptRecord {
@@ -31,6 +34,18 @@ function parentAttempt(overrides: Partial<UltraPlanAttemptRecord> = {}): UltraPl
     ...overrides,
   };
 }
+
+const TARGET_HINT = {
+  targetType: "scenario" as const,
+  stack: "frontend" as const,
+  domainId: "auth",
+  level: "unit" as const,
+  scenarioId: "scenario-login-form-renders",
+  phase: "red" as const,
+  resolvedSlot: "frontend-executor",
+  actorKind: "slot" as const,
+  sourceAgent: "sub-agent" as const,
+};
 
 describe("mintLaunchContext", () => {
   test("produces a context with attemptId, attemptKey, sourceAgent, and launchedAt", () => {
@@ -120,6 +135,48 @@ describe("injectLaunchContextIntoPrompt", () => {
     const twice = injectLaunchContextIntoPrompt(once, ctx);
     const markers = twice.match(new RegExp(`${LAUNCH_CONTEXT_PROMPT_MARKER}=`, "g")) ?? [];
     expect(markers.length).toBe(1);
+  });
+});
+
+describe("target-hint prompt carrier", () => {
+  test("injects the exact ULTRAPLAN_TARGET_HINT=<json> marker line", () => {
+    const injected = injectTargetHintIntoPrompt("you are a tester", TARGET_HINT);
+
+    expect(injected).toContain(`${TARGET_HINT_PROMPT_MARKER}=`);
+    const line = injected.split("\n").find((value) => value.startsWith(`${TARGET_HINT_PROMPT_MARKER}=`));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!.slice(`${TARGET_HINT_PROMPT_MARKER}=`.length))).toEqual(TARGET_HINT);
+  });
+
+  test("is idempotent and keeps only one target-hint marker", () => {
+    const once = injectTargetHintIntoPrompt("p", TARGET_HINT);
+    const twice = injectTargetHintIntoPrompt(once, TARGET_HINT);
+    const markers = twice.match(new RegExp(`${TARGET_HINT_PROMPT_MARKER}=`, "g")) ?? [];
+
+    expect(markers.length).toBe(1);
+  });
+
+  test("recovers the target hint from prompt text", () => {
+    const prompt = injectTargetHintIntoPrompt("p", TARGET_HINT);
+
+    expect(recoverTargetHintFromPrompt(prompt)).toEqual(TARGET_HINT);
+  });
+
+  test("ignores malformed target-hint JSON", () => {
+    expect(recoverTargetHintFromPrompt(`${TARGET_HINT_PROMPT_MARKER}=not-json`)).toBeNull();
+  });
+
+  test("rejects target-hint prompt carriers whose enum fields are not slot-backed values", () => {
+    const invalidHint = {
+      ...TARGET_HINT,
+      actorKind: "main-orchestrator",
+      sourceAgent: "main",
+      phase: "not-a-phase",
+    };
+
+    expect(recoverTargetHintFromPrompt(
+      `${TARGET_HINT_PROMPT_MARKER}=${JSON.stringify(invalidHint)}`,
+    )).toBeNull();
   });
 });
 

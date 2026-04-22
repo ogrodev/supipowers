@@ -179,6 +179,33 @@ describe("reducer — attempt_started", () => {
     expect(plan.kind).toBe("block");
     expect(plan.blockerUpdate?.nextValue?.code).toBe("unsafe-repair-required");
   });
+
+  test("nested before_agent_start while an attempt is already active emits a block plan", () => {
+    const state: ReducerState = {
+      tracker: makeTracker({ activeAttempt: attemptWith({}) }),
+      cursor: makeCursor({ status: "planned", phase: "red" }),
+    };
+
+    const plan = reduce(state, {
+      kind: "attempt_started",
+      observation: makeObservation({
+        hookEvent: "before_agent_start",
+        fingerprint: "start-nested",
+        attemptId: "att-2",
+        attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+      }),
+      launchContext: {
+        attemptId: "att-2",
+        attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+        sourceAgent: "sub-agent",
+        launchedAt: "2026-04-19T12:00:00.000Z",
+      },
+    });
+
+    expect(plan.kind).toBe("block");
+    expect(plan.blockerUpdate?.nextValue?.code).toBe("unsafe-repair-required");
+    expect(plan.appendObservationFingerprint).toBe("start-nested");
+  });
 });
 
 describe("reducer — observation_staged", () => {
@@ -307,6 +334,37 @@ describe("reducer — attempt_finalized", () => {
     });
     expect(plan.kind).toBe("noop");
   });
+
+  test("await-user blocker candidates set sessionStateUpdate to awaiting-user", () => {
+    const blocker = makeBlockerCandidate("proof-missing", {
+      blocker: {
+        code: "needs-user",
+        message: "Need product sign-off",
+        scope: "scenario",
+        affected: { stack: "frontend", domainId: "auth", level: "unit", scenarioId: "scenario-login-form-renders" },
+        recoverable: true,
+        recoveryMode: "await-user",
+        nextAction: "Wait for product sign-off",
+        retryable: false,
+        detectedAt: "2026-04-19T12:00:02.000Z",
+      },
+      observationFingerprint: "obs-await-user",
+    });
+    const state: ReducerState = {
+      tracker: makeTracker({ activeAttempt: attemptWith({ blockers: [blocker] }) }),
+      cursor: makeCursor({ status: "red-running" }),
+    };
+
+    const plan = reduce(state, {
+      kind: "attempt_finalized",
+      observation: makeObservation({ hookEvent: "agent_end", fingerprint: "end-await-user" }),
+      nowIso: "2026-04-19T12:00:02.000Z",
+    });
+
+    expect(plan.kind).toBe("block");
+    expect(plan.sessionStateUpdate).toBe("awaiting-user");
+    expect(plan.blockerUpdate?.nextValue?.message).toBe("Need product sign-off");
+  });
 });
 
 describe("reducer — session_shutdown", () => {
@@ -332,6 +390,40 @@ describe("reducer — session_shutdown", () => {
       nowIso: "2026-04-19T13:00:00.000Z",
     });
     expect(plan.kind).toBe("noop");
+  });
+});
+
+describe("reducer — session completion", () => {
+  test("returns a completion mutation when the cursor already resolved to session-complete", () => {
+    const state: ReducerState = {
+      tracker: makeTracker(),
+      cursor: {
+        targetType: "session",
+        stack: null,
+        domainId: null,
+        level: null,
+        scenarioId: null,
+        phase: "complete",
+        status: "complete",
+        summary: "Session complete",
+      },
+    };
+
+    const plan = reduce(state, {
+      kind: "observation_staged",
+      observation: makeObservation({
+        hookEvent: "tool_result",
+        fingerprint: "obs-complete",
+        actorKind: "main-orchestrator",
+        attemptId: null,
+        attemptKey: null,
+        target: null,
+      }),
+    });
+
+    expect(plan.kind).toBe("complete");
+    expect(plan.sessionStateUpdate).toBe("complete");
+    expect(plan.cursorUpdate?.targetType).toBe("session");
   });
 });
 

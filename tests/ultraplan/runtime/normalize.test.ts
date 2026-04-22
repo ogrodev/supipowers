@@ -7,6 +7,7 @@ import type {
 import { isUltraPlanHookObservation } from "../../../src/ultraplan/contracts.js";
 import {
   injectLaunchContextIntoPrompt,
+  injectTargetHintIntoPrompt,
   LAUNCH_CONTEXT_METADATA_KEY,
   mintLaunchContext,
 } from "../../../src/ultraplan/runtime/launch-context.js";
@@ -262,5 +263,100 @@ describe("normalizeHookEvent", () => {
       targetHint: BASE_TARGET,
     });
     expect(obs.attemptId).toBe(lc.attemptId);
+  });
+
+  test("recovers the target hint from prompt text when the direct hint is absent", () => {
+    const lc = mintLaunchContext({
+      attemptKey: "k/target-hint",
+      sourceAgent: "sub-agent",
+      nowIso: "2026-04-19T12:00:00.000Z",
+    });
+    const prompt = injectTargetHintIntoPrompt(injectLaunchContextIntoPrompt("hi", lc), BASE_TARGET);
+
+    const obs = normalizeHookEvent({
+      hookEvent: "tool_result",
+      sessionId: "up-123",
+      nowIso: "2026-04-19T12:00:02.000Z",
+      metadata: null,
+      prompt,
+      persistedActiveAttempt: null,
+      payload: { exitCode: 0 },
+    });
+
+    expect(obs.correlationFailure).toBeNull();
+    expect(obs.target?.scenarioId).toBe(BASE_TARGET.scenarioId);
+    expect(obs.target?.resolvedSlot).toBe(BASE_TARGET.resolvedSlot);
+  });
+
+  test("ignores invalid prompt-carried target hints instead of reclassifying the hook", () => {
+    const lc = mintLaunchContext({
+      attemptKey: "k/invalid-target-hint",
+      sourceAgent: "sub-agent",
+      nowIso: "2026-04-19T12:00:00.000Z",
+    });
+    const invalidPrompt = injectTargetHintIntoPrompt(
+      injectLaunchContextIntoPrompt("hi", lc),
+      { ...BASE_TARGET, actorKind: "main-orchestrator" } as any,
+    );
+
+    const obs = normalizeHookEvent({
+      hookEvent: "tool_result",
+      sessionId: "up-123",
+      nowIso: "2026-04-19T12:00:02.000Z",
+      metadata: null,
+      prompt: invalidPrompt,
+      persistedActiveAttempt: null,
+      payload: { exitCode: 0 },
+    });
+
+    expect(obs.actorKind).toBe("slot");
+    expect(obs.target).toBeNull();
+    expect(obs.correlationFailure?.reason).toMatch(/target hint/i);
+  });
+
+  test("falls back to active-execution metadata only when the prompt hint is absent", () => {
+    const lc = mintLaunchContext({
+      attemptKey: "k/fallback-hint",
+      sourceAgent: "sub-agent",
+      nowIso: "2026-04-19T12:00:00.000Z",
+    });
+
+    const obs = normalizeHookEvent({
+      hookEvent: "tool_call",
+      sessionId: "up-123",
+      nowIso: "2026-04-19T12:00:02.000Z",
+      metadata: { [LAUNCH_CONTEXT_METADATA_KEY]: lc },
+      prompt: null,
+      persistedActiveAttempt: null,
+      payload: { toolName: "ultraplan_signal" },
+      fallbackTargetHint: BASE_TARGET as any,
+    } as any);
+
+    expect(obs.correlationFailure).toBeNull();
+    expect(obs.target?.scenarioId).toBe(BASE_TARGET.scenarioId);
+    expect(obs.target?.resolvedSlot).toBe(BASE_TARGET.resolvedSlot);
+  });
+
+  test("leaves slot-backed events correlation-failed when both prompt and fallback target hints are absent", () => {
+    const lc = mintLaunchContext({
+      attemptKey: "k/missing-target-hint",
+      sourceAgent: "sub-agent",
+      nowIso: "2026-04-19T12:00:00.000Z",
+    });
+    const prompt = injectLaunchContextIntoPrompt("hi", lc);
+
+    const obs = normalizeHookEvent({
+      hookEvent: "tool_result",
+      sessionId: "up-123",
+      nowIso: "2026-04-19T12:00:02.000Z",
+      metadata: null,
+      prompt,
+      persistedActiveAttempt: null,
+      payload: { exitCode: 0 },
+    });
+
+    expect(obs.attemptId).toBe(lc.attemptId);
+    expect(obs.correlationFailure).not.toBeNull();
+    expect(obs.correlationFailure?.reason.toLowerCase()).toContain("target hint");
   });
 });

@@ -1,6 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../../src/platform/types.js";
+import type { UltraPlanExecutionTarget } from "../../src/ultraplan/execution/policy.js";
+import type {
+  UltraPlanRuntimeSignalBlockInput,
+  UltraPlanRuntimeSignalProofInput,
+} from "../../src/ultraplan/execution/runtime-tools.js";
+import type { ActiveUltraPlanExecution } from "../../src/ultraplan/runtime/active-execution.js";
 import type {
   ResolvedUltraPlanCatalog,
   ResolvedUltraPlanSlotBinding,
@@ -10,7 +16,10 @@ import type {
   UltraPlanHookObservation,
   UltraPlanLaunchContext,
   UltraPlanManifest,
+  UltraPlanMutationPlan,
+  UltraPlanPendingMutation,
   UltraPlanProof,
+  UltraPlanReviewStatus,
   UltraPlanReviewerSlotName,
   UltraPlanRuntimeTracker,
   UltraPlanScenario,
@@ -357,4 +366,115 @@ export function makeCatalogFixture(opts: {
     } satisfies ResolvedUltraPlanSlotBinding);
   }
   return { slots, reviewGates: opts.reviewGates ?? {} };
+}
+
+export function makeUltraPlanDomainReviewMap(
+  entries: Partial<Record<UltraPlanStack["stack"], Record<string, UltraPlanReviewStatus>>> = {},
+): ReadonlyMap<UltraPlanStack["stack"], ReadonlyMap<string, UltraPlanReviewStatus>> {
+  return new Map(
+    Object.entries(entries).map(([stack, domainStatuses]) => [stack as UltraPlanStack["stack"], new Map(Object.entries(domainStatuses ?? {}))]),
+  );
+}
+
+export function makeUltraPlanStackReviewMap(
+  entries: Partial<Record<UltraPlanStack["stack"], UltraPlanReviewStatus>> = {},
+): ReadonlyMap<UltraPlanStack["stack"], UltraPlanReviewStatus> {
+  return new Map(Object.entries(entries) as [UltraPlanStack["stack"], UltraPlanReviewStatus][]);
+}
+
+export function makeUltraPlanExecutionTarget(
+  overrides: Partial<UltraPlanExecutionTarget> = {},
+): UltraPlanExecutionTarget {
+  return {
+    targetType: "scenario",
+    stack: "frontend",
+    domainId: "auth",
+    level: "unit",
+    scenarioId: "scenario-login-form-renders",
+    phase: "red",
+    status: "planned",
+    summary: "frontend / auth / unit / Login form renders",
+    requiredSlot: "frontend-executor",
+    reviewArtifactPath: null,
+    ...overrides,
+  };
+}
+
+export function makeActiveUltraPlanExecution(
+  overrides: Partial<ActiveUltraPlanExecution> = {},
+): ActiveUltraPlanExecution {
+  return {
+    sessionId: "up-123",
+    cwd: "/repo",
+    target: makeUltraPlanExecutionTarget(),
+    launchContext: makeUltraPlanLaunchContext(),
+    slotBinding: makeCatalogFixture().slots["frontend-executor"],
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanMutationPlan(
+  overrides: Partial<UltraPlanMutationPlan> = {},
+): UltraPlanMutationPlan {
+  return {
+    kind: "noop",
+    rationale: "no-op fixture",
+    appendObservationFingerprint: null,
+    scenarioStatusUpdate: null,
+    reviewStatusUpdate: null,
+    blockerUpdate: null,
+    cursorUpdate: null,
+    sessionStateUpdate: null,
+    trackerAttemptFinalization: null,
+    recomputeProgress: false,
+    repairActions: [],
+    notes: [],
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanPendingMutation(
+  overrides: Partial<UltraPlanPendingMutation> = {},
+): UltraPlanPendingMutation {
+  return {
+    attemptId: "att-001",
+    mutationPlan: makeUltraPlanMutationPlan(),
+    expectedManifestFingerprint: "sha256:manifest-before",
+    stagedAt: "2026-04-19T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanSignalProofInput(
+  overrides: Partial<UltraPlanRuntimeSignalProofInput> = {},
+): UltraPlanRuntimeSignalProofInput {
+  return {
+    kind: "proof",
+    summary: "Tests passed",
+    details: { command: "bun test" },
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanSignalBlockInput(
+  overrides: Partial<UltraPlanRuntimeSignalBlockInput> = {},
+): UltraPlanRuntimeSignalBlockInput {
+  return {
+    kind: "block",
+    code: "blocked",
+    summary: "Execution is blocked",
+    details: { reason: "fixture" },
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanSignalAwaitUserInput(
+  overrides: Partial<UltraPlanRuntimeSignalBlockInput> = {},
+): UltraPlanRuntimeSignalBlockInput {
+  return makeUltraPlanSignalBlockInput({
+    kind: "await-user",
+    code: "await-user",
+    summary: "Awaiting user input",
+    ...overrides,
+  });
 }

@@ -10,6 +10,11 @@ import {
   repairOnSessionStart,
   type RepairState,
 } from "../../../src/ultraplan/runtime/repair.js";
+import {
+  makeUltraPlanManifest,
+  makeUltraPlanMutationPlan,
+  makeUltraPlanPendingMutation,
+} from "../fixtures.js";
 
 function makeActive(overrides: Partial<UltraPlanAttemptRecord> = {}): UltraPlanAttemptRecord {
   return {
@@ -166,6 +171,154 @@ describe("repairOnSessionStart", () => {
     };
     const planB = repairOnSessionStart(stateB, "2026-04-19T12:30:00.000Z");
     expect(planB.actions.find((a) => a.op === "clear-blocker")).toBeDefined();
+  });
+
+  test("clears a pending mutation that is already reflected in the manifest", () => {
+    const pending = makeUltraPlanPendingMutation({
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "repair",
+        blockerUpdate: {
+          scope: "scenario",
+          nextValue: null,
+          clearedByObservationFingerprint: "fp-clear",
+        },
+      }),
+    });
+    const state: RepairState = {
+      tracker: makeTracker({ pendingMutation: pending }),
+      manifest: makeUltraPlanManifest({ blocker: null }),
+    };
+
+    const plan = repairOnSessionStart(state, "2026-04-19T12:30:00.000Z");
+
+    expect(plan.pendingMutationAction).toBe("clear");
+    expect(plan.emittedBlockers).toEqual([]);
+  });
+
+  test("does not clear a blocker+state pending mutation when only the blocker is reflected", () => {
+    const blocker: UltraPlanBlocker = {
+      code: "proof-missing",
+      message: "Need the red proof",
+      scope: "scenario",
+      affected: { stack: "frontend", domainId: "auth", level: "unit", scenarioId: "s" },
+      recoverable: true,
+      recoveryMode: "retry",
+      nextAction: "Retry the proof",
+      retryable: true,
+      detectedAt: "2026-04-19T12:00:00.000Z",
+    };
+    const pending = makeUltraPlanPendingMutation({
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "block",
+        blockerUpdate: {
+          scope: "scenario",
+          nextValue: blocker,
+          clearedByObservationFingerprint: null,
+        },
+        sessionStateUpdate: "blocked",
+      }),
+    });
+
+    const plan = repairOnSessionStart({
+      tracker: makeTracker({ pendingMutation: pending }),
+      manifest: makeUltraPlanManifest({ blocker, state: "ready" }),
+    }, "2026-04-19T12:30:00.000Z");
+
+    expect(plan.pendingMutationAction).toBe("apply-and-clear");
+    expect(plan.emittedBlockers).toEqual([]);
+  });
+
+  test("does not clear a completion pending mutation when the cursor matches but session state is still stale", () => {
+    const cursor = {
+      targetType: "session" as const,
+      stack: null,
+      domainId: null,
+      level: null,
+      scenarioId: null,
+      phase: "complete" as const,
+      status: "complete" as const,
+      summary: "Session complete",
+    };
+    const pending = makeUltraPlanPendingMutation({
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "complete",
+        cursorUpdate: cursor,
+        sessionStateUpdate: "complete",
+      }),
+    });
+
+    const plan = repairOnSessionStart({
+      tracker: makeTracker({ pendingMutation: pending }),
+      manifest: makeUltraPlanManifest({ cursor, state: "running" }),
+    }, "2026-04-19T12:30:00.000Z");
+
+    expect(plan.pendingMutationAction).toBe("apply-and-clear");
+    expect(plan.emittedBlockers).toEqual([]);
+  });
+
+  test("marks a blocker-only pending mutation as safely finishable", () => {
+    const pending = makeUltraPlanPendingMutation({
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "block",
+        blockerUpdate: {
+          scope: "scenario",
+          nextValue: {
+            code: "proof-missing",
+            message: "Need the failing proof",
+            scope: "scenario",
+            affected: { stack: "frontend", domainId: "auth", level: "unit", scenarioId: "s" },
+            recoverable: true,
+            recoveryMode: "retry",
+            nextAction: "Retry the proof",
+            retryable: true,
+            detectedAt: "2026-04-19T12:00:00.000Z",
+          },
+          clearedByObservationFingerprint: null,
+        },
+      }),
+    });
+    const state: RepairState = {
+      tracker: makeTracker({ pendingMutation: pending }),
+      manifest: makeUltraPlanManifest({ blocker: null }),
+    };
+
+    const plan = repairOnSessionStart(state, "2026-04-19T12:30:00.000Z");
+
+    expect(plan.pendingMutationAction).toBe("apply-and-clear");
+    expect(plan.emittedBlockers).toEqual([]);
+  });
+
+  test("emits an unsafe blocker when pending mutation would advance authored scenario state", () => {
+    const pending = makeUltraPlanPendingMutation({
+      mutationPlan: makeUltraPlanMutationPlan({
+        kind: "advance",
+        scenarioStatusUpdate: {
+          stack: "frontend",
+          domainId: "auth",
+          level: "unit",
+          scenarioId: "s",
+          nextStatus: "red-proved",
+          appendProof: {
+            type: "test",
+            phase: "red",
+            recordedAt: "2026-04-19T12:00:00.000Z",
+            actor: "frontend-tester",
+            evidence: { summary: "proof" },
+            artifactRef: "artifact://proof",
+          },
+        },
+      }),
+    });
+    const state: RepairState = {
+      tracker: makeTracker({ pendingMutation: pending }),
+      manifest: makeUltraPlanManifest(),
+    };
+
+    const plan = repairOnSessionStart(state, "2026-04-19T12:30:00.000Z");
+
+    expect(plan.pendingMutationAction).toBe("leave");
+    expect(plan.emittedBlockers.length).toBeGreaterThan(0);
+    expect(plan.emittedBlockers[0].code).toBe("unsafe-repair-required");
   });
 });
 
