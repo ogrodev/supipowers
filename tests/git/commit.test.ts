@@ -7,6 +7,7 @@ import {
   buildAnalysisPrompt,
   commitStaged,
 } from "../../src/git/commit.js";
+import { handleCommit } from "../../src/commands/commit.js";
 import type { CommitPlan } from "../../src/git/commit.js";
 import { validateCommitPlanCoverage } from "../../src/git/commit-contract.js";
 
@@ -250,20 +251,6 @@ describe("buildAnalysisPrompt", () => {
 
   });
 
-  test("includes selected target and scope hint when provided", () => {
-    const prompt = buildAnalysisPrompt({
-      diff: "d",
-      stat: "s",
-      fileList: ["packages/pkg-a/src/index.ts"],
-      conventions: "",
-      scopeHint: "pkg-a",
-      targetLabel: "pkg-a — packages/pkg-a",
-    });
-    expect(prompt).toContain("Selected target");
-    expect(prompt).toContain("pkg-a — packages/pkg-a");
-    expect(prompt).toContain("Suggested conventional-commit scope");
-    expect(prompt).toContain("pkg-a");
-  });
 
   test("lists valid commit types", () => {
     const prompt = buildAnalysisPrompt({
@@ -275,24 +262,6 @@ describe("buildAnalysisPrompt", () => {
     expect(prompt).toContain("feat");
     expect(prompt).toContain("fix");
     expect(prompt).toContain("refactor");
-  });
-
-  test("includes multi-target mode instruction when multiTarget is true", () => {
-    const withMulti = buildAnalysisPrompt({
-      diff: "d",
-      stat: "s",
-      fileList: ["packages/pkg-a/src/index.ts", "packages/pkg-b/src/index.ts"],
-      conventions: "",
-      multiTarget: true,
-    });
-    const withoutMulti = buildAnalysisPrompt({
-      diff: "d",
-      stat: "s",
-      fileList: ["packages/pkg-a/src/index.ts"],
-      conventions: "",
-    });
-    expect(withMulti).toContain("Multi-target mode");
-    expect(withoutMulti).not.toContain("Multi-target mode");
   });
 
 });
@@ -316,16 +285,25 @@ describe("analyzeAndCommit", () => {
     );
   });
 
-  test("stages only the selected monorepo target when nothing is staged", async () => {
+  test("stages every changed file across packages when nothing is staged", async () => {
     const repoRoot = createMonorepoFixture();
     const plan: CommitPlan = {
-      commits: [{
-        type: "feat",
-        scope: "pkg-a",
-        summary: "add feature",
-        details: [],
-        files: ["packages/pkg-a/src/index.ts"],
-      }],
+      commits: [
+        {
+          type: "feat",
+          scope: "pkg-a",
+          summary: "add feature in a",
+          details: [],
+          files: ["packages/pkg-a/src/index.ts"],
+        },
+        {
+          type: "fix",
+          scope: "pkg-b",
+          summary: "fix bug in b",
+          details: [],
+          files: ["packages/pkg-b/src/index.ts"],
+        },
+      ],
     };
     const capture = { prompt: "" };
     let agentCwd = "";
@@ -335,10 +313,13 @@ describe("analyzeAndCommit", () => {
         stdout: " M packages/pkg-a/src/index.ts\n M packages/pkg-b/src/index.ts\n",
         code: 0,
       },
-      "git add -A -- packages/pkg-a/src/index.ts": { stdout: "", code: 0 },
-      "git diff --cached --name-only": { stdout: "packages/pkg-a/src/index.ts\n", code: 0 },
-      "git diff --cached --stat -- packages/pkg-a/src/index.ts": { stdout: " 1 file changed\n", code: 0 },
-      "git diff --cached -- packages/pkg-a/src/index.ts": { stdout: "diff --git a/packages/pkg-a/src/index.ts\n+new code", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": {
+        stdout: "packages/pkg-a/src/index.ts\npackages/pkg-b/src/index.ts\n",
+        code: 0,
+      },
+      "git diff --cached --stat": { stdout: " 2 files changed\n", code: 0 },
+      "git diff --cached": { stdout: "diff --git a/packages\n+code", code: 0 },
       "git config commit.template": { stdout: "", code: 1 },
       "git write-tree": { stdout: "abc123\n", code: 0 },
       "git read-tree": { stdout: "", code: 0 },
@@ -350,10 +331,7 @@ describe("analyzeAndCommit", () => {
       return createPromptCapturingSession(plan, capture) as any;
     });
     const platform = createMockPlatform({ exec, createAgentSession });
-    const select = mock()
-      // Explicitly pick pkg-a from the custom picker (options[0] is now "All workspaces")
-      .mockImplementationOnce((_title: string, options: string[]) => Promise.resolve(options.find((o) => o.includes("pkg-a")) ?? null))
-      .mockResolvedValueOnce("commit — feat(pkg-a): add feature");
+    const select = mock().mockResolvedValue("commit — apply 2 commits");
     const ctx = createMockCtx({
       cwd: repoRoot,
       ui: { select, notify: mock(), input: mock() },
@@ -362,168 +340,47 @@ describe("analyzeAndCommit", () => {
     const result = await analyzeAndCommit(platform, ctx);
 
     expect(result).not.toBeNull();
-    expect(result!.committed).toBe(1);
-    expect(agentCwd).toBe(join(repoRoot, "packages/pkg-a"));
-    expect(select.mock.calls[0]?.[0]).toBe("Commit target");
-    expect(capture.prompt).toContain("Selected target");
-    expect(capture.prompt).toContain("pkg-a — packages/pkg-a");
-    expect(capture.prompt).toContain("Suggested conventional-commit scope");
-    expect(capture.prompt).not.toContain("packages/pkg-b/src/index.ts");
+    expect(result!.committed).toBe(2);
+    expect(agentCwd).toBe(repoRoot);
+    expect(select.mock.calls[0]?.[0]).toBe("Proceed?");
+    expect(capture.prompt).toContain("packages/pkg-a/src/index.ts");
+    expect(capture.prompt).toContain("packages/pkg-b/src/index.ts");
+    expect(capture.prompt).not.toContain("Selected target");
+    expect(capture.prompt).not.toContain("Multi-target mode");
 
-    const addCall = exec.mock.calls.find(
+    const addCalls = exec.mock.calls.filter(
       (call: any[]) => call[0] === "git" && call[1][0] === "add",
     );
-    expect(addCall?.[1]).toEqual(["add", "-A", "--", "packages/pkg-a/src/index.ts"]);
+    expect(addCalls).toHaveLength(1);
+    expect(addCalls[0][1]).toEqual(["add", "-A"]);
   });
 
-  test("resolves commit targets from the repo root when invoked inside a package", async () => {
+  test("commits cleanly when staged changes already span multiple packages", async () => {
     const repoRoot = createMonorepoFixture();
     const plan: CommitPlan = {
-      commits: [{
-        type: "feat",
-        scope: "pkg-b",
-        summary: "add feature",
-        details: [],
-        files: ["packages/pkg-b/src/index.ts"],
-      }],
+      commits: [
+        {
+          type: "feat",
+          scope: "pkg-a",
+          summary: "add feature in a",
+          details: [],
+          files: ["packages/pkg-a/src/index.ts"],
+        },
+        {
+          type: "fix",
+          scope: "pkg-b",
+          summary: "fix bug in b",
+          details: [],
+          files: ["packages/pkg-b/src/index.ts"],
+        },
+      ],
     };
-    const capture = { prompt: "" };
-    let agentCwd = "";
 
-    const exec = createMockExec({
-      "git status": {
-        stdout: " M packages/pkg-a/src/index.ts\n M packages/pkg-b/src/index.ts\n",
-        code: 0,
-      },
-      "git add -A -- packages/pkg-b/src/index.ts": { stdout: "", code: 0 },
-      "git diff --cached --name-only": { stdout: "packages/pkg-b/src/index.ts\n", code: 0 },
-      "git diff --cached --stat -- packages/pkg-b/src/index.ts": { stdout: " 1 file changed\n", code: 0 },
-      "git diff --cached -- packages/pkg-b/src/index.ts": { stdout: "diff --git a/packages/pkg-b/src/index.ts\n+new code", code: 0 },
-      "git config commit.template": { stdout: "", code: 1 },
-      "git write-tree": { stdout: "abc123\n", code: 0 },
-      "git read-tree": { stdout: "", code: 0 },
-      "git reset HEAD --": { stdout: "", code: 0 },
-      "git commit": { stdout: "", code: 0 },
-    });
-    const createAgentSession = mock(async (opts: { cwd: string }) => {
-      agentCwd = opts.cwd;
-      return createPromptCapturingSession(plan, capture) as any;
-    });
-    const platform = createMockPlatform({ exec, createAgentSession });
-    const select = mock().mockResolvedValue("commit — feat(pkg-b): add feature");
-    const ctx = createMockCtx({
-      cwd: join(repoRoot, "packages", "pkg-a"),
-      ui: { select, notify: mock(), input: mock() },
-    });
-
-    const result = await analyzeAndCommit(platform, ctx, { requestedTarget: "pkg-b" });
-
-    expect(result).not.toBeNull();
-    expect(result!.committed).toBe(1);
-    expect(agentCwd).toBe(join(repoRoot, "packages", "pkg-b"));
-    expect(capture.prompt).toContain("pkg-b — packages/pkg-b");
-    expect(capture.prompt).not.toContain("packages/pkg-a/src/index.ts");
-  });
-
-  test("keeps diff analysis scoped to the single staged monorepo target", async () => {
-    const repoRoot = createMonorepoFixture();
-    const plan: CommitPlan = {
-      commits: [{
-        type: "fix",
-        scope: "pkg-a",
-        summary: "patch bug",
-        details: [],
-        files: ["packages/pkg-a/src/index.ts"],
-      }],
-    };
-    const capture = { prompt: "" };
-
-    const exec = createMockExec({
-      "git status": {
-        stdout: "M  packages/pkg-a/src/index.ts\n M packages/pkg-b/src/index.ts\n",
-        code: 0,
-      },
-      "git diff --cached --name-only": { stdout: "packages/pkg-a/src/index.ts\n", code: 0 },
-      "git diff --cached --stat -- packages/pkg-a/src/index.ts": { stdout: " 1 file changed\n", code: 0 },
-      "git diff --cached -- packages/pkg-a/src/index.ts": { stdout: "diff --git a/packages/pkg-a/src/index.ts\n+fix", code: 0 },
-      "git config commit.template": { stdout: "", code: 1 },
-      "git write-tree": { stdout: "abc123\n", code: 0 },
-      "git read-tree": { stdout: "", code: 0 },
-      "git reset HEAD --": { stdout: "", code: 0 },
-      "git commit": { stdout: "", code: 0 },
-    });
-    const platform = createMockPlatform({
-      exec,
-      createAgentSession: mock(async () => createPromptCapturingSession(plan, capture) as any),
-    });
-    const ctx = createMockCtx({
-      cwd: repoRoot,
-      ui: {
-        select: mock().mockResolvedValue("commit — fix(pkg-a): patch bug"),
-        notify: mock(),
-        input: mock(),
-      },
-    });
-
-    const result = await analyzeAndCommit(platform, ctx);
-
-    expect(result).not.toBeNull();
-    expect(result!.committed).toBe(1);
-    expect(exec.mock.calls.some(
-      (call: any[]) => call[0] === "git" && call[1][0] === "add",
-    )).toBe(false);
-    expect(capture.prompt).toContain("packages/pkg-a/src/index.ts");
-    expect(capture.prompt).not.toContain("packages/pkg-b/src/index.ts");
-  });
-
-  test("rejects staged changes spanning multiple monorepo targets", async () => {
-    const repoRoot = createMonorepoFixture();
     const exec = createMockExec({
       "git status": {
         stdout: "M  packages/pkg-a/src/index.ts\nM  packages/pkg-b/src/index.ts\n",
         code: 0,
       },
-      "git diff --cached --name-only": {
-        stdout: "packages/pkg-a/src/index.ts\npackages/pkg-b/src/index.ts\n",
-        code: 0,
-      },
-    });
-    const createAgentSession = mock();
-    const platform = createMockPlatform({ exec, createAgentSession });
-    const ctx = createMockCtx({
-      cwd: repoRoot,
-      ui: { notify: mock(), select: mock(), input: mock() },
-    });
-
-    const result = await analyzeAndCommit(platform, ctx);
-
-    expect(result).toBeNull();
-    expect(createAgentSession).not.toHaveBeenCalled();
-    expect(exec.mock.calls.some(
-      (call: any[]) => call[0] === "git" && call[1][0] === "add",
-    )).toBe(false);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Mixed-package staged changes are not supported yet"),
-      "error",
-    );
-  });
-
-  test("stages all files and produces a multi-target commit when 'All workspaces' is selected", async () => {
-    const repoRoot = createMonorepoFixture();
-    const plan: CommitPlan = {
-      commits: [
-        { type: "feat", scope: "pkg-a", summary: "add feature in a", details: [], files: ["packages/pkg-a/src/index.ts"] },
-        { type: "fix", scope: "pkg-b", summary: "fix bug in b", details: [], files: ["packages/pkg-b/src/index.ts"] },
-      ],
-    };
-    const capture = { prompt: "" };
-
-    const exec = createMockExec({
-      "git status": {
-        stdout: " M packages/pkg-a/src/index.ts\n M packages/pkg-b/src/index.ts\n",
-        code: 0,
-      },
-      "git add -A --": { stdout: "", code: 0 },
       "git diff --cached --name-only": {
         stdout: "packages/pkg-a/src/index.ts\npackages/pkg-b/src/index.ts\n",
         code: 0,
@@ -538,36 +395,30 @@ describe("analyzeAndCommit", () => {
     });
     const platform = createMockPlatform({
       exec,
-      createAgentSession: mock(async () => createPromptCapturingSession(plan, capture) as any),
+      createAgentSession: mockAgentSession(plan),
     });
-    // First select: picks options[0] = 'All workspaces ...' label
-    // Second select: approves the commit plan
-    const select = mock()
-      .mockImplementationOnce((_title: string, options: string[]) => Promise.resolve(options[0]))
-      .mockResolvedValueOnce("commit \u2014 apply 2 commits");
     const ctx = createMockCtx({
       cwd: repoRoot,
-      ui: { select, notify: mock(), input: mock() },
+      ui: {
+        select: mock().mockResolvedValue("commit — apply 2 commits"),
+        notify: mock(),
+        input: mock(),
+      },
     });
 
     const result = await analyzeAndCommit(platform, ctx);
 
     expect(result).not.toBeNull();
     expect(result!.committed).toBe(2);
-
-    // All files staged in a single git add call
-    const addCalls = exec.mock.calls.filter(
+    expect(result!.messages[0]).toContain("feat(pkg-a): add feature in a");
+    expect(result!.messages[1]).toContain("fix(pkg-b): fix bug in b");
+    expect(exec.mock.calls.some(
       (call: any[]) => call[0] === "git" && call[1][0] === "add",
+    )).toBe(false);
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+      expect.stringContaining("Mixed-package staged changes are not supported yet"),
+      "error",
     );
-    expect(addCalls.length).toBe(1);
-    expect(addCalls[0][1]).toContain("packages/pkg-a/src/index.ts");
-    expect(addCalls[0][1]).toContain("packages/pkg-b/src/index.ts");
-
-    // Prompt signals multi-target mode to the AI
-    expect(capture.prompt).toContain("Multi-target mode");
-    expect(capture.prompt).toContain("all workspaces");
-    expect(capture.prompt).toContain("packages/pkg-a/src/index.ts");
-    expect(capture.prompt).toContain("packages/pkg-b/src/index.ts");
   });
 
   test("executes single commit from agent plan", async () => {
@@ -1114,6 +965,78 @@ describe("analyzeAndCommit", () => {
     expect(ctx.ui.input).not.toHaveBeenCalled();
   });
 
+});
+
+
+describe("handleCommit", () => {
+  test("ignores --target flag and treats remaining args as user context", async () => {
+    const repoRoot = createMonorepoFixture();
+    const plan: CommitPlan = {
+      commits: [
+        {
+          type: "feat",
+          scope: "pkg-a",
+          summary: "add feature in a",
+          details: [],
+          files: ["packages/pkg-a/src/index.ts"],
+        },
+      ],
+    };
+    let capturedPrompt = "";
+
+    const session = {
+      subscribe: mock((handler: any) => {
+        setTimeout(() => handler({ type: "agent_end" }), 0);
+        return () => {};
+      }),
+      prompt: mock((text: string) => {
+        capturedPrompt = text;
+        return Promise.resolve();
+      }),
+      state: {
+        messages: [
+          {
+            role: "assistant",
+            content: "```json\n" + JSON.stringify(plan) + "\n```",
+          },
+        ],
+      },
+      dispose: mock().mockResolvedValue(undefined),
+    };
+
+    const exec = createMockExec({
+      "git status": { stdout: " M packages/pkg-a/src/index.ts\n", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "packages/pkg-a/src/index.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 1 file changed\n", code: 0 },
+      "git diff --cached": { stdout: "diff --git a/packages/pkg-a/src/index.ts\n+code", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mock().mockResolvedValue(session),
+    });
+    const ctx = createMockCtx({
+      cwd: repoRoot,
+      ui: {
+        select: mock().mockResolvedValue("commit — feat(pkg-a): add feature in a"),
+        notify: mock(),
+        input: mock(),
+      },
+    });
+
+    handleCommit(platform, ctx, "--target foo bar baz");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(capturedPrompt).toContain("Developer context");
+    expect(capturedPrompt).toContain("--target foo bar baz");
+    expect(ctx.ui.select).not.toHaveBeenCalledWith("Commit target", expect.anything(), expect.anything());
+  });
 });
 
 
