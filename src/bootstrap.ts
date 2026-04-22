@@ -39,6 +39,7 @@ import {
   registerUiDesignToolGuard,
   stopActiveUiDesignSession,
 } from "./ui-design/session.js";
+import { registerUltraPlanRuntimeTools } from "./ultraplan/execution/runtime-tools.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -95,6 +96,8 @@ export function bootstrap(platform: Platform): void {
   registerUiDesignCommand(platform);
   registerUltraplanCommand(platform);
 
+
+  registerUltraPlanRuntimeTools(platform);
 
   // Register plan approval flow (agent_end hook for plan approval UI)
   registerPlanApprovalHook(platform);
