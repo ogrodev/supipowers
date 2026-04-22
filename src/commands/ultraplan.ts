@@ -1,7 +1,11 @@
 import type { UltraPlanManifest, UltraPlanSessionSummary } from "../types.js";
 import type { Platform } from "../platform/types.js";
 import { notifyError, notifyInfo, notifyWarning } from "../notifications/renderer.js";
-import { buildUltraPlanPickerOptions, renderUltraPlanStatus } from "../ultraplan/presenter.js";
+import {
+  buildUltraPlanPickerOptions,
+  renderUltraPlanRunOutcome,
+  renderUltraPlanStatus,
+} from "../ultraplan/presenter.js";
 import {
   getUltraPlanIdleReasonLabel,
   resolveUltraPlanCurrentCursor,
@@ -16,6 +20,7 @@ import {
   loadUltraPlanSessionSummary,
 } from "../ultraplan/storage.js";
 import { resolveSessionMigration } from "../ultraplan/runtime/migration.js";
+import { runUltraPlanSession } from "../ultraplan/execution/session-runner.js";
 import { runUltraPlanAuthoringWizard } from "../ultraplan/authoring-wizard.js";
 
 const SUBCOMMANDS = [
@@ -228,7 +233,17 @@ async function handleRun(platform: Platform, ctx: any): Promise<void> {
     return;
   }
 
-  await presentSelectedSession(platform, ctx, session, "run");
+  const outcome = await runUltraPlanSession({
+    platform,
+    cwd: ctx.cwd,
+    sessionId: session.sessionId,
+  });
+
+  notifyInfo(
+    ctx,
+    outcome.kind === "completed" ? "Ultraplan complete" : "Ultraplan paused",
+    renderUltraPlanRunOutcome(outcome),
+  );
 }
 
 async function handleStatus(platform: Platform, ctx: any): Promise<void> {
