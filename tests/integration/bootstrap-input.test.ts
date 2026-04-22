@@ -3,8 +3,9 @@ import { createPaths } from "../../src/platform/types.js";
 import { cancelUiDesignTracking, isUiDesignActive, startUiDesignTracking } from "../../src/ui-design/session.js";
 
 
-function createPlatform() {
+function createPlatform(options: { withRegisterTool?: boolean } = {}) {
   const handlers = new Map<string, any>();
+  const registerTool = options.withRegisterTool ? mock() : undefined;
   const platform = {
     name: "omp",
     registerCommand: mock(),
@@ -18,13 +19,13 @@ function createPlatform() {
     on: mock((name: string, cb: any) => {
       handlers.set(name, cb);
     }),
-    registerTool: undefined,
+    registerTool,
     paths: createPaths(".omp"),
     capabilities: {
       agentSessions: true,
       compactionHooks: false,
       customWidgets: true,
-      registerTool: false,
+      registerTool: Boolean(registerTool),
     },
   } as any;
   return { platform, handlers };
@@ -88,5 +89,16 @@ describe("bootstrap input interception", () => {
 
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(isUiDesignActive()).toBe(false);
+  });
+
+  test("registers ultraplan_signal when tool registration is available", async () => {
+    const bootstrapModulePath = "../../src/bootstrap.js?bootstrap-input-ultraplan-signal";
+    const { bootstrap } = await import(bootstrapModulePath);
+    const { platform } = createPlatform({ withRegisterTool: true });
+
+    bootstrap(platform);
+
+    const registrations = platform.registerTool.mock.calls.map((call: unknown[]) => (call[0] as { name?: string } | undefined)?.name);
+    expect(registrations).toContain("ultraplan_signal");
   });
 });
