@@ -14,6 +14,7 @@ import {
   validateUltraPlanSessionMigrationRecord,
 } from "../contracts.js";
 import {
+  getUltraplanExecutionLogPath,
   getUltraplanHooksLogPath,
   getUltraplanMigrationRecordPath,
   getUltraplanRuntimeTrackerPath,
@@ -235,6 +236,55 @@ export function appendHookLog(
       error instanceof Error ? error.message : `Unable to append ${logPath}`,
     );
   }
+}
+
+export function appendExecutionLog(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  entry: Record<string, unknown>,
+): UltraPlanStorageResult<string> {
+  const logPath = getUltraplanExecutionLogPath(paths, cwd, sessionId);
+  const observationFingerprint = typeof entry.observationFingerprint === "string"
+    ? entry.observationFingerprint
+    : null;
+  try {
+    ensureDir(logPath);
+    if (observationFingerprint && executionLogContainsObservation(logPath, observationFingerprint)) {
+      return success(logPath);
+    }
+    fs.appendFileSync(logPath, `${JSON.stringify(entry)}\n`);
+    return success(logPath);
+  } catch (error) {
+    return failure(
+      logPath,
+      "io",
+      error instanceof Error ? error.message : `Unable to append ${logPath}`,
+    );
+  }
+}
+
+function executionLogContainsObservation(logPath: string, observationFingerprint: string): boolean {
+  if (!fs.existsSync(logPath)) {
+    return false;
+  }
+
+  for (const line of fs.readFileSync(logPath, "utf8").split("\n")) {
+    if (!line) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      if (parsed.observationFingerprint === observationFingerprint) {
+        return true;
+      }
+    } catch {
+      // Ignore malformed historical lines and keep scanning for a matching durable entry.
+    }
+  }
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
