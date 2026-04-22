@@ -7,7 +7,6 @@ import type { Platform } from "../platform/types.js";
 import type { PlatformContext } from "../platform/types.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { analyzeAndCommit } from "../git/commit.js";
-import { parseTargetArg, stripCliArg } from "../workspace/selector.js";
 
 modelRegistry.register({
   id: "commit",
@@ -45,8 +44,7 @@ export function handleCommit(platform: Platform, ctx: PlatformContext, args?: st
   void (async () => {
     try {
       await analyzeAndCommit(platform, ctx, {
-        requestedTarget: parseTargetArg(args),
-        userContext: stripCliArg(args, "--target"),
+        userContext: args?.trim() || undefined,
       });
     } catch (err) {
       ctx.ui.notify(`Commit error: ${(err as Error).message}`, "error");
