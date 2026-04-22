@@ -4,6 +4,7 @@ import type {
   UltraPlanSessionSummary,
   UltraPlanStack,
 } from "../types.js";
+import type { UltraPlanRunOutcome } from "./execution/session-runner.js";
 import {
   isDraftReadyToPersist,
   type UltraPlanAuthoredDraft,
@@ -76,6 +77,25 @@ export function renderUltraPlanStatus(
   }
 
   return lines.join("\n");
+}
+
+export function renderUltraPlanRunOutcome(outcome: UltraPlanRunOutcome): string {
+  if (outcome.kind === "completed") {
+    return [
+      `Completed: ${outcome.session.title}`,
+      `Current: ${outcome.session.cursor?.summary ?? "Session complete"}`,
+    ].join("\n");
+  }
+
+  const blockerMessage = outcome.session.blocker?.message
+    ?? outcome.session.cursor?.summary
+    ?? "Paused";
+  const prefix = outcome.session.state === "awaiting-user" ? "Awaiting user" : "Paused";
+
+  return [
+    `${prefix}: ${outcome.session.title}`,
+    blockerMessage,
+  ].join("\n");
 }
 
 function formatDomainProgress(authored: UltraPlanAuthoredArtifact, resolved: UltraPlanResolvedCursor): string {

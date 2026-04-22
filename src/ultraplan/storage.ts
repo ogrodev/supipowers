@@ -283,6 +283,22 @@ function validatePassedReviewReference(
   return success(null);
 }
 
+export function validateUltraPlanManifestReviewReferences(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  manifest: UltraPlanManifest,
+ ): UltraPlanStorageResult<null> {
+  for (const review of manifest.reviews) {
+    const reviewValidation = validatePassedReviewReference(paths, cwd, sessionId, review);
+    if (!reviewValidation.ok) {
+      return reviewValidation;
+    }
+  }
+
+  return success(null);
+}
+
 
 export function loadUltraPlanSessionSummary(
   paths: PlatformPaths,
@@ -293,13 +309,10 @@ export function loadUltraPlanSessionSummary(
   if (!manifest.ok) {
     return manifest;
   }
-
   const manifestValue = manifest.value;
-  for (const review of manifestValue.reviews) {
-    const reviewValidation = validatePassedReviewReference(paths, cwd, sessionId, review);
-    if (!reviewValidation.ok) {
-      return reviewValidation;
-    }
+  const reviewValidation = validateUltraPlanManifestReviewReferences(paths, cwd, sessionId, manifestValue);
+  if (!reviewValidation.ok) {
+    return reviewValidation;
   }
 
   return success({
