@@ -13,6 +13,11 @@ import type {
   UltraPlanAgentSlotName,
   UltraPlanAttemptRecord,
   UltraPlanAuthoredArtifact,
+  UltraPlanBatchActiveRunLease,
+  UltraPlanBatchJournalEvent,
+  UltraPlanBatchNode,
+  UltraPlanBatchRun,
+  UltraPlanBatchWave,
   UltraPlanHookObservation,
   UltraPlanLaunchContext,
   UltraPlanManifest,
@@ -477,4 +482,96 @@ export function makeUltraPlanSignalAwaitUserInput(
     summary: "Awaiting user input",
     ...overrides,
   });
+}
+
+
+export function makeUltraPlanBatchWave(overrides: Partial<UltraPlanBatchWave> = {}): UltraPlanBatchWave {
+  return {
+    waveIndex: 0,
+    sessionIds: ["up-123"],
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanBatchNode(overrides: Partial<UltraPlanBatchNode> = {}): UltraPlanBatchNode {
+  return {
+    nodeId: "node-up-123",
+    sessionId: "up-123",
+    title: "Auth slice",
+    waveIndex: 0,
+    dependencies: [],
+    state: "pending",
+    blockerKind: null,
+    blockerSummary: null,
+    resumeRequestedAt: null,
+    branchName: null,
+    worktreePath: null,
+    updatedAt: "2026-04-21T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanBatchRun(overrides: Partial<UltraPlanBatchRun> = {}): UltraPlanBatchRun {
+  return {
+    runId: "batch-123",
+    projectRoot: "/tmp/supipowers",
+    baseBranch: "main",
+    baseHead: "sha-base",
+    currentBaseHead: "sha-base",
+    createdAt: "2026-04-21T12:00:00.000Z",
+    updatedAt: "2026-04-21T12:00:00.000Z",
+    state: "paused",
+    maxParallelism: 2,
+    batchBlockerCode: null,
+    batchBlockerSummary: null,
+    batchResumeRequestedAt: null,
+    supervisorWorktreePath: null,
+    waves: overrides.waves ?? [makeUltraPlanBatchWave()],
+    nodes: overrides.nodes ?? [makeUltraPlanBatchNode()],
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanBatchRunWithNodes(
+  nodes: UltraPlanBatchNode[],
+  overrides: Partial<UltraPlanBatchRun> = {},
+): UltraPlanBatchRun {
+  const waves = [...new Set(nodes.map((node) => node.waveIndex))]
+    .sort((left, right) => left - right)
+    .map((waveIndex) => makeUltraPlanBatchWave({
+      waveIndex,
+      sessionIds: nodes.filter((node) => node.waveIndex === waveIndex).map((node) => node.sessionId),
+    }));
+
+  return makeUltraPlanBatchRun({
+    nodes,
+    waves,
+    ...overrides,
+  });
+}
+
+export function makeUltraPlanBatchActiveRunLease(
+  overrides: Partial<UltraPlanBatchActiveRunLease> = {},
+): UltraPlanBatchActiveRunLease {
+  return {
+    runId: "batch-123",
+    ownerSessionId: "main-session-1",
+    leaseAcquiredAt: "2026-04-21T12:00:00.000Z",
+    leaseExpiresAt: "2026-04-21T12:05:00.000Z",
+    updatedAt: "2026-04-21T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function makeUltraPlanBatchJournalEvent(
+  overrides: Partial<UltraPlanBatchJournalEvent> = {},
+): UltraPlanBatchJournalEvent {
+  return {
+    runId: "batch-123",
+    sessionId: "up-123",
+    type: "run-created",
+    recordedAt: "2026-04-21T12:00:00.000Z",
+    summary: "Created batch run batch-123",
+    ...overrides,
+  };
 }
