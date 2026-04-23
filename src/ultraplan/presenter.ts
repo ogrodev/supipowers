@@ -5,6 +5,7 @@ import type {
   UltraPlanStack,
 } from "../types.js";
 import type { UltraPlanRunOutcome } from "./execution/session-runner.js";
+import type { UltraPlanSessionRecommendation } from "./next-router.js";
 import {
   isDraftReadyToPersist,
   type UltraPlanAuthoredDraft,
@@ -22,12 +23,31 @@ export interface UltraPlanPickerOption {
   description: string;
 }
 
-export function buildUltraPlanPickerOptions(sessions: UltraPlanVisibleSession[]): UltraPlanPickerOption[] {
+export function buildUltraPlanPickerOptions(
+  sessions: UltraPlanVisibleSession[],
+  recommendations?: ReadonlyMap<string, UltraPlanSessionRecommendation>,
+): UltraPlanPickerOption[] {
   return sessions.map((session) => ({
     value: session.sessionId,
-    label: `[${session.bucket}] ${session.title}`,
-    description: describePickerSession(session),
+    label: `[${session.bucket}] ${formatInlineSessionTitle(session.title)}`,
+    description: describePickerDescription(session, recommendations?.get(session.sessionId)),
   }));
+}
+
+function formatInlineSessionTitle(title: string): string {
+  return title
+    .replace(/[\u0000-\u001F\u007F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function describePickerDescription(
+  session: UltraPlanVisibleSession,
+  recommendation?: UltraPlanSessionRecommendation,
+): string {
+  const base = describePickerSession(session);
+  if (!recommendation) return base;
+  return `${describePickerRecommendation(recommendation)} — ${base}`;
 }
 
 function describePickerSession(session: UltraPlanVisibleSession): string {
@@ -37,6 +57,74 @@ function describePickerSession(session: UltraPlanVisibleSession): string {
   }
   if (session.idleReasonLabel) return `Idle: ${session.idleReasonLabel}`;
   return `Current: ${session.cursor?.summary ?? "No active cursor"}`;
+}
+
+export function renderUltraPlanRecommendationSummary(
+  recommendation: UltraPlanSessionRecommendation,
+): string {
+  return `Recommended next: ${formatInlineSessionTitle(recommendation.session.title)} — ${describeRecommendationSummary(recommendation)}`;
+}
+
+export function renderUltraPlanRecommendationStatusLine(
+  recommendation: UltraPlanSessionRecommendation,
+): string {
+  return `Ultraplan next: ${formatInlineSessionTitle(recommendation.session.title)} — ${describeRecommendationStatus(recommendation)}`;
+}
+
+function describePickerRecommendation(
+  recommendation: UltraPlanSessionRecommendation,
+): string {
+  switch (recommendation.reasonCode) {
+    case "ongoing":
+      return "Recommended next to run";
+    case "pending":
+      return "Ready to run";
+    case "awaiting-user":
+    case "mismatch":
+      return "Inspect before running";
+    case "blocked-manual":
+      return "Action needed";
+    case "blocked":
+      return "Blocked";
+  }
+}
+
+function describeRecommendationSummary(
+  recommendation: UltraPlanSessionRecommendation,
+): string {
+  switch (recommendation.reasonCode) {
+    case "ongoing":
+      return "resume the in-progress session.";
+    case "pending":
+      return "ready to run.";
+    case "awaiting-user":
+      return "inspect it first; user input is required.";
+    case "blocked-manual":
+      return "action needed before it can resume.";
+    case "blocked":
+      return "inspect it first; it is blocked.";
+    case "mismatch":
+      return "inspect it first; session state is inconsistent.";
+  }
+}
+
+function describeRecommendationStatus(
+  recommendation: UltraPlanSessionRecommendation,
+): string {
+  switch (recommendation.reasonCode) {
+    case "ongoing":
+      return "resume now";
+    case "pending":
+      return "ready to run";
+    case "awaiting-user":
+      return "waiting for user input";
+    case "blocked-manual":
+      return "action needed";
+    case "blocked":
+      return "blocked";
+    case "mismatch":
+      return "inspect session";
+  }
 }
 
 export function renderUltraPlanStatus(

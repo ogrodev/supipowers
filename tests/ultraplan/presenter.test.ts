@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { UltraPlanCursor, UltraPlanSessionSummary } from "../../src/types.js";
 import type { UltraPlanResolvedCursor, UltraPlanVisibleSession } from "../../src/ultraplan/session-selection.js";
-import { buildUltraPlanPickerOptions, renderUltraPlanStatus } from "../../src/ultraplan/presenter.js";
+import {
+  buildUltraPlanPickerOptions,
+  renderUltraPlanRecommendationStatusLine,
+  renderUltraPlanRecommendationSummary,
+  renderUltraPlanStatus,
+} from "../../src/ultraplan/presenter.js";
+import type { UltraPlanSessionRecommendation } from "../../src/ultraplan/next-router.js";
 import { makeCatalogFixture, makeUltraPlanAuthored, makeUltraPlanScenario, makeUltraPlanStack } from "./fixtures.js";
 
 const authored = makeUltraPlanAuthored({
@@ -120,6 +126,17 @@ function makeVisibleSession(
   };
 }
 
+function makeRecommendation(
+  session: UltraPlanVisibleSession,
+  reasonCode: UltraPlanSessionRecommendation["reasonCode"],
+): UltraPlanSessionRecommendation {
+  return {
+    session,
+    action: reasonCode === "ongoing" || reasonCode === "pending" ? "run" : "inspect",
+    reasonCode,
+  };
+}
+
 const resolved: UltraPlanResolvedCursor = {
   source: "recomputed",
   cursor: currentCursor,
@@ -173,6 +190,89 @@ describe("ultraplan presenter", () => {
     const session = makeSummary("awaiting-user", "Idle auth slice", "Need product sign-off");
 
     expect(renderUltraPlanStatus(session, authored, resolved)).toContain("Idle reason: Awaiting user: Need product sign-off");
+  });
+
+  test("renders a runnable recommendation summary", () => {
+    const recommendation = makeRecommendation(
+      makeVisibleSession("running", "ongoing", "Ongoing session", null),
+      "ongoing",
+    );
+
+    expect(renderUltraPlanRecommendationSummary(recommendation)).toBe(
+      "Recommended next: Ongoing session — resume the in-progress session.",
+    );
+  });
+
+  test("renders a compact status line for inspect-only recommendations", () => {
+    const recommendation = makeRecommendation(
+      makeVisibleSession("awaiting-user", "idle", "Awaiting session", "Awaiting user: Need product sign-off"),
+      "awaiting-user",
+    );
+
+    expect(renderUltraPlanRecommendationStatusLine(recommendation)).toBe(
+      "Ultraplan next: Awaiting session — waiting for user input",
+    );
+  });
+
+  test("normalizes control characters in inline recommendation surfaces", () => {
+    const session = makeVisibleSession("ready", "pending", "Pending\n\tSession\u0007", null);
+    const recommendation = makeRecommendation(session, "pending");
+    const [option] = buildUltraPlanPickerOptions(
+      [session],
+      new Map([[session.sessionId, recommendation]]),
+    );
+
+    expect(option.label).toBe("[pending] Pending Session");
+    expect(option.description).toBe(
+      "Ready to run — Current: frontend / auth / unit / Second scenario",
+    );
+    expect(renderUltraPlanRecommendationSummary(recommendation)).toBe(
+      "Recommended next: Pending Session — ready to run.",
+    );
+    expect(renderUltraPlanRecommendationStatusLine(recommendation)).toBe(
+      "Ultraplan next: Pending Session — ready to run",
+    );
+  });
+
+  test("decorates picker descriptions from recommendations without reordering the caller input", () => {
+    const awaitingSession = makeVisibleSession(
+      "awaiting-user",
+      "idle",
+      "Awaiting session",
+      "Awaiting user: Need product sign-off",
+    );
+    const pendingSession = makeVisibleSession("ready", "pending", "Pending session", null);
+    const options = buildUltraPlanPickerOptions(
+      [awaitingSession, pendingSession],
+      new Map([
+        [awaitingSession.sessionId, makeRecommendation(awaitingSession, "awaiting-user")],
+        [pendingSession.sessionId, makeRecommendation(pendingSession, "pending")],
+      ]),
+    );
+
+    expect(options).toEqual([
+      {
+        value: "awaiting-session",
+        label: "[idle] Awaiting session",
+        description: "Inspect before running — Idle: Awaiting user: Need product sign-off",
+      },
+      {
+        value: "pending-session",
+        label: "[pending] Pending session",
+        description: "Ready to run — Current: frontend / auth / unit / Second scenario",
+      },
+    ]);
+  });
+
+  test("renders blocked inspect-only recommendations with action-needed wording", () => {
+    const recommendation = makeRecommendation(
+      makeVisibleSession("blocked", "idle", "Blocked session", "Need product sign-off"),
+      "blocked-manual",
+    );
+
+    expect(renderUltraPlanRecommendationSummary(recommendation)).toBe(
+      "Recommended next: Blocked session — action needed before it can resume.",
+    );
   });
 });
 

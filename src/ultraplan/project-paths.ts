@@ -1,7 +1,7 @@
 import path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
 import type { UltraPlanStackId } from "../types.js";
-import { resolveRepoRootFromFs } from "../workspace/repo-root.js";
+import { resolveRepoIdentityRootFromFs, resolveRepoRootFromFs } from "../workspace/repo-root.js";
 import { projectSlugFromRepoRoot } from "./runtime/project-slug.js";
 
 // Canonical directory name for the UltraPlan namespace under the global state root. Kept here so
@@ -19,17 +19,29 @@ export const ULTRAPLAN_EXECUTION_LOG_FILENAME = "execution-log.jsonl";
 export const ULTRAPLAN_HOOKS_LOG_FILENAME = "hooks-log.jsonl";
 export const ULTRAPLAN_RUNTIME_TRACKER_FILENAME = "runtime-tracker.json";
 export const ULTRAPLAN_MIGRATION_RECORD_FILENAME = "migration.json";
+const ULTRAPLAN_BATCH_RUNS_DIRNAME = "batch-runs";
+export const ULTRAPLAN_BATCH_RUN_FILENAME = "run.json";
+export const ULTRAPLAN_BATCH_JOURNAL_FILENAME = "journal.jsonl";
+export const ULTRAPLAN_ACTIVE_BATCH_RUN_FILENAME = "active-run.json";
 
 /**
- * Resolve the absolute repo root for the given cwd. UltraPlan state is always keyed by the
- * absolute repo root, never by the cwd itself — so subdirectories of the same repo share a slug.
+ * Resolve the active checkout root for the given cwd. Legacy repo-local helpers still target the
+ * active checkout, not the canonical UltraPlan identity root.
  */
-function resolveRepoRoot(cwd: string): string {
+function resolveCheckoutRoot(cwd: string): string {
   return path.resolve(resolveRepoRootFromFs(cwd));
 }
 
+/**
+ * Resolve the canonical project identity root for the given cwd. Linked worktrees of one repo
+ * must converge on the same identity root so they share one UltraPlan storage location.
+ */
+function resolveProjectIdentityRoot(cwd: string): string {
+  return path.resolve(resolveRepoIdentityRootFromFs(cwd));
+}
+
 export function getUltraplanProjectName(cwd: string): string {
-  const projectName = path.basename(path.normalize(resolveRepoRoot(cwd)));
+  const projectName = path.basename(path.normalize(resolveProjectIdentityRoot(cwd)));
   if (!projectName) {
     throw new Error(`Unable to derive ultraplan project name from cwd: ${cwd}`);
   }
@@ -41,15 +53,15 @@ export function getUltraplanProjectName(cwd: string): string {
  * Every other UltraPlan path helper composes on top of this single function.
  */
 export function resolveUltraPlanRoot(paths: PlatformPaths, cwd: string): string {
-  const repoRoot = resolveRepoRoot(cwd);
-  const slug = projectSlugFromRepoRoot(repoRoot);
+  const repoIdentityRoot = resolveProjectIdentityRoot(cwd);
+  const slug = projectSlugFromRepoRoot(repoIdentityRoot);
   return paths.global("projects", slug, ULTRAPLANS_DIR);
 }
 
 /** Project-scoped directory under the global state root (parent of `ultraplans/`). */
 export function getUltraplanProjectDir(paths: PlatformPaths, cwd: string): string {
-  const repoRoot = resolveRepoRoot(cwd);
-  const slug = projectSlugFromRepoRoot(repoRoot);
+  const repoIdentityRoot = resolveProjectIdentityRoot(cwd);
+  const slug = projectSlugFromRepoRoot(repoIdentityRoot);
   return paths.global("projects", slug);
 }
 
@@ -59,6 +71,26 @@ export function getUltraplansDir(paths: PlatformPaths, cwd: string): string {
 
 export function getUltraplanIndexPath(paths: PlatformPaths, cwd: string): string {
   return path.join(resolveUltraPlanRoot(paths, cwd), ULTRAPLAN_INDEX_FILENAME);
+}
+
+export function getUltraplanBatchRunsDir(paths: PlatformPaths, cwd: string): string {
+  return path.join(resolveUltraPlanRoot(paths, cwd), ULTRAPLAN_BATCH_RUNS_DIRNAME);
+}
+
+export function getUltraplanActiveBatchRunPath(paths: PlatformPaths, cwd: string): string {
+  return path.join(getUltraplanBatchRunsDir(paths, cwd), ULTRAPLAN_ACTIVE_BATCH_RUN_FILENAME);
+}
+
+export function getUltraplanBatchRunDir(paths: PlatformPaths, cwd: string, runId: string): string {
+  return path.join(getUltraplanBatchRunsDir(paths, cwd), runId);
+}
+
+export function getUltraplanBatchRunPath(paths: PlatformPaths, cwd: string, runId: string): string {
+  return path.join(getUltraplanBatchRunDir(paths, cwd, runId), ULTRAPLAN_BATCH_RUN_FILENAME);
+}
+
+export function getUltraplanBatchJournalPath(paths: PlatformPaths, cwd: string, runId: string): string {
+  return path.join(getUltraplanBatchRunDir(paths, cwd, runId), ULTRAPLAN_BATCH_JOURNAL_FILENAME);
 }
 
 export function getUltraplanSessionDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
@@ -135,7 +167,7 @@ const LEGACY_DOT_DIR = ".omp";
 const LEGACY_PACKAGE_DIR = "supipowers";
 
 export function getLegacyUltraplansDir(cwd: string): string {
-  return path.join(resolveRepoRoot(cwd), LEGACY_DOT_DIR, LEGACY_PACKAGE_DIR, ULTRAPLANS_DIR);
+  return path.join(resolveCheckoutRoot(cwd), LEGACY_DOT_DIR, LEGACY_PACKAGE_DIR, ULTRAPLANS_DIR);
 }
 
 export function getLegacyUltraplanSessionDir(cwd: string, sessionId: string): string {
