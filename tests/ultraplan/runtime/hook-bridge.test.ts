@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { Platform } from "../../../src/platform/types.js";
 import type {
   UltraPlanHookObservation,
+  UltraPlanLaunchContext,
   UltraPlanMutationPlan,
   UltraPlanRuntimeTracker,
 } from "../../../src/types.js";
@@ -117,12 +118,13 @@ function seedCanonicalGlobalSession(
   );
 }
 
-function launchContext() {
+function launchContext(overrides: Partial<UltraPlanLaunchContext> = {}): UltraPlanLaunchContext {
   return {
     attemptId: "att-1",
     attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
     sourceAgent: "sub-agent" as const,
     launchedAt: "2026-04-19T12:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -279,6 +281,111 @@ describe("registerUltraPlanHookBridge", () => {
     expect((deps.normalize as any).mock.calls.length).toBe(1);
   });
 
+  test("before_agent_start matches the fresh retry attempt by exact launch context", () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const oldAttempt = makeActiveUltraPlanExecution({
+      sessionId: "up-retry",
+      cwd,
+      launchContext: launchContext({ attemptId: "att-old", attemptKey: "frontend/auth/unit/scenario-login-form-renders/red" }),
+      target: makeUltraPlanExecutionTarget({ scenarioId: "scenario-old-attempt" }),
+    });
+    const freshAttempt = makeActiveUltraPlanExecution({
+      sessionId: "up-retry",
+      cwd,
+      launchContext: launchContext({ attemptId: "att-new", attemptKey: "frontend/auth/unit/scenario-login-form-renders/green" }),
+      target: makeUltraPlanExecutionTarget({ scenarioId: "scenario-fresh-attempt" }),
+    });
+    bindActiveUltraPlanExecution(oldAttempt);
+    bindActiveUltraPlanExecution(freshAttempt);
+
+    const { platform, handlers } = makeStubPlatform(paths);
+    const deps = buildInjectedDeps({}, null);
+    registerUltraPlanHookBridge(platform, deps);
+
+    handlers.get("before_agent_start")?.({
+      metadata: { [LAUNCH_CONTEXT_METADATA_KEY]: freshAttempt.launchContext },
+    }, { cwd });
+
+    const normalizeInput = (deps.normalize as any).mock.calls[0][0];
+    expect(normalizeInput.fallbackTargetHint.scenarioId).toBe("scenario-fresh-attempt");
+  });
+
+  test("fails closed when the launch context matches multiple active executions", () => {
+    const paths = createTestPaths(tmpDir);
+    const sharedLaunchContext = launchContext();
+    bindActiveUltraPlanExecution(makeActiveUltraPlanExecution({
+      sessionId: "up-ambiguous-one",
+      cwd: "/repo/one",
+      launchContext: sharedLaunchContext,
+    }));
+    bindActiveUltraPlanExecution(makeActiveUltraPlanExecution({
+      sessionId: "up-ambiguous-two",
+      cwd: "/repo/two",
+      launchContext: sharedLaunchContext,
+    }));
+
+    const { platform, handlers } = makeStubPlatform(paths);
+    const deps = buildInjectedDeps({}, null);
+    registerUltraPlanHookBridge(platform, deps);
+
+    handlers.get("before_agent_start")?.({
+      metadata: { [LAUNCH_CONTEXT_METADATA_KEY]: sharedLaunchContext },
+    }, { cwd: "/repo/one" });
+
+    expect((deps.normalize as any).mock.calls.length).toBe(0);
+    expect((deps.reduce as any).mock.calls.length).toBe(0);
+    expect((deps.applyMutationPlan as any).mock.calls.length).toBe(0);
+  });
+
+  test("ignores late events from an earlier attempt after a retry minted a fresh attempt id", () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const activeExecution = makeActiveUltraPlanExecution({
+      sessionId: "up-late-event",
+      cwd,
+      launchContext: launchContext({ attemptId: "att-new", attemptKey: "frontend/auth/unit/scenario-login-form-renders/green" }),
+      target: makeUltraPlanExecutionTarget({ scenarioId: "scenario-fresh-attempt" }),
+    });
+    bindActiveUltraPlanExecution(activeExecution);
+
+    const { platform, handlers } = makeStubPlatform(paths);
+    const deps = buildInjectedDeps({
+      loadTracker: mock(() => ({
+        ok: true,
+        value: makeUltraPlanRuntimeTracker({
+          activeAttempt: {
+            attemptId: activeExecution.launchContext.attemptId,
+            attemptKey: activeExecution.launchContext.attemptKey,
+            launchContext: activeExecution.launchContext,
+            cursorSnapshot: null,
+            observations: [],
+            proofCandidates: [],
+            blockerCandidates: [],
+            outcome: null,
+            startedAt: activeExecution.launchContext.launchedAt,
+            finalizedAt: null,
+          },
+        }),
+      }) as any),
+    }, null);
+    registerUltraPlanHookBridge(platform, deps);
+
+    handlers.get("tool_result")?.({
+      toolName: "bash",
+      metadata: {
+        [LAUNCH_CONTEXT_METADATA_KEY]: launchContext({
+          attemptId: "att-old",
+          attemptKey: "frontend/auth/unit/scenario-login-form-renders/red",
+        }),
+      },
+    }, { cwd });
+
+    expect((deps.normalize as any).mock.calls.length).toBe(0);
+    expect((deps.reduce as any).mock.calls.length).toBe(0);
+    expect((deps.applyMutationPlan as any).mock.calls.length).toBe(0);
+  });
+
   test("ignores unrelated hook events when only the active-execution registry is populated", () => {
     const paths = createTestPaths(tmpDir);
     const { repoRoot: cwd } = createTestRepo(tmpDir);
@@ -355,6 +462,31 @@ describe("registerUltraPlanHookBridge", () => {
     handlers.get("tool_result")?.({ toolName: "bash" }, { cwd });
 
     const normalizeInput = (deps.normalize as any).mock.calls[0][0];
+    expect(normalizeInput.fallbackTargetHint).toBeUndefined();
+  });
+
+  test("does not use launch-context fallback from a different explicit session", () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir);
+    const otherLaunchContext = launchContext({ attemptId: "att-other" });
+    bindActiveUltraPlanExecution(makeActiveUltraPlanExecution({
+      sessionId: "up-other-session",
+      cwd,
+      launchContext: otherLaunchContext,
+      target: makeUltraPlanExecutionTarget({ scenarioId: "scenario-from-other-session" }),
+    }));
+
+    const { platform, handlers } = makeStubPlatform(paths);
+    const deps = buildInjectedDeps({}, { sessionId: "up-explicit-session", cwd });
+    registerUltraPlanHookBridge(platform, deps);
+
+    handlers.get("tool_result")?.({
+      toolName: "bash",
+      metadata: { [LAUNCH_CONTEXT_METADATA_KEY]: otherLaunchContext },
+    }, { cwd });
+
+    const normalizeInput = (deps.normalize as any).mock.calls[0][0];
+    expect(normalizeInput.sessionId).toBe("up-explicit-session");
     expect(normalizeInput.fallbackTargetHint).toBeUndefined();
   });
 

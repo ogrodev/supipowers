@@ -24,7 +24,11 @@ import {
   resolveSessionMigration as resolveSessionMigrationDefault,
   type MigrationOutcome,
 } from "./migration.js";
-import { readActiveUltraPlanExecution } from "./active-execution.js";
+import {
+  listActiveUltraPlanExecutions,
+  readActiveUltraPlanExecutionForSession as readRegistryActiveExecutionForSession,
+  type ActiveUltraPlanExecution,
+} from "./active-execution.js";
 import { applyUltraPlanMutation } from "./apply-mutation.js";
 
 /**
@@ -173,7 +177,7 @@ function handleAttemptEvent(
 
   const nowIso = new Date().toISOString();
   const tracker = loadTrackerOrEmpty(deps, platform, session);
-  const activeExecution = readActiveUltraPlanExecutionForSession(session);
+  const activeExecution = resolveActiveUltraPlanExecutionForEvent(session, rawEvent, ctx);
   const observation = deps.normalize({
     hookEvent,
     sessionId: session.sessionId,
@@ -280,9 +284,8 @@ function resolveFallbackSessionContext(
   hookEvent: UltraPlanHookEventName,
   rawEvent: unknown,
   ctx: unknown,
-): UltraPlanSessionContext | null {
-  const activeExecution = readActiveUltraPlanExecution();
-  if (!activeExecution || hookEvent === "session_start") {
+ ): UltraPlanSessionContext | null {
+  if (hookEvent === "session_start") {
     return null;
   }
 
@@ -291,11 +294,18 @@ function resolveFallbackSessionContext(
     prompt: extractPrompt(rawEvent, ctx),
     persistedActiveAttempt: null,
   });
-  if (launchContext && sameLaunchContext(launchContext, activeExecution.launchContext)) {
-    return { sessionId: activeExecution.sessionId, cwd: activeExecution.cwd };
+
+  if (launchContext) {
+    const activeExecution = readActiveUltraPlanExecutionForLaunchContext(launchContext);
+    return activeExecution ? { sessionId: activeExecution.sessionId, cwd: activeExecution.cwd } : null;
   }
 
   if (hookEvent === "before_agent_start") {
+    return null;
+  }
+
+  const activeExecution = readUniqueActiveUltraPlanExecutionForCwd(extractCwd(rawEvent, ctx));
+  if (!activeExecution) {
     return null;
   }
 
@@ -313,22 +323,60 @@ function resolveFallbackSessionContext(
 
 function readActiveUltraPlanExecutionForSession(
   session: UltraPlanSessionContext,
- ): ReturnType<typeof readActiveUltraPlanExecution> {
-  const activeExecution = readActiveUltraPlanExecution();
-  if (!activeExecution) {
+ ): ActiveUltraPlanExecution | null {
+  return readRegistryActiveExecutionForSession(session.sessionId, session.cwd);
+}
+
+function readActiveUltraPlanExecutionForLaunchContext(
+  launchContext: UltraPlanLaunchContext,
+ ): ActiveUltraPlanExecution | null {
+  const matches = listActiveUltraPlanExecutions().filter((execution) => sameLaunchContext(launchContext, execution.launchContext));
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+function readUniqueActiveUltraPlanExecutionForCwd(cwd: string | null): ActiveUltraPlanExecution | null {
+  if (!cwd) {
     return null;
   }
 
-  if (activeExecution.sessionId !== session.sessionId || activeExecution.cwd !== session.cwd) {
-    return null;
+  const matches = listActiveUltraPlanExecutions().filter((execution) => execution.cwd === cwd);
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+function resolveActiveUltraPlanExecutionForEvent(
+  session: UltraPlanSessionContext,
+  rawEvent: unknown,
+  ctx: unknown,
+ ): ActiveUltraPlanExecution | null {
+  const launchContext = recoverLaunchContextFromEvent({
+    metadata: extractMetadata(rawEvent, ctx),
+    prompt: extractPrompt(rawEvent, ctx),
+    persistedActiveAttempt: null,
+  });
+  if (launchContext) {
+    const activeExecution = readActiveUltraPlanExecutionForLaunchContext(launchContext);
+    if (activeExecution?.sessionId === session.sessionId && activeExecution.cwd === session.cwd) {
+      return activeExecution;
+    }
   }
 
-  return activeExecution;
+  return readActiveUltraPlanExecutionForSession(session);
 }
 
 function sameLaunchContext(left: UltraPlanLaunchContext, right: UltraPlanLaunchContext): boolean {
   return left.attemptId === right.attemptId && left.attemptKey === right.attemptKey;
 }
+
+function extractCwd(rawEvent: unknown, ctx: unknown): string | null {
+  const rawCwd = asRecord(rawEvent)?.cwd;
+  if (typeof rawCwd === "string" && rawCwd.length > 0) {
+    return rawCwd;
+  }
+
+  const ctxCwd = asRecord(ctx)?.cwd;
+  return typeof ctxCwd === "string" && ctxCwd.length > 0 ? ctxCwd : null;
+}
+
 
 function extractTargetHint(
   rawEvent: unknown,
@@ -345,7 +393,7 @@ function extractTargetHint(
   return undefined;
 }
 
-function buildFallbackTargetHint(activeExecution: ReturnType<typeof readActiveUltraPlanExecution>): NormalizeHookEventInput["fallbackTargetHint"] {
+function buildFallbackTargetHint(activeExecution: ActiveUltraPlanExecution | null): NormalizeHookEventInput["fallbackTargetHint"] {
   if (!activeExecution) {
     return undefined;
   }

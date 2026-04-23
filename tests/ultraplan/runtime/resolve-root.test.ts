@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { resolveUltraPlanRoot } from "../../../src/ultraplan/project-paths.js";
 import { projectSlugFromRepoRoot } from "../../../src/ultraplan/runtime/project-slug.js";
+import { resolveRepoIdentityRootFromFs } from "../../../src/workspace/repo-root.js";
 import { createTestPaths, createTestRepo } from "../fixtures.js";
 
 /**
@@ -27,6 +28,23 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+function seedPrimaryGitDir(repoRoot: string): void {
+  fs.mkdirSync(path.join(repoRoot, ".git"), { recursive: true });
+}
+
+function createLinkedWorktree(repoRoot: string, worktreeName: string): { worktreeRoot: string; subdir: string } {
+  seedPrimaryGitDir(repoRoot);
+  const worktreeRoot = path.join(tmpDir, worktreeName);
+  const subdir = path.join(worktreeRoot, "src", "features");
+  const worktreeGitDir = path.join(repoRoot, ".git", "worktrees", worktreeName);
+  fs.mkdirSync(subdir, { recursive: true });
+  fs.mkdirSync(worktreeGitDir, { recursive: true });
+  fs.writeFileSync(path.join(worktreeRoot, "package.json"), JSON.stringify({ name: path.basename(repoRoot) }), "utf8");
+  fs.writeFileSync(path.join(worktreeRoot, ".git"), `gitdir: ${worktreeGitDir}\n`, "utf8");
+  fs.writeFileSync(path.join(worktreeGitDir, "commondir"), "../..\n", "utf8");
+  return { worktreeRoot, subdir };
+}
+
 describe("resolveUltraPlanRoot", () => {
   test("resolves to ${home}/.omp/supipowers/projects/<slug>/ultraplans for a cwd inside the repo", () => {
     const paths = createTestPaths(tmpDir);
@@ -38,18 +56,63 @@ describe("resolveUltraPlanRoot", () => {
     expect(resolveUltraPlanRoot(paths, repoRoot)).toBe(expected);
   });
 
-  test("is stable across cwd values inside the same repo", () => {
+  test("uses the primary checkout as the canonical identity for linked worktrees", () => {
     const paths = createTestPaths(tmpDir);
-    const { repoRoot, subdir } = createTestRepo(tmpDir);
-    const deep = path.join(subdir, "more", "nesting");
-    fs.mkdirSync(deep, { recursive: true });
+    const { repoRoot, subdir } = createTestRepo(tmpDir, "primary-repo");
+    const { worktreeRoot, subdir: worktreeSubdir } = createLinkedWorktree(repoRoot, "feature-worktree");
+    const slug = projectSlugFromRepoRoot(repoRoot);
+    const expected = paths.global("projects", slug, "ultraplans");
 
-    const fromRoot = resolveUltraPlanRoot(paths, repoRoot);
-    const fromSub = resolveUltraPlanRoot(paths, subdir);
-    const fromDeep = resolveUltraPlanRoot(paths, deep);
+    expect(resolveRepoIdentityRootFromFs(subdir)).toBe(repoRoot);
+    expect(resolveRepoIdentityRootFromFs(worktreeRoot)).toBe(repoRoot);
+    expect(resolveRepoIdentityRootFromFs(worktreeSubdir)).toBe(repoRoot);
+    expect(resolveUltraPlanRoot(paths, worktreeRoot)).toBe(expected);
+    expect(resolveUltraPlanRoot(paths, worktreeSubdir)).toBe(expected);
+  });
 
-    expect(fromRoot).toBe(fromSub);
-    expect(fromRoot).toBe(fromDeep);
+  test("uses the submodule checkout as its own repo identity", () => {
+    const paths = createTestPaths(tmpDir);
+    const superRoot = path.join(tmpDir, "super-repo");
+    const submoduleRoot = path.join(superRoot, "vendor", "child-repo");
+    const submoduleSubdir = path.join(submoduleRoot, "src");
+    const submoduleGitDir = path.join(superRoot, ".git", "modules", "vendor", "child-repo");
+    fs.mkdirSync(submoduleSubdir, { recursive: true });
+    fs.mkdirSync(submoduleGitDir, { recursive: true });
+    fs.writeFileSync(path.join(submoduleRoot, "package.json"), JSON.stringify({ name: "child-repo" }), "utf8");
+    fs.writeFileSync(path.join(submoduleRoot, ".git"), `gitdir: ${submoduleGitDir}\n`, "utf8");
+    const expected = paths.global("projects", projectSlugFromRepoRoot(submoduleRoot), "ultraplans");
+
+    expect(resolveRepoIdentityRootFromFs(submoduleSubdir)).toBe(submoduleRoot);
+    expect(resolveUltraPlanRoot(paths, submoduleSubdir)).toBe(expected);
+  });
+
+  test("keeps unrelated repositories distinct", () => {
+    const paths = createTestPaths(tmpDir);
+    const primary = createTestRepo(tmpDir, "primary-repo");
+    const secondary = createTestRepo(tmpDir, "secondary-repo");
+    seedPrimaryGitDir(primary.repoRoot);
+    seedPrimaryGitDir(secondary.repoRoot);
+
+    expect(resolveUltraPlanRoot(paths, primary.repoRoot)).not.toBe(
+      resolveUltraPlanRoot(paths, secondary.repoRoot),
+    );
+  });
+
+  test("fails closed when a linked worktree cannot prove its common repo identity", () => {
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot } = createTestRepo(tmpDir, "primary-repo");
+    seedPrimaryGitDir(repoRoot);
+    const brokenWorktreeRoot = path.join(tmpDir, "broken-worktree");
+    fs.mkdirSync(brokenWorktreeRoot, { recursive: true });
+    fs.writeFileSync(path.join(brokenWorktreeRoot, "package.json"), JSON.stringify({ name: "primary-repo" }), "utf8");
+    fs.writeFileSync(
+      path.join(brokenWorktreeRoot, ".git"),
+      `gitdir: ${path.join(repoRoot, ".git", "worktrees", "missing-worktree")}\n`,
+      "utf8",
+    );
+
+    expect(() => resolveRepoIdentityRootFromFs(brokenWorktreeRoot)).toThrow();
+    expect(() => resolveUltraPlanRoot(paths, brokenWorktreeRoot)).toThrow();
   });
 });
 
