@@ -49,6 +49,77 @@ export function resolveRepoRootFromFs(cwd: string): string {
   }
 }
 
+function resolveGitDirForRepoRoot(repoRoot: string): string | null {
+  const dotGitPath = path.join(repoRoot, ".git");
+  if (!fs.existsSync(dotGitPath)) {
+    return null;
+  }
+
+  const dotGitStats = fs.statSync(dotGitPath);
+  if (dotGitStats.isDirectory()) {
+    return path.resolve(dotGitPath);
+  }
+
+  if (!dotGitStats.isFile()) {
+    throw new Error(`Unable to resolve repo identity from ${repoRoot}: .git is neither a file nor directory`);
+  }
+
+  const rawPointer = fs.readFileSync(dotGitPath, "utf-8").trim();
+  const match = /^gitdir:\s*(.+)$/i.exec(rawPointer);
+  if (!match) {
+    throw new Error(`Unable to resolve repo identity from ${repoRoot}: invalid .git gitdir pointer`);
+  }
+
+  return path.resolve(repoRoot, match[1].trim());
+}
+
+function resolveCommonGitDir(gitDir: string): string {
+  if (!fs.existsSync(gitDir)) {
+    throw new Error(`Unable to resolve repo identity: gitdir does not exist at ${gitDir}`);
+  }
+
+  const commondirPath = path.join(gitDir, "commondir");
+  if (!fs.existsSync(commondirPath)) {
+    return gitDir;
+  }
+
+  const commondirValue = fs.readFileSync(commondirPath, "utf-8").trim();
+  if (commondirValue.length === 0) {
+    throw new Error(`Unable to resolve repo identity: empty commondir file at ${commondirPath}`);
+  }
+
+  const commonDir = path.resolve(gitDir, commondirValue);
+  if (!fs.existsSync(commonDir)) {
+    throw new Error(`Unable to resolve repo identity: common git dir does not exist at ${commonDir}`);
+  }
+
+  return commonDir;
+}
+
+export function resolveRepoIdentityRootFromFs(cwd: string): string {
+  const repoRoot = resolveRepoRootFromFs(cwd);
+  const gitDir = resolveGitDirForRepoRoot(repoRoot);
+  if (gitDir === null) {
+    return repoRoot;
+  }
+
+  const resolvedGitDir = path.resolve(gitDir);
+  const commonDir = path.resolve(resolveCommonGitDir(resolvedGitDir));
+  if (path.basename(commonDir) !== ".git") {
+    if (commonDir === resolvedGitDir) {
+      return repoRoot;
+    }
+    throw new Error(`Unable to resolve repo identity from ${repoRoot}: expected common git dir ending in .git, received ${commonDir}`);
+  }
+
+  const identityRoot = path.dirname(commonDir);
+  if (!path.isAbsolute(identityRoot) || identityRoot === commonDir) {
+    throw new Error(`Unable to resolve repo identity from ${repoRoot}: invalid identity root ${identityRoot}`);
+  }
+
+  return identityRoot;
+}
+
 export async function resolveRepoRoot(platform: Pick<Platform, "exec">, cwd: string): Promise<string> {
   try {
     const result = await platform.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
