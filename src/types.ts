@@ -1149,3 +1149,98 @@ export interface UltraPlanSessionMigrationRecord {
   legacyRenamedTo: string | null;
   kind: UltraPlanSessionMigrationKind;
 }
+
+// ---------------------------------------------------------------------------
+// UltraPlan Slice-7 batch orchestration contracts
+// ---------------------------------------------------------------------------
+
+export type UltraPlanBatchRunState = "paused" | "running" | "blocked" | "complete" | "abandoned";
+
+export type UltraPlanBatchNodeState =
+  | "pending"
+  | "preparing"
+  | "running"
+  | "merge-pending"
+  | "paused"
+  | "blocked"
+  | "awaiting-user"
+  | "merged"
+  | "abandoned";
+
+export type UltraPlanBatchNodeBlockerKind = "dependency" | "session" | "merge" | "supervisor";
+
+export type UltraPlanBatchBlockerCode =
+  | "project-identity-failed"
+  | "invalid-run"
+  | "supervisor-worktree-invalid"
+  | "base-drift"
+  | "merge-blocked";
+
+export type UltraPlanBatchJournalEventType =
+  | "run-created"
+  | "lease-acquired"
+  | "lease-released"
+  | "node-preparing"
+  | "node-running"
+  | "node-paused"
+  | "node-blocked"
+  | "node-awaiting-user"
+  | "node-merge-pending"
+  | "node-merged"
+  | "node-abandoned"
+  | "cleanup-warning";
+
+export interface UltraPlanBatchWave {
+  waveIndex: number;
+  sessionIds: string[];
+}
+
+export interface UltraPlanBatchNode {
+  nodeId: string;
+  sessionId: string;
+  title: string;
+  waveIndex: number;
+  dependencies: string[];
+  state: UltraPlanBatchNodeState;
+  blockerKind: UltraPlanBatchNodeBlockerKind | null;
+  blockerSummary: string | null;
+  resumeRequestedAt: string | null;
+  branchName: string | null;
+  worktreePath: string | null;
+  updatedAt: string;
+}
+
+export interface UltraPlanBatchRun {
+  runId: string;
+  projectRoot: string;
+  baseBranch: string;
+  baseHead: string;
+  currentBaseHead: string;
+  createdAt: string;
+  updatedAt: string;
+  state: UltraPlanBatchRunState;
+  maxParallelism: number;
+  batchBlockerCode: UltraPlanBatchBlockerCode | null;
+  batchBlockerSummary: string | null;
+  batchResumeRequestedAt: string | null;
+  supervisorWorktreePath: string | null;
+  waves: UltraPlanBatchWave[];
+  nodes: UltraPlanBatchNode[];
+}
+
+export interface UltraPlanBatchActiveRunLease {
+  runId: string;
+  ownerSessionId: string | null;
+  leaseAcquiredAt: string | null;
+  leaseExpiresAt: string | null;
+  updatedAt: string;
+}
+
+export interface UltraPlanBatchJournalEvent {
+  runId: string;
+  sessionId: string | null;
+  type: UltraPlanBatchJournalEventType;
+  recordedAt: string;
+  summary: string;
+  details?: Record<string, unknown>;
+}
