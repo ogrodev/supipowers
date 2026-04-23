@@ -56,7 +56,7 @@ export async function runUltraPlanSession(input: RunUltraPlanSessionInput): Prom
     try {
       await deps.dispatch(runState.execution, input);
     } finally {
-      clearActiveUltraPlanExecution();
+      clearActiveUltraPlanExecution(runState.execution);
     }
   }
 }

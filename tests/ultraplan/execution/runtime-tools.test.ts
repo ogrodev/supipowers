@@ -46,6 +46,56 @@ describe("ultraplan runtime tools", () => {
     expect(result.content[0].text.toLowerCase()).toContain("active ultraplan run");
   });
 
+  test("fails closed when multiple active workers make the signal target ambiguous", async () => {
+    bindActiveUltraPlanExecution(makeActiveUltraPlanExecution({ sessionId: "up-123", cwd: "/repo/one" }));
+    bindActiveUltraPlanExecution(makeActiveUltraPlanExecution({ sessionId: "up-456", cwd: "/repo/two" }));
+    const definition = registerToolDefinition();
+
+    const result = await definition.execute(
+      "tool-call-1",
+      makeUltraPlanSignalProofInput(),
+      new AbortController().signal,
+      undefined,
+      {},
+    );
+
+    expect(result.content[0].text.toLowerCase()).toContain("unambiguous active ultraplan run");
+  });
+
+  test("fails closed when an explicit tool cwd does not match the only active worker", async () => {
+    bindActiveUltraPlanExecution(makeActiveUltraPlanExecution({ sessionId: "up-123", cwd: "/repo/one" }));
+    const definition = registerToolDefinition();
+
+    const result = await definition.execute(
+      "tool-call-1",
+      makeUltraPlanSignalProofInput(),
+      new AbortController().signal,
+      undefined,
+      { cwd: "/repo/two" },
+    );
+
+    expect(result.content[0].text.toLowerCase()).toContain("active ultraplan run");
+    expect(result.details.error).toContain("unambiguous active UltraPlan run");
+  });
+
+  test("uses tool ctx.cwd to resolve the correct active worker when multiple workers are live", async () => {
+    const execution = makeActiveUltraPlanExecution({ sessionId: "up-456", cwd: "/repo/two" });
+    bindActiveUltraPlanExecution(makeActiveUltraPlanExecution({ sessionId: "up-123", cwd: "/repo/one" }));
+    bindActiveUltraPlanExecution(execution);
+    const definition = registerToolDefinition();
+
+    const result = await definition.execute(
+      "tool-call-1",
+      makeUltraPlanSignalProofInput({ details: { command: "bun test" } }),
+      new AbortController().signal,
+      undefined,
+      { cwd: "/repo/two" },
+    );
+
+    expect(result.details.execution).toEqual(execution);
+    expect(result.details.payload.proof.evidence.metadata).toEqual({ command: "bun test" });
+  });
+
   test("proof signals map details into payload.proof.evidence.metadata", async () => {
     bindActiveUltraPlanExecution(makeActiveUltraPlanExecution());
     const definition = registerToolDefinition();

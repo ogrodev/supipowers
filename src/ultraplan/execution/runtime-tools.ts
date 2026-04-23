@@ -1,5 +1,8 @@
 import type { Platform } from "../../platform/types.js";
-import { readActiveUltraPlanExecution } from "../runtime/active-execution.js";
+import {
+  readActiveUltraPlanExecution,
+  readActiveUltraPlanExecutionForCwd,
+} from "../runtime/active-execution.js";
 
 export interface UltraPlanRuntimeSignalProofInput {
   kind: "proof";
@@ -55,12 +58,12 @@ export function registerUltraPlanRuntimeTools(platform: Platform): void {
       },
       required: ["kind", "summary"],
     },
-    async execute(_toolCallId: string, params: UltraPlanRuntimeSignalInput) {
-      const execution = readActiveUltraPlanExecution();
+    async execute(_toolCallId: string, params: UltraPlanRuntimeSignalInput, _signal: AbortSignal, _onUpdate: unknown, toolCtx: any) {
+      const execution = resolveActiveExecution(toolCtx);
       if (!execution) {
         return {
-          content: [{ type: "text", text: "Error: ultraplan_signal requires an active UltraPlan run." }],
-          details: { error: "ultraplan_signal requires an active UltraPlan run." },
+          content: [{ type: "text", text: "Error: ultraplan_signal requires an unambiguous active UltraPlan run." }],
+          details: { error: "ultraplan_signal requires an unambiguous active UltraPlan run." },
         };
       }
 
@@ -71,6 +74,13 @@ export function registerUltraPlanRuntimeTools(platform: Platform): void {
       };
     },
   });
+}
+
+function resolveActiveExecution(toolCtx: unknown) {
+  const cwd = typeof (toolCtx as { cwd?: unknown } | null)?.cwd === "string"
+    ? ((toolCtx as { cwd?: string }).cwd ?? null)
+    : null;
+  return cwd === null ? readActiveUltraPlanExecution() : readActiveUltraPlanExecutionForCwd(cwd);
 }
 
 function buildSignalPayload(params: UltraPlanRuntimeSignalInput): UltraPlanRuntimeSignalPayload {

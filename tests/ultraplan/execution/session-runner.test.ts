@@ -4,6 +4,7 @@ import { runUltraPlanSession } from "../../../src/ultraplan/execution/session-ru
 import {
   clearActiveUltraPlanExecution,
   readActiveUltraPlanExecution,
+  readActiveUltraPlanExecutionForAttempt,
 } from "../../../src/ultraplan/runtime/active-execution.js";
 import { makeActiveUltraPlanExecution } from "../fixtures.js";
 
@@ -128,6 +129,77 @@ describe("ultraplan session runner", () => {
 
     expect(seenDuringDispatch).toEqual(execution);
     expect(readActiveUltraPlanExecution()).toBeNull();
+  });
+
+  test("keeps overlapping executions discoverable when one worker finishes before the other", async () => {
+    const first = makeActiveUltraPlanExecution({
+      sessionId: "up-123",
+      cwd: "/repo/one",
+      launchContext: { ...makeActiveUltraPlanExecution().launchContext, attemptId: "att-001" },
+    });
+    const second = makeActiveUltraPlanExecution({
+      sessionId: "up-456",
+      cwd: "/repo/two",
+      launchContext: { ...makeActiveUltraPlanExecution().launchContext, attemptId: "att-002" },
+    });
+    const blockedFirst: UltraPlanRunOutcome = { kind: "paused", session: makeSession("blocked") };
+    const blockedSecond: UltraPlanRunOutcome = { kind: "paused", session: { ...makeSession("blocked"), sessionId: second.sessionId } };
+
+    let firstResolveCount = 0;
+    let secondResolveCount = 0;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstReady = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondReady = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    let firstDispatchStarted!: () => void;
+    let secondDispatchStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstDispatchStarted = resolve; });
+    const secondStarted = new Promise<void>((resolve) => { secondDispatchStarted = resolve; });
+
+    const firstRun = runUltraPlanSession({
+      platform: {} as any,
+      cwd: first.cwd,
+      sessionId: first.sessionId,
+      deps: {
+        resolveRunState: async () => (++firstResolveCount === 1
+          ? { kind: "attempt", execution: first }
+          : { kind: "outcome", outcome: blockedFirst }),
+        dispatch: async () => {
+          firstDispatchStarted();
+          expect(readActiveUltraPlanExecutionForAttempt(first.sessionId, first.cwd, first.launchContext.attemptId)).toEqual(first);
+          await firstReady;
+        },
+      },
+    });
+
+    const secondRun = runUltraPlanSession({
+      platform: {} as any,
+      cwd: second.cwd,
+      sessionId: second.sessionId,
+      deps: {
+        resolveRunState: async () => (++secondResolveCount === 1
+          ? { kind: "attempt", execution: second }
+          : { kind: "outcome", outcome: blockedSecond }),
+        dispatch: async () => {
+          secondDispatchStarted();
+          expect(readActiveUltraPlanExecutionForAttempt(second.sessionId, second.cwd, second.launchContext.attemptId)).toEqual(second);
+          await secondReady;
+        },
+      },
+    });
+
+    await Promise.all([firstStarted, secondStarted]);
+    expect(readActiveUltraPlanExecutionForAttempt(first.sessionId, first.cwd, first.launchContext.attemptId)).toEqual(first);
+    expect(readActiveUltraPlanExecutionForAttempt(second.sessionId, second.cwd, second.launchContext.attemptId)).toEqual(second);
+
+    releaseFirst();
+    expect(await firstRun).toEqual(blockedFirst);
+    expect(readActiveUltraPlanExecutionForAttempt(first.sessionId, first.cwd, first.launchContext.attemptId)).toBeNull();
+    expect(readActiveUltraPlanExecutionForAttempt(second.sessionId, second.cwd, second.launchContext.attemptId)).toEqual(second);
+
+    releaseSecond();
+    expect(await secondRun).toEqual(blockedSecond);
+    expect(readActiveUltraPlanExecutionForAttempt(second.sessionId, second.cwd, second.launchContext.attemptId)).toBeNull();
   });
 
   test("returns completed when policy resolves the session as complete", async () => {
