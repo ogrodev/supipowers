@@ -7,6 +7,10 @@ import {
   isUltraPlanAgentDefinitionFrontmatter,
   isUltraPlanAgentSlots,
   isUltraPlanAuthoredArtifact,
+  isUltraPlanBatchActiveRunLease,
+  isUltraPlanBatchJournalEvent,
+  isUltraPlanBatchNode,
+  isUltraPlanBatchWave,
   isUltraPlanBlocker,
   isUltraPlanCursor,
   isUltraPlanDomain,
@@ -19,8 +23,16 @@ import {
   isUltraPlanStack,
   isUltraPlanStackReview,
   validateUltraPlanAuthoredArtifact,
+  validateUltraPlanBatchRun,
 } from "../../src/ultraplan/contracts.js";
 
+import {
+  makeUltraPlanBatchActiveRunLease,
+  makeUltraPlanBatchJournalEvent,
+  makeUltraPlanBatchNode,
+  makeUltraPlanBatchRun,
+  makeUltraPlanBatchWave,
+} from "./fixtures.js";
 const proof = {
   type: "test",
   phase: "green",
@@ -269,6 +281,20 @@ const resolvedCatalog = {
   },
 };
 
+const batchNode = makeUltraPlanBatchNode();
+
+const batchWave = makeUltraPlanBatchWave();
+
+const batchRun = makeUltraPlanBatchRun({
+  waves: [batchWave],
+  nodes: [batchNode],
+});
+
+const activeRunLease = makeUltraPlanBatchActiveRunLease();
+
+const batchJournalEvent = makeUltraPlanBatchJournalEvent();
+
+
 
 
 describe("ultraplan contracts", () => {
@@ -400,6 +426,45 @@ describe("ultraplan contracts", () => {
     expect(isUltraPlanManifest({ ...manifest, authored: undefined })).toBe(false);
     expect(isUltraPlanIndexEntry({ ...indexEntry, bucket: undefined })).toBe(false);
     expect(isUltraPlanIndex({ sessions: [{ ...indexEntry, state: undefined }] })).toBe(false);
+  });
+});
+
+
+describe("ultraplan batch contracts", () => {
+  test("accepts canonical batch run artifacts", () => {
+    expect(isUltraPlanBatchNode(batchNode)).toBe(true);
+    expect(isUltraPlanBatchWave(batchWave)).toBe(true);
+    expect(validateUltraPlanBatchRun(batchRun).ok).toBe(true);
+    expect(isUltraPlanBatchActiveRunLease(activeRunLease)).toBe(true);
+    expect(isUltraPlanBatchJournalEvent(batchJournalEvent)).toBe(true);
+  });
+
+  test("requires currentBaseHead and batchResumeRequestedAt in batch runs", () => {
+    const { currentBaseHead: _currentBaseHead, ...missingCurrentBaseHead } = batchRun;
+    const { batchResumeRequestedAt: _batchResumeRequestedAt, ...missingBatchResumeRequestedAt } = batchRun;
+
+    expect(validateUltraPlanBatchRun(missingCurrentBaseHead).ok).toBe(false);
+    expect(validateUltraPlanBatchRun(missingBatchResumeRequestedAt).ok).toBe(false);
+  });
+
+  test("rejects semantically invalid batch graphs", () => {
+    expect(validateUltraPlanBatchRun({
+      ...batchRun,
+      waves: [{ waveIndex: 0, sessionIds: ["missing-session"] }],
+    }).ok).toBe(false);
+
+    expect(validateUltraPlanBatchRun({
+      ...batchRun,
+      nodes: [{ ...batchNode, dependencies: ["missing-session"] }],
+    }).ok).toBe(false);
+  });
+
+  test("rejects invalid active-run lease shapes", () => {
+    expect(isUltraPlanBatchActiveRunLease({ ...activeRunLease, ownerSessionId: undefined })).toBe(false);
+    expect(isUltraPlanBatchActiveRunLease({ ...activeRunLease, leaseExpiresAt: undefined })).toBe(false);
+    expect(isUltraPlanBatchActiveRunLease({ ...activeRunLease, ownerSessionId: null })).toBe(false);
+    expect(isUltraPlanBatchActiveRunLease({ ...activeRunLease, leaseExpiresAt: null })).toBe(false);
+    expect(isUltraPlanBatchActiveRunLease({ ...activeRunLease, leaseAcquiredAt: "not-a-date" })).toBe(false);
   });
 });
 

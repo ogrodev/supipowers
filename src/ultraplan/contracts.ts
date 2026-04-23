@@ -11,6 +11,16 @@ import type {
   UltraPlanAttemptOutcome,
   UltraPlanAttemptRecord,
   UltraPlanAuthoredArtifact,
+  UltraPlanBatchActiveRunLease,
+  UltraPlanBatchBlockerCode,
+  UltraPlanBatchJournalEvent,
+  UltraPlanBatchJournalEventType,
+  UltraPlanBatchNode,
+  UltraPlanBatchNodeBlockerKind,
+  UltraPlanBatchNodeState,
+  UltraPlanBatchRun,
+  UltraPlanBatchRunState,
+  UltraPlanBatchWave,
   UltraPlanBlocker,
   UltraPlanBlockerCandidate,
   UltraPlanBlockerScope,
@@ -39,6 +49,7 @@ import type {
   UltraPlanStack,
   UltraPlanStackReview,
 } from "../types.js";
+import { getUltraPlanBatchGraphErrors } from "./batch/planner.js";
 
 export type {
   ResolvedUltraPlanCatalog,
@@ -49,6 +60,16 @@ export type {
   UltraPlanAttemptOutcome,
   UltraPlanAttemptRecord,
   UltraPlanAuthoredArtifact,
+  UltraPlanBatchActiveRunLease,
+  UltraPlanBatchBlockerCode,
+  UltraPlanBatchJournalEvent,
+  UltraPlanBatchJournalEventType,
+  UltraPlanBatchNode,
+  UltraPlanBatchNodeBlockerKind,
+  UltraPlanBatchNodeState,
+  UltraPlanBatchRun,
+  UltraPlanBatchRunState,
+  UltraPlanBatchWave,
   UltraPlanBlocker,
   UltraPlanBlockerCandidate,
   UltraPlanBlockerScope,
@@ -68,6 +89,7 @@ export type {
   UltraPlanProofCandidate,
   UltraPlanReducerAction,
   UltraPlanRepairAction,
+  UltraPlanReviewerSlotName,
   UltraPlanRuntimeTracker,
   UltraPlanScenario,
   UltraPlanSessionMigrationKind,
@@ -1207,4 +1229,192 @@ export function isUltraPlanSessionMigrationRecord(value: unknown): value is Ultr
 
 export function isUltraPlanRepairAction(value: unknown): value is UltraPlanRepairAction {
   return Value.Check(UltraPlanRepairActionSchema, value);
+}
+
+
+// ---------------------------------------------------------------------------
+// Slice 7 batch orchestration contracts.
+// ---------------------------------------------------------------------------
+
+export const ULTRAPLAN_BATCH_RUN_STATES = ["paused", "running", "blocked", "complete", "abandoned"] as const;
+export const ULTRAPLAN_BATCH_NODE_STATES = [
+  "pending",
+  "preparing",
+  "running",
+  "merge-pending",
+  "paused",
+  "blocked",
+  "awaiting-user",
+  "merged",
+  "abandoned",
+] as const;
+export const ULTRAPLAN_BATCH_NODE_BLOCKER_KINDS = ["dependency", "session", "merge", "supervisor"] as const;
+export const ULTRAPLAN_BATCH_BLOCKER_CODES = [
+  "project-identity-failed",
+  "invalid-run",
+  "supervisor-worktree-invalid",
+  "base-drift",
+  "merge-blocked",
+] as const;
+export const ULTRAPLAN_BATCH_JOURNAL_EVENT_TYPES = [
+  "run-created",
+  "lease-acquired",
+  "lease-released",
+  "node-preparing",
+  "node-running",
+  "node-paused",
+  "node-blocked",
+  "node-awaiting-user",
+  "node-merge-pending",
+  "node-merged",
+  "node-abandoned",
+  "cleanup-warning",
+] as const;
+
+export const UltraPlanBatchWaveSchema = Type.Object(
+  {
+    waveIndex: Type.Number({ minimum: 0 }),
+    sessionIds: Type.Array(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanBatchNodeSchema = Type.Object(
+  {
+    nodeId: Type.String({ minLength: 1 }),
+    sessionId: Type.String({ minLength: 1 }),
+    title: Type.String({ minLength: 1 }),
+    waveIndex: Type.Number({ minimum: 0 }),
+    dependencies: Type.Array(Type.String({ minLength: 1 })),
+    state: literalUnion(ULTRAPLAN_BATCH_NODE_STATES),
+    blockerKind: Type.Union([literalUnion(ULTRAPLAN_BATCH_NODE_BLOCKER_KINDS), Type.Null()]),
+    blockerSummary: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    resumeRequestedAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    branchName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    worktreePath: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    updatedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanBatchRunSchema = Type.Object(
+  {
+    runId: Type.String({ minLength: 1 }),
+    projectRoot: Type.String({ minLength: 1 }),
+    baseBranch: Type.String({ minLength: 1 }),
+    baseHead: Type.String({ minLength: 1 }),
+    currentBaseHead: Type.String({ minLength: 1 }),
+    createdAt: Type.String({ minLength: 1 }),
+    updatedAt: Type.String({ minLength: 1 }),
+    state: literalUnion(ULTRAPLAN_BATCH_RUN_STATES),
+    maxParallelism: Type.Number({ minimum: 1 }),
+    batchBlockerCode: Type.Union([literalUnion(ULTRAPLAN_BATCH_BLOCKER_CODES), Type.Null()]),
+    batchBlockerSummary: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    batchResumeRequestedAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    supervisorWorktreePath: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    waves: Type.Array(UltraPlanBatchWaveSchema),
+    nodes: Type.Array(UltraPlanBatchNodeSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanBatchActiveRunLeaseSchema = Type.Object(
+  {
+    runId: Type.String({ minLength: 1 }),
+    ownerSessionId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    leaseAcquiredAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    leaseExpiresAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    updatedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanBatchJournalEventSchema = Type.Object(
+  {
+    runId: Type.String({ minLength: 1 }),
+    sessionId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    type: literalUnion(ULTRAPLAN_BATCH_JOURNAL_EVENT_TYPES),
+    recordedAt: Type.String({ minLength: 1 }),
+    summary: Type.String({ minLength: 1 }),
+    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { additionalProperties: false },
+);
+
+function parseBatchLeaseTimestamp(errors: string[], fieldName: string, value: string | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  const millis = Date.parse(value);
+  if (!Number.isFinite(millis)) {
+    errors.push(`${fieldName} must be a valid ISO timestamp`);
+    return null;
+  }
+  return millis;
+}
+
+function getUltraPlanBatchActiveRunLeaseSemanticErrors(lease: UltraPlanBatchActiveRunLease): string[] {
+  const errors: string[] = [];
+  const hasOwner = lease.ownerSessionId !== null;
+  const hasAcquiredAt = lease.leaseAcquiredAt !== null;
+  const hasExpiresAt = lease.leaseExpiresAt !== null;
+  if (hasOwner !== hasAcquiredAt || hasOwner !== hasExpiresAt) {
+    return ["lease ownerSessionId, leaseAcquiredAt, and leaseExpiresAt must be all present or all null"];
+  }
+
+  const acquiredAt = parseBatchLeaseTimestamp(errors, "leaseAcquiredAt", lease.leaseAcquiredAt);
+  const expiresAt = parseBatchLeaseTimestamp(errors, "leaseExpiresAt", lease.leaseExpiresAt);
+  if (acquiredAt !== null && expiresAt !== null && expiresAt <= acquiredAt) {
+    errors.push("leaseExpiresAt must be after leaseAcquiredAt");
+  }
+
+  return errors;
+}
+
+export function validateUltraPlanBatchRun(value: unknown) {
+  const validation = buildValidationResult<UltraPlanBatchRun>(UltraPlanBatchRunSchema, value);
+  if (!validation.ok) {
+    return validation;
+  }
+
+  const semanticErrors = getUltraPlanBatchGraphErrors(validation.value);
+  if (semanticErrors.length > 0) {
+    return { ok: false, errors: semanticErrors } as const;
+  }
+
+  return validation;
+}
+
+export function validateUltraPlanBatchActiveRunLease(value: unknown) {
+  const validation = buildValidationResult<UltraPlanBatchActiveRunLease>(UltraPlanBatchActiveRunLeaseSchema, value);
+  if (!validation.ok) {
+    return validation;
+  }
+
+  const semanticErrors = getUltraPlanBatchActiveRunLeaseSemanticErrors(validation.value);
+  if (semanticErrors.length > 0) {
+    return { ok: false, errors: semanticErrors } as const;
+  }
+
+  return validation;
+}
+
+export function isUltraPlanBatchWave(value: unknown): value is UltraPlanBatchWave {
+  return Value.Check(UltraPlanBatchWaveSchema, value);
+}
+
+export function isUltraPlanBatchNode(value: unknown): value is UltraPlanBatchNode {
+  return Value.Check(UltraPlanBatchNodeSchema, value);
+}
+
+export function isUltraPlanBatchRun(value: unknown): value is UltraPlanBatchRun {
+  return validateUltraPlanBatchRun(value).ok;
+}
+
+export function isUltraPlanBatchActiveRunLease(value: unknown): value is UltraPlanBatchActiveRunLease {
+  return validateUltraPlanBatchActiveRunLease(value).ok;
+}
+
+export function isUltraPlanBatchJournalEvent(value: unknown): value is UltraPlanBatchJournalEvent {
+  return Value.Check(UltraPlanBatchJournalEventSchema, value);
 }
