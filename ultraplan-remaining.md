@@ -1,7 +1,7 @@
 ---
 name: ultraplan-remaining-slices-audit
 created: 2026-04-19
-updated: 2026-04-21
+updated: 2026-04-22
 status: draft
 tags: [ultraplan, audit, planning, roadmap]
 ---
@@ -10,7 +10,7 @@ tags: [ultraplan, audit, planning, roadmap]
 
 ## Goal
 
-Capture where the ultraplan implementation currently stands after slices 1, 2, 3, and 4, what remains for slices 5 and 6, the dependency order between those slices, and a low-effort checklist of the next phases.
+Capture where the ultraplan implementation currently stands after slices 1, 2, 3, 4, 5, 6, and 7, the dependency order between the landed slices, and a low-effort checklist of the next phase.
 
 ## Scope
 
@@ -24,7 +24,7 @@ Read skill://harness-engineering to have context of the mindset of a good harnes
 
 ## Current state
 
-The codebase currently has slices 1, 2, 3, and 4 implemented.
+The codebase currently has slices 1, 2, 3, 4, 5, 6, and 7 implemented.
 
 Slice 1 substrate in code:
 
@@ -33,8 +33,8 @@ Slice 1 substrate in code:
 - validated storage helpers exist for index, manifest, authored, and review artifacts
 - deterministic session bucketing and cursor recompute logic exist
 - presenter helpers exist for picker/status output
-- `/supi:ultraplan run` and `/supi:ultraplan status` command scaffolding exist
-- bare `/supi:ultraplan next` is still intentionally deferred to a later phase
+- `/supi:ultraplan run`, `/supi:ultraplan status`, and `/supi:ultraplan next` command surfaces now exist
+- deterministic router ranking, inspect-safe picker routing, and advisory `setStatus` / `setWidget` projection now exist for local Slice 6 UX
 
 Slice 3 substrate in code:
 
@@ -53,7 +53,7 @@ Slice 4 substrate in code:
 - `renderUltraPlanAuthoredDraft` in `src/ultraplan/presenter.ts` drives the review screen with deterministic output and readiness-blocker annotations
 - approved sessions round-trip through `loadUltraPlanIndex` / `loadUltraPlanSessionSummary` / `getVisibleUltraPlanSessions` / `resolveUltraPlanCurrentCursor` and appear in `/supi:ultraplan run` and `/supi:ultraplan status` with `state: "ready"` and a red/planned cursor
 
-## Completed substrate from slices 1, 2, 3, and 4
+## Completed substrate from slices 1, 2, 3, 4, 5, and 6
 
 | Capability                                         | Status | Existing implementation |
 | -------------------------------------------------- | ------ | ----------------------- |
@@ -62,10 +62,11 @@ Slice 4 substrate in code:
 | Validated storage layer                            | Done   | `src/ultraplan/storage.ts` |
 | Deterministic session selection / cursor recompute | Done   | `src/ultraplan/session-selection.ts` |
 | Picker/status presentation helpers                 | Done   | `src/ultraplan/presenter.ts` |
-| `/supi:ultraplan run` / `status` command shell     | Done   | `src/commands/ultraplan.ts`, `src/bootstrap.ts` |
+| `/supi:ultraplan run` / `status` / `next` command shell | Done | `src/commands/ultraplan.ts`, `src/bootstrap.ts` |
 | Root-only ultraplan config surface                 | Done   | `src/types.ts`, `src/config/schema.ts`, `src/config/loader.ts` |
 | Specialized agent catalog + built-in defaults      | Done   | `src/ultraplan/agent-catalog.ts`, `src/ultraplan/default-agents/` |
 | Authoring wizard (draft + persist + review)        | Done   | `src/ultraplan/authoring-draft.ts`, `src/ultraplan/authoring-persist.ts`, `src/ultraplan/authoring-wizard.ts`, `src/ultraplan/presenter.ts` |
+| Local router ranking + advisory UX projection      | Done   | `src/ultraplan/next-router.ts`, `src/ultraplan/presenter.ts`, `src/commands/ultraplan.ts` |
 
 ## Slice-by-slice status
 
@@ -118,34 +119,40 @@ Delivered constraints:
 
 - single-session orchestration only
 - no batching, waves, or worktree fan-out
-- no `/supi:ultraplan next` router yet
 
-### Slice 6 — Optional router + advanced UX
+### Slice 6 — Optional router + advanced UX — Implemented
 
-Purpose:
+Implemented scope:
 
-- improve usability after the core single-session execution path is working
+- `/supi:ultraplan next` now recommends the next local session to run or inspect using deterministic router ordering
+- `/supi:ultraplan run` and `/supi:ultraplan status` now share the same local picker ranking: runnable sessions first, inspect-only sessions after them, with done sessions trailing in title/sessionId order for status
+- inspect-only selections route to the detailed status path instead of falling through to execution
+- presenter helpers now expose deterministic recommendation summaries and compact status lines for local UX surfaces
+- command-owned advisory projection now mirrors the compact recommendation line to `setStatus` / `setWidget` when available and clears stale content when no valid recommendation exists
 
-May cover:
+Constraints that remain explicit:
 
-- `/supi:ultraplan next`
-- richer picker/status UX
-- inline hints if locally feasible without upstream OMP changes
-
-Not yet implemented:
-
-- next-action router
-- advanced picker polish
-- richer status drilldowns
+- no upstream-dependent inline hinting
+- canonical references: plan `.omp/supipowers/plans/2026-04-21-ultraplan-slice-6-router-and-advanced-ux.md`; spec `.omp/supipowers/specs/2026-04-21-ultraplan-slice-6-router-and-advanced-ux-design.md`
 
 ### Slice 7 — Batched execution + worktree orchestration
 
-Deferred follow-up:
+Verified scope in code:
 
-- wave planning across multiple authored sessions
-- batching / fan-out scheduling
-- dedicated worktree orchestration for parallel or isolated execution
-- any execution model that goes beyond the Slice 5 single-session run loop
+- `/supi:ultraplan run` now starts or resumes a real batch supervisor path instead of persisting a summary-only placeholder run
+- live batch supervision persists canonical `run.json`, acquires/releases `active-run.json` ownership, appends journal events, prepares deterministic worktrees, dispatches workers, and applies merge/reconciliation decisions until the run stabilizes
+- concurrent frontier workers now overlap safely via the multi-entry active-execution registry; global runtime resolution fails closed when ambiguous and `ultraplan_signal` resolves by unique worker cwd
+- planner/storage validation now enforces node↔wave coherence, duplicate/session/wave guards, dependency validity, and stale/invalid lease semantics
+- command-level and storage/runtime regression coverage now proves real batch start, active batch resume, blocked-owner fail-closed behavior, overlapping execution isolation, and hardened lease ownership rules
+
+Current explicit boundary:
+
+- the start UI is still a deterministic session-id + max-parallelism planner; it seeds a single-wave/no-dependency batch graph at creation time
+- richer `waves[]` / dependency graphs remain modeled and validated in persisted batch-run state, but they are not yet edited through an interactive planner surface
+
+Canonical references:
+
+- plan `.omp/supipowers/plans/2026-04-21-ultraplan-slice-7-batched-execution-and-worktree-orchestration.md`
 
 ## Dependency order
 
@@ -164,18 +171,18 @@ The stable sequencing is:
 - Slice 2 should land before real execution, because execution needs runtime-owned proof and recovery semantics.
 - Slice 3 has landed and is already available for later authoring/execution work.
 - Slice 4 has landed. Authored sessions now exist and are picked up by `/supi:ultraplan run` and `/supi:ultraplan status`.
-- Slice 5 has landed for strict single-session orchestration; batching and worktree fan-out remain explicitly deferred to Slice 7.
-- Slice 6 is optional polish and should remain after the core single-session execution path.
-- Slice 7 is intentionally last because it builds on the Slice 5 runtime truth model instead of inventing a parallel executor.
+- Slice 5 has landed for strict single-session orchestration and now serves as the worker engine under Slice 7 batch supervision.
+- Slice 6 has landed as local-only router and advanced UX polish; it intentionally stops short of upstream-dependent inline hinting.
+- Slice 7 recovery has landed with a truthful start/resume supervisor path, hardened lease/runtime boundaries, and validated batch-run state; the remaining gap is interactive wave/dependency authoring, not supervisor truth.
 
 ## Phase checklist
 
 Use this as the low-effort “what’s next” tracker:
 
-- [x] Slice 1 — Data model + storage + picker/status
+- [x] Slice 1 — Data model + storage + picker/status (plan: `.omp/supipowers/plans/2026-04-19-ultraplan-substrate-phase-1.md`; spec: `.omp/supipowers/specs/2026-04-19-ultraplan-parent-design.md`)
 - [x] Slice 2 — Hook tracker + recovery engine (plan: `.omp/supipowers/plans/2026-04-20-ultraplan-slice-2.md`; specs: `.omp/supipowers/specs/2026-04-19-ultraplan-slice-2-runtime-design.md` + `.omp/supipowers/specs/2026-04-20-ultraplan-slice-2-storage-and-migration-delta.md`)
-- [x] Slice 3 — Specialized agent catalog
+- [x] Slice 3 — Specialized agent catalog (plan: `.omp/supipowers/plans/2026-04-20-ultraplan-slice-3-agent-catalog.md`; spec: `.omp/supipowers/specs/2026-04-20-ultraplan-slice-3-agent-catalog-design.md`)
 - [x] Slice 4 — Authoring flow (plan: `.omp/supipowers/plans/2026-04-21-ultraplan-slice-4.md`; spec: `.omp/supipowers/specs/2026-04-21-ultraplan-slice-4-authoring-flow-design.md`)
-- [x] Slice 5 — Execution orchestration (single-session run loop)
-- [ ] Slice 6 — Optional router + advanced UX
-- [ ] Slice 7 — Batched execution + worktree orchestration
+- [x] Slice 5 — Execution orchestration (single-session run loop) (plan: `.omp/supipowers/plans/2026-04-21-ultraplan-slice-5-execution-orchestration.md`; spec: `.omp/supipowers/specs/2026-04-21-ultraplan-slice-5-execution-orchestration-design.md`)
+- [x] Slice 6 — Optional router + advanced UX (plan: `.omp/supipowers/plans/2026-04-21-ultraplan-slice-6-router-and-advanced-ux.md`; spec: `.omp/supipowers/specs/2026-04-21-ultraplan-slice-6-router-and-advanced-ux-design.md`)
+- [x] Slice 7 — Batched execution + worktree orchestration (plan: `.omp/supipowers/plans/2026-04-21-ultraplan-slice-7-batched-execution-and-worktree-orchestration.md`; spec: `.omp/supipowers/specs/2026-04-21-ultraplan-slice-7-batched-execution-and-worktree-orchestration-design.md`)
