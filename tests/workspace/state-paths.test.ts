@@ -5,7 +5,7 @@ import {
   getRootConfigPath,
   getRootStateDir,
   getTargetStateDir,
-  getTargetStatePath,
+  getLocalTargetStatePath,
   getWorkspaceStateDir,
 } from "../../src/workspace/state-paths.js";
 import type { WorkspaceTarget } from "../../src/types.js";
@@ -38,7 +38,7 @@ describe("workspace state paths", () => {
     expect(getWorkspaceStateDir(paths, "/repo", "packages/pkg-a")).toBe(
       path.join("/repo", ".omp", "supipowers", "workspaces", "packages", "pkg-a"),
     );
-    expect(getTargetStatePath(paths, target("@repo/pkg-a", "packages/pkg-a"), "reviews", "session.json")).toBe(
+    expect(getLocalTargetStatePath(paths, target("@repo/pkg-a", "packages/pkg-a"), "reviews", "session.json")).toBe(
       path.join("/repo", ".omp", "supipowers", "workspaces", "packages", "pkg-a", "reviews", "session.json"),
     );
   });
