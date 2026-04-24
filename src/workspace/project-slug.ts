@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 /**
+ * Version of the slug derivation scheme. Bumping this is a breaking change: every user's
+ * global state directories become orphaned because their previously derived slugs no longer
+ * match what {@link projectSlugFromRepoRoot} produces. Do not bump without a migration plan.
+ */
+export const SLUG_SCHEMA_VERSION = 1;
+
+/**
  * Fixed length of the hex hash suffix that appears after the human-readable basename portion.
  * 16 hex chars = 64 bits, which makes accidental collisions vanishingly unlikely while keeping
  * slugs readable on disk.
@@ -82,5 +89,4 @@ function stripTrailingSeparators(value: string): string {
     return value.slice(0, Math.max(end, 3));
   }
   return value.slice(0, end);
-
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-import { projectSlugFromRepoRoot } from "../../../src/ultraplan/runtime/project-slug.js";
+import { SLUG_SCHEMA_VERSION, projectSlugFromRepoRoot } from "../../src/workspace/project-slug.js";
 
 describe("projectSlugFromRepoRoot", () => {
   test("returns identical slug for identical absolute repo root", () => {
@@ -25,6 +25,14 @@ describe("projectSlugFromRepoRoot", () => {
     const b = projectSlugFromRepoRoot("/Users/bob/code/supipowers");
 
     expect(a).not.toBe(b);
+  });
+
+  test("returns distinct slugs for two clones of the same repo at different absolute roots", () => {
+    // Prevent the "two clones collide in the global projects dir" regression.
+    const repoA = projectSlugFromRepoRoot("/tmp/clones/repo-a");
+    const repoB = projectSlugFromRepoRoot("/tmp/clones/repo-b");
+
+    expect(repoA).not.toBe(repoB);
   });
 
   test("is normalization-stable: trailing slash or redundant separators do not change the slug", () => {
@@ -62,5 +70,9 @@ describe("projectSlugFromRepoRoot", () => {
     const runs = Array.from({ length: 8 }, () => projectSlugFromRepoRoot(input));
     const unique = new Set(runs);
     expect(unique.size).toBe(1);
+  });
+
+  test("SLUG_SCHEMA_VERSION is 1 and is frozen until a migration lands", () => {
+    expect(SLUG_SCHEMA_VERSION).toBe(1);
   });
 });
