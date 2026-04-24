@@ -5,11 +5,26 @@ import { dirname, join } from "node:path";
 
 const isWindows = process.platform === "win32";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// When invoked via bunx/npx, always force a full install to guarantee
-// node_modules/ and a consistent extension directory. The --force flag
-// bypasses the "already up to date" version check.
-const args = [join(__dirname, "install.ts"), "--force", ...process.argv.slice(2)];
-const result = spawnSync("bun", args, {
+
+const userArgs = process.argv.slice(2);
+const subcommand = userArgs[0];
+
+let script;
+let scriptArgs;
+
+if (subcommand === "migrate") {
+  // `bunx supipowers migrate [...]` — execution-state migration.
+  script = join(__dirname, "migrate.ts");
+  scriptArgs = userArgs.slice(1);
+} else {
+  // Default: installer flow. When invoked via bunx/npx, always force a full
+  // install to guarantee node_modules/ and a consistent extension directory.
+  // The --force flag bypasses the "already up to date" version check.
+  script = join(__dirname, "install.ts");
+  scriptArgs = ["--force", ...userArgs];
+}
+
+const result = spawnSync("bun", [script, ...scriptArgs], {
   stdio: "inherit",
   env: process.env,
   shell: isWindows,
