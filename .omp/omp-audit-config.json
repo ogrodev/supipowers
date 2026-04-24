@@ -1,6 +1,6 @@
 {
-  "lastAnalyzedVersion": "14.1.2",
-  "supipowersVersionAtLastAudit": "1.5.0",
-  "lastAuditDate": "2026-04-14",
+  "lastAnalyzedVersion": "14.2.0",
+  "supipowersVersionAtLastAudit": "1.5.3",
+  "lastAuditDate": "2026-04-24",
   "auditOutputFile": "OMP_CHANGELOG_AUDIT.md"
 }

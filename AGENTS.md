@@ -120,11 +120,30 @@ supipowers/
 │   └── install.ts            # Interactive CLI installer (@clack/prompts)
 ├── docs/                     # Project documentation
 │   └── supipowers/           # Supipowers-specific docs
-└── .omp/supipowers/          # Runtime data (gitignored)
-    ├── config.json           # Project-level config override
+├── .omp/supipowers/          # Team-shared config (committed subset; gitignored by default)
+│   ├── config.json           # Project-level config override
+│   ├── model.json            # Model overrides
+│   ├── fix-pr.json / e2e-qa.json / e2e-matrix.json / ui-design.json
+│   ├── review-agents/        # User-configurable AI review agents + config.yml
+
+**Execution state is keyed by a deterministic project slug** (`<basename>-<16-hex sha256 of the repo identity root>`) under `~/.omp/supipowers/projects/<slug>/`. Two clones of the same repo at different absolute paths get distinct slugs, so they never collide; linked worktrees of one repo converge on a single slug via `resolveRepoIdentityRootFromFs`.
+
+**Migration.** Older installs keep per-invocation state under `<cwd>/.omp/supipowers/<dir>`. Run `bunx supipowers migrate` once per repo to relocate it; the migrator is idempotent (marker file), fail-closed on conflicts, and refuses to move live SQLite databases. Pass `--force` to re-run after a conflict is resolved.
+│   ├── mcpc/ / .mcp.json / .mcp.lock
+│   └── .migration-v2.json    # Execution-state migration marker (written by `bunx supipowers migrate`)
+└── ~/.omp/supipowers/projects/<slug>/
     ├── plans/                # Saved plan markdown files
-    ├── review-agents/        # User-configurable AI review agents + config.yml
-    └── reviews/              # Persisted /supi:review sessions
+    ├── reviews/              # Persisted /supi:review sessions
+    ├── reports/              # /supi:checks report JSON
+    ├── fix-pr-sessions/
+    ├── qa-sessions/
+    ├── reliability/events.jsonl
+    ├── debug/*.jsonl
+    ├── visual/<sessionId>/
+    ├── ui-design/<sessionId>/
+    ├── sessions/events.db     # supi-context-mode event store
+    ├── doc-drift.json
+    └── ultraplans/           # UltraPlan state (pre-existing global layout)
 
 ---
 
