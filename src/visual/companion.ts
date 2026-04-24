@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { VisualServerInfo, VisualEvent } from "./types.js";
 import { normalizeLineEndings } from "../text.js";
 import type { PlatformPaths } from "../platform/types.js";
+import { getProjectStatePath } from "../workspace/state-paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,7 +19,7 @@ export function generateVisualSessionId(): string {
 
 /** Create the session directory and return its path */
 export function createSessionDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
-  const sessionDir = paths.project(cwd, "visual", sessionId);
+  const sessionDir = getProjectStatePath(paths, cwd, "visual", sessionId);
   fs.mkdirSync(sessionDir, { recursive: true });
   return sessionDir;
 }

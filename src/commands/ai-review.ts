@@ -28,7 +28,7 @@ import {
   selectWorkspaceTarget,
   type WorkspaceTargetOption,
 } from "../workspace/selector.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getProjectStatePath, getProjectTargetStatePath } from "../workspace/state-paths.js";
 import { discoverWorkspaceTargets } from "../workspace/targets.js";
 import type {
   ConfiguredReviewAgent,
@@ -572,8 +572,8 @@ function buildSavedSessionPath(
   selectedTarget: WorkspaceTarget | null,
 ): string {
   return selectedTarget
-    ? getTargetStatePath(platform.paths, selectedTarget, "reviews", session.id)
-    : platform.paths.project(ctx.cwd, "reviews", session.id);
+    ? getProjectTargetStatePath(platform.paths, selectedTarget, "reviews", session.id)
+    : getProjectStatePath(platform.paths, ctx.cwd, "reviews", session.id);
 }
 
 function buildActionLabel(action: ReviewPostConsolidationAction | null): string {

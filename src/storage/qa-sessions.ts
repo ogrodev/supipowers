@@ -2,15 +2,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
 import type { WorkspaceTarget } from "../types.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getProjectStatePath, getProjectTargetStatePath } from "../workspace/state-paths.js";
 import type { E2eSessionLedger } from "../qa/types.js";
 
 function getSessionsDir(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): string {
   if (target) {
-    return getTargetStatePath(paths, target, "qa-sessions");
+    return getProjectTargetStatePath(paths, target, "qa-sessions");
   }
 
-  return paths.project(cwd, "qa-sessions");
+  return getProjectStatePath(paths, cwd, "qa-sessions");
 }
 
 export function getSessionDir(paths: PlatformPaths, cwd: string, sessionId: string, target?: WorkspaceTarget): string {

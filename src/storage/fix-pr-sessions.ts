@@ -3,12 +3,12 @@ import * as path from "node:path";
 import type { FixPrSessionLedger } from "../fix-pr/types.js";
 import type { PlatformPaths } from "../platform/types.js";
 import type { WorkspaceTarget } from "../types.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getProjectTargetStatePath } from "../workspace/state-paths.js";
 
 const SESSIONS_DIR = "fix-pr-sessions";
 
 function getBaseDir(paths: PlatformPaths, target: WorkspaceTarget): string {
-  return getTargetStatePath(paths, target, SESSIONS_DIR);
+  return getProjectTargetStatePath(paths, target, SESSIONS_DIR);
 }
 
 export function getSessionDir(paths: PlatformPaths, target: WorkspaceTarget, sessionId: string): string {

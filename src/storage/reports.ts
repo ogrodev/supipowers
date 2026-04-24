@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
 import type { GateResult, GateStatus, ReviewReport, WorkspaceTarget } from "../types.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getProjectTargetStatePath } from "../workspace/state-paths.js";
 
 function getReportsDir(paths: PlatformPaths, target: WorkspaceTarget): string {
-  return getTargetStatePath(paths, target, "reports");
+  return getProjectTargetStatePath(paths, target, "reports");
 }
 
 function isGateStatus(value: unknown): value is GateStatus {

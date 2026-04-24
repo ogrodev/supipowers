@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { applyModelOverride } from "../config/model-resolver.js";
 import type { Platform, PlatformPaths } from "../platform/types.js";
+import { getProjectStatePath } from "../workspace/state-paths.js";
 import type { Manifest, ManifestStatus, UiDesignSession } from "./types.js";
 
 /**
@@ -89,7 +90,7 @@ export function generateUiDesignSessionId(): string {
 }
 
 export function createSessionDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
-  const dir = paths.project(cwd, "ui-design", sessionId);
+  const dir = getProjectStatePath(paths, cwd, "ui-design", sessionId);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -763,14 +764,22 @@ function discardSessionDir(sessionDir: string): void {
   }
 }
 
-function getUiDesignWritePath(toolName: string, input: Record<string, unknown>): string | undefined {
+function getUiDesignWritePaths(toolName: string, input: Record<string, unknown>): string[] | undefined {
   switch (toolName) {
     case "write":
-    case "edit":
     case "ast_edit":
-      return typeof input.path === "string" ? input.path : "";
+      return [typeof input.path === "string" ? input.path : ""];
+    case "edit": {
+      const edits = Array.isArray(input.edits) ? input.edits : [];
+      if (edits.length === 0) return [""];
+      return edits.map((edit) =>
+        edit && typeof edit === "object" && !Array.isArray(edit) && typeof (edit as { path?: unknown }).path === "string"
+          ? (edit as { path: string }).path
+          : "",
+      );
+    }
     case "notebook":
-      return typeof input.notebook_path === "string" ? input.notebook_path : "";
+      return [typeof input.notebook_path === "string" ? input.notebook_path : ""];
     default:
       return undefined;
   }
@@ -795,23 +804,26 @@ export function registerUiDesignToolGuard(platform: Platform): void {
       };
     }
 
-    const candidatePath = getUiDesignWritePath(
+    const candidatePaths = getUiDesignWritePaths(
       event.toolName,
       (event.input ?? {}) as Record<string, unknown>,
     );
-    if (candidatePath === undefined) return;
-    if (candidatePath.length === 0) {
-      return {
-        block: true,
-        reason: `UI-design mode: cannot verify ${event.toolName} without a path under \`${session.dir}\`.`,
-      };
-    }
+    if (candidatePaths === undefined) return;
 
-    if (!resolvePathWithinDir(session.dir, candidatePath, [session.dir, process.cwd()])) {
-      return {
-        block: true,
-        reason: `UI-design mode: ${event.toolName} may only write inside \`${session.dir}\`.`,
-      };
+    for (const candidatePath of candidatePaths) {
+      if (candidatePath.trim().length === 0) {
+        return {
+          block: true,
+          reason: `UI-design mode: cannot verify ${event.toolName} without a path under \`${session.dir}\`.`,
+        };
+      }
+
+      if (!resolvePathWithinDir(session.dir, candidatePath, [session.dir, process.cwd()])) {
+        return {
+          block: true,
+          reason: `UI-design mode: ${event.toolName} may only write inside \`${session.dir}\`.`,
+        };
+      }
     }
   });
 }

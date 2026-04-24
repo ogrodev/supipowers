@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
+import { getProjectStatePath } from "../workspace/state-paths.js";
 
 export type DebugSessionContext = {
   cwd?: string;
@@ -74,7 +75,7 @@ export function createDebugLogger(
     };
   }
 
-  const filePath = paths.project(cwd, "debug", `tool-${sanitizedTool}__session-${sessionId}.jsonl`);
+  const filePath = getProjectStatePath(paths, cwd, "debug", `tool-${sanitizedTool}__session-${sessionId}.jsonl`);
 
   const logger: DebugLogger = {
     enabled: true,

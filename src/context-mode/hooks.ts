@@ -14,6 +14,7 @@ import { readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerUltraPlanHookBridge } from "../ultraplan/runtime/hook-bridge.js";
+import { getProjectStatePath } from "../workspace/state-paths.js";
 
 type SessionContextLike = {
   cwd?: string;
@@ -50,7 +51,7 @@ function deriveSessionId(ctx?: SessionContextLike): string {
 }
 
 function getSessionDbPath(platform: Platform, cwd: string): string {
-  return join(platform.paths.project(cwd, "sessions"), "events.db");
+  return join(getProjectStatePath(platform.paths, cwd, "sessions"), "events.db");
 }
 
 /** Register supi-context-mode hooks on the platform */
@@ -77,7 +78,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
     }
 
     try {
-      mkdirSync(platform.paths.project(cwd, "sessions"), { recursive: true });
+      mkdirSync(getProjectStatePath(platform.paths, cwd, "sessions"), { recursive: true });
       eventStore = new EventStore(dbPath);
       eventStore.init();
       eventStore.pruneOldSessions(7);
@@ -100,7 +101,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   // Initialize knowledge store for native ctx_* tools (independent of event tracking)
   let knowledgeStore: KnowledgeStore | null = null;
   try {
-    const sessionsDir = platform.paths.project(sessionCwd, "sessions");
+    const sessionsDir = getProjectStatePath(platform.paths, sessionCwd, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     const kdbPath = join(sessionsDir, "knowledge.db");
     knowledgeStore = new KnowledgeStore(kdbPath);

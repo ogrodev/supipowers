@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
 import { isReviewSession } from "../review/types.js";
 import type { ReviewSession, WorkspaceTarget } from "../types.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getProjectStatePath, getProjectTargetStatePath } from "../workspace/state-paths.js";
 
 const SESSIONS_DIR = "reviews";
 const ITERATIONS_DIR = "iterations";
@@ -11,8 +11,8 @@ const AGENTS_DIR = "agents";
 
 function getSessionsDir(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget | null): string {
   return target
-    ? getTargetStatePath(paths, target, SESSIONS_DIR)
-    : paths.project(cwd, SESSIONS_DIR);
+    ? getProjectTargetStatePath(paths, target, SESSIONS_DIR)
+    : getProjectStatePath(paths, cwd, SESSIONS_DIR);
 }
 
 function ensureLayout(sessionDir: string): void {

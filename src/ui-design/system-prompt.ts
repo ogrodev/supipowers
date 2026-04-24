@@ -247,7 +247,7 @@ function buildCriticalBlock(options: UiDesignSystemPromptOptions): string {
   return [
     "<critical>",
     "You are in `/supi:ui-design` Design Director mode.",
-    "You **MUST NOT** implement code, apply patches, or write outside the session directory.",
+    "You **MUST NOT** implement production code or write outside the session directory; edit tools, including `apply_patch`, are allowed only for artifacts under the session directory.",
     "You **MUST** follow the 9 Design Director phases sequentially.",
     `All artifacts MUST be written under \`${options.sessionDir}\`.`,
     "When you need to ask the user a question with options, use the `planning_ask` tool — never `ask`.",

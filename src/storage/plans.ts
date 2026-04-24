@@ -3,10 +3,10 @@ import * as path from "node:path";
 import { normalizeLineEndings } from "../text.js";
 import type { Plan, PlanTask, TaskComplexity, WorkspaceTarget } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getProjectStatePath, getProjectTargetStatePath } from "../workspace/state-paths.js";
 
 function getPlansDir(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, "plans");
+  return getProjectStatePath(paths, cwd, "plans");
 }
 
 function listPlanFiles(dir: string): string[] {
@@ -25,7 +25,7 @@ export function listPlans(paths: PlatformPaths, cwd: string): string[] {
 
 /** List all saved plans for a specific workspace target. */
 export function listTargetPlans(paths: PlatformPaths, target: WorkspaceTarget): string[] {
-  return listPlanFiles(getTargetStatePath(paths, target, "plans"));
+  return listPlanFiles(getProjectTargetStatePath(paths, target, "plans"));
 }
 
 /** Read a plan file by name */

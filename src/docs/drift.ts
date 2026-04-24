@@ -7,7 +7,7 @@ import { renderSchemaText } from "../ai/schema-text.js";
 import { DocDriftOutputSchema, type DocDriftOutput } from "./contracts.js";
 import { ReleaseDocFixOutputSchema } from "../release/contracts.js";
 import { filterPathsForWorkspaceTarget } from "../workspace/path-mapping.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getProjectStatePath, getProjectTargetStatePath } from "../workspace/state-paths.js";
 
 // ── State persistence ─────────────────────────────────────────
 
@@ -36,7 +36,7 @@ function filterTrackedFilesToScope(
 }
 
 export function statePath(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): string {
-  return target ? getTargetStatePath(paths, target, STATE_FILENAME) : paths.project(cwd, STATE_FILENAME);
+  return target ? getProjectTargetStatePath(paths, target, STATE_FILENAME) : getProjectStatePath(paths, cwd, STATE_FILENAME);
 }
 
 export function loadState(paths: PlatformPaths, cwd: string, scope?: DocDriftScope): DocDriftState {

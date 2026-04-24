@@ -2,14 +2,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
 import type { WorkspaceTarget } from "../types.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getLocalTargetStatePath } from "../workspace/state-paths.js"
 import type { E2eQaConfig } from "./types.js";
 
 const CONFIG_FILENAME = "e2e-qa.json";
 
 function getConfigPath(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): string {
   if (target) {
-    return getTargetStatePath(paths, target, CONFIG_FILENAME);
+    return getLocalTargetStatePath(paths, target, CONFIG_FILENAME);
   }
 
   return paths.project(cwd, CONFIG_FILENAME);

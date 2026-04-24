@@ -2,7 +2,7 @@ import path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
 import type { UltraPlanStackId } from "../types.js";
 import { resolveRepoIdentityRootFromFs, resolveRepoRootFromFs } from "../workspace/repo-root.js";
-import { projectSlugFromRepoRoot } from "./runtime/project-slug.js";
+import { projectSlugFromRepoRoot } from "../workspace/project-slug.js";
 
 // Canonical directory name for the UltraPlan namespace under the global state root. Kept here so
 // no other UltraPlan module needs to know this token.

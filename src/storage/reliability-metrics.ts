@@ -17,13 +17,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
+import { getProjectStatePath } from "../workspace/state-paths.js";
 import type { ReliabilityOutcome, ReliabilityRecord, ReliabilitySummary } from "../types.js";
 
 const EVENTS_FILE = "events.jsonl";
 const RELIABILITY_DIR = "reliability";
 
 function getReliabilityDir(paths: PlatformPaths, cwd: string): string {
-  return paths.project(cwd, RELIABILITY_DIR);
+  return getProjectStatePath(paths, cwd, RELIABILITY_DIR);
 }
 
 function getEventsPath(paths: PlatformPaths, cwd: string): string {

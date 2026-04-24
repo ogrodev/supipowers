@@ -2,14 +2,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PlatformPaths } from "../platform/types.js";
 import type { WorkspaceTarget } from "../types.js";
-import { getTargetStatePath } from "../workspace/state-paths.js";
+import { getLocalTargetStatePath } from "../workspace/state-paths.js"
 import type { E2eFlowRecord, E2eMatrix, E2eRegression, E2eTestResult } from "./types.js";
 
 const MATRIX_FILENAME = "e2e-matrix.json";
 
 function getMatrixPath(paths: PlatformPaths, cwd: string, target?: WorkspaceTarget): string {
   if (target) {
-    return getTargetStatePath(paths, target, MATRIX_FILENAME);
+    return getLocalTargetStatePath(paths, target, MATRIX_FILENAME);
   }
 
   return paths.project(cwd, MATRIX_FILENAME);
