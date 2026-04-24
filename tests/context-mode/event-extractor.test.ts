@@ -144,11 +144,16 @@ describe("extractEvents", () => {
     test("todo_write emits task event", () => {
       const event = makeToolEvent({
         toolName: "todo_write",
-        input: { ops: [{ op: "add_task", content: "Fix bug" }] },
+        input: { add_tasks: [{ phase: "Implementation", content: "Fix bug" }] },
         content: [{ type: "text", text: "ok" }],
       });
       const events = extractEvents(event, SESSION_ID);
-      expect(events.some((e) => e.category === "task")).toBe(true);
+      const taskEvent = events.find((e) => e.category === "task");
+      expect(taskEvent).toBeDefined();
+      const data = JSON.parse(taskEvent!.data);
+      expect(data.input).toEqual({
+        add_tasks: [{ phase: "Implementation", content: "Fix bug" }],
+      });
     });
 
     test("ctx_* tools emit mcp event", () => {

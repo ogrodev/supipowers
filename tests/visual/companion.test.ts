@@ -10,14 +10,15 @@ import {
   clearEvents,
   getScriptsDir,
 } from "../../src/visual/companion.js";
-import { createPaths } from "../../src/platform/types.js";
+import { createHermeticPaths, slugForCwd } from "../helpers/paths.js";
 
 describe("visual companion", () => {
   let tmpDir: string;
-  const paths = createPaths(".test");
+  let paths: ReturnType<typeof createHermeticPaths>;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-visual-test-"));
+    paths = createHermeticPaths(tmpDir);
   });
 
   afterEach(() => {
@@ -38,7 +39,7 @@ describe("visual companion", () => {
     const sessionId = "visual-20260311-120000-test";
     const sessionDir = createSessionDir(paths, tmpDir, sessionId);
     expect(fs.existsSync(sessionDir)).toBe(true);
-    expect(sessionDir).toContain(path.join(".test", "supipowers", "visual", sessionId));
+    expect(sessionDir).toContain(path.join("projects", slugForCwd(tmpDir), "visual", sessionId));
   });
 
   test("writeScreen writes HTML file to session dir", () => {

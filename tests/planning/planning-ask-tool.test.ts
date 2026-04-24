@@ -113,7 +113,11 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
     const platform = makePlatform();
     registerPlanningAskToolGuard(platform as any);
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp", project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist" } as any);
+    startPlanTracking("/cwd", {
+      dotDirDisplay: ".omp",
+      project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist",
+      global: (..._parts: string[]) => "/tmp/does-not-exist-global",
+    } as any);
 
     const result = (await platform.fireToolCall("ask")) as
       | { block: true; reason: string }
@@ -153,7 +157,11 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
     const platform = makePlatform();
     registerPlanningAskToolGuard(platform as any);
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp", project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist" } as any);
+    startPlanTracking("/cwd", {
+      dotDirDisplay: ".omp",
+      project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist",
+      global: (..._parts: string[]) => "/tmp/does-not-exist-global",
+    } as any);
 
     for (const toolName of ["bash", "read", "grep", "planning_ask"]) {
       expect(await platform.fireToolCall(toolName)).toBeUndefined();
@@ -164,7 +172,11 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
     const platform = makePlatform();
     registerPlanningAskToolGuard(platform as any);
 
-    startPlanTracking("/cwd", { dotDirDisplay: ".omp", project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist" } as any);
+    startPlanTracking("/cwd", {
+      dotDirDisplay: ".omp",
+      project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist",
+      global: (..._parts: string[]) => "/tmp/does-not-exist-global",
+    } as any);
     expect((await platform.fireToolCall("ask"))?.block).toBe(true);
 
     cancelPlanTracking();

@@ -61,6 +61,12 @@ describe("ui-design system prompt", () => {
     expect(prompt).toContain("`planning_ask`");
   });
 
+  test("scopes edit tools to session artifacts", () => {
+    const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, BASE_OPTIONS);
+    expect(prompt).toContain("implement production code or write outside the session directory");
+    expect(prompt).toContain("edit tools, including `apply_patch`, are allowed only for artifacts");
+  });
+
   test("preserves the base Rules block", () => {
     const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, BASE_OPTIONS);
     expect(prompt).toContain("base rules");

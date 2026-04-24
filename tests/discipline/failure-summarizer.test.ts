@@ -9,14 +9,14 @@ import {
 } from "../../src/discipline/failure-summarizer.js";
 import { appendReliabilityRecord } from "../../src/storage/reliability-metrics.js";
 import type { ReliabilityRecord } from "../../src/types.js";
+import { createHermeticPaths } from "../helpers/paths.js";
 
 let tmpDir: string;
-const paths = {
-  project: (cwd: string, ...parts: string[]) => path.join(cwd, ".omp", "supipowers", ...parts),
-} as any;
+let paths: ReturnType<typeof createHermeticPaths>;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-failsum-"));
+  paths = createHermeticPaths(tmpDir);
 });
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });

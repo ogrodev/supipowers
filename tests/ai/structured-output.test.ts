@@ -234,15 +234,16 @@ describe("runWithOutputValidation", () => {
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
-import { createPaths } from "../../src/platform/types.js";
+import type { PlatformPaths } from "../../src/platform/types.js";
 import type { ReliabilityRecord } from "../../src/types.js";
+import { createHermeticPaths, expectedProjectStatePath } from "../helpers/paths.js";
 
 function mkTempCwd(): string {
   return fs.mkdtempSync(nodePath.join(os.tmpdir(), "supi-reliability-"));
 }
 
-function readRecords(cwd: string, dotDir = ".omp"): ReliabilityRecord[] {
-  const file = nodePath.join(cwd, dotDir, "supipowers", "reliability", "events.jsonl");
+function readRecords(paths: PlatformPaths, cwd: string): ReliabilityRecord[] {
+  const file = nodePath.join(expectedProjectStatePath(paths, cwd, "reliability"), "events.jsonl");
   if (!fs.existsSync(file)) return [];
   return fs
     .readFileSync(file, "utf-8")
@@ -254,7 +255,7 @@ function readRecords(cwd: string, dotDir = ".omp"): ReliabilityRecord[] {
 describe("runWithOutputValidation — reliability reporter", () => {
   test("emits ok record on first-attempt success", async () => {
     const cwd = mkTempCwd();
-    const paths = createPaths(".omp");
+    const paths = createHermeticPaths(cwd)
     const factory = makeFakeSessionFactory({
       responses: ['{"name":"Ada","age":30}'],
     });
@@ -267,7 +268,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
       reliability: { paths, cwd, command: "test", operation: "ok-path" },
     });
 
-    const records = readRecords(cwd);
+    const records = readRecords(paths, cwd);
     expect(records).toHaveLength(1);
     expect(records[0]!.outcome).toBe("ok");
     expect(records[0]!.attempts).toBe(1);
@@ -278,7 +279,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
 
   test("emits retry-exhausted record when schema never validates", async () => {
     const cwd = mkTempCwd();
-    const paths = createPaths(".omp");
+    const paths = createHermeticPaths(cwd)
     const factory = makeFakeSessionFactory({
       responses: ["nope", "still no", "still not"],
     });
@@ -292,7 +293,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
       reliability: { paths, cwd, command: "test", operation: "retry-path" },
     });
 
-    const records = readRecords(cwd);
+    const records = readRecords(paths, cwd);
     expect(records).toHaveLength(1);
     expect(records[0]!.outcome).toBe("retry-exhausted");
     expect(records[0]!.attempts).toBe(3);
@@ -301,7 +302,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
 
   test("emits agent-error record when the agent session errors", async () => {
     const cwd = mkTempCwd();
-    const paths = createPaths(".omp");
+    const paths = createHermeticPaths(cwd)
     const factory = makeFakeSessionFactory({
       responses: [new Error("model unavailable")],
     });
@@ -314,7 +315,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
       reliability: { paths, cwd, command: "test", operation: "agent-path" },
     });
 
-    const records = readRecords(cwd);
+    const records = readRecords(paths, cwd);
     expect(records).toHaveLength(1);
     expect(records[0]!.outcome).toBe("agent-error");
     expect(records[0]!.attempts).toBe(1);
@@ -323,7 +324,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
 
   test("emits agent-error and re-throws when createAgentSession itself throws", async () => {
     const cwd = mkTempCwd();
-    const paths = createPaths(".omp");
+    const paths = createHermeticPaths(cwd)
     const throwingFactory = async () => {
       throw new Error("session factory boom");
     };
@@ -342,7 +343,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
     }
 
     expect(caught?.message).toContain("session factory boom");
-    const records = readRecords(cwd);
+    const records = readRecords(paths, cwd);
     expect(records).toHaveLength(1);
     expect(records[0]!.outcome).toBe("agent-error");
     expect(records[0]!.attempts).toBe(1);
@@ -351,6 +352,7 @@ describe("runWithOutputValidation — reliability reporter", () => {
 
   test("no records emitted when reporter omitted (back-compat)", async () => {
     const cwd = mkTempCwd();
+    const paths = createHermeticPaths(cwd);
     const factory = makeFakeSessionFactory({
       responses: ['{"name":"Bea","age":22}'],
     });
@@ -362,6 +364,6 @@ describe("runWithOutputValidation — reliability reporter", () => {
       parse: (raw) => parseStructuredOutput<Person>(raw, PersonSchema),
     });
 
-    expect(readRecords(cwd)).toHaveLength(0);
+    expect(readRecords(paths, cwd)).toHaveLength(0);
   });
 });

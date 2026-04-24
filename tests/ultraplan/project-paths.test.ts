@@ -26,7 +26,7 @@ import {
   getUltraplansDir,
   resolveUltraPlanRoot,
 } from "../../src/ultraplan/project-paths.js";
-import { projectSlugFromRepoRoot } from "../../src/ultraplan/runtime/project-slug.js";
+import { projectSlugFromRepoRoot } from "../../src/workspace/project-slug.js";
 import { createTestPaths, createTestRepo } from "./fixtures.js";
 
 let tmpDir: string;

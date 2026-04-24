@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { Platform } from "../../src/platform/types.js";
 import { formatOverviewStatus, showStatusDialog } from "../../src/commands/status.js";
 import { appendReliabilityRecord } from "../../src/storage/reliability-metrics.js";
+import { expectedProjectStatePath } from "../helpers/paths.js";
 
 const tempDirs: string[] = [];
 
@@ -20,7 +21,13 @@ function createTempRepo(): string {
   return dir;
 }
 
-function createPlatform(): Platform {
+function createTempGlobalRoot(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "supipowers-status-global-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function createPlatform(globalRoot: string): Platform {
   return {
     name: "omp",
     registerCommand: mock(),
@@ -36,8 +43,8 @@ function createPlatform(): Platform {
       dotDir: ".omp",
       dotDirDisplay: ".omp",
       project: (cwd: string, ...segments: string[]) => path.join(cwd, ".omp", "supipowers", ...segments),
-      global: (...segments: string[]) => path.join(os.tmpdir(), "supipowers-global-test", ...segments),
-      agent: (...segments: string[]) => path.join(os.tmpdir(), "supipowers-agent-test", ...segments),
+      global: (...segments: string[]) => path.join(globalRoot, ".omp", "supipowers", ...segments),
+      agent: (...segments: string[]) => path.join(globalRoot, ".omp", "agent", ...segments),
     },
     capabilities: {
       agentSessions: true,
@@ -66,12 +73,20 @@ function writeText(filePath: string, value: string): void {
   fs.writeFileSync(filePath, value);
 }
 
-function repoStatePath(repoRoot: string, ...segments: string[]): string {
-  return path.join(repoRoot, ".omp", "supipowers", ...segments);
+function projectStatePath(platform: Platform, repoRoot: string, ...segments: string[]): string {
+  return path.join(expectedProjectStatePath(platform.paths, repoRoot), ...segments);
 }
 
-function workspaceStatePath(repoRoot: string, workspaceRelativeDir: string, ...segments: string[]): string {
-  return repoStatePath(repoRoot, "workspaces", ...workspaceRelativeDir.split("/"), ...segments);
+function projectWorkspaceStatePath(
+  platform: Platform,
+  repoRoot: string,
+  workspaceRelativeDir: string,
+  ...segments: string[]
+): string {
+  return projectStatePath(platform, repoRoot, "workspaces", ...workspaceRelativeDir.split("/"), ...segments);
+}
+function repoStatePath(repoRoot: string, ...segments: string[]): string {
+  return path.join(repoRoot, ".omp", "supipowers", ...segments);
 }
 
 function writeReviewReport(filePath: string, overallStatus: "passed" | "failed" | "blocked"): void {
@@ -109,7 +124,7 @@ describe("showStatusDialog", () => {
     });
     writeText(repoStatePath(repoRoot, "config.json"), "{\n");
 
-    const platform = createPlatform();
+    const platform = createPlatform(createTempGlobalRoot());
     const ctx = createContext(repoRoot);
 
     await showStatusDialog(platform, ctx);
@@ -127,10 +142,10 @@ describe("showStatusDialog", () => {
       name: "single-app",
       version: "1.0.0",
     });
-    writeText(repoStatePath(repoRoot, "plans", "plan-a.md"), "# plan\n");
-    writeReviewReport(repoStatePath(repoRoot, "reports", "review-2026-04-16.json"), "passed");
+    const platform = createPlatform(createTempGlobalRoot());
+    writeText(projectStatePath(platform, repoRoot, "plans", "plan-a.md"), "# plan\n");
+    writeReviewReport(projectStatePath(platform, repoRoot, "reports", "review-2026-04-16.json"), "passed");
 
-    const platform = createPlatform();
     const ctx = createContext(repoRoot);
 
     await showStatusDialog(platform, ctx);
@@ -164,9 +179,9 @@ describe("showStatusDialog", () => {
       name: "web",
       version: "1.0.0",
     });
-    writeText(repoStatePath(repoRoot, "plans", "root-plan.md"), "# root plan\n");
+    const platform = createPlatform(createTempGlobalRoot());
+    writeText(projectStatePath(platform, repoRoot, "plans", "root-plan.md"), "# root plan\n");
 
-    const platform = createPlatform();
     const ctx = createContext(workspaceDir);
 
     await showStatusDialog(platform, ctx);
@@ -202,13 +217,13 @@ describe("showStatusDialog", () => {
       name: "web",
       version: "1.0.0",
     });
-    writeText(repoStatePath(repoRoot, "plans", "root-plan.md"), "# root plan\n");
+    const platform = createPlatform(createTempGlobalRoot());
+    writeText(projectStatePath(platform, repoRoot, "plans", "root-plan.md"), "# root plan\n");
     writeReviewReport(
-      workspaceStatePath(repoRoot, "packages/api", "reports", "review-2026-04-16.json"),
+      projectWorkspaceStatePath(platform, repoRoot, "packages/api", "reports", "review-2026-04-16.json"),
       "passed",
     );
 
-    const platform = createPlatform();
     const ctx = createContext(repoRoot);
 
     await showStatusDialog(platform, ctx);
@@ -238,7 +253,7 @@ describe("showStatusDialog", () => {
     const repoRoot = createTempRepo();
     writeJson(path.join(repoRoot, "package.json"), { name: "lonely", version: "1.0.0" });
 
-    const platform = createPlatform();
+    const platform = createPlatform(createTempGlobalRoot());
     const ctx = createContext(repoRoot);
 
     await showStatusDialog(platform, ctx);
@@ -254,7 +269,7 @@ describe("showStatusDialog", () => {
     const repoRoot = createTempRepo();
     writeJson(path.join(repoRoot, "package.json"), { name: "reliable", version: "1.0.0" });
 
-    const platform = createPlatform();
+    const platform = createPlatform(createTempGlobalRoot());
     const ctx = createContext(repoRoot);
 
     appendReliabilityRecord(platform.paths, repoRoot, {

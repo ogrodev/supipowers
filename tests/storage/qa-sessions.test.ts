@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createPaths } from "../../src/platform/types.js";
+import { createHermeticPaths, expectedProjectStatePath } from "../helpers/paths.js";
 import { DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
 import type { E2eSessionLedger } from "../../src/qa/types.js";
 import {
@@ -17,7 +17,7 @@ import {
 } from "../../src/storage/qa-sessions.js";
 import type { WorkspaceTarget } from "../../src/types.js";
 
-const paths = createPaths(".omp");
+let paths: ReturnType<typeof createHermeticPaths>;
 
 function target(name: string, relativeDir = "."): WorkspaceTarget {
   return {
@@ -60,6 +60,7 @@ describe("qa-sessions storage", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-qa-test-"));
+    paths = createHermeticPaths(tmpDir);
   });
 
   afterEach(() => {
@@ -97,7 +98,7 @@ describe("qa-sessions storage", () => {
     expect(loadSession(paths, tmpDir, ledger.id, workspaceTarget)).toEqual(ledger);
     expect(loadSession(paths, tmpDir, ledger.id)).toBeNull();
     expect(getSessionDir(paths, tmpDir, ledger.id, workspaceTarget)).toBe(
-      path.join(tmpDir, ".omp", "supipowers", "workspaces", "packages", "web", "qa-sessions", ledger.id),
+      expectedProjectStatePath(paths, tmpDir, "workspaces", "packages", "web", "qa-sessions", ledger.id),
     );
   });
 
@@ -183,6 +184,6 @@ describe("qa-sessions storage", () => {
 
   test("getSessionDir returns correct root path", () => {
     const dir = getSessionDir(paths, tmpDir, "qa-20260311-120000-abcd");
-    expect(dir).toBe(path.join(tmpDir, ".omp", "supipowers", "qa-sessions", "qa-20260311-120000-abcd"));
+    expect(dir).toBe(expectedProjectStatePath(paths, tmpDir, "qa-sessions", "qa-20260311-120000-abcd"));
   });
 });

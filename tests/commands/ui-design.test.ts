@@ -253,7 +253,11 @@ describe("handleUiDesign", () => {
     const ctx = createContext();
     const deps = createDeps();
 
-    startPlanTracking(tmpDir, { dotDirDisplay: ".omp", project: () => path.join(tmpDir, "plan.md") } as any);
+    startPlanTracking(tmpDir, {
+      dotDirDisplay: ".omp",
+      project: () => path.join(tmpDir, "plan.md"),
+      global: (...segments: string[]) => path.join(tmpDir, "home", ".omp", "supipowers", ...segments),
+    } as any);
     expect(isPlanningActive()).toBe(true);
 
     await handleUiDesign(platform, ctx, undefined, deps);

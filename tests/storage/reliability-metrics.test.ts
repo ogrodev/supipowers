@@ -10,13 +10,14 @@ import {
 } from "../../src/storage/reliability-metrics.js";
 import type { ReliabilityRecord } from "../../src/types.js";
 
+import { createHermeticPaths, expectedProjectStatePath } from "../helpers/paths.js";
+
 let tmpDir: string;
-const paths = {
-  project: (cwd: string, ...parts: string[]) => path.join(cwd, ".omp", "supipowers", ...parts),
-} as any;
+let paths: ReturnType<typeof createHermeticPaths>;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-relmetrics-"));
+  paths = createHermeticPaths(tmpDir);
 });
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -53,7 +54,7 @@ describe("appendReliabilityRecord + readReliabilityRecords", () => {
   });
 
   test("skips malformed lines without aborting", () => {
-    const eventsDir = path.join(tmpDir, ".omp", "supipowers", "reliability");
+    const eventsDir = expectedProjectStatePath(paths, tmpDir, "reliability");
     fs.mkdirSync(eventsDir, { recursive: true });
     fs.writeFileSync(
       path.join(eventsDir, "events.jsonl"),
@@ -71,7 +72,7 @@ describe("appendReliabilityRecord + readReliabilityRecords", () => {
   });
 
   test("drops records missing required fields", () => {
-    const eventsDir = path.join(tmpDir, ".omp", "supipowers", "reliability");
+    const eventsDir = expectedProjectStatePath(paths, tmpDir, "reliability");
     fs.mkdirSync(eventsDir, { recursive: true });
     fs.writeFileSync(
       path.join(eventsDir, "events.jsonl"),

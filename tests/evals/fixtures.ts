@@ -10,6 +10,8 @@ import { mock } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { projectSlugFromRepoRoot } from "../../src/workspace/project-slug.js";
+import { resolveRepoIdentityRootFromFs } from "../../src/workspace/repo-root.js";
 
 // ---------------------------------------------------------------------------
 // Platform mock
@@ -73,10 +75,13 @@ export function makeEvalPlatform(opts: MockPlatformOptions = {}): CapturedPlatfo
 
   const platform: any = {
     paths: {
+      dotDir: ".omp",
       dotDirDisplay: ".omp",
       agent: (...parts: string[]) => path.join(cwd, ".omp", ...parts),
       project: (projectCwd: string, ...parts: string[]) =>
         path.join(projectCwd, ".omp", "supipowers", ...parts),
+      global: (...parts: string[]) =>
+        path.join(cwd, "home", ".omp", "supipowers", ...parts),
     },
     registerCommand: mock((name: string, def: CommandDefinition) => {
       capturedCommands[name] = def;
@@ -197,7 +202,9 @@ export interface TempWorkspace {
  */
 export function makeTempWorkspace(): TempWorkspace {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-eval-"));
-  const plansDir = path.join(dir, ".omp", "supipowers", "plans");
+  const identityRoot = resolveRepoIdentityRootFromFs(dir);
+  const slug = projectSlugFromRepoRoot(identityRoot);
+  const plansDir = path.join(dir, "home", ".omp", "supipowers", "projects", slug, "plans");
   fs.mkdirSync(plansDir, { recursive: true });
   return {
     dir,

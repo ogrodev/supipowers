@@ -2,20 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHermeticPaths, expectedProjectStatePath } from "../helpers/paths.js";
 import { createPaths } from "../../src/platform/types.js";
 import { loadLatestReport, saveReviewReport } from "../../src/storage/reports.js";
 import type { ReviewReport, WorkspaceTarget } from "../../src/types.js";
 
-function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
-  return {
-    dotDir: ".omp",
-    dotDirDisplay: ".omp",
-    project: (cwd: string, ...segments: string[]) =>
-      path.join(cwd, ".omp", "supipowers", ...segments),
-    global: (...segments: string[]) =>
-      path.join(rootDir, "global-config", ".omp", "supipowers", ...segments),
-    agent: (...segments: string[]) => path.join(rootDir, "agent", ...segments),
-  };
+function createTestPaths(rootDir: string): ReturnType<typeof createHermeticPaths> {
+  return createHermeticPaths(rootDir);
 }
 
 function createTarget(overrides: Partial<WorkspaceTarget> = {}): WorkspaceTarget {
@@ -57,7 +50,7 @@ function createReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
 
 describe("review report storage", () => {
   let tmpDir: string;
-  let localPaths: ReturnType<typeof createPaths>;
+  let localPaths: ReturnType<typeof createHermeticPaths>;
   let rootTarget: WorkspaceTarget;
   let workspaceTarget: WorkspaceTarget;
 
@@ -94,14 +87,14 @@ describe("review report storage", () => {
     const rootPath = saveReviewReport(localPaths, rootTarget, rootReport);
     const workspacePath = saveReviewReport(localPaths, workspaceTarget, workspaceReport);
 
-    expect(rootPath).toContain(path.join(".omp", "supipowers", "reports"));
-    expect(workspacePath).toContain(path.join(".omp", "supipowers", "workspaces", "packages", "pkg", "reports"));
+    expect(rootPath).toContain(expectedProjectStatePath(localPaths, tmpDir, "reports"));
+    expect(workspacePath).toContain(expectedProjectStatePath(localPaths, tmpDir, "workspaces", "packages", "pkg", "reports"));
     expect(loadLatestReport(localPaths, rootTarget)).toEqual(rootReport);
     expect(loadLatestReport(localPaths, workspaceTarget)).toEqual(workspaceReport);
   });
 
   test("loadLatestReport ignores legacy profile-shaped report files", () => {
-    const reportsDir = localPaths.project(tmpDir, "reports");
+    const reportsDir = expectedProjectStatePath(localPaths, tmpDir, "reports");
     fs.mkdirSync(reportsDir, { recursive: true });
     fs.writeFileSync(
       path.join(reportsDir, "review-2026-04-10.json"),

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createPaths } from "../../src/platform/types.js";
+import { createHermeticPaths, expectedProjectStatePath } from "../helpers/paths.js";
 import { DEFAULT_E2E_QA_CONFIG } from "../../src/qa/config.js";
 import {
   advanceE2ePhase,
@@ -13,7 +13,7 @@ import {
 import type { E2eSessionLedger } from "../../src/qa/types.js";
 import type { WorkspaceTarget } from "../../src/types.js";
 
-const paths = createPaths(".omp");
+let paths: ReturnType<typeof createHermeticPaths>;
 
 function target(name: string, relativeDir = "."): WorkspaceTarget {
   return {
@@ -35,6 +35,7 @@ describe("E2E QA session lifecycle", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-e2e-session-"));
+    paths = createHermeticPaths(tmpDir);
   });
 
   afterEach(() => {
@@ -56,7 +57,7 @@ describe("E2E QA session lifecycle", () => {
 
   test("createNewE2eSession persists ledger and creates subdirs", () => {
     const ledger = createNewE2eSession(paths, tmpDir, DEFAULT_E2E_QA_CONFIG);
-    const sessionDir = path.join(tmpDir, ".omp", "supipowers", "qa-sessions", ledger.id);
+    const sessionDir = expectedProjectStatePath(paths, tmpDir, "qa-sessions", ledger.id);
     expect(fs.existsSync(path.join(sessionDir, "ledger.json"))).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "tests"))).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "screenshots"))).toBe(true);
@@ -70,7 +71,7 @@ describe("E2E QA session lifecycle", () => {
       manifestPath: path.join(tmpDir, "packages/web/package.json"),
     };
     const ledger = createNewE2eSession(paths, tmpDir, DEFAULT_E2E_QA_CONFIG, workspaceTarget);
-    const sessionDir = path.join(tmpDir, ".omp", "supipowers", "workspaces", "packages", "web", "qa-sessions", ledger.id);
+    const sessionDir = expectedProjectStatePath(paths, tmpDir, "workspaces", "packages", "web", "qa-sessions", ledger.id);
     expect(fs.existsSync(path.join(sessionDir, "ledger.json"))).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "tests"))).toBe(true);
     expect(fs.existsSync(path.join(sessionDir, "screenshots"))).toBe(true);
@@ -91,7 +92,7 @@ describe("E2E QA session lifecycle", () => {
   test("advanceE2ePhase persists changes to disk", () => {
     const ledger = createNewE2eSession(paths, tmpDir, DEFAULT_E2E_QA_CONFIG);
     advanceE2ePhase(paths, tmpDir, ledger, "flow-discovery", "completed");
-    const filePath = path.join(tmpDir, ".omp", "supipowers", "qa-sessions", ledger.id, "ledger.json");
+    const filePath = path.join(expectedProjectStatePath(paths, tmpDir, "qa-sessions"), ledger.id, "ledger.json");
     const loaded = JSON.parse(fs.readFileSync(filePath, "utf-8")) as E2eSessionLedger;
     expect(loaded.phases["flow-discovery"].status).toBe("completed");
   });

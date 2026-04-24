@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ResolvedModel } from "../../src/types.js";
 import { createPaths } from "../../src/platform/types.js";
+import { createHermeticPaths, expectedProjectStatePath } from "../helpers/paths.js";
 import {
   cancelUiDesignTracking,
   createSessionDir,
@@ -217,11 +218,11 @@ describe("ui-design session — id + dir", () => {
     expect(id).toMatch(/^uidesign-\d{8}-\d{6}-[a-z0-9]{4}$/);
   });
 
-  test("createSessionDir creates the dir under project(cwd, ui-design, id)", () => {
-    const paths = createPaths(".omp");
+  test("createSessionDir creates the dir under the project-scoped global state root", () => {
+    const paths = createHermeticPaths(tmpDir);
     const id = "uidesign-20260418-120000-xxxx";
     const dir = createSessionDir(paths, tmpDir, id);
-    expect(dir).toBe(paths.project(tmpDir, "ui-design", id));
+    expect(dir).toBe(expectedProjectStatePath(paths, tmpDir, "ui-design", id));
     expect(fs.existsSync(dir)).toBe(true);
   });
 });
@@ -270,6 +271,32 @@ describe("ui-design session — tool guard", () => {
     const { fire } = registerToolGuardPlatform();
     expect(fire("write", { path: path.join(sessionDir, "context.md") })).toBeUndefined();
     expect((fire("bash", { command: "touch surprise.txt" }) as { block: true }).block).toBe(true);
+  });
+
+  test("validates every edit operation path under the active session dir", () => {
+    const sessionDir = path.join(tmpDir, "guard-edit");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    startUiDesignTracking(makeSession(sessionDir), async () => {});
+
+    const { fire } = registerToolGuardPlatform();
+    const insidePath = path.join(sessionDir, "context.md");
+
+    expect(fire("edit", { edits: [{ path: insidePath, content: "ok" }] })).toBeUndefined();
+
+    const outside = fire("edit", {
+      edits: [
+        { path: insidePath, content: "ok" },
+        { path: path.join(tmpDir, "outside.md"), content: "bad" },
+      ],
+    }) as { block: true; reason: string } | undefined;
+    expect(outside?.block).toBe(true);
+    expect(outside?.reason).toContain("may only write");
+
+    const missingPath = fire("edit", { edits: [{ content: "missing path" }] }) as
+      | { block: true; reason: string }
+      | undefined;
+    expect(missingPath?.block).toBe(true);
+    expect(missingPath?.reason).toContain("cannot verify edit");
   });
 });
 
