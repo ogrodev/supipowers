@@ -131,6 +131,7 @@ export const ReviewAgentConfigSchema = Type.Object(
       Type.Literal("xhigh"),
       Type.Null(),
     ])),
+    peerCoordination: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );

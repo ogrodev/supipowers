@@ -959,6 +959,7 @@ async function runReviewPass(
     scope,
     agents,
     createAgentSession: platform.createAgentSession.bind(platform),
+    activeTools: platform.getActiveTools(),
     model: resolvedModel.model,
     thinkingLevel: resolvedModel.thinkingLevel,
     onAgentStart: (agent) => progress.startAgent(agent),
