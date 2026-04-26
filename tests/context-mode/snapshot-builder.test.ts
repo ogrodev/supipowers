@@ -50,7 +50,7 @@ describe("buildResumeSnapshot — fallback mode", () => {
   });
 
   test("includes pending_tasks from task events", () => {
-    writeEvent("task", { input: { ops: [{ op: "add_task", content: "Refactor utils" }] } }, 2);
+    writeEvent("task", { input: { ops: [{ op: "replace", phases: [{ name: "I. Foo", tasks: [{ content: "Refactor utils" }] }] }] } }, 2);
     const snapshot = buildResumeSnapshot(store, SESSION);
     expect(snapshot).toContain("<pending_tasks>");
     expect(snapshot).toContain("Refactor utils");
@@ -165,7 +165,7 @@ describe("buildResumeSnapshot — reference format", () => {
   test("section ordering: rules before files before tasks", () => {
     writeEvent("rule", { file: ".pi/rules.md" }, 3);
     writeEvent("file", { op: "edit", path: "/src/a.ts" }, 2);
-    writeEvent("task", { input: { ops: [{ op: "add_task", content: "Do stuff" }] } }, 2);
+    writeEvent("task", { input: { ops: [{ op: "replace", phases: [{ name: "I. Bar", tasks: [{ content: "Do stuff" }] }] }] } }, 2);
     const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
 
     const rulesIdx = snapshot.indexOf("<rules>");
@@ -260,5 +260,107 @@ describe("buildResumeSnapshot — reference format", () => {
     writeEvent("cwd", { cwd: "/Users/dev/project" }, 4);
     const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
     expect(snapshot).toContain("<cwd>/Users/dev/project</cwd>");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// extractTaskContent projection (OMP 14.4.0 flat-ops shape)
+// Exercised through buildResumeSnapshot's <pending_tasks> section.
+// ---------------------------------------------------------------------------
+
+describe("todo_write flat-ops projection", () => {
+  function pendingTasksContent(snapshot: string): string {
+    const open = snapshot.indexOf("<pending_tasks>");
+    const close = snapshot.indexOf("</pending_tasks>");
+    if (open < 0 || close < 0) return "";
+    return snapshot.slice(open, close);
+  }
+
+  test("replace with multiple phases/tasks joins all task contents", () => {
+    writeEvent("task", {
+      input: {
+        ops: [
+          {
+            op: "replace",
+            phases: [
+              { name: "I. Foundation", tasks: [{ content: "Scaffold crate" }, { content: "Wire workspace" }] },
+              { name: "II. Auth", tasks: [{ content: "Port store" }] },
+            ],
+          },
+        ],
+      },
+    }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    const block = pendingTasksContent(snapshot);
+    expect(block).toContain("replace: Scaffold crate");
+    // 100-char cap may truncate later entries; first entry must always survive.
+    expect(block).toContain("replace:");
+  });
+
+  test("append projects items[].label", () => {
+    writeEvent("task", {
+      input: { ops: [{ op: "append", phase: "II. Auth", items: [{ id: "task-9", label: "Handle retries" }] }] },
+    }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("append: Handle retries");
+  });
+
+  test("note projects text", () => {
+    writeEvent("task", {
+      input: { ops: [{ op: "note", task: "task-3", text: "Wait for review" }] },
+    }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("note: Wait for review");
+  });
+
+  test("start with task id renders 'verb: target'", () => {
+    writeEvent("task", { input: { ops: [{ op: "start", task: "task-3" }] } }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("start: task-3");
+  });
+
+  test("done with phase id renders 'verb: phase'", () => {
+    writeEvent("task", { input: { ops: [{ op: "done", phase: "II. Auth" }] } }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("done: II. Auth");
+  });
+
+  test("drop without task or phase renders 'verb: all'", () => {
+    writeEvent("task", { input: { ops: [{ op: "drop" }] } }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("drop: all");
+  });
+
+  test("rm without task or phase renders 'verb: all'", () => {
+    writeEvent("task", { input: { ops: [{ op: "rm" }] } }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("rm: all");
+  });
+
+  test("legacy ops with content preserve stored task text", () => {
+    writeEvent("task", { input: { ops: [{ op: "add_task", content: "Refactor utils" }] } }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("add_task: Refactor utils");
+    expect(snapshot).not.toContain("add_task: all");
+  });
+
+  test("input.ops missing falls back to JSON.stringify(input).slice(0, 100)", () => {
+    writeEvent("task", { input: { add_tasks: [{ phase: "Implementation", content: "Fix bug" }] } }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    const block = pendingTasksContent(snapshot);
+    expect(block).toContain("add_tasks");
+    expect(block).toContain("Fix bug");
+  });
+
+  test("all-empty replace with no task content returns null and omits the task entry", () => {
+    writeEvent("task", {
+      input: { ops: [{ op: "replace", phases: [{ name: "I. Foo", tasks: [{ content: "" }] }] }] },
+    }, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    // <pending_tasks> opens because there is a task event, but the projected content is empty.
+    const block = pendingTasksContent(snapshot);
+    expect(block).not.toContain("replace:");
+    expect(block).not.toContain("task:");
   });
 });

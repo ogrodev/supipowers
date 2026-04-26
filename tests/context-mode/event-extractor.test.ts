@@ -83,6 +83,98 @@ describe("extractEvents", () => {
     });
   });
 
+  describe("open canonical alias (OMP 14.3.0)", () => {
+    test("emits file event with read op for canonical 'open' tool name", () => {
+      const event = makeToolEvent({
+        toolName: "open",
+        input: { path: "/src/index.ts" },
+        content: [{ type: "text", text: "export default {}" }],
+      });
+      const events = extractEvents(event, SESSION_ID);
+      expect(events).toHaveLength(1);
+      expect(events[0].category).toBe("file");
+      const data = JSON.parse(events[0].data);
+      expect(data.op).toBe("read");
+      expect(data.path).toBe("/src/index.ts");
+    });
+
+    test("open of AGENTS.md emits both file and rule events", () => {
+      const event = makeToolEvent({
+        toolName: "open",
+        input: { path: "/project/AGENTS.md" },
+        content: [{ type: "text", text: "rules" }],
+      });
+      const events = extractEvents(event, SESSION_ID);
+      expect(events.some((e) => e.category === "rule")).toBe(true);
+      expect(events.some((e) => e.category === "file")).toBe(true);
+      const rule = events.find((e) => e.category === "rule")!;
+      expect(rule.priority).toBe(PRIORITY.critical);
+      const data = JSON.parse(rule.data);
+      expect(data.type).toBe("project-rule");
+      expect(data.path).toBe("/project/AGENTS.md");
+    });
+
+    test("open of .omp/config.json emits both file and rule events", () => {
+      const event = makeToolEvent({
+        toolName: "open",
+        input: { path: "/home/user/.omp/config.json" },
+        content: [{ type: "text", text: "{}" }],
+      });
+      const events = extractEvents(event, SESSION_ID);
+      expect(events.some((e) => e.category === "rule")).toBe(true);
+      expect(events.some((e) => e.category === "file")).toBe(true);
+    });
+
+    test("open of normal file does NOT emit rule event", () => {
+      const event = makeToolEvent({
+        toolName: "open",
+        input: { path: "/src/index.ts" },
+        content: [{ type: "text", text: "code" }],
+      });
+      const events = extractEvents(event, SESSION_ID);
+      expect(events.every((e) => e.category !== "rule")).toBe(true);
+    });
+
+    test("open of skills/planning/SKILL.md emits both file and skill events", () => {
+      const event = makeToolEvent({
+        toolName: "open",
+        input: { path: "/home/user/.omp/skills/planning/SKILL.md" },
+        content: [{ type: "text", text: "skill content" }],
+      });
+      const events = extractEvents(event, SESSION_ID);
+      expect(events.some((e) => e.category === "skill")).toBe(true);
+      expect(events.some((e) => e.category === "file")).toBe(true);
+      const skill = events.find((e) => e.category === "skill")!;
+      expect(skill.priority).toBe(PRIORITY.medium);
+      const data = JSON.parse(skill.data);
+      expect(data.path).toBe("/home/user/.omp/skills/planning/SKILL.md");
+    });
+
+    test("open of normal file does NOT emit skill event", () => {
+      const event = makeToolEvent({
+        toolName: "open",
+        input: { path: "/src/utils.ts" },
+        content: [{ type: "text", text: "code" }],
+      });
+      const events = extractEvents(event, SESSION_ID);
+      expect(events.every((e) => e.category !== "skill")).toBe(true);
+    });
+
+    test("open isError preserves the original tool name in the error event", () => {
+      const event = makeToolEvent({
+        toolName: "open",
+        input: { path: "/missing.ts" },
+        content: [{ type: "text", text: "Permission denied" }],
+        isError: true,
+      });
+      const events = extractEvents(event, SESSION_ID);
+      const err = events.find((e) => e.category === "error")!;
+      expect(err).toBeDefined();
+      const data = JSON.parse(err.data);
+      expect(data.toolName).toBe("open");
+    });
+  });
+
   describe("edit extraction", () => {
     test("emits file event with edit op at high priority", () => {
       const event = makeToolEvent({
@@ -144,16 +236,26 @@ describe("extractEvents", () => {
     test("todo_write emits task event", () => {
       const event = makeToolEvent({
         toolName: "todo_write",
-        input: { add_tasks: [{ phase: "Implementation", content: "Fix bug" }] },
+        input: {
+          ops: [
+            {
+              op: "replace",
+              phases: [
+                { name: "I. Foundation", tasks: [{ content: "Scaffold crate" }] },
+              ],
+            },
+            { op: "start", task: "task-1" },
+          ],
+        },
         content: [{ type: "text", text: "ok" }],
       });
       const events = extractEvents(event, SESSION_ID);
       const taskEvent = events.find((e) => e.category === "task");
       expect(taskEvent).toBeDefined();
       const data = JSON.parse(taskEvent!.data);
-      expect(data.input).toEqual({
-        add_tasks: [{ phase: "Implementation", content: "Fix bug" }],
-      });
+      expect(Array.isArray(data.input.ops)).toBe(true);
+      expect(data.input.ops[0].op).toBe("replace");
+      expect(data.input.ops[1]).toEqual({ op: "start", task: "task-1" });
     });
 
     test("ctx_* tools emit mcp event", () => {

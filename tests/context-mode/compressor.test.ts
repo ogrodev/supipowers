@@ -34,6 +34,22 @@ function readResult(
   } as any;
 }
 
+function openResult(
+  text: string,
+  input?: { offset?: number; limit?: number; sel?: string },
+  isError = false,
+) {
+  return {
+    type: "tool_result",
+    toolName: "open",
+    toolCallId: "test-id",
+    input: { path: "/test/file.ts", ...input },
+    content: [{ type: "text", text }],
+    isError,
+    details: undefined,
+  } as any;
+}
+
 function grepResult(text: string, isError = false) {
   return {
     type: "tool_result",
@@ -194,6 +210,25 @@ describe("compressToolResult", () => {
     });
   });
 
+  describe("open compression (canonical alias)", () => {
+    test("compresses files above boundary using same head+tail rules as read", () => {
+      const lines = Array.from({ length: 111 }, (_, i) => `${i+1}#XX:line ${i}`).join("\n");
+      const result = compressToolResult(openResult(lines), THRESHOLD);
+      expect(result).toBeDefined();
+      const text = result!.content![0] as { type: string; text: string };
+      expect(text.text).toContain("1#XX:line 0");
+      expect(text.text).toContain("80#XX:line 79");
+      expect(text.text).toContain("111#XX:line 110");
+      expect(text.text).toContain('sel="L81-L81"');
+    });
+
+    test("passes through scoped open with offset/limit/sel (same rule as read)", () => {
+      const lines = Array.from({ length: 200 }, (_, i) => `${i+1}#XX:line ${i}`).join("\n");
+      expect(compressToolResult(openResult(lines, { offset: 10, limit: 20 }), THRESHOLD)).toBeUndefined();
+      expect(compressToolResult(openResult(lines, { sel: "L50-L120" }), THRESHOLD)).toBeUndefined();
+    });
+  });
+
   describe("grep compression", () => {
     test("compresses to first N matches", () => {
       const lines = Array.from({ length: 50 }, (_, i) => `file${i}.ts:${i}: match ${i}`).join("\n");
@@ -348,6 +383,20 @@ describe("compressToolResultWithLLM", () => {
     );
     expect(calls.length).toBe(1);
     expect(calls[0]!.prompt.startsWith("Summarize this file content")).toBe(true);
+  });
+
+  test("open tool uses read-specific prompt template (canonical alias)", async () => {
+    const { fn, calls } = makeSummarize();
+    const bigText = "x".repeat(LLM_THRESHOLD + 200);
+    await compressToolResultWithLLM(
+      openResult(bigText),
+      THRESHOLD,
+      LLM_THRESHOLD,
+      fn,
+    );
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.prompt.startsWith("Summarize this file content")).toBe(true);
+    expect(calls[0]!.toolName).toBe("open");
   });
 
   test("grep tool uses grep-specific prompt template", async () => {

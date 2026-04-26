@@ -232,6 +232,24 @@ describe("registerContextModeHooks", () => {
     expect(() => handler(event, {})).not.toThrow();
   });
 
+  test("tool_result handler routes canonical 'open' tool name like 'read'", () => {
+    const platform = createMockPlatformWithHandlers();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+
+    const handler = platform._handlers.get("tool_result");
+    const event = {
+      type: "tool_result",
+      toolName: "open",
+      toolCallId: "test-id",
+      input: { path: "/src/test.ts" },
+      content: [{ type: "text", text: "content" }],
+      isError: false,
+      details: undefined,
+    };
+
+    expect(() => handler(event, {})).not.toThrow();
+  });
+
   test("registers compaction hooks when compaction enabled", () => {
     const platform = createMockPlatformWithHandlers();
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
