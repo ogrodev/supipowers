@@ -346,11 +346,45 @@ function safeParse(json: string): Record<string, unknown> | null {
 function extractTaskContent(data: Record<string, unknown> | null): string | null {
   if (!data?.input) return null;
   const input = data.input as Record<string, unknown>;
-  if (Array.isArray(input.ops)) {
-    const ops = input.ops as Array<{ content?: string; op?: string }>;
-    return ops.map((o) => `${o.op ?? "task"}: ${o.content ?? ""}`).join("; ");
+  if (!Array.isArray(input.ops)) return JSON.stringify(input).slice(0, 100);
+
+  const parts: string[] = [];
+  for (const rawOp of input.ops as Array<Record<string, unknown>>) {
+    if (!rawOp || typeof rawOp !== "object") continue;
+    const verb = typeof rawOp.op === "string" ? rawOp.op : "task";
+
+    if (verb === "replace" && Array.isArray(rawOp.phases)) {
+      for (const phase of rawOp.phases as Array<Record<string, unknown>>) {
+        const tasks = Array.isArray(phase?.tasks) ? phase.tasks : [];
+        for (const task of tasks as Array<Record<string, unknown>>) {
+          const content = typeof task?.content === "string" ? task.content : "";
+          if (content) parts.push(`replace: ${content}`);
+        }
+      }
+    } else if (verb === "append" && Array.isArray(rawOp.items)) {
+      for (const item of rawOp.items as Array<Record<string, unknown>>) {
+        const label = typeof item?.label === "string" ? item.label : "";
+        if (label) parts.push(`append: ${label}`);
+      }
+    } else if (verb === "note") {
+      const text = typeof rawOp.text === "string" ? rawOp.text : "";
+      if (text) parts.push(`note: ${text}`);
+    } else {
+      const legacyContent = typeof rawOp.content === "string" ? rawOp.content : "";
+      if (legacyContent) {
+        parts.push(`${verb}: ${legacyContent}`);
+        continue;
+      }
+
+      const target = (typeof rawOp.task === "string" && rawOp.task)
+        || (typeof rawOp.phase === "string" && rawOp.phase)
+        || "all";
+      parts.push(`${verb}: ${target}`);
+    }
   }
-  return JSON.stringify(input).slice(0, 100);
+
+  // Preserve the existing 100-char cap so prompts stay bounded.
+  return parts.length > 0 ? parts.join("; ").slice(0, 100) : null;
 }
 
 function formatErrorSummary(data: Record<string, unknown> | null): string | null {

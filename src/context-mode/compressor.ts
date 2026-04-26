@@ -1,4 +1,5 @@
 // src/context-mode/compressor.ts
+import { canonicalToolName } from "./tool-name.js";
 
 interface ToolResultEventLike {
   toolName: string;
@@ -136,7 +137,7 @@ export function compressToolResult(
   const text = getCombinedText(event.content);
   let compressed: string | undefined;
 
-  switch (event.toolName) {
+  switch (canonicalToolName(event.toolName)) {
     case "bash":
       compressed = compressBash(text, event.details);
       break;
@@ -187,7 +188,7 @@ export async function compressToolResultWithLLM(
 
   // Above LLM threshold: try LLM summarization
   try {
-    const prompt = SUMMARIZE_PROMPTS[event.toolName] ?? "Summarize this output concisely (under 200 words).";
+    const prompt = SUMMARIZE_PROMPTS[canonicalToolName(event.toolName)] ?? "Summarize this output concisely (under 200 words).";
     const summary = await summarize(`${prompt}\n\n${text}`, event.toolName);
 
     // Validate: non-empty and reasonably sized

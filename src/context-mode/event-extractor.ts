@@ -1,6 +1,7 @@
 // src/context-mode/event-extractor.ts
 import { PRIORITY } from "./event-store.js";
 import type { EventCategory, EventPriority, TrackedEvent } from "./event-store.js";
+import { canonicalToolName } from "./tool-name.js";
 
 type Event = Omit<TrackedEvent, "id" | "dataHash">;
 
@@ -65,7 +66,7 @@ export function extractEvents(
     }, PRIORITY.critical, "tool_result"));
   }
 
-  switch (event.toolName) {
+  switch (canonicalToolName(event.toolName)) {
     case "bash":
       extractBash(events, event, sessionId, text);
       break;
@@ -102,7 +103,7 @@ export function extractEvents(
         events.push(makeEvent(sessionId, "mcp", {
           tool: event.toolName,
         }, PRIORITY.low, "tool_result"));
-      } else if (event.toolName === "task" || event.toolName === "sub_agent") {
+      } else if (canonicalToolName(event.toolName) === "task" || event.toolName === "sub_agent") {
         events.push(makeEvent(sessionId, "subagent", {
           toolName: event.toolName,
           input: event.input,
