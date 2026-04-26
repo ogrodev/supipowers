@@ -58,6 +58,8 @@ For everything else:
 - `ctx_batch_execute(commands, queries)` — multiple commands + search in ONE call
 - `ctx_execute(language: "shell", code: "...")` — sandbox, only stdout enters context
 
+When OMP's `shellMinimizer` is active, large bash output ends with a `[raw output: artifact://<id>]` footer. The footer is OMP's pointer to the full bytes — supipowers leaves it untouched. Recover the original with `read artifact://<id>`.
+
 ### Read
 
 Reads are never blocked — OMP's native open/read tool preserves hashline anchors (e.g., `120th|content` after 14.4.1) for the edit contract. Large reads (>110 lines) are auto-compressed to head (80) + tail (30) with a `sel` hint.
