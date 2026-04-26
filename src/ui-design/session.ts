@@ -28,6 +28,7 @@ const MANIFEST_STATUSES = new Set<ManifestStatus>([
 const COMPLETION_PROOF_FILE = "completion-proof.json";
 const REVIEW_APPROVAL_FILE = "review-approval.json";
 const PATH_URI_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const GLOB_META_RE = /[*?\[\]{}]/;
 
 type UiDesignReviewDecision = "approve" | "request-changes" | "discard";
 
@@ -767,8 +768,14 @@ function discardSessionDir(sessionDir: string): void {
 function getUiDesignWritePaths(toolName: string, input: Record<string, unknown>): string[] | undefined {
   switch (toolName) {
     case "write":
-    case "ast_edit":
       return [typeof input.path === "string" ? input.path : ""];
+    case "ast_edit": {
+      const raw = typeof input.path === "string" ? input.path : "";
+      if (raw.length === 0) return [""];
+      // OMP ast_edit accepts comma-separated path lists. Preserve whitespace inside literal paths.
+      const segments = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+      return segments.length > 0 ? segments : [raw];
+    }
     case "edit": {
       const edits = Array.isArray(input.edits) ? input.edits : [];
       if (edits.length === 0) return [""];
@@ -815,6 +822,13 @@ export function registerUiDesignToolGuard(platform: Platform): void {
         return {
           block: true,
           reason: `UI-design mode: cannot verify ${event.toolName} without a path under \`${session.dir}\`.`,
+        };
+      }
+
+      if (GLOB_META_RE.test(candidatePath)) {
+        return {
+          block: true,
+          reason: `UI-design mode: ${event.toolName} cannot use glob pattern \`${candidatePath}\`; use a literal path under \`${session.dir}\`.`,
         };
       }
 
