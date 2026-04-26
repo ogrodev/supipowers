@@ -34,11 +34,14 @@ const VALID_REVIEW_OUTPUT = JSON.stringify({
 
 function createMockSession() {
   const calls: any[] = [];
+  const prompts: string[] = [];
   const fn = mock(async (options: any) => {
     calls.push(options);
     const session: AgentSession = {
       subscribe: () => () => {},
-      prompt: mock(async () => {}),
+      prompt: mock(async (prompt: string) => {
+        prompts.push(prompt);
+      }),
       state: {
         messages: [
           { role: "user", content: "test" },
@@ -49,7 +52,7 @@ function createMockSession() {
     };
     return session;
   });
-  return { fn, calls };
+  return { fn, calls, prompts };
 }
 
 describe("thinkingLevel override", () => {
@@ -130,5 +133,109 @@ describe("package-aware scope context", () => {
     expect(prompt).toContain("Reviewing uncommitted changes for api (packages/api)");
     expect(prompt).toContain("packages/api/src/index.ts");
     expect(prompt).not.toContain("packages/web/src/index.ts");
+  });
+});
+
+describe("IRC peer coordination", () => {
+  test("injects IRC block when two agents opt in and `irc` is active", async () => {
+    const { fn, prompts, calls } = createMockSession();
+    await runMultiAgentReview({
+      cwd: "/fake",
+      scope: EMPTY_SCOPE,
+      agents: [
+        makeAgent({ name: "alpha", peerCoordination: true }),
+        makeAgent({ name: "beta", peerCoordination: true }),
+      ],
+      createAgentSession: fn as any,
+      activeTools: ["irc", "open", "bash"],
+    });
+
+    expect(prompts).toHaveLength(2);
+    const [alphaPrompt, betaPrompt] = prompts;
+    expect(alphaPrompt).toContain("## IRC peer coordination");
+    expect(alphaPrompt).toContain("`supi-review-alpha`");
+    expect(alphaPrompt).toContain("`supi-review-beta`");
+    expect(betaPrompt).toContain("`supi-review-alpha`");
+    expect(betaPrompt).toContain("`supi-review-beta`");
+    expect(calls.map((call) => call.agentId)).toEqual([
+      "supi-review-alpha",
+      "supi-review-beta",
+    ]);
+    expect(calls.map((call) => call.agentDisplayName)).toEqual(["alpha", "beta"]);
+  });
+
+  test("sanitizes duplicate peer names into registered IRC ids", async () => {
+    const { fn, prompts, calls } = createMockSession();
+    await runMultiAgentReview({
+      cwd: "/fake",
+      scope: EMPTY_SCOPE,
+      agents: [
+        makeAgent({ name: "Alpha Agent", peerCoordination: true }),
+        makeAgent({ name: "Alpha/Agent", peerCoordination: true }),
+      ],
+      createAgentSession: fn as any,
+      activeTools: ["irc"],
+    });
+
+    expect(calls.map((call) => call.agentId)).toEqual([
+      "supi-review-alpha-agent",
+      "supi-review-alpha-agent-2",
+    ]);
+    expect(prompts[0]).toContain("`supi-review-alpha-agent-2`");
+    expect(prompts[1]).toContain("`supi-review-alpha-agent`");
+  });
+
+  test("omits IRC block when `irc` is not in activeTools", async () => {
+    const { fn, prompts } = createMockSession();
+    await runMultiAgentReview({
+      cwd: "/fake",
+      scope: EMPTY_SCOPE,
+      agents: [
+        makeAgent({ name: "alpha", peerCoordination: true }),
+        makeAgent({ name: "beta", peerCoordination: true }),
+      ],
+      createAgentSession: fn as any,
+      activeTools: ["open", "bash"],
+    });
+
+    for (const prompt of prompts) {
+      expect(prompt).not.toContain("## IRC peer coordination");
+    }
+  });
+
+  test("omits IRC block when peerCoordination is unset (default)", async () => {
+    const { fn, prompts } = createMockSession();
+    await runMultiAgentReview({
+      cwd: "/fake",
+      scope: EMPTY_SCOPE,
+      agents: [
+        makeAgent({ name: "alpha" }),
+        makeAgent({ name: "beta" }),
+      ],
+      createAgentSession: fn as any,
+      activeTools: ["irc"],
+    });
+
+    for (const prompt of prompts) {
+      expect(prompt).not.toContain("## IRC peer coordination");
+    }
+  });
+
+  test("omits IRC block when only one agent opted in (no peers)", async () => {
+    const { fn, prompts } = createMockSession();
+    await runMultiAgentReview({
+      cwd: "/fake",
+      scope: EMPTY_SCOPE,
+      agents: [
+        makeAgent({ name: "alpha", peerCoordination: true }),
+        makeAgent({ name: "beta" }),
+      ],
+      createAgentSession: fn as any,
+      activeTools: ["irc"],
+    });
+
+    for (const prompt of prompts) {
+      expect(prompt).not.toContain("## IRC peer coordination");
+    }
   });
 });

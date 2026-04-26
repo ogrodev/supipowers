@@ -612,3 +612,83 @@ describe("thinkingLevel backward compatibility", () => {
     expect(content).toBe(modernConfig);
   });
 });
+
+describe("peerCoordination flag", () => {
+  let tmpDir: string;
+  let paths: PlatformPaths;
+  let projectDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-peer-coord-test-"));
+    paths = createTestPaths(tmpDir);
+    projectDir = path.join(tmpDir, "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("config with peerCoordination: true surfaces the flag on the loaded agent", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    fs.mkdirSync(agentsDir, { recursive: true });
+    const configContent = [
+      "agents:",
+      "  - name: peer",
+      "    enabled: true",
+      "    data: peer.md",
+      "    model: null",
+      "    thinkingLevel: null",
+      "    peerCoordination: true",
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(agentsDir, "config.yml"), configContent);
+    writeAgentMarkdown(agentsDir, "peer.md", "peer", "Peer", null, "Review.\n\n{output_instructions}");
+
+    const result = await loadReviewAgents(paths, projectDir);
+    const peer = result.agents.find((a) => a.name === "peer");
+    expect(peer).toBeDefined();
+    expect(peer!.peerCoordination).toBe(true);
+  });
+
+  test("default config (no peerCoordination field) leaves the flag unset/falsy", async () => {
+    const result = await loadReviewAgents(paths, projectDir);
+    expect(result.agents.length).toBeGreaterThan(0);
+    for (const agent of result.agents) {
+      expect(agent.peerCoordination ?? false).toBe(false);
+    }
+  });
+
+  test("buildDefaultConfigText documents peerCoordination in the comment header", async () => {
+    await loadReviewAgents(paths, projectDir);
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    const configContent = fs.readFileSync(path.join(agentsDir, "config.yml"), "utf-8");
+    expect(configContent).toContain("#   peerCoordination: boolean");
+    // Default config does NOT opt agents into peer coordination.
+    expect(configContent).not.toContain("peerCoordination: true");
+  });
+
+  test("migration backfills nothing when peerCoordination is absent (omitted by default)", async () => {
+    const agentsDir = getReviewAgentsDir(paths, projectDir);
+    fs.mkdirSync(agentsDir, { recursive: true });
+    const legacyConfig = [
+      "agents:",
+      "  - name: sec",
+      "    enabled: true",
+      "    data: sec.md",
+      "    model: null",
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(agentsDir, "config.yml"), legacyConfig);
+    writeAgentMarkdown(agentsDir, "sec.md", "sec", "Security", null, "Review.\n\n{output_instructions}");
+
+    const result = await loadReviewAgents(paths, projectDir);
+    const sec = result.agents.find((a) => a.name === "sec");
+    expect(sec!.peerCoordination ?? false).toBe(false);
+
+    // Migrated YAML body should not contain a per-agent peerCoordination entry.
+    // (The header comment documents the option; the body should not opt agents in.)
+    const migrated = fs.readFileSync(path.join(agentsDir, "config.yml"), "utf-8");
+    expect(migrated).not.toContain("    peerCoordination:");
+  });
+});
