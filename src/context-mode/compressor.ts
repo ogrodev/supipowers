@@ -20,6 +20,14 @@ const READ_TAIL_LINES = 30;
 const GREP_MAX_MATCHES = 10;
 const FIND_MAX_PATHS = 20;
 
+/**
+ * OMP's `shellMinimizer` already shrinks bash output and appends this footer
+ * pointing at the full bytes. When we see it, supipowers must NOT re-compress —
+ * doing so would either drop the pointer or double-truncate already-trimmed text.
+ * The artifact id is recoverable via `read artifact://<id>`.
+ */
+const OMP_MINIMIZER_FOOTER_RE = /(?:^|\n)\[raw output: artifact:\/\/[a-zA-Z0-9_-]+\]\s*$/;
+
 /** Measure total byte length of text content entries */
 function measureTextBytes(content: Array<{ type: string; text?: string }>): number {
   let total = 0;
@@ -51,6 +59,9 @@ function compressBash(text: string, details: unknown): string | undefined {
       ? (details as { exitCode: number }).exitCode
       : 0;
 
+  // Already minimized by OMP — pass through to preserve the artifact pointer.
+  if (OMP_MINIMIZER_FOOTER_RE.test(text)) return undefined;
+
   // Non-zero exit: keep full output for debugging
   if (exitCode !== 0) return undefined;
 
@@ -72,6 +83,9 @@ function compressBash(text: string, details: unknown): string | undefined {
 
 /** Compress read tool output — head+tail with hashline preservation */
 function compressRead(text: string, input: Record<string, unknown>): string | undefined {
+  // Already minimized by OMP (e.g. when reading a `bash-original` artifact back). Pass through.
+  if (OMP_MINIMIZER_FOOTER_RE.test(text)) return undefined;
+
   // Scoped reads (offset/limit/sel) are already targeted — pass through
   if (input.offset != null || input.limit != null || input.sel != null) return undefined;
 
