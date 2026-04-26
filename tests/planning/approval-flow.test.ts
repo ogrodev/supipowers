@@ -182,6 +182,84 @@ describe("Approve and execute", () => {
     expect(prompt).toContain("You **MUST** keep going until complete. This matters.");
   });
 
+  test("embeds todo_write replace payload when plan has tasks", async () => {
+    mockListPlans
+      .mockReturnValueOnce([])
+      .mockReturnValue(["plan-with-tasks.md"]);
+    mockReadPlanFile.mockReturnValue([
+      "---",
+      "name: plan-with-tasks",
+      "created: 2026-04-26",
+      "tags: []",
+      "---",
+      "",
+      "## Context",
+      "Some context.",
+      "",
+      "## Tasks",
+      "",
+      "### 1. Add new types [parallel-safe]",
+      "- **files**: src/types.ts",
+      "- **criteria**: Types compile",
+      "- **complexity**: small",
+      "",
+      "### 2. Wire detector [sequential: depends on 1]",
+      "- **files**: src/detector.ts",
+      "- **criteria**: Detector works",
+      "- **complexity**: medium",
+      "",
+    ].join("\n"));
+
+    const ctx = makeCtx();
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
+
+    const platform = makePlatform();
+    ctx.ui.select.mockResolvedValue("Approve and execute");
+    registerPlanApprovalHook(platform as any);
+
+    await platform.fireAgentEnd(ctx);
+
+    const prompt: string = platform.sendUserMessage.mock.calls[0][0];
+    expect(prompt).toContain("todo_write");
+    expect(prompt).toContain('"op": "replace"');
+    expect(prompt).toContain('"name": "I. Implementation"');
+    expect(prompt).toContain('"task": "task-1"');
+    expect(prompt).toContain('"content": "Add new types"');
+    expect(prompt).toContain("## Initialize todo tracker");
+  });
+
+  test("omits todo block when plan parses to zero tasks", async () => {
+    mockListPlans
+      .mockReturnValueOnce([])
+      .mockReturnValue(["empty-plan.md"]);
+    // Parse-able plan with valid frontmatter but no `### N.` task headers.
+    mockReadPlanFile.mockReturnValue([
+      "---",
+      "name: empty-plan",
+      "created: 2026-04-26",
+      "tags: []",
+      "---",
+      "",
+      "## Context",
+      "No tasks.",
+      "",
+    ].join("\n"));
+
+    const ctx = makeCtx();
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
+
+    const platform = makePlatform();
+    ctx.ui.select.mockResolvedValue("Approve and execute");
+    registerPlanApprovalHook(platform as any);
+
+    await platform.fireAgentEnd(ctx);
+
+    expect(platform.sendUserMessage).toHaveBeenCalledTimes(1);
+    const prompt: string = platform.sendUserMessage.mock.calls[0][0];
+    expect(prompt).not.toContain("## Initialize todo tracker");
+    expect(prompt).not.toContain("todo_write");
+  });
+
   test("planning is deactivated after approve", async () => {
     mockListPlans
       .mockReturnValueOnce([])
