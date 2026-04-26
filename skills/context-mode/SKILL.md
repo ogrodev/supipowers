@@ -60,7 +60,7 @@ For everything else:
 
 ### Read
 
-Reads are never blocked — OMP's native read tool preserves hashline anchors (`N#XX`) for the edit contract. Large reads (>110 lines) are auto-compressed to head (80) + tail (30) with a `sel` hint.
+Reads are never blocked — OMP's native open/read tool preserves hashline anchors (e.g., `120th|content` after 14.4.1) for the edit contract. Large reads (>110 lines) are auto-compressed to head (80) + tail (30) with a `sel` hint.
 
 For analysis-only reads where anchors are not needed, prefer `ctx_execute_file(path, language, code)` — only your printed summary enters context.
 
