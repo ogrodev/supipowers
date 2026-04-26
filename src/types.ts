@@ -181,6 +181,8 @@ export interface ReviewAgentConfig {
   data: string;
   model: string | null;
   thinkingLevel: ThinkingLevel | null;
+  /** Opt this agent into IRC peer coordination (requires OMP `irc` tool active). */
+  peerCoordination?: boolean;
 }
 
 /** Top-level review agent pipeline config */
@@ -202,6 +204,8 @@ export interface ConfiguredReviewAgent extends ReviewAgentDefinition {
   data: string;
   model: string | null;
   thinkingLevel: ThinkingLevel | null;
+  /** Opt this agent into IRC peer coordination (requires OMP `irc` tool active). */
+  peerCoordination?: boolean;
   scope?: "global" | "root" | "workspace";
 }
 
@@ -351,7 +355,7 @@ export interface GateExecutionContext {
     fileScope: GateExecutionContext["fileScope"]
   ) => Promise<GateIssue[]>;
   createAgentSession: (
-    opts: Pick<AgentSessionOptions, "cwd" | "model" | "thinkingLevel">
+    opts: Pick<AgentSessionOptions, "cwd" | "model" | "thinkingLevel" | "agentId" | "agentDisplayName">
   ) => Promise<AgentSession>;
   activeTools: string[];
   reviewModel?: Pick<ResolvedModel, "model" | "thinkingLevel">;

@@ -1,9 +1,9 @@
 import type { Platform } from "../platform/types.js";
 import type { DebugLogger } from "../debug/logger.js";
-import type { ResolvedModel } from "../types.js";
+import type { Plan, ResolvedModel } from "../types.js";
 import type { PlanningSystemPromptOptions } from "./system-prompt.js";
 import { applyModelOverride } from "../config/model-resolver.js";
-import { listPlans, readPlanFile } from "../storage/plans.js";
+import { listPlans, parsePlan, readPlanFile } from "../storage/plans.js";
 import { validatePlanMarkdown } from "./validate.js";
 import { appendReliabilityRecord } from "../storage/reliability-metrics.js";
 
@@ -82,12 +82,91 @@ export function getPlanningDebugLogger(): DebugLogger | null {
 }
 
 /**
+ * Mirrors OMP 14.4.0's flat-ops `todo_write` payload shape just enough to
+ * hand the agent a ready-to-execute payload after plan approval.
+ *
+ * The canonical schema lives in OMP \u2014 keep this type local; we only construct
+ * the payload to embed in a prompt string.
+ */
+type TodoWriteOp =
+  | {
+      op: "replace";
+      phases: Array<{ name: string; tasks: Array<{ content: string }> }>;
+    }
+  | { op: "note"; task: string; text: string };
+
+/** Cap individual task labels so the embedded payload stays bounded. */
+const TODO_WRITE_TASK_LABEL_MAX_CHARS = 200;
+
+function truncateTaskLabel(label: string): string {
+  if (label.length <= TODO_WRITE_TASK_LABEL_MAX_CHARS) return label;
+  return `${label.slice(0, TODO_WRITE_TASK_LABEL_MAX_CHARS - 1).trimEnd()}\u2026`;
+}
+
+/**
+ * Build the canonical `todo_write` ops payload from a parsed plan.
+ *
+ * Empty plans return `{ ops: [] }` so callers can skip emit cleanly.
+ * Non-empty plans always start with a single `replace` op containing one phase
+ * (`I. Implementation`) with one task per `plan.tasks` entry. Tasks that carry
+ * acceptance criteria get a follow-up `note` op so the criteria show up when the
+ * task becomes `in_progress`.
+ */
+export function buildTodoWriteOpsForPlan(plan: Plan): { ops: TodoWriteOp[] } {
+  if (plan.tasks.length === 0) return { ops: [] };
+
+  const tasks = plan.tasks.map((task) => ({
+    content: truncateTaskLabel(task.name),
+  }));
+
+  const ops: TodoWriteOp[] = [
+    {
+      op: "replace",
+      phases: [{ name: "I. Implementation", tasks }],
+    },
+  ];
+
+  for (const [index, task] of plan.tasks.entries()) {
+    const trimmed = task.criteria.trim();
+    if (!trimmed) continue;
+    // `todo_write` replace assigns task ids by replacement order (`task-1`, `task-2`, ...).
+    ops.push({ op: "note", task: `task-${index + 1}`, text: trimmed });
+  }
+
+  return { ops };
+}
+
+/**
  * Build the execution handoff prompt from an approved plan.
  *
  * Mirrors OMP's `plan-mode-approved.md` template: critical directive
  * to execute, the full plan content, and step-by-step instructions.
+ *
+ * When `plan` is provided and has tasks, the prompt also embeds the
+ * exact `todo_write` payload the agent must call before doing any work.
  */
-function buildExecutionPrompt(planContent: string, planPath: string): string {
+function buildExecutionPrompt(
+  planContent: string,
+  planPath: string,
+  plan?: Plan,
+): string {
+  const todoBlock: string[] = [];
+  if (plan && plan.tasks.length > 0) {
+    const payload = buildTodoWriteOpsForPlan(plan);
+    todoBlock.push(
+      "",
+      "## Initialize todo tracker",
+      "",
+      "Before any other work, call `todo_write` with exactly this payload:",
+      "",
+      "```json",
+      JSON.stringify(payload, null, 2),
+      "```",
+      "",
+      "After that initial call, mark the first task `in_progress` and proceed.",
+    );
+  }
+
   return [
     "<critical>",
     "Plan approved. You **MUST** execute it now.",
@@ -105,6 +184,7 @@ function buildExecutionPrompt(planContent: string, planPath: string): string {
     "Before execution, you **MUST** initialize todo tracking with the task list.",
     "After each completed step, immediately update progress so it stays visible.",
     "</instruction>",
+    ...todoBlock,
     "",
     "<critical>",
     "You **MUST** keep going until complete. This matters.",
@@ -130,8 +210,9 @@ async function executeApproveFlow(
   newSession: ((options?: any) => Promise<{ cancelled: boolean }>) | null,
   resolvedModel: ResolvedModel | null,
   debugLogger: DebugLogger | null,
+  plan: Plan | null,
  ): Promise<void> {
-  const prompt = buildExecutionPrompt(planContent, planPath);
+  const prompt = buildExecutionPrompt(planContent, planPath, plan ?? undefined);
   debugLogger?.log("execution_handoff_started", {
     planPath,
     promptLength: prompt.length,
@@ -263,6 +344,16 @@ export function registerPlanApprovalHook(platform: Platform): void {
 
     const canonicalContent = planContent;
     const planPath = `${platform.paths.dotDirDisplay}/supipowers/plans/${planName}`;
+    let parsedPlan: Plan | null = null;
+    try {
+      parsedPlan = parsePlan(planContent, planPath);
+    } catch (error) {
+      debugLogger?.log("approval_flow_plan_parse_failed", {
+        planName,
+        planPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     try {
       appendReliabilityRecord(platform.paths, planCwd, {
         ts: new Date().toISOString(),
@@ -304,6 +395,7 @@ export function registerPlanApprovalHook(platform: Platform): void {
         executionNewSession,
         executionModel,
         debugLogger,
+        parsedPlan,
       );
     } else if (choice === "Refine plan") {
       // Keep planning active, let user type refinement.
@@ -326,6 +418,7 @@ export function registerPlanApprovalHook(platform: Platform): void {
         executionNewSession,
         executionModel,
         debugLogger,
+        parsedPlan,
       );
       } else {
         debugLogger?.log("approval_flow_refine_requested", {
