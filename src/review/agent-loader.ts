@@ -66,6 +66,7 @@ const CONFIG_HEADER = [
   "#   data:          string   - markdown file name in the agents directory",
   "#   model:         string   - model id (e.g. \"anthropic/claude-sonnet-4-20250514\") or null to inherit",
   "#   thinkingLevel: string   - off | minimal | low | medium | high | xhigh | null to inherit",
+  "#   peerCoordination: boolean  - opt this agent into IRC peer coordination (multi-agent reviews only); omit or set false to disable",
   "#",
 ].join("\n");
 
@@ -81,6 +82,7 @@ function serializeConfigYaml(agents: ReviewAgentConfig[]): string {
       `    data: ${a.data}`,
       `    model: ${a.model ?? "null"}`,
       `    thinkingLevel: ${a.thinkingLevel ?? "null"}`,
+      ...(a.peerCoordination === true ? [`    peerCoordination: true`] : []),
     ]),
     "",
   ].join("\n");
@@ -129,6 +131,13 @@ function migrateConfigIfNeeded(configPath: string): void {
     } else if (current && trimmed.startsWith("thinkingLevel:")) {
       const val = trimmed.slice("thinkingLevel:".length).trim();
       current.thinkingLevel = val === "null" ? null : (val as any);
+    } else if (current && trimmed.startsWith("peerCoordination:")) {
+      const val = trimmed.slice("peerCoordination:".length).trim();
+      if (val === "true") {
+        current.peerCoordination = true;
+      } else if (val === "false") {
+        current.peerCoordination = false;
+      }
     }
   }
   if (current?.name) agents.push(current as ReviewAgentConfig);
@@ -270,6 +279,7 @@ function loadAgentsFromConfig(
         data: agent.data,
         model: agent.model,
         thinkingLevel: agent.thinkingLevel ?? null,
+        ...(agent.peerCoordination === true ? { peerCoordination: true } : {}),
         ...(scope ? { scope } : {}),
       } satisfies ConfiguredReviewAgent;
     });
