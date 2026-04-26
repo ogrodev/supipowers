@@ -209,4 +209,105 @@ describe("createCommandGate", () => {
       },
     });
   });
+
+  test("hoists OMP minimizer artifact refs from stdout/stderr into metadata.artifactRefs", async () => {
+    const context = createContext(ALPHA_TARGET, async (): Promise<ExecResult> => ({
+      stdout: "ok\n[raw output: artifact://abc123]",
+      stderr: "warning\n[raw output: artifact://stderr_456]",
+      code: 0,
+    }));
+    const config: CommandGateConfig = {
+      enabled: true,
+      runs: [{ command: "bun test:alpha", target: { scope: "workspace", relativeDir: "packages/alpha" } }],
+    };
+
+    const result = await commandGate.run(context, config);
+
+    expect(result.status).toBe("passed");
+    expect(result.metadata).toEqual({
+      target: "packages/alpha",
+      runs: [{
+        command: "bun test:alpha",
+        target: { scope: "workspace", relativeDir: "packages/alpha" },
+        exitCode: 0,
+        artifactRefs: ["artifact://abc123", "artifact://stderr_456"],
+      }],
+      artifactRefs: ["artifact://abc123", "artifact://stderr_456"],
+    });
+  });
+
+  test("failed runs also propagate artifactRefs into metadata", async () => {
+    const context = createContext(ALPHA_TARGET, async (): Promise<ExecResult> => ({
+      stdout: "",
+      stderr: "failed\n[raw output: artifact://fail-789]",
+      code: 1,
+    }));
+    const config: CommandGateConfig = {
+      enabled: true,
+      runs: [{ command: "bun test:alpha", target: { scope: "workspace", relativeDir: "packages/alpha" } }],
+    };
+
+    const result = await commandGate.run(context, config);
+
+    expect(result.status).toBe("failed");
+    expect(result.metadata).toMatchObject({
+      target: "packages/alpha",
+      failedCommand: "bun test:alpha",
+      artifactRefs: ["artifact://fail-789"],
+    });
+    const runs = (result.metadata as { runs: Array<{ artifactRefs?: string[] }> }).runs;
+    expect(runs[0]?.artifactRefs).toEqual(["artifact://fail-789"]);
+  });
+
+  test("omits artifactRefs metadata key when no refs are present", async () => {
+    const context = createContext(ALPHA_TARGET, async (): Promise<ExecResult> => ({
+      stdout: "clean output",
+      stderr: "",
+      code: 0,
+    }));
+    const config: CommandGateConfig = {
+      enabled: true,
+      runs: [{ command: "bun test:alpha", target: { scope: "workspace", relativeDir: "packages/alpha" } }],
+    };
+
+    const result = await commandGate.run(context, config);
+
+    expect(result.status).toBe("passed");
+    const metadata = result.metadata as Record<string, unknown>;
+    expect("artifactRefs" in metadata).toBe(false);
+    const runs = metadata.runs as Array<Record<string, unknown>>;
+    expect("artifactRefs" in runs[0]!).toBe(false);
+  });
+
+  test("de-duplicates artifact refs that appear in both stdout and stderr across multiple runs", async () => {
+    const calls: string[] = [];
+    const context = createContext(ALPHA_TARGET, async (command): Promise<ExecResult> => {
+      calls.push(command);
+      if (command === "bun test:workspace") {
+        return {
+          stdout: "foo\n[raw output: artifact://shared-1]",
+          stderr: "",
+          code: 0,
+        };
+      }
+      return {
+        stdout: "[raw output: artifact://shared-1] [raw output: artifact://only-2]",
+        stderr: "",
+        code: 0,
+      };
+    });
+    const config: CommandGateConfig = {
+      enabled: true,
+      runs: [
+        { command: "bun test:workspace", target: { scope: "all-workspaces" } },
+        { command: "bun test:alpha", target: { scope: "workspace", relativeDir: "packages/alpha" } },
+      ],
+    };
+
+    const result = await commandGate.run(context, config);
+
+    expect(result.status).toBe("passed");
+    const metadata = result.metadata as { artifactRefs: string[] };
+    expect(metadata.artifactRefs.sort()).toEqual(["artifact://only-2", "artifact://shared-1"]);
+  });
 });

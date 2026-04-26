@@ -10,6 +10,19 @@ import type {
 } from "../../types.js";
 import { GATE_CONFIG_SCHEMAS } from "../registry.js";
 
+const ARTIFACT_REF_RE = /artifact:\/\/[a-zA-Z0-9_-]+/g;
+
+function extractArtifactRefs(...streams: string[]): string[] {
+  const seen = new Set<string>();
+  for (const stream of streams) {
+    if (!stream) continue;
+    const matches = stream.match(ARTIFACT_REF_RE);
+    if (!matches) continue;
+    for (const ref of matches) seen.add(ref);
+  }
+  return [...seen];
+}
+
 interface TargetDetectedCommand {
   target: ProjectFactsTarget;
   command: string;
@@ -282,16 +295,30 @@ export function createCommandGate<TGateId extends CommandGateId>(
         };
       }
 
-      const executedRuns: Array<{ command: string; target: CommandGateRun["target"]; exitCode: number }> = [];
+      const executedRuns: Array<{
+        command: string;
+        target: CommandGateRun["target"];
+        exitCode: number;
+        artifactRefs?: string[];
+      }> = [];
       for (const run of matchingRuns) {
         const result = await context.execShell(run.command, {
           cwd: context.cwd,
           timeout: 120_000,
         });
-        executedRuns.push({ command: run.command, target: run.target, exitCode: result.code });
+        const artifactRefs = extractArtifactRefs(result.stdout, result.stderr);
+        executedRuns.push({
+          command: run.command,
+          target: run.target,
+          exitCode: result.code,
+          ...(artifactRefs.length > 0 ? { artifactRefs } : {}),
+        });
 
         if (result.code !== 0) {
           const detail = createFailureDetail(options.label, result.code, result.stdout, result.stderr);
+          const failedRefs = extractArtifactRefs(
+            ...executedRuns.flatMap((r) => r.artifactRefs ?? []),
+          );
           return {
             gate: options.id,
             status: "failed",
@@ -301,11 +328,15 @@ export function createCommandGate<TGateId extends CommandGateId>(
               target: context.target.relativeDir,
               runs: executedRuns,
               failedCommand: run.command,
+              ...(failedRefs.length > 0 ? { artifactRefs: failedRefs } : {}),
             },
           };
         }
       }
 
+      const passedRefs = extractArtifactRefs(
+        ...executedRuns.flatMap((r) => r.artifactRefs ?? []),
+      );
       return {
         gate: options.id,
         status: "passed",
@@ -314,6 +345,7 @@ export function createCommandGate<TGateId extends CommandGateId>(
         metadata: {
           target: context.target.relativeDir,
           runs: executedRuns,
+          ...(passedRefs.length > 0 ? { artifactRefs: passedRefs } : {}),
         },
       };
     },
