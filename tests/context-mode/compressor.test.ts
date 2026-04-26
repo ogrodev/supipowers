@@ -250,6 +250,42 @@ describe("compressToolResult", () => {
       expect(text.text).toContain("50 files found");
     });
   });
+
+  describe("OMP shellMinimizer footer pass-through", () => {
+    test("bash output containing OMP minimizer footer is passed through unchanged", () => {
+      const head = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+      const text = `${head}\n[raw output: artifact://abc123_DEF-456]`;
+      const result = compressToolResult(bashResult(text, { exitCode: 0 }), THRESHOLD);
+      expect(result).toBeUndefined();
+    });
+
+    test("read output containing OMP minimizer footer is passed through unchanged", () => {
+      const head = Array.from({ length: 200 }, (_, i) => `${i + 1}#XX:line ${i}`).join("\n");
+      const text = `${head}\n[raw output: artifact://xyz789]`;
+      const result = compressToolResult(readResult(text), THRESHOLD);
+      expect(result).toBeUndefined();
+    });
+
+    test("footer-like text in the middle still compresses normally", () => {
+      const lines = [
+        ...Array.from({ length: 25 }, (_, i) => `line ${i}`),
+        "literal docs mention [raw output: artifact://abc123] here",
+        ...Array.from({ length: 25 }, (_, i) => `tail ${i}`),
+      ].join("\n");
+      const result = compressToolResult(bashResult(lines, { exitCode: 0 }), THRESHOLD);
+      expect(result).toBeDefined();
+      const out = result!.content![0] as { type: string; text: string };
+      expect(out.text).toContain("[...compressed:");
+    });
+
+    test("bash output without footer still compresses normally", () => {
+      const lines = Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n");
+      const result = compressToolResult(bashResult(lines, { exitCode: 0 }), THRESHOLD);
+      expect(result).toBeDefined();
+      const out = result!.content![0] as { type: string; text: string };
+      expect(out.text).toContain("[...compressed:");
+    });
+  });
 });
 
 
