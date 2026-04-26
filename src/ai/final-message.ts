@@ -20,6 +20,8 @@ export interface StructuredAgentRunOptions {
   prompt: string;
   model?: string;
   thinkingLevel?: string | null;
+  agentId?: string;
+  agentDisplayName?: string;
   timeoutMs?: number;
 }
 
@@ -92,6 +94,8 @@ export async function runStructuredAgentSession(
     cwd: options.cwd,
     model: options.model,
     thinkingLevel: options.thinkingLevel ?? null,
+    ...(options.agentId ? { agentId: options.agentId } : {}),
+    ...(options.agentDisplayName ? { agentDisplayName: options.agentDisplayName } : {}),
   });
 
   try {

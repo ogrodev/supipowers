@@ -42,6 +42,8 @@ export interface StructuredOutputRunOptions<T> {
   parse: (raw: string) => StructuredParseResult<T>;
   model?: string;
   thinkingLevel?: string | null;
+  agentId?: string;
+  agentDisplayName?: string;
   timeoutMs?: number;
   /** Default: 3. Clamped to >=1 at runtime. */
   maxAttempts?: number;
@@ -171,6 +173,8 @@ export async function runWithOutputValidation<T>(
         prompt,
         model: options.model,
         thinkingLevel: options.thinkingLevel ?? null,
+        agentId: options.agentId,
+        agentDisplayName: options.agentDisplayName,
         timeoutMs: options.timeoutMs,
       });
 
