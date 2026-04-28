@@ -9,6 +9,10 @@ import { buildResumeSnapshot } from "./snapshot-builder.js";
 import { routeToolCall } from "./routing.js";
 import { KnowledgeStore } from "./knowledge/store.js";
 import { registerContextModeTools } from "./tools.js";
+import { MetricsStore, __setMetricsStoreForTest, _resetMetricsStoreCache } from "./metrics-store.js";
+import { toMetricRow } from "./metrics-recorder.js";
+import { basename } from "node:path";
+import { getProjectStateDir } from "../workspace/state-paths.js";
 import { createHash } from "node:crypto";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -60,6 +64,8 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
 
   let eventStore: EventStore | null = null;
   let eventStorePath: string | null = null;
+  let metricsStore: MetricsStore | null = null;
+  let metricsStorePath: string | null = null;
   let sessionCwd = process.cwd();
   let sessionId = deriveSessionId();
 
@@ -94,7 +100,40 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
     }
   };
 
+  /** Mirror of ensureEventStore for the metrics sidecar; cwd-keyed.
+   *  Closes any prior store when the cwd changes so we never write rows to
+   *  the wrong project's metrics.db. */
+  const ensureMetricsStore = (cwd: string): MetricsStore | null => {
+    const dbPath = join(getProjectStatePath(platform.paths, cwd, "sessions"), "metrics.db");
+    if (metricsStore && metricsStorePath === dbPath) return metricsStore;
+
+    if (metricsStore) {
+      try {
+        metricsStore.close();
+      } catch {
+        // Best effort: we are about to reopen against the active project's metrics.db.
+      }
+    }
+
+    try {
+      mkdirSync(getProjectStatePath(platform.paths, cwd, "sessions"), { recursive: true });
+      const slug = basename(getProjectStateDir(platform.paths, cwd));
+      metricsStore = new MetricsStore({ dbPath, projectSlug: slug });
+      metricsStore.init();
+      metricsStorePath = dbPath;
+      __setMetricsStoreForTest(metricsStore);
+      return metricsStore;
+    } catch (e) {
+      metricsStore = null;
+      metricsStorePath = null;
+      __setMetricsStoreForTest(null);
+      (platform as any).logger?.error?.("supi-context-mode: failed to initialize metrics store", e);
+      return null;
+    }
+  };
+
   ensureEventStore(sessionCwd);
+  ensureMetricsStore(sessionCwd);
 
   _sessionIdRef = sessionId;
 
@@ -127,12 +166,21 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
     _sessionIdRef = sessionId;
 
     const store = ensureEventStore(sessionCwd);
-    if (!store) return;
+    if (store) {
+      try {
+        store.upsertMeta(sessionId, sessionCwd);
+      } catch (e) {
+        (platform as any).logger?.warn?.("supi-context-mode: failed to initialize session metadata", e);
+      }
+    }
 
-    try {
-      store.upsertMeta(sessionId, sessionCwd);
-    } catch (e) {
-      (platform as any).logger?.warn?.("supi-context-mode: failed to initialize session metadata", e);
+    const metrics = ensureMetricsStore(sessionCwd);
+    if (metrics) {
+      try {
+        metrics.upsertSession({ session_id: sessionId, cwd: sessionCwd });
+      } catch (e) {
+        (platform as any).logger?.warn?.("supi-context-mode: failed to initialize metrics session metadata", e);
+      }
     }
   });
 
@@ -146,6 +194,19 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
       } finally {
         knowledgeStore = null;
         _knowledgeStoreRef = null;
+      }
+    }
+    // Prune + close metrics store independently of event store status.
+    if (metricsStore) {
+      try {
+        metricsStore.pruneOldSessions(7);
+        metricsStore.close();
+      } catch (e) {
+        (platform as any).logger?.warn?.("supi-context-mode: failed to close metrics store", e);
+      } finally {
+        metricsStore = null;
+        metricsStorePath = null;
+        __setMetricsStoreForTest(null);
       }
     }
 
@@ -180,6 +241,39 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
         if (events.length > 0) eventStore.writeEvents(events);
       } catch (e) {
         (platform as any).logger?.warn?.("supi-context-mode: event extraction failed", e);
+      }
+    }
+
+    // Metrics recording (fire-and-forget; never throws back to the agent).
+    if (metricsStore) {
+      try {
+        const usage = (() => {
+          try {
+            const raw = (event as any).contextUsage
+              ?? (event as any).context
+              ?? null;
+            if (!raw || typeof raw !== "object") return null;
+            return {
+              tokens: typeof raw.tokens === "number" ? raw.tokens : null,
+              contextWindow: typeof raw.contextWindow === "number" ? raw.contextWindow : null,
+              percent: typeof raw.percent === "number" ? raw.percent : null,
+            };
+          } catch {
+            return null;
+          }
+        })();
+        const row = toMetricRow({
+          event,
+          compressed,
+          sessionId,
+          cwd: sessionCwd,
+          projectSlug: basename(getProjectStateDir(platform.paths, sessionCwd)),
+          contextUsage: usage,
+          ts: Date.now(),
+        });
+        metricsStore.record(row);
+      } catch (e) {
+        (platform as any).logger?.warn?.("supi-context-mode: metrics record failed", e);
       }
     }
 
@@ -316,6 +410,9 @@ export function getEventStore(): EventStore | null {
   return _eventStoreRef;
 }
 
+/** Get the metrics store instance (for use by /supi:context, ctx_stats, /supi:clear). */
+export { getMetricsStore } from "./metrics-store.js";
+
 /** Get the session ID (for use by compaction hooks) */
 export function getSessionId(): string {
   return _sessionIdRef;
@@ -332,4 +429,5 @@ export function _resetCache(): void {
   _eventStoreRef = null;
   _knowledgeStoreRef = null;
   _sessionIdRef = "";
+  _resetMetricsStoreCache();
 }

@@ -390,3 +390,115 @@ describe("intent-driven filtering", () => {
     expect(text.length).toBeGreaterThan(0);
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────
+// ctx_stats — JSON mode (Tasks 36, 37, 38)
+// ─────────────────────────────────────────────────────────────
+
+import {
+  MetricsStore,
+  __setMetricsStoreForTest,
+  _resetMetricsStoreCache,
+} from "../../src/context-mode/metrics-store.js";
+import { _resetCache as _resetHooksCache } from "../../src/context-mode/hooks.js";
+
+describe("ctx_stats — markdown vs JSON", () => {
+  let metricsTmp: string;
+  let metricsDb: string;
+  let metrics: MetricsStore;
+
+  beforeEach(() => {
+    _resetHooksCache();
+    _resetMetricsStoreCache();
+    metricsTmp = fs.mkdtempSync(path.join(os.tmpdir(), "supi-tools-stats-"));
+    metricsDb = path.join(metricsTmp, "metrics.db");
+    metrics = new MetricsStore({ dbPath: metricsDb, projectSlug: "demo" });
+    metrics.init();
+    metrics.upsertSession({ session_id: "", cwd: metricsTmp });
+  });
+
+  afterEach(() => {
+    try { metrics.close(); } catch { /* already closed */ }
+    rmDirWithRetry(metricsTmp);
+    _resetMetricsStoreCache();
+  });
+
+  test("defaults to markdown when format is omitted (Task 36)", async () => {
+    registerAll();
+    const result = await callTool("ctx_stats", {});
+    expect(result.content[0].text).toContain("## Context Mode Stats");
+  });
+
+  test("format=json returns the spec \u00a76.2 contract (Task 37)", async () => {
+    registerAll();
+    __setMetricsStoreForTest(metrics);
+    metrics.record({
+      session_id: "",
+      ts: Date.now(),
+      layer: "L2",
+      tool: "bash",
+      processor: "bash",
+      before_bytes: 1000,
+      after_bytes: 100,
+      cache_hit: 0,
+      unique_source_hash: null,
+      context_tokens: null,
+      context_window: null,
+      context_percent: null,
+    });
+    await metrics.flushPendingForTest();
+
+    const result = await callTool("ctx_stats", { format: "json" });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(typeof parsed.session.id).toBe("string");
+    expect(typeof parsed.session.startedAt).toBe("number");
+    expect(typeof parsed.session.rowCount).toBe("number");
+
+    expect(typeof parsed.totals.beforeBytes).toBe("number");
+    expect(typeof parsed.totals.afterBytes).toBe("number");
+    expect(typeof parsed.totals.saved).toBe("number");
+    expect(typeof parsed.totals.tokensEstimated).toBe("number");
+
+    expect(Array.isArray(parsed.perTool)).toBe(true);
+    for (const t of parsed.perTool) {
+      expect(typeof t.tool).toBe("string");
+      expect(typeof t.saved).toBe("number");
+      expect(typeof t.calls).toBe("number");
+    }
+
+    expect(Array.isArray(parsed.perLayer)).toBe(true);
+    for (const layer of parsed.perLayer) {
+      expect(typeof layer.layer).toBe("string");
+      expect(typeof layer.saved).toBe("number");
+      expect(typeof layer.rows).toBe("number");
+    }
+
+    expect(typeof parsed.uniqueSourceShare).toBe("number");
+    expect(parsed.uniqueSourceShare).toBeGreaterThanOrEqual(0);
+    expect(parsed.uniqueSourceShare).toBeLessThanOrEqual(1);
+    expect(typeof parsed.writeFailures).toBe("number");
+  });
+
+  test("format=json with null metricsStore uses documented defaults (Task 38)", async () => {
+    registerAll();
+    __setMetricsStoreForTest(null);
+
+    const result = await callTool("ctx_stats", { format: "json" });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.totals).toEqual({
+      beforeBytes: 0,
+      afterBytes: 0,
+      saved: 0,
+      tokensEstimated: 0,
+    });
+    expect(parsed.perTool).toEqual([]);
+    expect(parsed.perLayer).toEqual([]);
+    expect(parsed.uniqueSourceShare).toBe(0);
+    expect(parsed.writeFailures).toBe(0);
+    expect(parsed.session.startedAt).toBe(0);
+    expect(parsed.session.rowCount).toBe(0);
+  });
+});

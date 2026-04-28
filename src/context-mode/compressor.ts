@@ -26,7 +26,7 @@ const FIND_MAX_PATHS = 20;
  * doing so would either drop the pointer or double-truncate already-trimmed text.
  * The artifact id is recoverable via `read artifact://<id>`.
  */
-const OMP_MINIMIZER_FOOTER_RE = /(?:^|\n)\[raw output: artifact:\/\/[a-zA-Z0-9_-]+\]\s*$/;
+export const OMP_MINIMIZER_FOOTER_RE = /(?:^|\n)\[raw output: artifact:\/\/[a-zA-Z0-9_-]+\]\s*$/;
 
 /** Measure total byte length of text content entries */
 function measureTextBytes(content: Array<{ type: string; text?: string }>): number {

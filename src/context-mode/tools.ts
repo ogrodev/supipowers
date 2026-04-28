@@ -10,6 +10,7 @@ import { executeCode } from "./sandbox/executor.js";
 import { getSupportedLanguages } from "./sandbox/runners.js";
 import { chunkMarkdown } from "./knowledge/chunker.js";
 import { KnowledgeStore } from "./knowledge/store.js";
+import { getMetricsStore, getSessionId } from "./hooks.js";
 import { fetchAndIndex } from "./web/fetcher.js";
 
 /** Threshold (bytes) above which intent-driven filtering kicks in. */
@@ -429,8 +430,64 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       "Use only when the user asks about context consumption or to debug context bloat",
       "Do not call this proactively — it consumes context itself",
     ],
-    parameters: { type: "object", properties: {} },
-    async execute() {
+    parameters: {
+      type: "object",
+      properties: {
+        format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "Output format. Defaults to markdown for human reading; json is for tokscale-class consumers.",
+        },
+      },
+    },
+    async execute(_id: string, params: any = {}) {
+      const format = params?.format === "json" ? "json" : "markdown";
+      const metricsStore = getMetricsStore();
+      const sessionId = getSessionId();
+
+      if (format === "json") {
+        const meta = (() => {
+          try {
+            return metricsStore?.getSessionMeta(sessionId) ?? null;
+          } catch {
+            return null;
+          }
+        })();
+        const totals = metricsStore
+          ? metricsStore.getSessionTotals(sessionId)
+          : { beforeBytes: 0, afterBytes: 0, saved: 0, rowCount: 0 };
+        const perTool = metricsStore ? metricsStore.getTopTools(sessionId, 50) : [];
+        const perLayer = metricsStore ? metricsStore.getPerLayer(sessionId) : [];
+        const uniqueSourceShare = metricsStore
+          ? metricsStore.getUniqueSourceShare(sessionId)
+          : 0;
+        const writeFailures = metricsStore
+          ? metricsStore.getSessionWriteFailures(sessionId)
+          : 0;
+        const tokensEstimated = Math.ceil(totals.saved / 4);
+        const payload = {
+          session: {
+            id: sessionId,
+            startedAt: meta?.started_at ?? 0,
+            rowCount: totals.rowCount,
+          },
+          totals: {
+            beforeBytes: totals.beforeBytes,
+            afterBytes: totals.afterBytes,
+            saved: totals.saved,
+            tokensEstimated,
+          },
+          perTool,
+          perLayer,
+          uniqueSourceShare,
+          writeFailures,
+        };
+        const text = JSON.stringify(payload, null, 2);
+        trackCall("ctx_stats", text.length);
+        return { content: [{ type: "text", text }] };
+      }
+
+      // Markdown (default; existing behavior preserved).
       const storeStats = store.getStats();
       const totalCalls = Object.values(stats.calls).reduce((sum, n) => sum + n, 0);
       const estimatedTokens = Math.ceil(stats.bytesReturned / 4); // rough estimate
@@ -450,6 +507,17 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       output += `- **Chunks indexed**: ${storeStats.totalChunks}\n`;
       output += `- **Sources**: ${storeStats.sources.length > 0 ? storeStats.sources.join(", ") : "(none)"}\n`;
       output += `- **DB size**: ${(storeStats.dbSizeBytes / 1024).toFixed(1)}KB\n`;
+
+      // Append a Savings panel for the active metrics session, when available.
+      if (metricsStore) {
+        const totals = metricsStore.getSessionTotals(sessionId);
+        const uniqueSourceShare = metricsStore.getUniqueSourceShare(sessionId);
+        output += `\n### Session savings (L1 metrics)\n\n`;
+        output += `- **Before**: ${(totals.beforeBytes / 1024).toFixed(1)}KB\n`;
+        output += `- **After**: ${(totals.afterBytes / 1024).toFixed(1)}KB\n`;
+        output += `- **Saved**: ${(totals.saved / 1024).toFixed(1)}KB\n`;
+        output += `- **Unique-source share**: ${Math.round(uniqueSourceShare * 100)}%\n`;
+      }
 
       trackCall("ctx_stats", output.length);
       return { content: [{ type: "text", text: output }] };
