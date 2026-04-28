@@ -19,6 +19,7 @@ import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { registerContextCommand, handleContext } from "./commands/context.js";
 import { registerOptimizeContextCommand, handleOptimizeContext } from "./commands/optimize-context.js";
+import { registerClearCommand, handleClear } from "./commands/clear.js";
 import { registerCommitCommand, handleCommit } from "./commands/commit.js";
 import { registerGenerateCommand } from "./commands/generate.js";
 import { registerAgentsCommand, handleAgents } from "./commands/agents.js";
@@ -40,6 +41,7 @@ import {
   stopActiveUiDesignSession,
 } from "./ui-design/session.js";
 import { registerUltraPlanRuntimeTools } from "./ultraplan/execution/runtime-tools.js";
+import { registerUltraPlanAuthoringTool } from "./ultraplan/authoring-tool.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -54,6 +56,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:model": (platform, ctx) => handleModel(platform, ctx),
   "supi:context": (platform, ctx) => handleContext(platform, ctx),
   "supi:optimize-context": (platform, ctx) => handleOptimizeContext(platform, ctx),
+  "supi:clear": (platform, ctx, args) => handleClear(platform, ctx, args),
   "supi:commit": (platform, ctx, args) => handleCommit(platform, ctx, args),
   "supi:release": (platform, ctx, args) => handleRelease(platform, ctx, args),
   "supi:checks": (platform, ctx, args) => handleChecksCommand(platform, ctx, args),
@@ -90,6 +93,7 @@ export function bootstrap(platform: Platform): void {
   registerModelCommand(platform);
   registerContextCommand(platform);
   registerOptimizeContextCommand(platform);
+  registerClearCommand(platform);
   registerCommitCommand(platform);
   registerGenerateCommand(platform);
   registerAgentsCommand(platform);
@@ -98,6 +102,7 @@ export function bootstrap(platform: Platform): void {
 
 
   registerUltraPlanRuntimeTools(platform);
+  registerUltraPlanAuthoringTool(platform);
 
   // Register plan approval flow (agent_end hook for plan approval UI)
   registerPlanApprovalHook(platform);

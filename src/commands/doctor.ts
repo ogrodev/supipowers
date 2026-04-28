@@ -8,6 +8,9 @@ import { isLspAvailable } from "../lsp/detector.js";
 import { summarizeEnabledGates } from "../quality/setup.js";
 import { DEPENDENCIES } from "../deps/registry.js";
 import { formatReliabilitySection, loadReliabilitySummaries } from "../storage/reliability-metrics.js";
+import { getMetricsStore, getSessionId } from "../context-mode/hooks.js";
+import { getProjectStatePath, getProjectStateDir } from "../workspace/state-paths.js";
+import { basename } from "node:path";
 
 export interface CheckResult {
   name: string;
@@ -242,6 +245,121 @@ export function checkContextMode(_activeTools: string[]): CheckResult {
   };
 }
 
+/** Metrics health checks for the L1 measurement layer. */
+export function checkMetrics(
+  platform: Platform,
+  cwd: string,
+  now = Date.now(),
+): { section: SectionResult; absDbPath: string } {
+  const absDbPath = getProjectStatePath(
+    platform.paths,
+    cwd,
+    "sessions",
+    "metrics.db",
+  );
+  const store = getMetricsStore();
+  const sessionId = getSessionId();
+
+  const reachable: CheckResult = store
+    ? {
+        name: "metrics-db-reachable",
+        presence: { ok: true, detail: `Metrics DB: ${absDbPath}` },
+        functional: { ok: true, detail: "Open" },
+      }
+    : (() => {
+        // Differentiate the two reasons `getMetricsStore()` returns null:
+        //   1. `contextMode.enabled = false` — the hook never registered, so the
+        //      remediation is to flip the config flag.
+        //   2. Init failed (FS perms, sqlite error, etc.) — the hook registered
+        //      but `ensureMetricsStore` returned null and logged the error.
+        // Saying "run /supi:context to bootstrap" was wrong: that command only
+        // reads the ref and never initializes the store.
+        const enabled = (() => {
+          try {
+            return inspectConfig(platform.paths, cwd).effectiveConfig?.contextMode?.enabled ?? true;
+          } catch {
+            return true;
+          }
+        })();
+        const detail = enabled
+          ? `Failed to initialize \u2014 check session_start logs (${absDbPath})`
+          : `Disabled (contextMode.enabled = false) \u2014 set it to true in config to enable metrics (${absDbPath})`;
+        return {
+          name: "metrics-db-reachable",
+          presence: { ok: false, detail },
+        };
+      })();
+
+  const writeFailures = (() => {
+    try {
+      return store?.getSessionWriteFailures(sessionId) ?? 0;
+    } catch {
+      return 0;
+    }
+  })();
+  const writeHealthy: CheckResult = store
+    ? {
+        name: "metrics-write-healthy",
+        presence: {
+          ok: writeFailures === 0,
+          detail:
+            writeFailures === 0
+              ? "No write failures this session"
+              : `${writeFailures} write_failures \u2014 see /supi:clear or filesystem health`,
+        },
+      }
+    : {
+        name: "metrics-write-healthy",
+        presence: { ok: false, detail: "Skipped \u2014 metrics store unavailable" },
+      };
+
+  const lastPruneAt = (() => {
+    try {
+      // Use the store's bound slug rather than re-deriving from cwd; the store
+      // is the source of truth for which project_meta_metrics row matters.
+      const slug = store?.projectSlug ?? basename(getProjectStateDir(platform.paths, cwd));
+      return store?.getProjectMeta(slug)?.last_prune_at ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const pruneFresh: CheckResult = !store
+    ? {
+        name: "metrics-prune-fresh",
+        presence: { ok: false, detail: "Skipped \u2014 metrics store unavailable" },
+      }
+    : lastPruneAt === null
+      ? {
+          name: "metrics-prune-fresh",
+          presence: {
+            ok: false,
+            detail: "Never pruned; runs on session_shutdown",
+          },
+        }
+      : now - lastPruneAt <= ONE_DAY_MS
+        ? {
+            name: "metrics-prune-fresh",
+            presence: { ok: true, detail: "Pruned within 24h" },
+          }
+        : {
+            name: "metrics-prune-fresh",
+            presence: {
+              ok: false,
+              detail: `Stale (${Math.round((now - lastPruneAt) / ONE_DAY_MS)}d ago)`,
+            },
+          };
+
+  return {
+    section: {
+      title: `Metrics (${absDbPath})`,
+      checks: [reachable, writeHealthy, pruneFresh],
+    },
+    absDbPath,
+  };
+}
+
+
 export async function checkNpm(platform: Platform): Promise<CheckResult> {
   try {
     const vResult = await platform.exec("npm", ["--version"]);
@@ -287,10 +405,13 @@ export async function runDoctorChecks(platform: Platform, cwd: string): Promise<
   const mcpAvailable = mcpResult.presence.ok;
   const capChecks = checkCapabilities(platform.capabilities, mcpAvailable);
 
+  const metrics = checkMetrics(platform, cwd);
+
   return [
     { title: "Core Infrastructure", checks: core },
     { title: "Integrations", checks: integrations },
     { title: "Platform Capabilities", checks: capChecks },
+    metrics.section,
   ];
 }
 

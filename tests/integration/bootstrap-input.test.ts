@@ -91,8 +91,8 @@ describe("bootstrap input interception", () => {
     expect(isUiDesignActive()).toBe(false);
   });
 
-  test("registers ultraplan_signal when tool registration is available", async () => {
-    const bootstrapModulePath = "../../src/bootstrap.js?bootstrap-input-ultraplan-signal";
+  test("registers UltraPlan tools when tool registration is available", async () => {
+    const bootstrapModulePath = "../../src/bootstrap.js?bootstrap-input-ultraplan-tools";
     const { bootstrap } = await import(bootstrapModulePath);
     const { platform } = createPlatform({ withRegisterTool: true });
 
@@ -100,5 +100,6 @@ describe("bootstrap input interception", () => {
 
     const registrations = platform.registerTool.mock.calls.map((call: unknown[]) => (call[0] as { name?: string } | undefined)?.name);
     expect(registrations).toContain("ultraplan_signal");
+    expect(registrations).toContain("ultraplan_create");
   });
 });
