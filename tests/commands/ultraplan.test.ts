@@ -42,11 +42,6 @@ function seedGlobalIndex(paths: ReturnType<typeof createTestPaths>, cwd: string,
   fs.writeFileSync(indexPath, `${JSON.stringify(index, null, 2)}\n`);
 }
 
-function writeGlobalConfig(paths: ReturnType<typeof createTestPaths>, data: unknown): void {
-  const configPath = paths.global("config.json");
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`);
-}
 
 function seedCanonicalGlobalSession(
   paths: ReturnType<typeof createTestPaths>,
@@ -298,62 +293,75 @@ function updateAuthored(
   fs.writeFileSync(authoredPath, `${JSON.stringify(authored, null, 2)}\n`);
 }
 
-describe("handleUltraplan bare-call", () => {
-  test("hasUI:true + undefined args routes to runUltraPlanAuthoringWizard (input prompted)", async () => {
+describe("handleUltraplan conversational authoring", () => {
+  test("undefined args starts agent-driven authoring without TUI prompts", async () => {
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
-    const platform = { paths } as any;
+    const sendMessage = mock(() => {});
+    const platform = { paths, sendMessage } as any;
     const ctx = createUltraplanCtx({ hasUI: true, inputResponses: [null] });
     ctx.cwd = cwd;
+
     await handleUltraplan(platform, ctx, undefined);
-    // Wizard was engaged: the input prompt fired.
-    expect(ctx.input).toHaveBeenCalled();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [message, options] = sendMessage.mock.calls[0] as any[];
+    expect(message.customType).toBe("supi-ultraplan-author");
+    expect(message.display).toBe("none");
+    expect(String(message.content[0].text)).toContain("No initial prompt was provided");
+    expect(options).toEqual({ deliverAs: "steer", triggerTurn: true });
+    expect(ctx.input).not.toHaveBeenCalled();
+    expect(ctx.select).not.toHaveBeenCalled();
   });
 
-  test("hasUI:false + undefined args emits a warning notify", async () => {
+  test("hasUI:false still starts chat authoring instead of warning", async () => {
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
-    const platform = { paths } as any;
+    const sendMessage = mock(() => {});
+    const platform = { paths, sendMessage } as any;
     const ctx = createUltraplanCtx({ hasUI: false });
     ctx.cwd = cwd;
+
     await handleUltraplan(platform, ctx, undefined);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
     const warnings = ctx.notify.mock.calls.filter((c: unknown[]) => c[1] === "warning");
-    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(warnings).toHaveLength(0);
   });
 
-  test("catalog preflight failures surface an error notify instead of failing silently", async () => {
+  test("non-subcommand args are treated as the initial user prompt", async () => {
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
-    writeGlobalConfig(paths, {
-      ultraplan: {
-        slots: {
-          "backend-tester": {
-            agentName: "integration-breaker",
-          },
-        },
-      },
-    });
-    const platform = { paths } as any;
+    const sendMessage = mock(() => {});
+    const platform = { paths, sendMessage } as any;
     const ctx = createUltraplanCtx({ hasUI: true });
     ctx.cwd = cwd;
 
-    await handleUltraplan(platform, ctx, undefined);
+    await handleUltraplan(platform, ctx, "redesign checkout for mobile");
 
-    const errors: unknown[][] = ctx.notify.mock.calls.filter((c: unknown[]) => c[1] === "error");
-    expect(errors).toHaveLength(1);
-    expect(String(errors[0][0])).toContain("Ultraplan authoring cannot start");
-    expect(String(errors[0][0])).toContain("Only repository config may define ultraplan");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [message] = sendMessage.mock.calls[0] as any[];
+    const prompt = String(message.content[0].text);
+    expect(prompt).toContain("Initial user prompt (verbatim)");
+    expect(prompt).toContain("redesign checkout for mobile");
+    expect(prompt).toContain("ultraplan_create");
     expect(ctx.input).not.toHaveBeenCalled();
   });
 
   test("empty-string args routes identically to undefined", async () => {
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
-    const platform = { paths } as any;
+    const sendMessage = mock(() => {});
+    const platform = { paths, sendMessage } as any;
     const ctx = createUltraplanCtx({ hasUI: true, inputResponses: [null] });
     ctx.cwd = cwd;
+
     await handleUltraplan(platform, ctx, "");
-    expect(ctx.input).toHaveBeenCalled();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [message] = sendMessage.mock.calls[0] as any[];
+    expect(String(message.content[0].text)).toContain("No initial prompt was provided");
+    expect(ctx.input).not.toHaveBeenCalled();
   });
 });
 
@@ -1666,48 +1674,23 @@ describe("handleUltraplan run command", () => {
 });
 
 describe("handleUltraplan end-to-end integration", () => {
-  test("author a minimal session via handleUltraplan → manifest + index reflect the new session", async () => {
-    const { loadUltraPlanIndex, loadUltraPlanManifest } = await import("../../src/ultraplan/storage.js");
+  test("authoring is delegated to the active agent instead of persisting synchronously", async () => {
+    const { loadUltraPlanIndex } = await import("../../src/ultraplan/storage.js");
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
-    const platform = { paths } as any;
-    const ctx = createUltraplanCtx({
-      hasUI: true,
-      inputResponses: ["test", "a session", "auth", "login"],
-      selectResponses: [
-        "applicable", "not-applicable", "not-applicable",
-        "+ Add domain", "✓ Done with frontend domains",
-        "+ Add unit scenario", "✓ Done with unit",
-        "✓ Done with integration", "✓ Done with e2e",
-        "✓ Approve & save",
-      ],
-    });
+    const sendMessage = mock(() => {});
+    const platform = { paths, sendMessage } as any;
+    const ctx = createUltraplanCtx({ hasUI: true, inputResponses: ["test", "a session"] });
     ctx.cwd = cwd;
 
     await handleUltraplan(platform, ctx, undefined);
 
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(ctx.input).not.toHaveBeenCalled();
     const indexResult = loadUltraPlanIndex(paths, cwd);
-    expect(indexResult.ok).toBe(true);
-    if (!indexResult.ok) return;
-    expect(indexResult.value.sessions).toHaveLength(1);
-    const sessionId = indexResult.value.sessions[0].sessionId;
+    expect(indexResult.ok).toBe(false);
 
-    expect(fs.existsSync(getUltraplanAuthoredJsonPath(paths, cwd, sessionId))).toBe(true);
-    expect(fs.existsSync(getUltraplanManifestPath(paths, cwd, sessionId))).toBe(true);
-    expect(fs.existsSync(getUltraplanIndexPath(paths, cwd))).toBe(true);
-
-    const manifestResult = loadUltraPlanManifest(paths, cwd, sessionId);
-    expect(manifestResult.ok).toBe(true);
-    if (!manifestResult.ok) return;
-    expect(manifestResult.value.state).toBe("ready");
-    expect(manifestResult.value.cursor?.targetType).toBe("scenario");
-    expect(manifestResult.value.cursor?.phase).toBe("red");
-    expect(manifestResult.value.cursor?.status).toBe("planned");
-
-    const successNotifies: unknown[][] = ctx.notify.mock.calls.filter((c: unknown[]) =>
-      String(c[0]).toLowerCase().includes("saved"),
-    );
-    expect(successNotifies.length).toBe(1);
-    expect(String(successNotifies[0][0])).toContain("test");
+    const infos = (ctx.notify.mock.calls as unknown[][]).filter((call: unknown[]) => call[1] === "info");
+    expect(String(infos[0]?.[0] ?? "")).toContain("UltraPlan authoring started");
   });
 });

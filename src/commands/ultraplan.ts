@@ -60,7 +60,6 @@ import {
 } from "../ultraplan/batch/supervisor.js";
 import { resolveSessionMigration } from "../ultraplan/runtime/migration.js";
 import { runUltraPlanSession } from "../ultraplan/execution/session-runner.js";
-import { runUltraPlanAuthoringWizard } from "../ultraplan/authoring-wizard.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import { resolveRepoIdentityRootFromFs, resolveRepoRoot } from "../workspace/repo-root.js";
 
@@ -69,6 +68,8 @@ const SUBCOMMANDS = [
   { name: "status", description: "Inspect status for an existing ultraplan session" },
   { name: "next", description: "Recommend the next ultraplan session to run" },
 ] as const;
+
+type UltraPlanSubcommand = (typeof SUBCOMMANDS)[number]["name"];
 
 const ULTRAPLAN_RECOMMENDATION_SURFACE_KEY = "supi-ultraplan-next";
 
@@ -93,9 +94,10 @@ type SessionPickerState = {
   topRecommendation: UltraPlanSessionRecommendation | null;
 };
 
-function parseUltraplanSubcommand(args?: string): string | null {
-  const first = args?.trim().split(/\s+/)[0];
-  return first ? first.toLowerCase() : null;
+function parseUltraplanSubcommand(args?: string): UltraPlanSubcommand | null {
+  const first = args?.trim().split(/\s+/)[0]?.toLowerCase();
+  if (!first) return null;
+  return SUBCOMMANDS.some((subcommand) => subcommand.name === first) ? (first as UltraPlanSubcommand) : null;
 }
 
 function buildCursorManifest(summary: UltraPlanSessionSummary): UltraPlanManifest {
@@ -1356,7 +1358,7 @@ export async function handleUltraplan(platform: Platform, ctx: any, args?: strin
 
   switch (subcommand) {
     case null:
-      await handleAuthoring(platform, ctx);
+      await handleAuthoring(platform, ctx, args);
       return;
     case "run":
       await handleRun(platform, ctx, args);
@@ -1367,46 +1369,55 @@ export async function handleUltraplan(platform: Platform, ctx: any, args?: strin
     case "next":
       await handleNext(platform, ctx);
       return;
-    default:
-      notifyError(ctx, `Unknown subcommand "${subcommand}"`, `Available: ${SUBCOMMANDS.map((item) => item.name).join(", ")}`);
-  }
+}
 }
 
-function formatAuthoringCatalogErrors(errors: readonly { message: string }[]): string {
-  return errors.map((error) => `- ${error.message}`).join("\n");
+function buildUltraPlanAuthoringPrompt(initialRequest: string): string {
+  const requestSection = initialRequest.trim()
+    ? ["Initial user prompt (verbatim):", "```", initialRequest.trim(), "```"]
+    : [
+      "No initial prompt was provided.",
+      "Start by asking the user what they want this UltraPlan to accomplish.",
+    ];
+
+  return [
+    "# UltraPlan conversational authoring",
+    "",
+    "You are authoring a new UltraPlan session from natural-language chat, not from command-line form fields.",
+    "",
+    ...requestSection,
+    "",
+    "## Interaction contract",
+    "- Infer the title, one-line goal, applicable stacks (frontend/backend/infrastructure), domains, and scenarios from the user's prompt and repository context.",
+    "- Ask clarifying questions only when the missing answer would materially change the plan.",
+    "- When asking, keep it in chat. Prefer a structured question tool when available; give 2-5 suggested answers and mark the recommended one.",
+    "- Always preserve an open-ended path: if the tool provides an automatic Other option, rely on it; otherwise explicitly say the user can type their own answer.",
+    "- Do not ask the user to type JSON, rerun `/supi:ultraplan` with no arguments, or fill title/goal/domain TUI prompts.",
+    "",
+    "## Completion contract",
+    "- Once you understand the request well enough, call `ultraplan_create` with the complete inferred plan.",
+    "- Include only stacks that actually have work; every included stack needs at least one domain, and every domain needs at least one scenario.",
+    "- Use scenario titles that are concrete execution targets. Add steps only when they clarify non-obvious sequencing or verification.",
+    "- After `ultraplan_create` succeeds, summarize what was created and tell the user they can run `/supi:ultraplan run`.",
+  ].join("\n");
 }
 
-async function handleAuthoring(platform: Platform, ctx: any): Promise<void> {
-  if (!ctx.hasUI) {
-    notifyWarning(ctx, "Ultraplan authoring requires interactive mode");
-    return;
-  }
-  const result = await runUltraPlanAuthoringWizard(platform, ctx);
-  if (result.ok) return;
+async function handleAuthoring(platform: Platform, ctx: any, args?: string): Promise<void> {
+  const initialRequest = args?.trim() ?? "";
+  platform.sendMessage(
+    {
+      customType: "supi-ultraplan-author",
+      content: [{ type: "text", text: buildUltraPlanAuthoringPrompt(initialRequest) }],
+      display: "none",
+    },
+    { deliverAs: "steer", triggerTurn: true },
+  );
 
-  switch (result.failure.kind) {
-    case "cancelled":
-    case "discarded":
-    case "persist-failed":
-      return;
-    case "catalog-error":
-      notifyError(
-        ctx,
-        "Ultraplan authoring cannot start",
-        formatAuthoringCatalogErrors(result.failure.errors),
-      );
-      return;
-    case "empty-session":
-      notifyWarning(
-        ctx,
-        "Ultraplan authoring is incomplete",
-        "At least one applicable stack with scenarios is required before saving.",
-      );
-      return;
-    case "no-ui":
-      notifyWarning(ctx, "Ultraplan authoring requires interactive mode");
-      return;
-  }
+  notifyInfo(
+    ctx,
+    "UltraPlan authoring started",
+    initialRequest ? "The agent will refine the prompt in chat and save the plan when ready." : "Describe what you want to build; the agent will refine it in chat.",
+  );
 }
 
 export function registerUltraplanCommand(platform: Platform): void {

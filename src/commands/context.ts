@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Platform, PlatformContext } from "../platform/types.js";
 import {
@@ -9,6 +9,13 @@ import {
   formatToolsReport,
 } from "../context/analyzer.js";
 import type { ContextUsage } from "../context/analyzer.js";
+import {
+  buildSavingsLinesFromStore,
+  formatSavingsReportFromStore,
+  getFirstRunNotice,
+} from "../context/savings.js";
+import { getMetricsStore, getSessionId } from "../context-mode/hooks.js";
+import { getProjectStateDir, getProjectStatePath } from "../workspace/state-paths.js";
 
 const REPORT_FILE = ".omp-context-breakdown.md";
 
@@ -38,8 +45,21 @@ export function handleContext(platform: Platform, ctx: PlatformContext): void {
       // getSystemPrompt not available — continue without
     }
 
-    // If we have nothing to show, notify and bail
-    if (!usage && !systemPrompt) {
+    // L1 metrics surfaces
+    const store = getMetricsStore();
+    const sessionId = getSessionId();
+    const projectSlug = basename(getProjectStateDir(platform.paths, ctx.cwd));
+    const dbAbsPath = getProjectStatePath(platform.paths, ctx.cwd, "sessions", "metrics.db");
+    const sessionStartedAtMs = (() => {
+      try {
+        return store?.getSessionMeta(sessionId)?.started_at ?? null;
+      } catch {
+        return null;
+      }
+    })();
+
+    // Bail only when *nothing* is available: no usage, no system prompt, no metrics store.
+    if (!usage && !systemPrompt && !store) {
       ctx.ui.notify("Context data unavailable", "warning");
       return;
     }
@@ -47,7 +67,25 @@ export function handleContext(platform: Platform, ctx: PlatformContext): void {
     // Parse system prompt (may be empty)
     const sections = systemPrompt ? parseSystemPrompt(systemPrompt) : [];
     const activeTools = platform.getActiveTools();
-    const items = buildBreakdownItems(usage, sections, activeTools, !systemPrompt);
+    const baseItems = buildBreakdownItems(usage, sections, activeTools, !systemPrompt);
+
+    // Build the savings panel + first-run notice + footer
+    const noticeLine = getFirstRunNotice(store, projectSlug, dbAbsPath);
+    const savingsLines = buildSavingsLinesFromStore(
+      store,
+      sessionId,
+      sessionStartedAtMs,
+      dbAbsPath,
+    );
+    const footerLine = `Metrics DB: ${dbAbsPath}`;
+    const drillableSavings = new Set(savingsLines);
+
+    const items: typeof baseItems = [];
+    if (noticeLine) items.push({ line: noticeLine });
+    for (const line of savingsLines) items.push({ line });
+    items.push({ line: footerLine });
+    items.push(...baseItems);
+
     const lines = items.map(i => i.line);
 
     while (true) {
@@ -56,14 +94,17 @@ export function handleContext(platform: Platform, ctx: PlatformContext): void {
       });
       if (!choice || choice.trim() === "Close") break;
 
-      const item = items.find(i => i.line === choice);
-      if (!item || (!item.section && !item.toolNames)) continue;
-
       let report: string | null = null;
-      if (item.section) {
-        report = formatSectionReport(item.section);
-      } else if (item.toolNames) {
-        report = formatToolsReport(item.toolNames);
+      if (drillableSavings.has(choice)) {
+        report = formatSavingsReportFromStore(store, sessionId, sessionStartedAtMs);
+      } else {
+        const item = items.find(i => i.line === choice);
+        if (!item || (!item.section && !item.toolNames)) continue;
+        if (item.section) {
+          report = formatSectionReport(item.section);
+        } else if (item.toolNames) {
+          report = formatToolsReport(item.toolNames);
+        }
       }
 
       if (report) {
