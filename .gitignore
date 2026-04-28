@@ -3,6 +3,7 @@ dist/
 .omp/supipowers
 node-compile-cache
 .claude/
+fix-gpt55-context.sh
 
 # dependencies
 /node_modules
