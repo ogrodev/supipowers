@@ -24,6 +24,7 @@ import {
   setSessionId,
   setSessionTitleAndGoal,
   setStackApplicability,
+  slugifyUltraPlanId,
   SESSION_GOAL_MAX,
   SESSION_TITLE_MAX,
   type UltraPlanAuthoredDraft,
@@ -60,7 +61,7 @@ export type AuthoringResult =
   }
   | { ok: false; failure: AuthoringFailure };
 
-function generateSessionId(now: Date): string {
+export function generateUltraPlanSessionId(now: Date): string {
   const yyyymmdd = now.toISOString().slice(0, 10).replace(/-/g, "");
   const random = Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0");
   return `ultraplan-${yyyymmdd}-${random}`;
@@ -69,7 +70,7 @@ function generateSessionId(now: Date): string {
 export function defaultDependencies(_platform: Platform): AuthoringDependencies {
   return {
     now: () => new Date(),
-    newSessionId: () => generateSessionId(new Date()),
+    newSessionId: () => generateUltraPlanSessionId(new Date()),
     loadCatalog: loadUltraPlanAgentCatalog,
     persist: persistAuthoredUltraPlanSession,
   };
@@ -82,7 +83,7 @@ function mergeDependencies(
   return { ...defaultDependencies(platform), ...overrides };
 }
 
-function collectMissingRequiredSlotErrors(catalog: ResolvedUltraPlanCatalog): UltraPlanCatalogError[] {
+export function collectMissingRequiredSlotErrors(catalog: ResolvedUltraPlanCatalog): UltraPlanCatalogError[] {
   const errors: UltraPlanCatalogError[] = [];
   for (const stack of ULTRAPLAN_STACKS) {
     const executorSlot: UltraPlanAgentSlotName = `${stack}-executor`;
@@ -247,15 +248,6 @@ export async function runUltraPlanAuthoringWizard(
 
 const DOMAIN_NAME_MAX = 60;
 
-function slugify(raw: string): string {
-  return raw
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "") // strip combining diacritics
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32) || "domain";
-}
 
 async function runDomainLoop(
   ctx: PlatformContext,
@@ -281,7 +273,7 @@ async function runDomainLoop(
     if (selected === "+ Add domain") {
       const name = await promptBounded(ctx, `Name for the new ${stackId} domain`, DOMAIN_NAME_MAX);
       if (name === null) return null;
-      const id = slugify(name);
+      const id = slugifyUltraPlanId(name);
       const result = addDomain(current, stackId, { id, name });
       if (!result.ok) {
         if (result.reason.code === "duplicate-id") {
@@ -401,7 +393,7 @@ async function runScenarioLevelLoop(
     if (selected === `+ Add ${level} scenario`) {
       const title = await promptBounded(ctx, `Title for the new ${level} scenario`, SCENARIO_TITLE_MAX_LOCAL);
       if (title === null) return null;
-      const id = slugify(title);
+      const id = slugifyUltraPlanId(title);
       const result = addScenario(current, { stack: stackId, domainId, level }, { id, title });
       if (!result.ok) {
         if (result.reason.code === "duplicate-id") {

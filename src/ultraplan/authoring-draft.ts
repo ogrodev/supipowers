@@ -64,6 +64,16 @@ function lengthCap(field: string, max: number, value: string): DraftOpError | nu
   return null;
 }
 
+export function slugifyUltraPlanId(raw: string, maxLength = 32): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLength) || "item";
+}
+
 function validateDraft(draft: UltraPlanAuthoredDraft): DraftOpResult {
   if (isUltraPlanAuthoredArtifact(draft)) {
     return { ok: true, draft };
@@ -381,7 +391,7 @@ function scenarioAssignedSlots(stack: UltraPlanStack, level: UltraPlanScenarioLe
 export function addScenario(
   draft: UltraPlanAuthoredDraft,
   coord: { stack: UltraPlanStackId; domainId: string; level: UltraPlanScenarioLevel },
-  scenario: { id: string; title: string },
+  scenario: { id: string; title: string; steps?: string[]; dependencies?: string[] },
 ): DraftOpResult {
   const idErr = lengthCap("scenario.id", 48, scenario.id);
   if (idErr) return { ok: false, reason: idErr };
@@ -400,8 +410,9 @@ export function addScenario(
       domainId: coord.domainId,
       level: coord.level,
       status: "planned" as const,
-      steps: [],
+      steps: scenario.steps ?? [],
       assignedSlots: scenarioAssignedSlots(stack, coord.level),
+      ...(scenario.dependencies && scenario.dependencies.length > 0 ? { dependencies: scenario.dependencies } : {}),
       proofs: [],
     };
     const nextDomain = {
