@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createPaths, type Platform } from "../../src/platform/types.js";
-import { checkConfig, formatReliabilityReportLines } from "../../src/commands/doctor.js";
+import { checkCapabilities, checkConfig, checkLazyTools, formatReliabilityReportLines } from "../../src/commands/doctor.js";
 import { appendReliabilityRecord } from "../../src/storage/reliability-metrics.js";
 
 function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
@@ -36,6 +36,7 @@ function createPlatform(localPaths: ReturnType<typeof createPaths>): Platform {
       compactionHooks: false,
       customWidgets: false,
       registerTool: false,
+      activeToolFiltering: false,
     },
   } as unknown as Platform;
 }
@@ -63,6 +64,74 @@ describe("checkConfig", () => {
     const result = await checkConfig(platform, tmpDir);
 
     expect(result.functional?.detail).toMatch(/JSON Parse error|Unexpected token/);
+  });
+});
+
+describe("active-tool filtering doctor checks", () => {
+  let tmpDir: string;
+  let localPaths: ReturnType<typeof createPaths>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-doctor-lazy-tools-"));
+    localPaths = createTestPaths(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("checkCapabilities reports active-tool filtering capability", () => {
+    const healthy = checkCapabilities(
+      { agentSessions: true, compactionHooks: true, customWidgets: true, registerTool: true, activeToolFiltering: true },
+      false,
+    );
+    const degraded = checkCapabilities(
+      { agentSessions: true, compactionHooks: true, customWidgets: true, registerTool: true, activeToolFiltering: false },
+      false,
+    );
+
+    expect(healthy.find((check) => check.name === "activeToolFiltering")?.presence.ok).toBe(true);
+    expect(degraded.find((check) => check.name === "activeToolFiltering")?.presence.ok).toBe(false);
+  });
+
+  test("checkLazyTools reports healthy when L7 is enabled and platform capability exists", () => {
+    const platform = createPlatform(localPaths);
+    platform.capabilities.activeToolFiltering = true;
+
+    const result = checkLazyTools(platform, tmpDir);
+
+    expect(result.name).toBe("Lazy Tools");
+    expect(result.presence.ok).toBe(true);
+    expect(result.presence.detail).toContain("active-tool filtering available");
+  });
+
+  test("checkLazyTools reports degraded when L7 is enabled but platform capability is missing", () => {
+    const platform = createPlatform(localPaths);
+    platform.capabilities.activeToolFiltering = false;
+
+    const result = checkLazyTools(platform, tmpDir);
+
+    expect(result.presence.ok).toBe(false);
+    expect(result.presence.detail).toContain("contextMode.lazyTools.enabled");
+    expect(result.presence.detail).toContain("upgrade OMP");
+  });
+
+  test("checkLazyTools reports invalid config instead of defaulting to healthy", () => {
+    const platform = createPlatform(localPaths);
+    platform.capabilities.activeToolFiltering = true;
+    const configPath = localPaths.project(tmpDir, "config.json");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ contextMode: { lazyTools: { enabled: true, mode: "reckless" } } }),
+    );
+
+    const result = checkLazyTools(platform, tmpDir);
+
+    expect(result.presence.ok).toBe(false);
+    expect(result.presence.detail).toContain("config is invalid");
+    expect(result.functional?.ok).toBe(false);
+    expect(result.functional?.detail).toContain("contextMode.lazyTools.mode");
   });
 });
 
