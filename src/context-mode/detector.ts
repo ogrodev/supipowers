@@ -10,15 +10,35 @@ export interface ContextModeStatus {
     ctxIndex: boolean;
     ctxSearch: boolean;
     ctxFetchAndIndex: boolean;
+    ctxStats: boolean;
+    ctxPurge: boolean;
   };
 }
 
 /**
- * Context-mode tools are native (registered by this extension), so they are
- * always available when the extension is loaded. The interface is preserved for
- * backward compatibility with hooks/routing consumers.
+ * Return active context-mode tool status. When activeTools is supplied, it is
+ * treated as the current model-visible tool set. Without it, keep the legacy
+ * registered-tool fallback for compatibility with older call sites.
  */
-export function detectContextMode(_activeTools?: string[]): ContextModeStatus {
+export function detectContextMode(activeTools?: string[]): ContextModeStatus {
+  if (activeTools) {
+    const active = new Set(activeTools);
+    const tools = {
+      ctxExecute: active.has("ctx_execute"),
+      ctxBatchExecute: active.has("ctx_batch_execute"),
+      ctxExecuteFile: active.has("ctx_execute_file"),
+      ctxIndex: active.has("ctx_index"),
+      ctxSearch: active.has("ctx_search"),
+      ctxFetchAndIndex: active.has("ctx_fetch_and_index"),
+      ctxStats: active.has("ctx_stats"),
+      ctxPurge: active.has("ctx_purge"),
+    };
+    return {
+      available: Object.values(tools).some(Boolean),
+      tools,
+    };
+  }
+
   return {
     available: true,
     tools: {
@@ -28,6 +48,8 @@ export function detectContextMode(_activeTools?: string[]): ContextModeStatus {
       ctxIndex: true,
       ctxSearch: true,
       ctxFetchAndIndex: true,
+      ctxStats: true,
+      ctxPurge: true,
     },
   };
 }
