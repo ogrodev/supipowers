@@ -306,6 +306,14 @@ describe("strict and inspection config loading", () => {
     expect(() => loadConfig(localPaths, tmpDir)).toThrow(/quality\.gates/);
   });
 
+  test("strict load rejects invalid context-mode processor disable entries", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      contextMode: { processors: { enabled: true, disable: ["not-a-family"] } },
+    });
+
+    expect(() => loadConfig(localPaths, tmpDir)).toThrow(/contextMode\.processors\.disable\.0/);
+  });
+
   test("strict load rejects release.tagFormat without ${version}", () => {
     writeProjectConfig(localPaths, tmpDir, {
       release: { channels: ["github"], tagFormat: "fixed-tag" },
@@ -724,6 +732,7 @@ describe("contextMode config", () => {
     expect(config.contextMode.compaction).toBe(true);
     expect(config.contextMode.llmSummarization).toBe(false);
     expect(config.contextMode.llmThreshold).toBe(16384);
+    expect(config.contextMode.processors).toEqual({ enabled: true, disable: [] });
   });
 
   test("deepMerge applies contextMode overrides", () => {
@@ -733,4 +742,12 @@ describe("contextMode config", () => {
     expect(config.contextMode.compressionThreshold).toBe(8192);
     expect(config.contextMode.enabled).toBe(true);
   });
+
+  test("deepMerge replaces contextMode processor disable arrays", () => {
+    const config = deepMerge(DEFAULT_CONFIG, {
+      contextMode: { processors: { disable: ["log"] } },
+    });
+    expect(config.contextMode.processors).toEqual({ enabled: true, disable: ["log"] });
+  });
+
 });

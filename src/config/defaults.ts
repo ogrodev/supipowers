@@ -32,6 +32,10 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     llmSummarization: false,
     llmThreshold: 16384,
     enforceRouting: true,
+    processors: {
+      enabled: true,
+      disable: [],
+    },
   },
   mcp: {
     closeSessionsOnExit: false,

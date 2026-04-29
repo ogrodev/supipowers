@@ -59,6 +59,24 @@ export const ConfigSchema = Type.Object(
         llmSummarization: Type.Boolean(),
         llmThreshold: Type.Number({ minimum: 4096 }),
         enforceRouting: Type.Boolean(),
+        processors: Type.Object(
+          {
+            enabled: Type.Boolean(),
+            disable: Type.Array(
+              Type.Union([
+                Type.Literal("git"),
+                Type.Literal("test"),
+                Type.Literal("lint"),
+                Type.Literal("build"),
+                Type.Literal("k8s"),
+                Type.Literal("docker"),
+                Type.Literal("log"),
+                Type.Literal("json"),
+              ]),
+            ),
+          },
+          { additionalProperties: false },
+        ),
       },
       { additionalProperties: false },
     ),
