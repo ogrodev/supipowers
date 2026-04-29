@@ -71,4 +71,54 @@ describe("createOmpAdapter", () => {
     expect(session.prompt).toBeDefined();
     expect(session.dispose).toBeDefined();
   });
+
+  it("forwards active-tool APIs and awaits setActiveTools", async () => {
+    const raw = {
+      ...createMockOmpApi(),
+      getAllTools: mock(() => ["bash", "ctx_execute"]),
+      setActiveTools: mock(async (_names: string[]) => {}),
+    };
+    let releaseSetActiveTools!: () => void;
+    const calls: string[] = [];
+    raw.setActiveTools = mock(async (_names: string[]) => {
+      calls.push("started");
+      await new Promise<void>((resolve) => {
+        releaseSetActiveTools = resolve;
+      });
+      calls.push("finished");
+    });
+
+    const adapter = createOmpAdapter(raw);
+    expect(adapter.getAllTools?.()).toEqual(["bash", "ctx_execute"]);
+
+    const setPromise = adapter.setActiveTools?.(["bash"]);
+    expect(raw.setActiveTools).toHaveBeenCalledWith(["bash"]);
+    expect(calls).toEqual(["started"]);
+    releaseSetActiveTools();
+    await setPromise;
+    expect(calls).toEqual(["started", "finished"]);
+  });
+
+  it("reports active-tool filtering only when all active-tool APIs are present", () => {
+    const complete = createOmpAdapter({
+      ...createMockOmpApi(),
+      getAllTools: mock(() => []),
+      setActiveTools: mock(async () => {}),
+    });
+    expect(complete.capabilities.activeToolFiltering).toBe(true);
+
+    const missingGetAll = createOmpAdapter({
+      ...createMockOmpApi(),
+      setActiveTools: mock(async () => {}),
+    });
+    expect(missingGetAll.getAllTools).toBeUndefined();
+    expect(missingGetAll.capabilities.activeToolFiltering).toBe(false);
+
+    const missingSet = createOmpAdapter({
+      ...createMockOmpApi(),
+      getAllTools: mock(() => []),
+    });
+    expect(missingSet.setActiveTools).toBeUndefined();
+    expect(missingSet.capabilities.activeToolFiltering).toBe(false);
+  });
 });
