@@ -26,6 +26,7 @@ defineEval({
       "ctx_execute",
       "ctx_search",
       "ctx_batch_execute",
+      "ctx_fetch_and_index",
     ]);
     const opts = { enforceRouting: true, blockHttpCommands: true };
 

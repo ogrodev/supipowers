@@ -182,7 +182,7 @@ describe("registerContextModeHooks", () => {
     expect(result.reason).toContain("ctx_fetch_and_index");
   });
 
-  test("tool_call handler blocks curl since context-mode tools are always available", () => {
+  test("tool_call handler allows curl when ctx_fetch_and_index is inactive", () => {
     const platform = createMockPlatformWithHandlers();
     platform.getActiveTools.mockReturnValue(["bash", "read"]);
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
@@ -196,10 +196,7 @@ describe("registerContextModeHooks", () => {
     };
 
     const result = handler(event, {});
-    // Native tools are always available — curl is always blocked
-    expect(result).toBeDefined();
-    expect(result.block).toBe(true);
-    expect(result.reason).toContain("ctx_fetch_and_index");
+    expect(result).toBeUndefined();
   });
 
   test("tool_call handler passes through non-HTTP bash commands", () => {
@@ -231,6 +228,25 @@ describe("registerContextModeHooks", () => {
     const result = handler(event, {});
     expect(result).toBeDefined();
     expect(result.systemPrompt).toContain("You are an assistant.");
+    expect(result.systemPrompt).toContain("context-mode");
+    expect(result.systemPrompt).toContain("Active context-mode rescue tools: ctx_execute, ctx_search");
+    expect(result.systemPrompt).not.toContain("ctx_purge");
+    const injected = result.systemPrompt.replace("You are an assistant.\n\n", "");
+    expect(new TextEncoder().encode(injected).byteLength).toBeLessThanOrEqual(2048);
+  });
+
+  test("before_agent_start handler appends routing to current rebuilt system prompt", () => {
+    const platform = createMockPlatformWithHandlers();
+    platform.getActiveTools.mockReturnValue(["bash", "ctx_execute", "ctx_search"]);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+
+    const handler = platform._handlers.get("before_agent_start");
+    const event = { prompt: "fix the bug", systemPrompt: "stale prompt" };
+    const result = handler(event, { getSystemPrompt: mock(() => "rebuilt prompt") });
+
+    expect(result).toBeDefined();
+    expect(result.systemPrompt).toContain("rebuilt prompt");
+    expect(result.systemPrompt).not.toContain("stale prompt");
     expect(result.systemPrompt).toContain("context-mode");
   });
 
@@ -735,6 +751,7 @@ describe("error handling", () => {
 
   test("before_agent_start handler continues when prompt extraction throws", () => {
     const platform = createPlatformWithTmpPaths();
+    platform.getActiveTools.mockReturnValue(["bash", "ctx_execute", "ctx_search"]);
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     // Close the store: extractPromptEvents always produces >= 1 event,

@@ -1,6 +1,6 @@
 // tests/context-mode/routing.test.ts
 import { isHttpCommand, isBashSearchCommand, isFullFileRead, routeToolCall } from "../../src/context-mode/routing.js";
-import type { ContextModeStatus } from "../../src/context-mode/detector.js";
+import { detectContextMode, type ContextModeStatus } from "../../src/context-mode/detector.js";
 
 describe("isBashSearchCommand", () => {
   test("blocks find commands", () => {
@@ -175,11 +175,38 @@ const STATUS: ContextModeStatus = {
   tools: {
     ctxExecute: true, ctxBatchExecute: true, ctxExecuteFile: true,
     ctxIndex: true, ctxSearch: true, ctxFetchAndIndex: true,
+    ctxStats: true, ctxPurge: true,
   },
 };
 
+const INACTIVE_STATUS = detectContextMode(["ctx_execute_file"]);
+
+
 const ENFORCE = { enforceRouting: true, blockHttpCommands: true };
 const NO_ENFORCE = { enforceRouting: false, blockHttpCommands: true };
+
+describe("detectContextMode", () => {
+  test("honors supplied active tools exactly", () => {
+    const status = detectContextMode(["ctx_execute", "ctx_search"]);
+
+    expect(status.available).toBe(true);
+    expect(status.tools).toMatchObject({
+      ctxExecute: true,
+      ctxSearch: true,
+      ctxBatchExecute: false,
+      ctxExecuteFile: false,
+      ctxIndex: false,
+      ctxFetchAndIndex: false,
+      ctxStats: false,
+      ctxPurge: false,
+    });
+  });
+
+  test("keeps registered-tool fallback when no active list is supplied", () => {
+    expect(detectContextMode().tools.ctxFetchAndIndex).toBe(true);
+    expect(detectContextMode().tools.ctxPurge).toBe(true);
+  });
+});
 
 describe("routeToolCall", () => {
   test("blocks Grep when enforceRouting enabled", () => {
@@ -258,5 +285,59 @@ describe("routeToolCall", () => {
   test("allows unknown tools through", () => {
     const result = routeToolCall("edit", { file_path: "/foo.ts" }, STATUS, ENFORCE);
     expect(result).toBeUndefined();
+  });
+
+  test("allows Grep when active search replacements are missing", () => {
+    const result = routeToolCall("grep", { pattern: "foo" }, INACTIVE_STATUS, ENFORCE);
+    expect(result).toBeUndefined();
+  });
+
+  test("blocks Grep with ctx_batch_execute when ctx_search is inactive", () => {
+    const result = routeToolCall(
+      "grep",
+      { pattern: "foo" },
+      detectContextMode(["ctx_batch_execute"]),
+      ENFORCE,
+    );
+    expect(result).toBeDefined();
+    expect(result!.reason).toContain("ctx_batch_execute");
+  });
+
+  test("blocks Grep with ctx_execute when indexed search replacements are inactive", () => {
+    const result = routeToolCall(
+      "grep",
+      { pattern: "foo" },
+      detectContextMode(["ctx_execute"]),
+      ENFORCE,
+    );
+
+    expect(result).toBeDefined();
+    expect(result!.reason).toContain("ctx_execute");
+  });
+
+  test("allows Find and bash search when active replacements are missing", () => {
+    expect(routeToolCall("find", { pattern: "**/*.ts" }, INACTIVE_STATUS, ENFORCE)).toBeUndefined();
+    expect(
+      routeToolCall("bash", { command: "grep -R foo src" }, INACTIVE_STATUS, ENFORCE),
+    ).toBeUndefined();
+  });
+
+  test("blocks Bash HTTP commands with ctx_execute when ctx_fetch_and_index is inactive", () => {
+    const result = routeToolCall(
+      "bash",
+      { command: "curl https://example.com" },
+      detectContextMode(["ctx_execute"]),
+      ENFORCE,
+    );
+
+    expect(result).toBeDefined();
+    expect(result!.reason).toContain("ctx_execute");
+  });
+
+  test("allows HTTP routing when active HTTP replacements are missing", () => {
+    expect(
+      routeToolCall("bash", { command: "curl https://example.com" }, INACTIVE_STATUS, ENFORCE),
+    ).toBeUndefined();
+    expect(routeToolCall("fetch", { url: "https://example.com" }, INACTIVE_STATUS, ENFORCE)).toBeUndefined();
   });
 });
