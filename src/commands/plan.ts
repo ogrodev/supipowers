@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { resolveModelForAction, createModelBridge, applyModelOverride } from "../config/model-resolver.js";
 import { loadModelConfig } from "../config/model-config.js";
+import { getProjectStatePath } from "../workspace/state-paths.js";
 import { cancelPlanTracking, startPlanTracking } from "../planning/approval-flow.js";
 import { stopVisualServer } from "../visual/stop-server.js";
 
@@ -158,6 +159,7 @@ export function registerPlanCommand(platform: Platform): void {
           topic: planningTopic,
           skillContent: skillContent || undefined,
           dotDirDisplay: platform.paths.dotDirDisplay,
+          plansDir: getProjectStatePath(platform.paths, ctx.cwd, "plans"),
           isQuick: quickMode,
         };
 
