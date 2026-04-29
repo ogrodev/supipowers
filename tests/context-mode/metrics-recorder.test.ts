@@ -123,6 +123,39 @@ describe("toMetricRow — passthrough vs OMP minimizer (Task 18 + Task 56)", () 
     expect(row.processor).toBe("omp-minimizer");
     expect(row.tool).toBe("bash");
   });
+
+  test("explicit processorKey and sourceHash override fallback derivation", () => {
+    const row = toMetricRow({
+      event: eventFor("bash", { command: "git status" }, "large output"),
+      compressed: { content: [{ type: "text", text: "compressed" }] },
+      sessionId: "s1",
+      cwd: "/repo",
+      projectSlug: "demo",
+      contextUsage: null,
+      ts: 1700,
+      processorKey: "git",
+      sourceHash: "known-hash",
+    });
+
+    expect(row.tool).toBe("bash");
+    expect(row.processor).toBe("git");
+    expect(row.unique_source_hash).toBe("known-hash");
+  });
+
+  test("omitted processorKey and sourceHash keep legacy fallback behavior", () => {
+    const row = toMetricRow({
+      event: eventFor("bash", { command: "echo hi" }, "large output"),
+      compressed: { content: [{ type: "text", text: "compressed" }] },
+      sessionId: "s1",
+      cwd: "/repo",
+      projectSlug: "demo",
+      contextUsage: null,
+      ts: 1700,
+    });
+
+    expect(row.processor).toBe("bash");
+    expect(row.unique_source_hash).not.toBeNull();
+  });
 });
 
 describe("toMetricRow — non-tool / unknown events (Task 19)", () => {

@@ -44,6 +44,10 @@ export interface ToMetricRowOpts {
   ts: number;
   /** Defaults to "L2"; future layers override (e.g. L3 cache hits). */
   layer?: LayerKey;
+  /** Processor chosen by the emission pipeline; omitted preserves legacy derivation. */
+  processorKey?: ProcessorKey;
+  /** Stable source hash computed by the hook; omitted preserves legacy derivation. */
+  sourceHash?: string | null;
 }
 
 const PROCESSOR_BY_TOOL: Record<string, ProcessorKey> = {
@@ -100,6 +104,8 @@ export function toMetricRow(opts: ToMetricRowOpts): MetricRow {
     contextUsage,
     ts,
   } = opts;
+  const explicitProcessorKey = opts.processorKey;
+  const explicitSourceHash = opts.sourceHash;
 
   const canonical = canonicalToolName(event.toolName);
   const knownProcessor = processorFor(canonical);
@@ -111,7 +117,9 @@ export function toMetricRow(opts: ToMetricRowOpts): MetricRow {
     : before_bytes;
 
   let processor: ProcessorKey;
-  if (!isKnown) {
+  if (explicitProcessorKey !== undefined) {
+    processor = explicitProcessorKey;
+  } else if (!isKnown) {
     processor = null;
   } else if (compressed === undefined) {
     // The compressor passed the result through. Distinguish three reasons:
@@ -129,14 +137,16 @@ export function toMetricRow(opts: ToMetricRowOpts): MetricRow {
   }
 
   const tool = isKnown ? canonical : "(system)";
-  const sourceHash = isKnown
-    ? uniqueSourceHash({
-        tool: event.toolName,
-        input: event.input,
-        cwd,
-        projectSlug,
-      })
-    : null;
+  const sourceHash = explicitSourceHash !== undefined
+    ? explicitSourceHash
+    : isKnown
+      ? uniqueSourceHash({
+          tool: event.toolName,
+          input: event.input,
+          cwd,
+          projectSlug,
+        })
+      : null;
 
   const layer: LayerKey = opts.layer ?? "L2";
 

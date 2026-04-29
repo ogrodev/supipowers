@@ -456,7 +456,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
         const totals = metricsStore
           ? metricsStore.getSessionTotals(sessionId)
           : { beforeBytes: 0, afterBytes: 0, saved: 0, rowCount: 0 };
-        const perTool = metricsStore ? metricsStore.getTopTools(sessionId, 50) : [];
+        const perProcessor = metricsStore ? metricsStore.getTopProcessors(sessionId, 50) : [];
         const perLayer = metricsStore ? metricsStore.getPerLayer(sessionId) : [];
         const uniqueSourceShare = metricsStore
           ? metricsStore.getUniqueSourceShare(sessionId)
@@ -477,7 +477,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
             saved: totals.saved,
             tokensEstimated,
           },
-          perTool,
+          perProcessor,
           perLayer,
           uniqueSourceShare,
           writeFailures,

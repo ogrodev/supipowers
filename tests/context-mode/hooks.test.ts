@@ -4,8 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmDirWithRetry } from "../helpers/fs.js";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { Database } from "bun:sqlite";
 
-import { registerContextModeHooks, _resetCache, getEventStore, getSessionId } from "../../src/context-mode/hooks.js";
+import { registerContextModeHooks, _resetCache, getEventStore, getMetricsStore, getSessionId } from "../../src/context-mode/hooks.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { SupipowersConfig } from "../../src/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
@@ -23,6 +24,41 @@ function createMockPlatformWithHandlers() {
     logger: { warn: mock(), error: mock(), debug: mock() },
     _handlers: handlers,
   }) as any;
+}
+
+function createMockPlatformWithHandlersAndPaths(rootDir: string) {
+  const handlers = new Map<string, Function>();
+  const testPaths: PlatformPaths = {
+    dotDir: ".omp",
+    dotDirDisplay: ".omp",
+    project: (_cwd: string, ...segments: string[]) => path.join(rootDir, "project", ...segments),
+    global: (...segments: string[]) => path.join(rootDir, "global", ...segments),
+    agent: (...segments: string[]) => path.join(rootDir, "agent", ...segments),
+  };
+  const platform = createMockPlatform({
+    on: mock((event: string, handler: Function) => {
+      handlers.set(event, handler);
+    }) as any,
+    paths: testPaths,
+    registerTool: mock(),
+  });
+  return Object.assign(platform, {
+    logger: { warn: mock(), error: mock(), debug: mock() },
+    _handlers: handlers,
+  }) as any;
+}
+
+function largeBashEvent(command = "ls") {
+  const bigOutput = Array.from({ length: 500 }, (_, i) => `line ${i}: ${"x".repeat(20)}`).join("\n");
+  return {
+    type: "tool_result",
+    toolName: "bash",
+    toolCallId: "test-id",
+    input: { command },
+    content: [{ type: "text", text: bigOutput }],
+    isError: false,
+    details: { exitCode: 0 },
+  };
 }
 
 let activeSessionShutdown: (() => void) | null = null;
@@ -248,6 +284,107 @@ describe("registerContextModeHooks", () => {
     };
 
     expect(() => handler(event, {})).not.toThrow();
+  });
+
+  test("tool_result deduplicates repeated same-source large bash output and records final processor", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-hooks-dedup-"));
+    try {
+      const platform = createMockPlatformWithHandlersAndPaths(tmpDir);
+      registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+      platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+      const handler = platform._handlers.get("tool_result");
+      const first = handler(largeBashEvent("ls"), {});
+      const second = handler(largeBashEvent("ls"), {});
+
+      expect(first.content[0].text).toContain("[...compressed:");
+      expect(second.content[0].text).toContain("same as turn 1");
+      expect(second.content[0].text).toContain("processor=bash");
+
+      const store = getMetricsStore();
+      expect(store).not.toBeNull();
+      await store!.flushPendingForTest();
+
+      const probe = new Database(store!.dbPath);
+      try {
+        const rows = probe
+          .prepare(`SELECT processor, unique_source_hash FROM metrics ORDER BY id ASC`)
+          .all() as Array<{ processor: string; unique_source_hash: string | null }>;
+        expect(rows.map((row) => row.processor)).toEqual(["bash", "dedup"]);
+        expect(rows[0].unique_source_hash).not.toBeNull();
+        expect(rows[1].unique_source_hash).toBe(rows[0].unique_source_hash);
+      } finally {
+        probe.close();
+      }
+    } finally {
+      cleanupTrackedContextModeHooks();
+      rmDirWithRetry(tmpDir);
+    }
+  });
+
+  test("large git status records git processor metrics", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-hooks-git-"));
+    try {
+      const platform = createMockPlatformWithHandlersAndPaths(tmpDir);
+      registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+      platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+      const gitStatus = [
+        "## feature/l2-processors...origin/feature/l2-processors [ahead 2]",
+        ...Array.from({ length: 260 }, (_, i) => ` M src/context-mode/file-${i}.ts`),
+      ].join("\n");
+      const handler = platform._handlers.get("tool_result");
+      handler({
+        type: "tool_result",
+        toolName: "bash",
+        toolCallId: "test-id",
+        input: { command: "git status --short --branch" },
+        content: [{ type: "text", text: gitStatus }],
+        isError: false,
+        details: { exitCode: 0 },
+      }, {});
+
+      const store = getMetricsStore();
+      expect(store).not.toBeNull();
+      await store!.flushPendingForTest();
+
+      const probe = new Database(store!.dbPath);
+      try {
+        const row = probe
+          .prepare(`SELECT processor FROM metrics ORDER BY id DESC LIMIT 1`)
+          .get() as { processor: string };
+        expect(row.processor).toBe("git");
+      } finally {
+        probe.close();
+      }
+    } finally {
+      cleanupTrackedContextModeHooks();
+      rmDirWithRetry(tmpDir);
+    }
+  });
+
+  test("session_shutdown clears dedup state", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-hooks-dedup-"));
+    try {
+      const platform = createMockPlatformWithHandlersAndPaths(tmpDir);
+      registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+      const sessionStart = platform._handlers.get("session_start");
+      const shutdown = platform._handlers.get("session_shutdown");
+      const handler = platform._handlers.get("tool_result");
+
+      sessionStart({}, { cwd: tmpDir });
+      handler(largeBashEvent("ls"), {});
+      expect(handler(largeBashEvent("ls"), {}).content[0].text).toContain("same as turn 1");
+
+      shutdown({}, {});
+      sessionStart({}, { cwd: tmpDir });
+      const afterRestart = handler(largeBashEvent("ls"), {});
+      expect(afterRestart.content[0].text).not.toContain("dedup");
+      expect(afterRestart.content[0].text).toContain("[...compressed:");
+    } finally {
+      cleanupTrackedContextModeHooks();
+      rmDirWithRetry(tmpDir);
+    }
   });
 
   test("registers compaction hooks when compaction enabled", () => {

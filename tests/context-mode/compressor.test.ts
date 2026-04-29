@@ -1,5 +1,5 @@
 // tests/context-mode/compressor.test.ts
-import { compressToolResult, compressToolResultWithLLM } from "../../src/context-mode/compressor.js";
+import { compressToolResult, compressToolResultWithLLM, runEmissionPipeline } from "../../src/context-mode/compressor.js";
 
 // Helper to create a text-only tool result event
 function bashResult(
@@ -284,6 +284,17 @@ describe("compressToolResult", () => {
       expect(result).toBeDefined();
       const out = result!.content![0] as { type: string; text: string };
       expect(out.text).toContain("[...compressed:");
+    });
+  });
+
+  describe("runEmissionPipeline compatibility", () => {
+    test("compressToolResult returns only the pipeline result", () => {
+      const lines = Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n");
+      const event = bashResult(lines, { exitCode: 0 });
+
+      expect(compressToolResult(event, THRESHOLD)).toEqual(
+        runEmissionPipeline(event, THRESHOLD).result,
+      );
     });
   });
 });

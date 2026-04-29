@@ -32,6 +32,15 @@ export type ProcessorKey =
   | "find"
   | "passthrough"
   | "omp-minimizer"
+  | "git"
+  | "test"
+  | "lint"
+  | "build"
+  | "k8s"
+  | "docker"
+  | "log"
+  | "json"
+  | "dedup"
   | null;
 
 /** A single metric row pending insertion or read from the metrics table. */
@@ -495,21 +504,21 @@ export class MetricsStore {
     return row;
   }
 
-  getTopTools(
+  getTopProcessors(
     sessionId: string,
     limit: number,
-  ): Array<{ tool: string; saved: number; calls: number }> {
+  ): Array<{ processor: string; saved: number; calls: number }> {
     return this.#db.prepare(
       `SELECT
-         tool,
+         COALESCE(processor, tool) AS processor,
          COALESCE(SUM(before_bytes - after_bytes), 0) AS saved,
          COUNT(*) AS calls
        FROM metrics
        WHERE session_id = ?
-       GROUP BY tool
+       GROUP BY COALESCE(processor, tool)
        ORDER BY saved DESC
        LIMIT ?`,
-    ).all(sessionId, limit) as Array<{ tool: string; saved: number; calls: number }>;
+    ).all(sessionId, limit) as Array<{ processor: string; saved: number; calls: number }>;
   }
 
   getPerLayer(

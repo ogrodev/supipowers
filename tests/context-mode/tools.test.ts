@@ -461,9 +461,9 @@ describe("ctx_stats — markdown vs JSON", () => {
     expect(typeof parsed.totals.saved).toBe("number");
     expect(typeof parsed.totals.tokensEstimated).toBe("number");
 
-    expect(Array.isArray(parsed.perTool)).toBe(true);
-    for (const t of parsed.perTool) {
-      expect(typeof t.tool).toBe("string");
+    expect(Array.isArray(parsed.perProcessor)).toBe(true);
+    for (const t of parsed.perProcessor) {
+      expect(typeof t.processor).toBe("string");
       expect(typeof t.saved).toBe("number");
       expect(typeof t.calls).toBe("number");
     }
@@ -494,7 +494,7 @@ describe("ctx_stats — markdown vs JSON", () => {
       saved: 0,
       tokensEstimated: 0,
     });
-    expect(parsed.perTool).toEqual([]);
+    expect(parsed.perProcessor).toEqual([]);
     expect(parsed.perLayer).toEqual([]);
     expect(parsed.uniqueSourceShare).toBe(0);
     expect(parsed.writeFailures).toBe(0);

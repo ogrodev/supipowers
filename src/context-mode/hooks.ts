@@ -1,7 +1,7 @@
 // src/context-mode/hooks.ts
 import type { Platform } from "../platform/types.js";
 import type { SupipowersConfig } from "../types.js";
-import { compressToolResult } from "./compressor.js";
+import { runEmissionPipeline } from "./compressor.js";
 import { detectContextMode, type ContextModeStatus } from "./detector.js";
 import { EventStore } from "./event-store.js";
 import { extractEvents, extractPromptEvents } from "./event-extractor.js";
@@ -11,6 +11,8 @@ import { KnowledgeStore } from "./knowledge/store.js";
 import { registerContextModeTools } from "./tools.js";
 import { MetricsStore, __setMetricsStoreForTest, _resetMetricsStoreCache } from "./metrics-store.js";
 import { toMetricRow } from "./metrics-recorder.js";
+import { combinedTextOf, createDedupState, maybeSubstitute, type DedupState } from "./dedup.js";
+import { uniqueSourceHash } from "./source-hash.js";
 import { basename } from "node:path";
 import { getProjectStateDir } from "../workspace/state-paths.js";
 import { createHash } from "node:crypto";
@@ -68,6 +70,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   let metricsStorePath: string | null = null;
   let sessionCwd = process.cwd();
   let sessionId = deriveSessionId();
+  let dedupState: DedupState = createDedupState();
 
   const ensureEventStore = (cwd: string): EventStore | null => {
     if (!config.contextMode.eventTracking) return null;
@@ -164,6 +167,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
     sessionCwd = resolveSessionCwd(ctx as SessionContextLike | undefined);
     sessionId = deriveSessionId(ctx as SessionContextLike | undefined);
     _sessionIdRef = sessionId;
+    dedupState = createDedupState();
 
     const store = ensureEventStore(sessionCwd);
     if (store) {
@@ -185,6 +189,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   });
 
   platform.on("session_shutdown", () => {
+    dedupState = createDedupState();
     // Close knowledge store
     if (knowledgeStore) {
       try {
@@ -231,8 +236,37 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
 
   // Phase 1: Result compression + Phase 2: Event extraction
   platform.on("tool_result", (event) => {
-    // Phase 1: compression
-    const compressed = compressToolResult(event, config.contextMode.compressionThreshold);
+    const projectSlug = basename(getProjectStateDir(platform.paths, sessionCwd));
+
+    // Phase 1: compression + forward-only same-source dedup
+    const pipeline = runEmissionPipeline(event, config.contextMode.compressionThreshold, {
+      processors: config.contextMode.processors,
+    });
+    let compressed = pipeline.result;
+    let processorKey = pipeline.processorKey;
+    const sourceHash = uniqueSourceHash({
+      tool: event.toolName,
+      input: event.input,
+      cwd: sessionCwd,
+      projectSlug,
+    });
+
+    try {
+      const processedBytes = compressed?.content
+        ? new TextEncoder().encode(combinedTextOf(compressed.content)).byteLength
+        : 0;
+      const deduped = maybeSubstitute({
+        result: compressed,
+        processorKey,
+        sourceHash,
+        dedupState,
+        processedBytes,
+      });
+      compressed = deduped.result;
+      processorKey = deduped.processorKey;
+    } catch (e) {
+      (platform as any).logger?.warn?.("supi-context-mode: dedup substitution failed", e);
+    }
 
     // Phase 2: event extraction (fire-and-forget)
     if (eventStore && config.contextMode.eventTracking) {
@@ -267,9 +301,11 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
           compressed,
           sessionId,
           cwd: sessionCwd,
-          projectSlug: basename(getProjectStateDir(platform.paths, sessionCwd)),
+          projectSlug,
           contextUsage: usage,
           ts: Date.now(),
+          processorKey,
+          sourceHash,
         });
         metricsStore.record(row);
       } catch (e) {

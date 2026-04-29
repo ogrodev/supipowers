@@ -183,6 +183,23 @@ describe("MetricsStore.record", () => {
     }
   });
 
+  test("persists L2 processor family and dedup processor keys", async () => {
+    store.upsertSession({ session_id: "s1", cwd: "/tmp/x" });
+    store.record(row({ session_id: "s1", processor: "git" }));
+    store.record(row({ session_id: "s1", processor: "dedup" }));
+    await store.flushPendingForTest();
+
+    const probe = new Database(dbPath, { readonly: true });
+    try {
+      const processors = probe
+        .prepare(`SELECT processor FROM metrics WHERE session_id = 's1' ORDER BY id ASC`)
+        .all() as Array<{ processor: string }>;
+      expect(processors.map((entry) => entry.processor)).toEqual(["git", "dedup"]);
+    } finally {
+      probe.close();
+    }
+  });
+
   test("microtask burst coalesces into one transaction", async () => {
     store.upsertSession({ session_id: "s1", cwd: "/tmp/x" });
     expect(store.flushCountForTest).toBe(0);
@@ -349,17 +366,19 @@ describe("MetricsStore read accessors", () => {
     expect(totals.rowCount).toBe(2);
   });
 
-  test("getTopTools returns rows sorted by saved desc", async () => {
+  test("getTopProcessors groups by processor and falls back to tool for legacy rows", async () => {
     store.upsertSession({ session_id: "s1", cwd: "/tmp/x" });
-    store.record(row({ session_id: "s1", tool: "bash", before_bytes: 1000, after_bytes: 100 }));
-    store.record(row({ session_id: "s1", tool: "bash", before_bytes: 500, after_bytes: 100 }));
-    store.record(row({ session_id: "s1", tool: "read", before_bytes: 200, after_bytes: 100 }));
+    store.record(row({ session_id: "s1", tool: "bash", processor: "git", before_bytes: 1000, after_bytes: 100 }));
+    store.record(row({ session_id: "s1", tool: "bash", processor: "git", before_bytes: 500, after_bytes: 100 }));
+    store.record(row({ session_id: "s1", tool: "bash", processor: "test", before_bytes: 200, after_bytes: 100 }));
+    store.record(row({ session_id: "s1", tool: "read", processor: null, before_bytes: 180, after_bytes: 100 }));
     await store.flushPendingForTest();
 
-    const top = store.getTopTools("s1", 5);
+    const top = store.getTopProcessors("s1", 5);
     expect(top).toEqual([
-      { tool: "bash", saved: 1300, calls: 2 },
-      { tool: "read", saved: 100, calls: 1 },
+      { processor: "git", saved: 1300, calls: 2 },
+      { processor: "test", saved: 100, calls: 1 },
+      { processor: "read", saved: 80, calls: 1 },
     ]);
   });
 

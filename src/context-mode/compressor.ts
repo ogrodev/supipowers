@@ -1,5 +1,8 @@
 // src/context-mode/compressor.ts
 import { canonicalToolName } from "./tool-name.js";
+import type { ContextModeProcessorsConfig } from "../types.js";
+import type { ProcessorKey } from "./metrics-store.js";
+import { lookupProcessor } from "./processors/registry.js";
 
 interface ToolResultEventLike {
   toolName: string;
@@ -11,6 +14,15 @@ interface ToolResultEventLike {
 
 interface ToolResultEventResult {
   content?: Array<{ type: string; text: string }>;
+}
+
+export interface RunEmissionPipelineOptions {
+  processors?: ContextModeProcessorsConfig;
+}
+
+export interface PipelineResult {
+  result: ToolResultEventResult | undefined;
+  processorKey: ProcessorKey;
 }
 
 const BASH_HEAD_LINES = 5;
@@ -27,6 +39,13 @@ const FIND_MAX_PATHS = 20;
  * The artifact id is recoverable via `read artifact://<id>`.
  */
 export const OMP_MINIMIZER_FOOTER_RE = /(?:^|\n)\[raw output: artifact:\/\/[a-zA-Z0-9_-]+\]\s*$/;
+
+const LEGACY_PROCESSOR_KEYS: Record<string, ProcessorKey> = {
+  bash: "bash",
+  read: "read",
+  grep: "grep",
+  find: "find",
+};
 
 /** Measure total byte length of text content entries */
 function measureTextBytes(content: Array<{ type: string; text?: string }>): number {
@@ -50,6 +69,22 @@ function getCombinedText(content: Array<{ type: string; text?: string }>): strin
     .filter((entry) => entry.type === "text" && entry.text)
     .map((entry) => entry.text!)
     .join("\n");
+}
+
+function exitCodeFromDetails(details: unknown): number | null {
+  if (details && typeof details === "object" && "exitCode" in details) {
+    const exitCode = (details as { exitCode?: unknown }).exitCode;
+    return typeof exitCode === "number" ? exitCode : null;
+  }
+  return null;
+}
+
+function eolOf(text: string): "\n" | "\r\n" {
+  return text.includes("\r\n") ? "\r\n" : "\n";
+}
+
+function wrapText(text: string): ToolResultEventResult {
+  return { content: [{ type: "text", text }] };
 }
 
 /** Compress bash tool output */
@@ -138,20 +173,49 @@ function compressFind(text: string): string | undefined {
   ].join("\n");
 }
 
-/** Compress a tool result if it exceeds the threshold */
-export function compressToolResult(
+/** Run the deterministic emission pipeline and report the processor decision. */
+export function runEmissionPipeline(
   event: ToolResultEventLike,
   threshold: number,
-): ToolResultEventResult | undefined {
-  // General rules: pass through errors, non-text content, and small outputs
-  if (event.isError) return undefined;
-  if (hasNonTextContent(event.content)) return undefined;
-  if (measureTextBytes(event.content) <= threshold) return undefined;
+  options: RunEmissionPipelineOptions = {},
+): PipelineResult {
+  const canonicalTool = canonicalToolName(event.toolName);
+  const legacyProcessorKey = LEGACY_PROCESSOR_KEYS[canonicalTool] ?? null;
+  const passthroughProcessorKey: ProcessorKey = legacyProcessorKey === null ? null : "passthrough";
+
+  // General rules: pass through errors, non-text content, and small outputs.
+  if (event.isError) return { result: undefined, processorKey: passthroughProcessorKey };
+  if (hasNonTextContent(event.content)) return { result: undefined, processorKey: passthroughProcessorKey };
+
+  const byteSize = measureTextBytes(event.content);
+  if (byteSize <= threshold) {
+    return {
+      result: undefined,
+      processorKey: passthroughProcessorKey,
+    };
+  }
 
   const text = getCombinedText(event.content);
-  let compressed: string | undefined;
 
-  switch (canonicalToolName(event.toolName)) {
+  if (canonicalTool === "bash" && OMP_MINIMIZER_FOOTER_RE.test(text)) {
+    return { result: undefined, processorKey: "omp-minimizer" };
+  }
+
+  if (canonicalTool === "bash") {
+    const match = lookupProcessor(canonicalTool, event.input, text, options);
+    if (match) {
+      const output = match.processor(text, {
+        exitCode: exitCodeFromDetails(event.details),
+        eol: eolOf(text),
+      });
+      if (!output.passthrough) {
+        return { result: wrapText(output.text), processorKey: output.processorKey };
+      }
+    }
+  }
+
+  let compressed: string | undefined;
+  switch (canonicalTool) {
     case "bash":
       compressed = compressBash(text, event.details);
       break;
@@ -165,11 +229,19 @@ export function compressToolResult(
       compressed = compressFind(text);
       break;
     default:
-      return undefined;
+      return { result: undefined, processorKey: null };
   }
 
-  if (!compressed) return undefined;
-  return { content: [{ type: "text", text: compressed }] };
+  if (!compressed) return { result: undefined, processorKey: "passthrough" };
+  return { result: wrapText(compressed), processorKey: legacyProcessorKey };
+}
+
+/** Compress a tool result if it exceeds the threshold */
+export function compressToolResult(
+  event: ToolResultEventLike,
+  threshold: number,
+): ToolResultEventResult | undefined {
+  return runEmissionPipeline(event, threshold).result;
 }
 
 /** Summarization prompt templates by tool type */
