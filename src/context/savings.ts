@@ -78,7 +78,7 @@ export interface SavingsPanelInput {
     saved: number;
     tokensEstimated: number;
   };
-  perTool: Array<{ tool: string; saved: number; calls: number }>;
+  perCompressor: Array<{ compressor: string; saved: number; calls: number }>;
   uniqueSourceShare: number;
 }
 
@@ -88,31 +88,31 @@ function shortSessionId(id: string): string {
 
 /**
  * Render the four savings lines for the `/supi:context` panel:
- *   1. Session: <id> | Started: <relative> | Tools tracked: <n>
+ *   1. Session: <id> | Started: <relative> | Compressors tracked: <n>
  *   2. Saved this session: <bytes> (~<tokens> tokens estimated)
- *   3. Top compressors: <tool1> -<bytes1> · <tool2> -<bytes2> · <tool3> -<bytes3>
+ *   3. Top compressors: <compressor1> -<bytes1> · <compressor2> -<bytes2> · <compressor3> -<bytes3>
  *   4. Unique-source share: <pct>% (lower = more re-reads)
  *
  * The consumer is responsible for appending the `Metrics DB: <abs-path>`
  * footer; this function deliberately does not emit it.
  */
 export function buildSavingsLines(input: SavingsPanelInput): string[] {
-  const tracked = new Set(input.perTool.map((t) => t.tool)).size;
+  const tracked = new Set(input.perCompressor.map((t) => t.compressor)).size;
   const sessionLine =
     `Session: ${shortSessionId(input.session.id)}` +
     ` | Started: ${relativeTime(input.session.startedAt)}` +
-    ` | Tools tracked: ${tracked}`;
+    ` | Compressors tracked: ${tracked}`;
 
   const savedLine =
     `Saved this session: ${formatSize(input.totals.saved)}` +
     ` (~${formatTokens(input.totals.tokensEstimated)} tokens estimated)`;
 
   let topLine: string;
-  if (input.perTool.length === 0) {
+  if (input.perCompressor.length === 0) {
     topLine = "Top compressors: (none)";
   } else {
-    const top3 = input.perTool.slice(0, 3).map((t) => {
-      const display = canonicalToolName(t.tool);
+    const top3 = input.perCompressor.slice(0, 3).map((t) => {
+      const display = canonicalToolName(t.compressor);
       return `${display} -${formatSize(t.saved)}`;
     });
     topLine = `Top compressors: ${top3.join(" \u00b7 ")}`;
@@ -140,12 +140,16 @@ export function buildSavingsLinesFromStore(
     const sessionLine =
       `Session: ${shortSessionId(sessionId)}` +
       ` | Started: ${relativeTime(sessionStartedAtMs)}` +
-      ` | Tools tracked: 0`;
+      ` | Compressors tracked: 0`;
     return [sessionLine, FALLBACK_LINE];
   }
 
   const totals = store.getSessionTotals(sessionId);
-  const perTool = store.getTopTools(sessionId, 5);
+  const perCompressor = store.getTopProcessors(sessionId, 5).map((entry) => ({
+    compressor: entry.processor,
+    saved: entry.saved,
+    calls: entry.calls,
+  }));
   const uniqueSourceShare = store.getUniqueSourceShare(sessionId);
   const tokensEstimated = estimateTokens("x".repeat(Math.max(0, totals.saved)));
 
@@ -161,7 +165,7 @@ export function buildSavingsLinesFromStore(
       saved: totals.saved,
       tokensEstimated,
     },
-    perTool,
+    perCompressor,
     uniqueSourceShare,
   });
 }
@@ -171,14 +175,14 @@ export function buildSavingsLinesFromStore(
  * `writeReport`/`openInEditor` pipeline already in `/supi:context`.
  */
 export function formatSavingsReport(input: SavingsPanelInput): string {
-  const tracked = new Set(input.perTool.map((t) => t.tool)).size;
+  const tracked = new Set(input.perCompressor.map((t) => t.compressor)).size;
   const lines: string[] = [];
   lines.push("# Session savings");
   lines.push("");
   lines.push(`- Session: ${input.session.id}`);
   lines.push(`- Started: ${relativeTime(input.session.startedAt)}`);
   lines.push(`- Rows recorded: ${input.session.rowCount}`);
-  lines.push(`- Tools tracked: ${tracked}`);
+  lines.push(`- Compressors tracked: ${tracked}`);
   lines.push("");
 
   lines.push("## Totals");
@@ -189,14 +193,14 @@ export function formatSavingsReport(input: SavingsPanelInput): string {
   lines.push(`- Tokens estimated: ~${formatTokens(input.totals.tokensEstimated)}`);
   lines.push("");
 
-  lines.push("## Top tools");
+  lines.push("## Top compressors");
   lines.push("");
-  if (input.perTool.length === 0) {
-    lines.push("(no tools tracked yet)");
+  if (input.perCompressor.length === 0) {
+    lines.push("(no compressors tracked yet)");
   } else {
-    for (const t of input.perTool) {
+    for (const t of input.perCompressor) {
       lines.push(
-        `- ${canonicalToolName(t.tool)} — ${formatSize(t.saved)} saved across ${t.calls} call${t.calls === 1 ? "" : "s"}`,
+        `- ${canonicalToolName(t.compressor)} — ${formatSize(t.saved)} saved across ${t.calls} call${t.calls === 1 ? "" : "s"}`,
       );
     }
   }
@@ -221,7 +225,11 @@ export function formatSavingsReportFromStore(
   if (!store) return null;
 
   const totals = store.getSessionTotals(sessionId);
-  const perTool = store.getTopTools(sessionId, 10);
+  const perCompressor = store.getTopProcessors(sessionId, 10).map((entry) => ({
+    compressor: entry.processor,
+    saved: entry.saved,
+    calls: entry.calls,
+  }));
   const uniqueSourceShare = store.getUniqueSourceShare(sessionId);
   const tokensEstimated = estimateTokens("x".repeat(Math.max(0, totals.saved)));
 
@@ -237,7 +245,7 @@ export function formatSavingsReportFromStore(
       saved: totals.saved,
       tokensEstimated,
     },
-    perTool,
+    perCompressor,
     uniqueSourceShare,
   });
 }

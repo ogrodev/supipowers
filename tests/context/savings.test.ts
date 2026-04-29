@@ -12,6 +12,7 @@ import {
   buildSavingsLines,
   buildSavingsLinesFromStore,
   formatSavingsReport,
+  formatSavingsReportFromStore,
   getFirstRunNotice,
 } from "../../src/context/savings.js";
 import { rmDirWithRetry } from "../helpers/fs.js";
@@ -102,10 +103,10 @@ describe("buildSavingsLines", () => {
     const lines = buildSavingsLines({
       session: { id: "abcd1234ef", startedAt: Date.now() - 3_600_000, rowCount: 12 },
       totals: { beforeBytes: 12000, afterBytes: 4000, saved: 8000, tokensEstimated: 2000 },
-      perTool: [
-        { tool: "bash", saved: 5000, calls: 5 },
-        { tool: "read", saved: 2000, calls: 6 },
-        { tool: "grep", saved: 1000, calls: 1 },
+      perCompressor: [
+        { compressor: "bash", saved: 5000, calls: 5 },
+        { compressor: "read", saved: 2000, calls: 6 },
+        { compressor: "grep", saved: 1000, calls: 1 },
       ],
       uniqueSourceShare: 0.42,
     });
@@ -113,18 +114,18 @@ describe("buildSavingsLines", () => {
     expect(lines).toHaveLength(4);
     expect(lines[0]).toContain("Session:");
     expect(lines[0]).toContain("Started:");
-    expect(lines[0]).toContain("Tools tracked: 3");
+    expect(lines[0]).toContain("Compressors tracked: 3");
     expect(lines[1]).toContain("Saved this session:");
     expect(lines[2]).toContain("Top compressors:");
     expect(lines[2]).toContain("bash");
     expect(lines[3]).toContain("Unique-source share: 42%");
   });
 
-  test("empty perTool renders 'Top compressors: (none)'", () => {
+  test("empty perCompressor renders 'Top compressors: (none)'", () => {
     const lines = buildSavingsLines({
       session: { id: "x", startedAt: null, rowCount: 0 },
       totals: { beforeBytes: 0, afterBytes: 0, saved: 0, tokensEstimated: 0 },
-      perTool: [],
+      perCompressor: [],
       uniqueSourceShare: 0,
     });
     expect(lines[2]).toBe("Top compressors: (none)");
@@ -134,7 +135,7 @@ describe("buildSavingsLines", () => {
     const lines = buildSavingsLines({
       session: { id: "x", startedAt: null, rowCount: 0 },
       totals: { beforeBytes: 0, afterBytes: 0, saved: 0, tokensEstimated: 0 },
-      perTool: [],
+      perCompressor: [],
       uniqueSourceShare: 0,
     });
     expect(lines.some((l) => l.startsWith("Metrics DB:"))).toBe(false);
@@ -146,7 +147,7 @@ describe("buildSavingsLinesFromStore", () => {
     const lines = buildSavingsLinesFromStore(null, "abc12345", Date.now(), dbPath);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("Session:");
-    expect(lines[0]).toContain("Tools tracked: 0");
+    expect(lines[0]).toContain("Compressors tracked: 0");
     expect(lines[1]).toBe(_internals.FALLBACK_LINE);
   });
 
@@ -176,23 +177,51 @@ describe("formatSavingsReport", () => {
     const md = formatSavingsReport({
       session: { id: "s1", startedAt: Date.now() - 60_000, rowCount: 3 },
       totals: { beforeBytes: 1000, afterBytes: 100, saved: 900, tokensEstimated: 225 },
-      perTool: [{ tool: "bash", saved: 900, calls: 3 }],
+      perCompressor: [{ compressor: "bash", saved: 900, calls: 3 }],
       uniqueSourceShare: 0.5,
     });
 
     expect(md).toContain("# Session savings");
     expect(md).toContain("## Totals");
-    expect(md).toContain("## Top tools");
+    expect(md).toContain("## Top compressors");
     expect(md).toContain("## Unique-source share");
   });
 
-  test("renders zero-state message when no tools were tracked", () => {
+  test("renders zero-state message when no compressors were tracked", () => {
     const md = formatSavingsReport({
       session: { id: "s1", startedAt: null, rowCount: 0 },
       totals: { beforeBytes: 0, afterBytes: 0, saved: 0, tokensEstimated: 0 },
-      perTool: [],
+      perCompressor: [],
       uniqueSourceShare: 0,
     });
-    expect(md).toContain("(no tools tracked yet)");
+    expect(md).toContain("(no compressors tracked yet)");
+  });
+
+  test("renders metrics recorded with all L2 processor keys", async () => {
+    store.upsertSession({ session_id: "s1", cwd: "/tmp" });
+    const processors = ["git", "test", "lint", "build", "k8s", "docker", "log", "json", "dedup"] as const;
+    for (const processor of processors) {
+      store.record(row({
+        session_id: "s1",
+        tool: "bash",
+        processor,
+        before_bytes: 1000,
+        after_bytes: 100,
+      }));
+    }
+    await store.flushPendingForTest();
+
+    expect(store.getSessionTotals("s1")).toMatchObject({
+      beforeBytes: 9000,
+      afterBytes: 900,
+      saved: 8100,
+      rowCount: 9,
+    });
+
+    const report = formatSavingsReportFromStore(store, "s1", Date.now())!;
+    expect(report).toContain("- Saved: 7.9KB");
+    for (const processor of processors) {
+      expect(report).toContain(`- ${processor} —`);
+    }
   });
 });
