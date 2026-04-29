@@ -12,11 +12,13 @@ export function createMockPlatform(overrides?: Partial<Platform>): Platform {
     registerCommand: mock(),
     getCommands: mock(() => []),
     getActiveTools: mock(() => []),
+    getAllTools: mock(() => []),
     exec: mock(async () => ({ stdout: "", stderr: "", code: 0 })),
     sendMessage: mock(),
     sendUserMessage: mock(),
     registerMessageRenderer: mock(),
     on: mock(),
+    setActiveTools: mock(async () => {}),
     createAgentSession: mock(async () => ({
       subscribe: mock(() => () => {}),
       prompt: mock(async () => {}),
@@ -29,6 +31,7 @@ export function createMockPlatform(overrides?: Partial<Platform>): Platform {
       compactionHooks: true,
       customWidgets: true,
       registerTool: true,
+      activeToolFiltering: true,
     },
     ...overrides,
   };

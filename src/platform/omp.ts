@@ -50,6 +50,8 @@ export function createOmpAdapter(api: any): Platform {
     registerCommand: (name, opts) => api.registerCommand(name, opts),
     getCommands: () => api.getCommands(),
     getActiveTools: () => api.getActiveTools(),
+    getAllTools:
+      typeof api.getAllTools === "function" ? () => api.getAllTools() : undefined,
     exec: (cmd, args, opts) =>
       opts?.env ? execWithEnv(cmd, args, opts) : api.exec(cmd, args, opts),
     sendMessage: (content, opts) => {
@@ -126,6 +128,10 @@ export function createOmpAdapter(api: any): Platform {
     },
 
     registerTool: api.registerTool ? (definition: any) => api.registerTool(definition) : undefined,
+    setActiveTools:
+      typeof api.setActiveTools === "function"
+        ? (names: string[]) => api.setActiveTools(names)
+        : undefined,
 
     paths: createPaths(".omp"),
     capabilities: {
@@ -133,6 +139,8 @@ export function createOmpAdapter(api: any): Platform {
       compactionHooks: true,
       customWidgets: true,
       registerTool: typeof api.registerTool === "function",
+      activeToolFiltering:
+        typeof api.getAllTools === "function" && typeof api.setActiveTools === "function",
     },
   };
 }

@@ -37,6 +37,7 @@ export interface PlatformCapabilities {
   compactionHooks: boolean;
   customWidgets: boolean;
   registerTool: boolean;
+  activeToolFiltering: boolean;
 }
 
 // ── Agent Sessions ─────────────────────────────────────────
@@ -132,10 +133,11 @@ export interface Platform {
 
   // Introspection
   getActiveTools(): string[];
+  getAllTools?(): string[];
 
   // Tool registration
   registerTool?(definition: any): void;
-  setActiveTools?(names: string[]): void;
+  setActiveTools?(names: string[]): Promise<void>;
 
   // Rendering
   registerMessageRenderer<T>(type: string, renderer: any): void;
