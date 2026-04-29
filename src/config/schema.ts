@@ -59,6 +59,20 @@ export const ConfigSchema = Type.Object(
         llmSummarization: Type.Boolean(),
         llmThreshold: Type.Number({ minimum: 4096 }),
         enforceRouting: Type.Boolean(),
+        lazyTools: Type.Object(
+          {
+            enabled: Type.Boolean(),
+            mode: Type.Union([
+              Type.Literal("conservative"),
+              Type.Literal("balanced"),
+              Type.Literal("aggressive"),
+            ]),
+            alwaysKeep: Type.Array(Type.String()),
+            commandAllowlist: Type.Record(Type.String(), Type.Array(Type.String())),
+            keywordTools: Type.Record(Type.String(), Type.Array(Type.String())),
+          },
+          { additionalProperties: false },
+        ),
         processors: Type.Object(
           {
             enabled: Type.Boolean(),

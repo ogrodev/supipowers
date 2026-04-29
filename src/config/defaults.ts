@@ -36,6 +36,13 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
       enabled: true,
       disable: [],
     },
+    lazyTools: {
+      enabled: true,
+      mode: "balanced",
+      alwaysKeep: ["ctx_execute", "ctx_search", "mcpc_manager"],
+      commandAllowlist: {},
+      keywordTools: {},
+    },
   },
   mcp: {
     closeSessionsOnExit: false,
