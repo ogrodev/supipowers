@@ -455,6 +455,21 @@ export interface ReleaseResult {
   error?: string;
 }
 
+export type ContextModeProcessorFamily =
+  | "git"
+  | "test"
+  | "lint"
+  | "build"
+  | "k8s"
+  | "docker"
+  | "log"
+  | "json";
+
+export interface ContextModeProcessorsConfig {
+  enabled: boolean;
+  disable: ContextModeProcessorFamily[];
+}
+
 /** Context-mode integration settings */
 export interface ContextModeConfig {
   /** Master toggle for all supi-context-mode integration (default: true) */
@@ -475,6 +490,8 @@ export interface ContextModeConfig {
   llmThreshold: number;
   /** Hard-block native search/read tools when ctx_* equivalents are available (default: true) */
   enforceRouting: boolean;
+  /** Deterministic content-aware emission processors (default: enabled with no disabled families) */
+  processors: ContextModeProcessorsConfig;
 }
 
 /** MCP management settings */
