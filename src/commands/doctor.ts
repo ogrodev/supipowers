@@ -229,6 +229,8 @@ const CTX_TOOL_NAMES: Record<string, string> = {
   ctxIndex: "ctx_index",
   ctxSearch: "ctx_search",
   ctxFetchAndIndex: "ctx_fetch_and_index",
+  ctxStats: "ctx_stats",
+  ctxPurge: "ctx_purge",
 };
 
 export function checkContextMode(_activeTools: string[]): CheckResult {
@@ -242,6 +244,64 @@ export function checkContextMode(_activeTools: string[]): CheckResult {
     name: "Context Mode",
     presence: { ok: true, detail: "Native tools (built-in)" },
     functional: { ok: true, detail: foundNames.join(", ") },
+  };
+}
+
+export function checkLazyTools(platform: Platform, cwd: string): CheckResult {
+  const inspection = (() => {
+    try {
+      return inspectConfig(platform.paths, cwd);
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  })();
+
+  if (inspection instanceof Error) {
+    return {
+      name: "Lazy Tools",
+      presence: { ok: false, detail: `Unable to inspect config: ${inspection.message}` },
+    };
+  }
+
+  if (!inspection.effectiveConfig) {
+    return {
+      name: "Lazy Tools",
+      presence: { ok: false, detail: "Skipped: config is invalid" },
+      functional: { ok: false, detail: formatConfigErrors(inspection) },
+    };
+  }
+
+  const config = inspection.effectiveConfig;
+
+  if (!config.contextMode.enabled) {
+    return {
+      name: "Lazy Tools",
+      presence: { ok: false, detail: "Disabled (contextMode.enabled = false)" },
+    };
+  }
+
+  if (!config.contextMode.lazyTools.enabled) {
+    return {
+      name: "Lazy Tools",
+      presence: { ok: false, detail: "Disabled (contextMode.lazyTools.enabled = false)" },
+    };
+  }
+
+  if (!platform.capabilities.activeToolFiltering) {
+    return {
+      name: "Lazy Tools",
+      presence: {
+        ok: false,
+        detail:
+          "Degraded: contextMode.lazyTools.enabled is true but active-tool filtering is unavailable; upgrade OMP/supipowers adapter or disable contextMode.lazyTools.enabled.",
+      },
+    };
+  }
+
+  return {
+    name: "Lazy Tools",
+    presence: { ok: true, detail: "L7 active-tool filtering available" },
+    functional: { ok: true, detail: `mode: ${config.contextMode.lazyTools.mode}` },
   };
 }
 
@@ -398,6 +458,7 @@ export async function runDoctorChecks(platform: Platform, cwd: string): Promise<
     checkLsp(activeTools),
     mcpResult,
     checkContextMode(activeTools),
+    checkLazyTools(platform, cwd),
     await checkNpm(platform),
   ];
 
@@ -460,6 +521,7 @@ const CAPABILITY_LABELS: Partial<Record<keyof PlatformCapabilities, string>> = {
   compactionHooks: "Context compression",
   customWidgets: "Progress widgets",
   registerTool: "Custom tool registration",
+  activeToolFiltering: "Active-tool filtering",
 };
 
 export function checkCapabilities(
