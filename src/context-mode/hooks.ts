@@ -16,9 +16,8 @@ import { uniqueSourceHash } from "./source-hash.js";
 import { basename } from "node:path";
 import { getProjectStateDir } from "../workspace/state-paths.js";
 import { createHash } from "node:crypto";
-import { readFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { registerUltraPlanHookBridge } from "../ultraplan/runtime/hook-bridge.js";
 import { getProjectStatePath } from "../workspace/state-paths.js";
 
@@ -30,14 +29,47 @@ type SessionContextLike = {
 // Cached detection result
 let cachedStatus: ContextModeStatus | null = null;
 
-function loadRoutingSkill(): string | null {
-  try {
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const skillPath = join(__dirname, "..", "..", "skills", "context-mode", "SKILL.md");
-    return readFileSync(skillPath, "utf-8");
-  } catch {
-    return null;
+function buildActiveRoutingGuidance(status: ContextModeStatus): string | null {
+  if (!status.available) return null;
+
+  const activeTools = activeContextToolNames(status);
+  const rescueTools = activeTools.filter((tool) =>
+    tool === "ctx_execute" || tool === "ctx_search" || tool === "ctx_batch_execute",
+  );
+  const lines = [
+    "# supi-context-mode",
+    "Use active `ctx_*` tools shown in the tool catalog for high-output work; inactive ctx tools are intentionally unavailable this turn.",
+    `Active context-mode rescue tools: ${rescueTools.length > 0 ? rescueTools.join(", ") : "none"}.`,
+    "Routing blocks native tools only when the named replacement is active. If a specialized ctx tool is absent, use an active rescue tool or proceed with the native tool.",
+  ];
+
+  if (status.tools.ctxSearch || status.tools.ctxBatchExecute) {
+    lines.push("For search/gather work, prefer active `ctx_search` or `ctx_batch_execute` over Grep/Find outputs.");
   }
+  if (status.tools.ctxExecute) {
+    lines.push("Use active `ctx_execute` for shell/data processing that may emit large output.");
+  }
+  if (status.tools.ctxFetchAndIndex) {
+    lines.push("Use active `ctx_fetch_and_index` for URLs, curl/wget, Fetch/WebFetch, or web docs.");
+  }
+  if (status.tools.ctxExecuteFile) {
+    lines.push("Use active `ctx_execute_file` for analysis-only large-file processing without loading the file into context.");
+  }
+
+  return lines.join("\n");
+}
+
+function activeContextToolNames(status: ContextModeStatus): string[] {
+  const names: string[] = [];
+  if (status.tools.ctxExecute) names.push("ctx_execute");
+  if (status.tools.ctxSearch) names.push("ctx_search");
+  if (status.tools.ctxBatchExecute) names.push("ctx_batch_execute");
+  if (status.tools.ctxExecuteFile) names.push("ctx_execute_file");
+  if (status.tools.ctxFetchAndIndex) names.push("ctx_fetch_and_index");
+  if (status.tools.ctxIndex) names.push("ctx_index");
+  if (status.tools.ctxStats) names.push("ctx_stats");
+  if (status.tools.ctxPurge) names.push("ctx_purge");
+  return names;
 }
 
 function resolveSessionCwd(ctx?: SessionContextLike): string {
@@ -329,7 +361,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   });
 
   // Phase 1: Routing instructions + Phase 2: Prompt event extraction
-  platform.on("before_agent_start", (event) => {
+  platform.on("before_agent_start", (event, ctx) => {
     // Phase 2: prompt event extraction (fire-and-forget)
     if (eventStore && config.contextMode.eventTracking) {
       try {
@@ -347,12 +379,22 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
     // regardless of MCP tool detection (tools may load after this hook fires)
     if (!config.contextMode.routingInstructions && !config.contextMode.enforceRouting) return;
 
-    const skill = loadRoutingSkill();
-    if (!skill) return;
+    const status = detectContextMode(platform.getActiveTools());
+    const guidance = buildActiveRoutingGuidance(status);
+    if (!guidance) return;
 
-    const systemPrompt = (event as any).systemPrompt as string | undefined;
-    if (!systemPrompt) return { systemPrompt: skill };
-    return { systemPrompt: systemPrompt + "\n\n" + skill };
+    let systemPrompt = (event as any).systemPrompt as string | undefined;
+    const getSystemPrompt = (ctx as any)?.getSystemPrompt;
+    if (typeof getSystemPrompt === "function") {
+      try {
+        const currentPrompt = getSystemPrompt();
+        if (typeof currentPrompt === "string") systemPrompt = currentPrompt;
+      } catch (e) {
+        (platform as any).logger?.warn?.("supi-context-mode: failed to read current system prompt", e);
+      }
+    }
+    if (!systemPrompt) return { systemPrompt: guidance };
+    return { systemPrompt: systemPrompt + "\n\n" + guidance };
   });
 
   // Phase 3: Compaction integration

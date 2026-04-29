@@ -63,33 +63,35 @@ export interface BlockResult {
 export function routeToolCall(
   toolName: string,
   input: Record<string, unknown> | undefined,
-  _status: ContextModeStatus,
+  status: ContextModeStatus,
   options: { enforceRouting: boolean; blockHttpCommands: boolean },
 ): BlockResult | undefined {
-  // Native tools are always available — no availability check needed.
+  const grepReplacement = getGrepReplacement(status);
+  const shellSearchReplacement = getShellSearchReplacement(status);
+  const fetchReplacement = status.tools.ctxFetchAndIndex ? "ctx_fetch_and_index" : null;
+  const bashHttpReplacement = getBashHttpReplacement(status);
 
-  // Grep → block, redirect to ctx_search
-  if (options.enforceRouting && toolName === "grep") {
+  // Grep → block only when an active search/shell replacement exists.
+  if (options.enforceRouting && toolName === "grep" && grepReplacement) {
     return {
       block: true,
-      reason:
-        'Use ctx_search(queries: ["<pattern>"]) or ctx_batch_execute instead of Grep. ' +
-        "Results are indexed and compressed to save context window.",
+      reason: formatGrepReplacementReason(grepReplacement),
     };
   }
 
-  // Find/Glob → block, redirect to ctx_execute or ctx_batch_execute
-  if (options.enforceRouting && toolName === "find") {
+  // Find/Glob → block only when an active shell/search replacement exists.
+  if (options.enforceRouting && toolName === "find" && shellSearchReplacement) {
     return {
       block: true,
       reason:
-        'Use ctx_execute(language: "shell", code: "find ...") or ctx_batch_execute instead of Find/Glob. ' +
-        "Results are indexed and compressed to save context window.",
+        shellSearchReplacement === "ctx_execute"
+          ? 'Use ctx_execute(language: "shell", code: "find ...") or ctx_batch_execute instead of Find/Glob. Results are indexed and compressed to save context window.'
+          : "Use ctx_batch_execute instead of Find/Glob. Results are indexed and compressed to save context window.",
     };
   }
 
-  // Fetch/WebFetch → block, redirect to ctx_fetch_and_index
-  if (toolName === "fetch" || toolName === "web_fetch") {
+  // Fetch/WebFetch → block only when ctx_fetch_and_index is active.
+  if ((toolName === "fetch" || toolName === "web_fetch") && fetchReplacement) {
     return {
       block: true,
       reason:
@@ -102,26 +104,64 @@ export function routeToolCall(
   if (toolName === "bash") {
     const command = input?.command;
 
-    // Bash search commands → block, redirect to ctx_execute
-    if (options.enforceRouting && isBashSearchCommand(command)) {
+    // Bash search commands → block only when an active shell/search replacement exists.
+    if (options.enforceRouting && isBashSearchCommand(command) && shellSearchReplacement) {
       return {
         block: true,
         reason:
-          'Use ctx_execute(language: "shell", code: "<command>") instead of Bash for search commands. ' +
-          "For multiple commands, use ctx_batch_execute. Results stay in sandbox and are auto-indexed.",
+          shellSearchReplacement === "ctx_execute"
+            ? 'Use ctx_execute(language: "shell", code: "<command>") instead of Bash for search commands. For multiple commands, use ctx_batch_execute. Results stay in sandbox and are auto-indexed.'
+            : "Use ctx_batch_execute instead of Bash for search commands. Results stay in sandbox and are auto-indexed.",
       };
     }
 
-    // Bash HTTP commands → block, redirect to ctx_fetch_and_index
-    if (options.blockHttpCommands && isHttpCommand(command)) {
+    // Bash HTTP commands → block only when an active HTTP replacement exists.
+    if (options.blockHttpCommands && isHttpCommand(command) && bashHttpReplacement) {
       return {
         block: true,
-        reason:
-          "Use ctx_fetch_and_index instead of curl/wget. " +
-          "It fetches the URL, indexes the content, and returns a compressed summary.",
+        reason: formatBashHttpReplacementReason(bashHttpReplacement),
       };
     }
   }
 
   return undefined;
+}
+
+function getGrepReplacement(status: ContextModeStatus): "ctx_search" | "ctx_batch_execute" | "ctx_execute" | null {
+  if (status.tools.ctxSearch) return "ctx_search";
+  if (status.tools.ctxBatchExecute) return "ctx_batch_execute";
+  if (status.tools.ctxExecute) return "ctx_execute";
+  return null;
+}
+
+function getShellSearchReplacement(status: ContextModeStatus): "ctx_execute" | "ctx_batch_execute" | null {
+  if (status.tools.ctxExecute) return "ctx_execute";
+  if (status.tools.ctxBatchExecute) return "ctx_batch_execute";
+  return null;
+}
+
+function getBashHttpReplacement(status: ContextModeStatus): "ctx_fetch_and_index" | "ctx_execute" | null {
+  if (status.tools.ctxFetchAndIndex) return "ctx_fetch_and_index";
+  if (status.tools.ctxExecute) return "ctx_execute";
+  return null;
+}
+
+function formatGrepReplacementReason(replacement: "ctx_search" | "ctx_batch_execute" | "ctx_execute"): string {
+  if (replacement === "ctx_search") {
+    return 'Use ctx_search(queries: ["<pattern>"]) or ctx_batch_execute instead of Grep. Results are indexed and compressed to save context window.';
+  }
+  if (replacement === "ctx_batch_execute") {
+    return "Use ctx_batch_execute instead of Grep. Results are indexed and compressed to save context window.";
+  }
+  return 'Use ctx_execute(language: "shell", code: "grep ...") instead of Grep. Results stay in sandbox to save context window.';
+}
+
+function formatBashHttpReplacementReason(replacement: "ctx_fetch_and_index" | "ctx_execute"): string {
+  if (replacement === "ctx_fetch_and_index") {
+    return (
+      "Use ctx_fetch_and_index instead of curl/wget. " +
+      "It fetches the URL, indexes the content, and returns a compressed summary."
+    );
+  }
+  return 'Use ctx_execute(language: "shell", code: "<http request>") instead of Bash HTTP commands. Only printed summaries enter context.';
 }

@@ -41,6 +41,7 @@ export type ProcessorKey =
   | "log"
   | "json"
   | "dedup"
+  | "lazy-tools"
   | null;
 
 /** A single metric row pending insertion or read from the metrics table. */
