@@ -4,9 +4,9 @@ Route high-output tool calls through sandboxed execution to protect the context 
 
 | Scope | Tool routing rules for supi-context-mode |
 |-------|-----------------------------------------------------|
-| Trigger | Always active when supi-context-mode tools are available |
+| Trigger | Active-aware; only currently active `ctx_*` tools can be used or named as enforced replacements |
 | Goal | Prevent context flooding — a single unrouted command can dump 56 KB into context |
-| Key rule | Blocked tools return errors; use sandbox equivalents instead |
+| Key rule | Blocked native tools are blocked only when an active `ctx_*` replacement exists |
 
 ## Tool Selection Hierarchy
 
@@ -22,7 +22,7 @@ Pick the highest-priority tool that fits the task:
 
 ## Blocked Commands
 
-Blocked commands are intercepted and replaced with an error. Do NOT retry via Bash.
+Blocked commands are intercepted only when their replacement `ctx_*` tool is active for the turn. Do NOT retry via Bash when a block reason names an active replacement.
 
 | Blocked tool | Replacement |
 |---|---|
@@ -66,9 +66,9 @@ Reads are never blocked — OMP's native open/read tool preserves hashline ancho
 
 For analysis-only reads where anchors are not needed, prefer `ctx_execute_file(path, language, code)` — only your printed summary enters context.
 
-## Subagent Routing
+## Runtime Routing Guidance
 
-The routing block is automatically injected into subagent prompts. Bash-type subagents are upgraded to general-purpose for tool access. You do NOT need to manually instruct subagents about context-mode.
+The injected prompt is a compact, active-aware summary generated from the current active tool list. This static file is reference documentation; it is not injected wholesale.
 
 ## Output Constraints
 
