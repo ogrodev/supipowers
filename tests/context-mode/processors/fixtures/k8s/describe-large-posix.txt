@@ -1,0 +1,13 @@
+Name:             api-abc
+Namespace:        default
+Priority:         0
+Status:           Running
+IP:               10.0.0.10
+Containers:
+  api:
+    Image:        example/api:latest
+Events:
+  Type     Reason     Age   From               Message
+  ----     ------     ----  ----               -------
+  Warning  BackOff    2m    kubelet            Back-off restarting failed container
+  Normal   Pulled     1m    kubelet            Successfully pulled image

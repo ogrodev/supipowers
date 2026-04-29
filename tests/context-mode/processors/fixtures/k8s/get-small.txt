@@ -1,0 +1,2 @@
+NAMESPACE   NAME        READY   STATUS    RESTARTS   AGE
+default     api-abc     1/1     Running   0          1d

@@ -1,0 +1,4 @@
+CONTAINER ID   IMAGE          COMMAND       STATUS                    NAMES
+abc123def456   api:latest     "bun start"   Up 2 minutes              api-1
+def456abc789   worker:latest  "bun worker"  Restarting (1) 5s ago     worker-1
+fedcba987654   redis:7        "redis"       Up 5 hours                redis-1

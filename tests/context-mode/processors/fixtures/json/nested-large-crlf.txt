@@ -1,0 +1,15 @@
+{
+  "service": {
+    "name": "context-mode",
+    "ports": [{ "name": "http", "port": 3000 }, { "name": "metrics", "port": 9090 }],
+    "env": { "NODE_ENV": "test", "SUPI_DEBUG": "0" }
+  },
+  "deployment": {
+    "replicas": 3,
+    "strategy": { "type": "RollingUpdate", "maxUnavailable": 1 }
+  },
+  "observability": {
+    "logs": { "level": "info", "sampleRate": 0.1 },
+    "traces": { "enabled": true, "endpoint": "http://otel:4318" }
+  }
+}

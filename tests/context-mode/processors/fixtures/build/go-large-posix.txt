@@ -1,0 +1,4 @@
+# example.com/demo
+./main.go:14:9: cannot use "3000" (untyped string constant) as int value in assignment
+./server.go:22:13: undefined: startServer
+FAIL example.com/demo [build failed]

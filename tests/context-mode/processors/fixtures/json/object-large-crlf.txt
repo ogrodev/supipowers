@@ -1,0 +1,15 @@
+{
+  "name": "supipowers",
+  "version": "1.0.0",
+  "enabled": true,
+  "dependencies": {
+    "@oh-my-pi/pi-coding-agent": "latest",
+    "typescript": "^5.9.0"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "workspaces": ["packages/core", "packages/cli", "packages/ui"],
+  "metadata": { "owners": ["platform", "agents"], "features": { "contextMode": true } }
+}

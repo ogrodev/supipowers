@@ -1,0 +1,4 @@
+REPOSITORY   TAG       IMAGE ID       CREATED        SIZE
+api          latest    abc123def456   2 hours ago    200MB
+worker       latest    def456abc789   2 hours ago    210MB
+redis        7         fedcba987654   4 weeks ago    120MB

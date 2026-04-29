@@ -1,0 +1,9 @@
+/repo/src/a.ts
+  1:7   error    'x' is assigned a value but never used  no-unused-vars
+  2:10  warning  Unexpected console statement              no-console
+
+/repo/src/b.ts
+  5:3   error    Missing semicolon                         semi
+  9:12  warning  'value' is never reassigned               prefer-const
+
+✖ 4 problems (2 errors, 2 warnings)

@@ -1,0 +1,2 @@
+src/a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+Found 1 error in src/a.ts:1

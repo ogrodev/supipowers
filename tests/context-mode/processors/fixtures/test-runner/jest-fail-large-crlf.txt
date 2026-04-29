@@ -1,0 +1,17 @@
+FAIL tests/api/user.test.ts
+  ● user api › returns validation error
+
+    expect(received).toEqual(expected) // deep equality
+
+    Expected: 400
+    Received: 200
+
+      at Object.<anonymous> (tests/api/user.test.ts:27:18)
+
+PASS tests/api/health.test.ts
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       1 failed, 5 passed, 6 total
+Snapshots:   0 total
+Time:        2.345 s
+Ran all test suites.

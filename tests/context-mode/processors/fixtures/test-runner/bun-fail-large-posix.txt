@@ -1,0 +1,18 @@
+bun test v1.3.13
+
+tests/context-mode/dedup.test.ts:
+42 | expect(value).toBe(1)
+                        ^
+error: expect(received).toBe(expected)
+
+Expected: 1
+Received: 2
+
+      at tests/context-mode/dedup.test.ts:42:24
+(fail) context-mode dedup > duplicate hit [2.00ms]
+(pass) context-mode dedup > first hit [1.00ms]
+
+ 1 pass
+ 1 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [20.00ms]

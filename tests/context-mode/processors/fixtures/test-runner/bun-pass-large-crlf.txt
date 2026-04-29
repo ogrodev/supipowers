@@ -1,0 +1,13 @@
+bun test v1.3.13
+
+tests/unit/pass-001.test.ts:
+(pass) case 1 [1.00ms]
+tests/unit/pass-002.test.ts:
+(pass) case 2 [1.00ms]
+tests/unit/pass-003.test.ts:
+(pass) case 3 [1.00ms]
+
+ 3 pass
+ 0 fail
+ 6 expect() calls
+Ran 3 tests across 3 files. [40.00ms]

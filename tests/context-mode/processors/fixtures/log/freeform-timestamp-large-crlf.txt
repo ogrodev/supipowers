@@ -1,0 +1,5 @@
+[2026-04-28 10:00:01] INFO boot
+[2026-04-28 10:00:02] ERROR failed to connect
+[2026-04-28 10:00:03] INFO retry
+[2026-04-28 10:00:04] INFO ready
+[2026-04-28 10:00:05] PANIC impossible state

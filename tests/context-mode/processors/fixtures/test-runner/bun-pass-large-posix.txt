@@ -1,0 +1,27 @@
+bun test v1.3.13
+
+tests/unit/pass-001.test.ts:
+(pass) case 1 [1.00ms]
+tests/unit/pass-002.test.ts:
+(pass) case 2 [1.00ms]
+tests/unit/pass-003.test.ts:
+(pass) case 3 [1.00ms]
+tests/unit/pass-004.test.ts:
+(pass) case 4 [1.00ms]
+tests/unit/pass-005.test.ts:
+(pass) case 5 [1.00ms]
+tests/unit/pass-006.test.ts:
+(pass) case 6 [1.00ms]
+tests/unit/pass-007.test.ts:
+(pass) case 7 [1.00ms]
+tests/unit/pass-008.test.ts:
+(pass) case 8 [1.00ms]
+tests/unit/pass-009.test.ts:
+(pass) case 9 [1.00ms]
+tests/unit/pass-010.test.ts:
+(pass) case 10 [1.00ms]
+
+ 10 pass
+ 0 fail
+ 20 expect() calls
+Ran 10 tests across 10 files. [120.00ms]

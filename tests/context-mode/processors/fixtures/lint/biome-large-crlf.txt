@@ -1,0 +1,7 @@
+src/a.ts:1:7 lint/correctness/noUnusedVariables ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✖ This variable is unused.
+
+src/b.ts:5:3 lint/style/useConst ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ⚠ This variable should be const.
+
+Checked 20 files in 12ms. Found 1 error and 1 warning.

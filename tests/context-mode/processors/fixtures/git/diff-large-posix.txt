@@ -1,0 +1,23 @@
+diff --git a/src/context-mode/hooks.ts b/src/context-mode/hooks.ts
+index 1111111..2222222 100644
+--- a/src/context-mode/hooks.ts
++++ b/src/context-mode/hooks.ts
+@@ -10,7 +10,10 @@ import { routeToolCall } from "./routing.js";
+-import { compressToolResult } from "./compressor.js";
++import { runEmissionPipeline } from "./compressor.js";
++import { createDedupState } from "./dedup.js";
++import { maybeSubstitute } from "./dedup.js";
++import { uniqueSourceHash } from "./source-hash.js";
+@@ -230,6 +233,9 @@ export function registerContextModeHooks(platform, config) {
+-    const compressed = compressToolResult(event, threshold);
++    const pipeline = runEmissionPipeline(event, threshold);
++    const sourceHash = uniqueSourceHash({ tool, input, cwd, projectSlug });
++    const compressed = maybeSubstitute(pipeline);
+ }
+diff --git a/src/context-mode/old-router.ts b/src/context-mode/new-router.ts
+similarity index 88%
+rename from src/context-mode/old-router.ts
+rename to src/context-mode/new-router.ts
+@@ -1,4 +1,4 @@
+-export const ROUTER = "old";
++export const ROUTER = "new";

@@ -1,0 +1,13 @@
+ FAIL  tests/components/Button.test.ts > Button > renders label
+AssertionError: expected 'Save' to contain 'Submit'
+ ❯ tests/components/Button.test.ts:18:22
+     16| render(<Button>Save</Button>)
+     17| const button = screen.getByRole('button')
+     18| expect(button.textContent).toContain('Submit')
+       |                      ^
+ PASS  tests/components/Input.test.ts
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 3 passed (4)
+   Start at  10:30:00
+   Duration  1.23s

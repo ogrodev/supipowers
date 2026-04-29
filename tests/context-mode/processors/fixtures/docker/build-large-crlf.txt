@@ -1,0 +1,5 @@
+#1 [internal] load build definition from Dockerfile
+#2 [internal] load .dockerignore
+#3 [build 1/4] FROM oven/bun:1
+#4 [build 2/4] COPY package.json bun.lock ./
+#5 ERROR: failed to solve: process "/bin/sh -c bun install" did not complete successfully: exit code: 1

@@ -1,0 +1,7 @@
+Apr 28 10:00:01 host api[100]: INFO start
+Apr 28 10:00:02 host api[100]: ERROR db unavailable
+Apr 28 10:00:03 host api[100]: INFO retry
+Apr 28 10:00:04 host api[100]: INFO ready
+Apr 28 10:00:05 host api[100]: FATAL exit status=1
+Apr 28 10:00:06 host api[100]: INFO restart
+Apr 28 10:00:07 host api[100]: INFO healthy

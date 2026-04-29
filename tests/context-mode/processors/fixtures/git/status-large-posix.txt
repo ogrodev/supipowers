@@ -1,0 +1,20 @@
+## feature/l2-processors...origin/feature/l2-processors [ahead 2, behind 1]
+ M src/context-mode/hooks.ts
+A  src/context-mode/processors/git.ts
+R  src/context-mode/old-router.ts -> src/context-mode/new-router.ts
+ D src/context-mode/legacy.ts
+?? tests/context-mode/processors/git.test.ts
+?? tests/context-mode/processors/fixtures/git/status-large-posix.txt
+ M tests/context-mode/hooks.test.ts
+ M tests/context-mode/runEmissionPipeline.test.ts
+A  tests/context-mode/processors/types.test.ts
+ M src/config/defaults.ts
+ M src/config/schema.ts
+ M src/types.ts
+?? notes/l2-roadmap.txt
+ M docs/supipowers/context-mode.md
+A  src/context-mode/dedup.ts
+ M src/context-mode/compressor.ts
+ M src/context-mode/metrics-recorder.ts
+ M src/context-mode/metrics-store.ts
+?? tests/context-mode/dedup.test.ts

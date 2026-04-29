@@ -1,0 +1,6 @@
+NAMESPACE   NAME             READY   STATUS             RESTARTS   AGE
+default     api-abc          1/1     Running            0          1d
+default     worker-def       0/1     CrashLoopBackOff   5          2h
+kube-system coredns-xyz      1/1     Running            0          5d
+prod        web-123          1/1     Pending            0          10m
+prod        jobs-456         1/1     Completed          0          1h
