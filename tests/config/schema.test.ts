@@ -189,6 +189,24 @@ describe("validateConfig", () => {
   });
 
 
+  test("rejects malformed lazy-tools config", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      contextMode: {
+        ...DEFAULT_CONFIG.contextMode,
+        lazyTools: {
+          ...DEFAULT_CONFIG.contextMode.lazyTools,
+          mode: "reckless",
+          unexpected: true,
+        },
+      },
+    } as unknown);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.includes("contextMode.lazyTools.mode"))).toBe(true);
+    expect(result.errors.some((error) => error.includes("contextMode.lazyTools"))).toBe(true);
+  });
+
   test("rejects release.tagFormat without exactly one ${version} placeholder", () => {
     const missingPlaceholder = validateConfig({
       ...DEFAULT_CONFIG,

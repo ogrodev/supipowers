@@ -169,6 +169,14 @@ describe("loadConfig", () => {
     expect("defaultProfile" in DEFAULT_CONFIG).toBe(false);
   });
 
+  test("DEFAULT_CONFIG enables balanced lazy tools with rescue tools", () => {
+    expect(DEFAULT_CONFIG.contextMode.lazyTools.enabled).toBe(true);
+    expect(DEFAULT_CONFIG.contextMode.lazyTools.mode).toBe("balanced");
+    expect(DEFAULT_CONFIG.contextMode.lazyTools.alwaysKeep).toEqual(
+      expect.arrayContaining(["ctx_execute", "ctx_search", "mcpc_manager"]),
+    );
+  });
+
   test("merges project config over defaults", () => {
     const localPaths = createTestPaths(tmpDir);
     const configDir = path.join(tmpDir, ".omp", "supipowers");
@@ -180,6 +188,29 @@ describe("loadConfig", () => {
     const config = loadConfig(localPaths, tmpDir);
     expect(config.contextMode.compressionThreshold).toBe(8192);
     expect(config.contextMode.enabled).toBe(true);
+  });
+
+  test("merges project lazy-tools overrides over defaults", () => {
+    const localPaths = createTestPaths(tmpDir);
+    writeProjectConfig(localPaths, tmpDir, {
+      contextMode: {
+        lazyTools: {
+          mode: "aggressive",
+          alwaysKeep: ["ctx_execute"],
+          commandAllowlist: { "supi:review": ["ctx_batch_execute"] },
+          keywordTools: { "design review": ["mcpc_figma"] },
+        },
+      },
+    });
+
+    const config = loadConfig(localPaths, tmpDir);
+    expect(config.contextMode.lazyTools).toEqual({
+      enabled: true,
+      mode: "aggressive",
+      alwaysKeep: ["ctx_execute"],
+      commandAllowlist: { "supi:review": ["ctx_batch_execute"] },
+      keywordTools: { "design review": ["mcpc_figma"] },
+    });
   });
 });
 
