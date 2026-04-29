@@ -8,6 +8,9 @@ import { buildSpecReviewerPrompt } from "./spec-reviewer.js";
 export interface PlanningSystemPromptOptions {
   skillContent?: string;
   dotDirDisplay: string;
+  /** Absolute path to the directory where plans must be saved.
+   * Owned by approval-flow's listPlans watcher; the agent MUST write here. */
+  plansDir: string;
   topic?: string;
   isQuick?: boolean;
 }
@@ -81,7 +84,7 @@ function buildFullPlanningSection(options: PlanningSystemPromptOptions): string 
   const specReviewerPrompt = buildSpecReviewerPrompt("<path-to-spec-file>");
   const planWriterPrompt = buildPlanWriterPrompt({
     specPath: "<path-to-approved-spec>",
-    dotDirDisplay: options.dotDirDisplay,
+    plansDir: options.plansDir,
   });
 
   return [
@@ -97,7 +100,7 @@ function buildFullPlanningSection(options: PlanningSystemPromptOptions): string 
     "## HARD-GATE",
     "",
     "- Do NOT write production code, apply patches, or claim that you changed files during planning.",
-    "- The only allowed file writes are the approved design doc under `.omp/supipowers/specs/` and the final implementation plan under `.omp/supipowers/plans/`.",
+    `- The only allowed file writes are the approved design doc under \`${options.dotDirDisplay}/supipowers/specs/\` and the final implementation plan under \`${options.plansDir}/\`.`,
     "- Keep planning artifacts local. Do NOT stage, commit, or push the design doc or implementation plan.",
     "- If the user asks to jump into coding early, explain that planning mode must finish first.",
     "",
@@ -130,7 +133,7 @@ function buildFullPlanningSection(options: PlanningSystemPromptOptions): string 
     "- Apply YAGNI ruthlessly and prefer isolated units with clear boundaries.",
     "",
     "### Phase 5: Write the design doc",
-    "- After the user approves the design, write `.omp/supipowers/specs/YYYY-MM-DD-<topic>-design.md`.",
+    `- After the user approves the design, write \`${options.dotDirDisplay}/supipowers/specs/YYYY-MM-DD-<topic>-design.md\`.`,
     "- Use concise, implementation-ready language.",
     "- Keep the design doc local; do NOT commit it to git.",
     "",
@@ -208,7 +211,7 @@ function buildQuickPlanningSection(options: PlanningSystemPromptOptions): string
     "",
     "4. Each task must include name, files, criteria, and complexity (small/medium/large).",
     `   - ${QUICK_PLAN_TASK_CONTENT_REQUIREMENT}`,
-    "5. Save the plan under `.omp/supipowers/plans/YYYY-MM-DD-<feature-name>.md`.",
+    `5. Save the plan under \`${options.plansDir}/YYYY-MM-DD-<feature-name>.md\`.`,
     "6. After saving, tell the user: `Plan saved to <path>. Review it and approve when ready.`",
     "7. Then stop and wait. The approval UI handles execution handoff.",
     ...buildAdditionalGuidelines(options.skillContent),
@@ -231,7 +234,7 @@ function buildPlanningCriticalBlock(options: PlanningSystemPromptOptions): strin
     "This is NOT native OMP plan mode.",
     "You **MUST NOT** call `exit_plan_mode` or `ExitPlanMode` — it will fail.",
     `You **MUST NOT** write plans to \`local://PLAN.md\` — that is OMP's native plan location and will not trigger the approval flow.`,
-    `You **MUST** save the plan to \`${options.dotDirDisplay}/supipowers/plans/YYYY-MM-DD-<feature-name>.md\` using the Write tool.`,
+    `You **MUST** save the plan to \`${options.plansDir}/YYYY-MM-DD-<feature-name>.md\` using the Write tool.`,
     "After saving, tell the user the plan path, then **stop and yield your turn**.",
     "The approval UI appears automatically when your turn ends and a new plan file is detected in that directory.",
     "</critical>",

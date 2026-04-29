@@ -1,3 +1,6 @@
+import * as path from "node:path";
+import { createPaths } from "../../src/platform/types.js";
+import { getProjectStatePath } from "../../src/workspace/state-paths.js";
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import {
   startPlanTracking,
@@ -43,7 +46,7 @@ type MockCtx = {
 function makePlatform(overrides: Partial<MockPlatform> = {}): MockPlatform {
   let hookedHandler: ((event: any, ctx: any) => Promise<void>) | null = null;
   const platform: MockPlatform = {
-    paths: { dotDirDisplay: ".omp" } as any,
+    paths: createPaths(".omp"),
     on: mock((event: string, handler: any) => {
       if (event === "agent_end") hookedHandler = handler;
     }),
@@ -177,7 +180,11 @@ describe("Approve and execute", () => {
 
     const prompt: string = platform.sendUserMessage.mock.calls[0][0];
     expect(prompt).toContain("Plan approved. You **MUST** execute it now.");
-    expect(prompt).toContain(".omp/supipowers/plans/2026-04-03-myplan.md");
+    const expectedPlanPath = path.join(
+      getProjectStatePath(platform.paths, "/cwd", "plans"),
+      "2026-04-03-myplan.md",
+    );
+    expect(prompt).toContain(expectedPlanPath);
     expect(prompt).toContain("## Tasks");
     expect(prompt).toContain("You **MUST** keep going until complete. This matters.");
   });

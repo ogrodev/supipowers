@@ -23,6 +23,7 @@ describe("planning system prompt", () => {
   test("includes shared plan-content policy in full planning mode", () => {
     const prompt = buildPlanningSystemPrompt(basePrompt, {
       dotDirDisplay: ".omp",
+      plansDir: "/home/dev/.omp/supipowers/projects/repo/plans",
       skillContent: "Additional planning note.",
     });
 
@@ -33,6 +34,7 @@ describe("planning system prompt", () => {
   test("includes quick-plan content guidance", () => {
     const prompt = buildPlanningSystemPrompt(basePrompt, {
       dotDirDisplay: ".omp",
+      plansDir: "/home/dev/.omp/supipowers/projects/repo/plans",
       isQuick: true,
     });
 

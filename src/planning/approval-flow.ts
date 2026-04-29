@@ -5,6 +5,8 @@ import type { PlanningSystemPromptOptions } from "./system-prompt.js";
 import { applyModelOverride } from "../config/model-resolver.js";
 import { listPlans, parsePlan, readPlanFile } from "../storage/plans.js";
 import { validatePlanMarkdown } from "./validate.js";
+import { getProjectStatePath } from "../workspace/state-paths.js";
+import * as path from "node:path";
 import { appendReliabilityRecord } from "../storage/reliability-metrics.js";
 
 /**
@@ -324,7 +326,7 @@ export function registerPlanApprovalHook(platform: Platform): void {
       } catch {}
       plansBefore = plansNow;
       const steer = [
-        `The plan you just wrote to \`${platform.paths.dotDirDisplay}/supipowers/plans/${planName}\` does not match the required schema.`,
+        `The plan you just wrote to \`${path.join(getProjectStatePath(platform.paths, planCwd, "plans"), planName)}\` does not match the required schema.`,
         "",
         "Validation errors:",
         ...validated.errors.map((err) => `- ${err.path}: ${err.message}`),
@@ -343,7 +345,7 @@ export function registerPlanApprovalHook(platform: Platform): void {
     }
 
     const canonicalContent = planContent;
-    const planPath = `${platform.paths.dotDirDisplay}/supipowers/plans/${planName}`;
+    const planPath = path.join(getProjectStatePath(platform.paths, planCwd, "plans"), planName);
     let parsedPlan: Plan | null = null;
     try {
       parsedPlan = parsePlan(planContent, planPath);
