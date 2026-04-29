@@ -28,7 +28,7 @@ import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { loadMcpRegistry } from "./mcp/config.js";
 import { McpcClient } from "./mcp/mcpc.js";
-import { parseTags, computeActiveServers } from "./mcp/activation.js";
+import { parseTags } from "./mcp/activation.js";
 import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
 import { registerPlanApprovalHook } from "./planning/approval-flow.js";
 import { registerPlanningSystemPromptHook } from "./planning/system-prompt.js";
@@ -42,6 +42,7 @@ import {
 } from "./ui-design/session.js";
 import { registerUltraPlanRuntimeTools } from "./ultraplan/execution/runtime-tools.js";
 import { registerUltraPlanAuthoringTool } from "./ultraplan/authoring-tool.js";
+import { registerActiveToolController } from "./tool-catalog/active-tool-controller.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -143,6 +144,14 @@ export function bootstrap(platform: Platform): void {
 
   // Context-mode integration
   const config = loadConfig(platform.paths, process.cwd());
+  registerActiveToolController(platform, config, {
+    loadMcpRegistryForCwd: (cwd: string) => loadMcpRegistry(platform.paths, cwd),
+    consumePendingTags: () => {
+      const tags = pendingTags;
+      pendingTags = [];
+      return tags;
+    },
+  });
   registerContextModeHooks(platform, config);
 
 
@@ -151,28 +160,6 @@ export function bootstrap(platform: Platform): void {
   registerPlanningSystemPromptHook(platform);
   registerUiDesignSystemPromptHook(platform);
 
-  // MCP per-turn activation
-  platform.on("before_agent_start", async (event, ctx) => {
-    const registry = loadMcpRegistry(platform.paths, ctx.cwd);
-    if (Object.keys(registry.servers).length === 0) {
-      pendingTags = [];
-      return;
-    }
-
-    const message = typeof event.message?.content === "string" ? event.message.content : "";
-    const active = computeActiveServers(registry.servers, message, pendingTags);
-
-    const activeToolNames = active.map((name) => `mcpc_${name}`);
-    activeToolNames.push("mcpc_manager");
-
-    if (platform.setActiveTools) {
-      const currentTools = platform.getActiveTools();
-      const nonMcpTools = currentTools.filter((t: string) => !t.startsWith("mcpc_"));
-      platform.setActiveTools([...nonMcpTools, ...activeToolNames]);
-    }
-
-    pendingTags = [];
-  });
 
   // Session start
   platform.on("session_start", async (_event, ctx) => {
