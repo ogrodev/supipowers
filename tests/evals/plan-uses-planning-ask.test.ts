@@ -44,6 +44,7 @@ defineEval({
 
     const fullPrompt = buildPlanningSystemPrompt(basePrompt, {
       dotDirDisplay: ".omp",
+      plansDir: "/home/dev/.omp/supipowers/projects/repo/plans",
       topic: "test topic",
       isQuick: false,
     });
