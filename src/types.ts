@@ -470,6 +470,16 @@ export interface ContextModeProcessorsConfig {
   disable: ContextModeProcessorFamily[];
 }
 
+export type ContextModeLazyToolsMode = "conservative" | "balanced" | "aggressive";
+
+export interface ContextModeLazyToolsConfig {
+  enabled: boolean;
+  mode: ContextModeLazyToolsMode;
+  alwaysKeep: string[];
+  commandAllowlist: Record<string, string[]>;
+  keywordTools: Record<string, string[]>;
+}
+
 /** Context-mode integration settings */
 export interface ContextModeConfig {
   /** Master toggle for all supi-context-mode integration (default: true) */
@@ -492,6 +502,8 @@ export interface ContextModeConfig {
   enforceRouting: boolean;
   /** Deterministic content-aware emission processors (default: enabled with no disabled families) */
   processors: ContextModeProcessorsConfig;
+  /** Lazy active-tool filtering policy for supipowers-owned tools (default: balanced) */
+  lazyTools: ContextModeLazyToolsConfig;
 }
 
 /** MCP management settings */
