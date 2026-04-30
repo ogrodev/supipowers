@@ -42,6 +42,7 @@ export type ProcessorKey =
   | "json"
   | "dedup"
   | "lazy-tools"
+  | "startup-optimizer"
   | null;
 
 /** A single metric row pending insertion or read from the metrics table. */
