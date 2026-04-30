@@ -2,41 +2,61 @@
 import { detectContextMode } from "../../src/context-mode/detector.js";
 
 describe("detectContextMode", () => {
-  test("returns available: true unconditionally", () => {
-    const status = detectContextMode([]);
-    expect(status.available).toBe(true);
-  });
-
-  test("all tool booleans are true regardless of active tools list", () => {
-    const status = detectContextMode(["bash", "read"]);
-    expect(status.tools.ctxExecute).toBe(true);
-    expect(status.tools.ctxBatchExecute).toBe(true);
-    expect(status.tools.ctxExecuteFile).toBe(true);
-    expect(status.tools.ctxIndex).toBe(true);
-    expect(status.tools.ctxSearch).toBe(true);
-    expect(status.tools.ctxFetchAndIndex).toBe(true);
-  });
-
-  test("available with no arguments", () => {
+  test("no-argument call returns the legacy all-true fallback", () => {
+    // The no-argument shape is preserved for callers (e.g. older entry points)
+    // that don't have access to the runtime's active-tool list. They get the
+    // optimistic "all ctx_* tools registered" view that pre-cd95f31 callers expect.
     const status = detectContextMode();
     expect(status.available).toBe(true);
-    expect(status.tools.ctxExecute).toBe(true);
+    expect(Object.values(status.tools).every(Boolean)).toBe(true);
   });
 
-  test("available with empty tools list", () => {
+  test("empty active-tools list reports no ctx_* tools available", () => {
+    // With no tools active, nothing in the tool catalog can rescue large output.
+    // Routing/prompt code uses `available === false` to skip injecting rescue
+    // text and to stop blocking native tools that have no replacement.
     const status = detectContextMode([]);
+    expect(status.available).toBe(false);
+    expect(Object.values(status.tools).every((value) => value === false)).toBe(true);
+  });
+
+  test("active list with no ctx_* names ignores non-ctx tools", () => {
+    const status = detectContextMode(["bash", "read", "grep"]);
+    expect(status.available).toBe(false);
+    expect(status.tools.ctxExecute).toBe(false);
+    expect(status.tools.ctxSearch).toBe(false);
+  });
+
+  test("flags individual ctx tools based on the active set", () => {
+    const status = detectContextMode(["ctx_execute", "ctx_search"]);
     expect(status.available).toBe(true);
+    expect(status.tools).toMatchObject({
+      ctxExecute: true,
+      ctxSearch: true,
+      ctxBatchExecute: false,
+      ctxExecuteFile: false,
+      ctxIndex: false,
+      ctxFetchAndIndex: false,
+      ctxStats: false,
+      ctxPurge: false,
+    });
   });
 
   test("ContextModeStatus interface shape is preserved", () => {
-    const status = detectContextMode(["anything"]);
+    const status = detectContextMode(["ctx_execute"]);
     expect(status).toHaveProperty("available");
     expect(status).toHaveProperty("tools");
-    expect(status.tools).toHaveProperty("ctxExecute");
-    expect(status.tools).toHaveProperty("ctxBatchExecute");
-    expect(status.tools).toHaveProperty("ctxExecuteFile");
-    expect(status.tools).toHaveProperty("ctxIndex");
-    expect(status.tools).toHaveProperty("ctxSearch");
-    expect(status.tools).toHaveProperty("ctxFetchAndIndex");
+    for (const key of [
+      "ctxExecute",
+      "ctxBatchExecute",
+      "ctxExecuteFile",
+      "ctxIndex",
+      "ctxSearch",
+      "ctxFetchAndIndex",
+      "ctxStats",
+      "ctxPurge",
+    ] as const) {
+      expect(status.tools).toHaveProperty(key);
+    }
   });
 });
