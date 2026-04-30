@@ -233,16 +233,27 @@ const CTX_TOOL_NAMES: Record<string, string> = {
   ctxPurge: "ctx_purge",
 };
 
-export function checkContextMode(_activeTools: string[]): CheckResult {
-  const status = detectContextMode();
+export function checkContextMode(activeTools: string[]): CheckResult {
+  // Reflect the same active-tool-aware view the runtime routing/prompt layers
+  // use, so the doctor cannot claim ctx_* tools are available when the model
+  // can't actually call them.
+  const status = detectContextMode(activeTools);
 
   const foundNames = Object.entries(status.tools)
-    .filter(([, v]) => v)
-    .map(([k]) => CTX_TOOL_NAMES[k] || k);
+    .filter(([, value]) => value)
+    .map(([key]) => CTX_TOOL_NAMES[key] || key);
+
+  if (!status.available) {
+    return {
+      name: "Context Mode",
+      presence: { ok: false, detail: "No ctx_* tools active in this session" },
+      functional: { ok: false, detail: "Inactive — routing rescue path will be skipped this turn" },
+    };
+  }
 
   return {
     name: "Context Mode",
-    presence: { ok: true, detail: "Native tools (built-in)" },
+    presence: { ok: true, detail: "Native tools active" },
     functional: { ok: true, detail: foundNames.join(", ") },
   };
 }
