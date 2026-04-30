@@ -56,7 +56,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
   "supi:model": (platform, ctx) => handleModel(platform, ctx),
   "supi:context": (platform, ctx) => handleContext(platform, ctx),
-  "supi:optimize-context": (platform, ctx) => handleOptimizeContext(platform, ctx),
+  "supi:optimize-context": (platform, ctx, args) => handleOptimizeContext(platform, ctx, args),
   "supi:clear": (platform, ctx, args) => handleClear(platform, ctx, args),
   "supi:commit": (platform, ctx, args) => handleCommit(platform, ctx, args),
   "supi:release": (platform, ctx, args) => handleRelease(platform, ctx, args),
