@@ -189,7 +189,7 @@ describe("Approve and execute", () => {
     expect(prompt).toContain("You **MUST** keep going until complete. This matters.");
   });
 
-  test("embeds todo_write replace payload when plan has tasks", async () => {
+  test("embeds todo_write init payload when plan has tasks", async () => {
     mockListPlans
       .mockReturnValueOnce([])
       .mockReturnValue(["plan-with-tasks.md"]);
@@ -228,11 +228,15 @@ describe("Approve and execute", () => {
 
     const prompt: string = platform.sendUserMessage.mock.calls[0][0];
     expect(prompt).toContain("todo_write");
-    expect(prompt).toContain('"op": "replace"');
-    expect(prompt).toContain('"name": "I. Implementation"');
-    expect(prompt).toContain('"task": "task-1"');
-    expect(prompt).toContain('"content": "Add new types"');
+    expect(prompt).toContain('"op": "init"');
+    expect(prompt).toContain('"phase": "Implementation"');
+    expect(prompt).toContain('"items"');
+    expect(prompt).toContain('"task": "Add new types"');
+    expect(prompt).toContain('"text": "Types compile"');
     expect(prompt).toContain("## Initialize todo tracker");
+    expect(prompt).not.toContain('"op": "replace"');
+    expect(prompt).not.toContain("I. Implementation");
+    expect(prompt).not.toContain("task-1");
   });
 
   test("omits todo block when plan parses to zero tasks", async () => {

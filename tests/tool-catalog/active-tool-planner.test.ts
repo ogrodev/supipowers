@@ -9,6 +9,7 @@ describe("supipowers-owned tool groups", () => {
   test("identifies only supipowers-owned tool names", () => {
     expect(isSupiOwnedTool("ctx_execute")).toBe(true);
     expect(isSupiOwnedTool("ctx_search")).toBe(true);
+    expect(isSupiOwnedTool("ctx_open_cached")).toBe(true);
     expect(isSupiOwnedTool("mcpc_manager")).toBe(true);
     expect(isSupiOwnedTool("mcpc_figma")).toBe(true);
 
@@ -24,11 +25,12 @@ describe("supipowers-owned tool groups", () => {
       orderOwnedTools([
         "mcpc_figma",
         "ctx_search",
+        "ctx_open_cached",
         "ctx_execute",
         "ctx_search",
         "mcpc_manager",
       ]),
-    ).toEqual(["ctx_execute", "ctx_search", "mcpc_manager", "mcpc_figma"]);
+    ).toEqual(["ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager", "mcpc_figma"]);
   });
 });
 
@@ -39,6 +41,7 @@ const ALL_CTX_TOOLS = [
   "ctx_batch_execute",
   "ctx_index",
   "ctx_search",
+  "ctx_open_cached",
   "ctx_fetch_and_index",
   "ctx_stats",
   "ctx_purge",
@@ -100,6 +103,7 @@ describe("planActiveTools base policy", () => {
     expect(plan.activeTools).toEqual([
       "ctx_execute",
       "ctx_search",
+      "ctx_open_cached",
       "ctx_batch_execute",
       "ctx_execute_file",
       "ctx_fetch_and_index",
@@ -140,10 +144,15 @@ describe("planActiveTools base policy", () => {
 describe("planActiveTools prompt triggers", () => {
   test.each([
     ["search the repository", "ctx_batch_execute"],
+    ["grep TODOs in src", "ctx_batch_execute"],
     ["read https://example.com/docs", "ctx_fetch_and_index"],
     ["show context stats", "ctx_stats"],
     ["please ctx purge now", "ctx_purge"],
     ["process a large file safely", "ctx_execute_file"],
+    [`open cache://${"a".repeat(64)}`, "ctx_open_cached"],
+    ["open cached output", "ctx_open_cached"],
+    ["inspect this cached handle", "ctx_open_cached"],
+    ["use ctx_open_cached please", "ctx_open_cached"],
   ])("activates %s trigger", (prompt, expectedTool) => {
     const plan = planActiveTools({
       prompt,

@@ -106,7 +106,7 @@ describe("buildSavingsLines", () => {
       perCompressor: [
         { compressor: "bash", saved: 5000, calls: 5 },
         { compressor: "read", saved: 2000, calls: 6 },
-        { compressor: "grep", saved: 1000, calls: 1 },
+        { compressor: "search", saved: 1000, calls: 1 },
       ],
       uniqueSourceShare: 0.42,
     });

@@ -29,7 +29,7 @@ describe("buildTodoWriteOpsForPlan", () => {
     expect(result).toEqual({ ops: [] });
   });
 
-  test("3-task plan produces a single replace op with one phase named 'I. Implementation'", () => {
+  test("3-task plan produces a single init op with one phase named 'Implementation'", () => {
     const result = buildTodoWriteOpsForPlan(
       plan([
         task({ id: 1, name: "Add types" }),
@@ -40,18 +40,14 @@ describe("buildTodoWriteOpsForPlan", () => {
 
     expect(result.ops).toHaveLength(1);
     const [first] = result.ops;
-    expect(first.op).toBe("replace");
-    if (first.op !== "replace") throw new Error("type narrowing failed");
-    expect(first.phases).toHaveLength(1);
-    expect(first.phases[0].name).toBe("I. Implementation");
-    expect(first.phases[0].tasks).toEqual([
-      { content: "Add types" },
-      { content: "Add loader" },
-      { content: "Wire runner" },
-    ]);
+    expect(first.op).toBe("init");
+    if (first.op !== "init") throw new Error("type narrowing failed");
+    expect(first.list).toHaveLength(1);
+    expect(first.list[0].phase).toBe("Implementation");
+    expect(first.list[0].items).toEqual(["Add types", "Add loader", "Wire runner"]);
   });
 
-  test("tasks with non-empty criteria produce follow-up note ops", () => {
+  test("tasks with non-empty criteria produce follow-up note ops keyed by task content", () => {
     const result = buildTodoWriteOpsForPlan(
       plan([
         task({ id: 10, name: "First", criteria: "Tests pass" }),
@@ -63,22 +59,62 @@ describe("buildTodoWriteOpsForPlan", () => {
 
     const noteOps = result.ops.filter((op) => op.op === "note");
     expect(noteOps).toEqual([
-      { op: "note", task: "task-1", text: "Tests pass" },
-      { op: "note", task: "task-4", text: "Lint clean" },
+      { op: "note", task: "First", text: "Tests pass" },
+      { op: "note", task: "Fourth", text: "Lint clean" },
     ]);
   });
 
-  test("long task names are truncated to 200 chars with ellipsis", () => {
+  test("duplicate task names are de-duplicated and notes target distinct labels", () => {
+    const result = buildTodoWriteOpsForPlan(
+      plan([
+        task({ id: 1, name: "Deploy", criteria: "First criteria" }),
+        task({ id: 2, name: "Deploy", criteria: "Second criteria" }),
+        task({ id: 3, name: "Deploy (2)", criteria: "Existing suffix" }),
+      ]),
+    );
+
+    const [first, ...noteOps] = result.ops;
+    if (first.op !== "init") throw new Error("type narrowing failed");
+    expect(first.list[0].items).toEqual(["Deploy", "Deploy (2)", "Deploy (2) (2)"]);
+    expect(noteOps).toEqual([
+      { op: "note", task: "Deploy", text: "First criteria" },
+      { op: "note", task: "Deploy (2)", text: "Second criteria" },
+      { op: "note", task: "Deploy (2) (2)", text: "Existing suffix" },
+    ]);
+  });
+
+  test("long task names are truncated to 200 chars with ellipsis and notes target the truncated label", () => {
     const longName = "x".repeat(500);
     const result = buildTodoWriteOpsForPlan(
-      plan([task({ id: 1, name: longName })]),
+      plan([task({ id: 1, name: longName, criteria: "Tests pass" })]),
+    );
+
+    const [first, note] = result.ops;
+    if (first.op !== "init") throw new Error("type narrowing failed");
+    const item = first.list[0].items[0];
+    expect(item.length).toBe(200);
+    expect(item.endsWith("\u2026")).toBe(true);
+
+    if (note.op !== "note") throw new Error("note op missing");
+    expect(note.task).toBe(item);
+    expect(note.text).toBe("Tests pass");
+  });
+
+  test("long duplicate task names remain unique within the label cap", () => {
+    const longName = "x".repeat(500);
+    const result = buildTodoWriteOpsForPlan(
+      plan([
+        task({ id: 1, name: longName }),
+        task({ id: 2, name: longName }),
+      ]),
     );
 
     const [first] = result.ops;
-    if (first.op !== "replace") throw new Error("type narrowing failed");
-    const content = first.phases[0].tasks[0].content;
-    expect(content.length).toBe(200);
-    expect(content.endsWith("\u2026")).toBe(true);
+    if (first.op !== "init") throw new Error("type narrowing failed");
+    const items = first.list[0].items;
+    expect(new Set(items).size).toBe(2);
+    expect(items.every((item) => item.length <= 200)).toBe(true);
+    expect(items[1].endsWith("(2)")).toBe(true);
   });
 
   test("task names exactly at the cap are passed through unchanged", () => {
@@ -88,7 +124,7 @@ describe("buildTodoWriteOpsForPlan", () => {
     );
 
     const [first] = result.ops;
-    if (first.op !== "replace") throw new Error("type narrowing failed");
-    expect(first.phases[0].tasks[0].content).toBe(cappedName);
+    if (first.op !== "init") throw new Error("type narrowing failed");
+    expect(first.list[0].items[0]).toBe(cappedName);
   });
 });

@@ -40,8 +40,15 @@ describe("classifyFailure", () => {
 	});
 
 	test("fires wrong-tool-path on blocked tool name", () => {
-		expect(classifyFailure({ toolName: "grep" })).toEqual(["wrong-tool-path"]);
+		expect(classifyFailure({ toolName: "search" })).toEqual(["wrong-tool-path"]);
 		expect(classifyFailure({ toolName: "WebFetch" })).toEqual([
+			"wrong-tool-path",
+		]);
+	});
+
+	test("fires wrong-tool-path on `find` and `web_fetch` blocked tool names", () => {
+		expect(classifyFailure({ toolName: "find" })).toEqual(["wrong-tool-path"]);
+		expect(classifyFailure({ toolName: "web_fetch" })).toEqual([
 			"wrong-tool-path",
 		]);
 	});

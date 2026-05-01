@@ -4,17 +4,14 @@ import { pathToFileURL } from "node:url";
 import {
   createPencilMcpBackend,
   detectPencilMcp,
+  REQUIRED_PENCIL_TOOLS,
 } from "../../../src/ui-design/backends/pencil-mcp.js";
 import { BackendUnavailableError } from "../../../src/ui-design/backend-adapter.js";
 
 const PEN_ABSOLUTE = path.resolve("/tmp/supi-ui-design-test.pen");
 
 function pencilTools(): string[] {
-  return [
-    "mcp_pencil_batch_design",
-    "mcp_pencil_batch_get",
-    "mcp_pencil_open_document",
-  ];
+  return [...REQUIRED_PENCIL_TOOLS];
 }
 
 describe("detectPencilMcp", () => {
@@ -23,7 +20,8 @@ describe("detectPencilMcp", () => {
   });
 
   test("returns false when one of the required tools is missing", () => {
-    expect(detectPencilMcp(["mcp_pencil_batch_design"])).toBe(false);
+    const withoutExport = REQUIRED_PENCIL_TOOLS.filter((tool) => tool !== "mcp__pencil_export_nodes");
+    expect(detectPencilMcp(withoutExport)).toBe(false);
   });
 
   test("returns false on empty or non-array input", () => {

@@ -831,7 +831,7 @@ describe("ui-design session — pencil-mcp completion validation", () => {
     expect(proof.issues.some((i: string) => i.includes("penFilePath missing on disk"))).toBe(true);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const steer = extractSteerText(sendMessage);
-    expect(steer).toContain("mcp_pencil_open_document");
+    expect(steer).toContain("mcp__pencil_open_document");
     expect(steer).toContain(penPath);
   });
 

@@ -163,7 +163,7 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
       global: (..._parts: string[]) => "/tmp/does-not-exist-global",
     } as any);
 
-    for (const toolName of ["bash", "read", "grep", "planning_ask"]) {
+    for (const toolName of ["bash", "read", "search", "planning_ask"]) {
       expect(await platform.fireToolCall(toolName)).toBeUndefined();
     }
   });
