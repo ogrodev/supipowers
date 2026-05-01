@@ -9,20 +9,27 @@ import {
 } from "../backend-adapter.js";
 
 /**
- * Minimal set of `mcp_pencil_*` tools the director must be able to call for a
- * pencil-mcp session to have a chance of succeeding. Availability is detected
- * by checking the harness's active tools list for these exact names.
+ * Minimal set of `mcp__pencil_*` tools the Director and its mandatory
+ * pencil sub-agents must be able to call for a pencil-mcp session to have a
+ * chance of succeeding. Availability is detected by checking the harness's
+ * active tools list for these exact names.
  */
-const REQUIRED_PENCIL_TOOLS = [
-  "mcp_pencil_batch_design",
-  "mcp_pencil_batch_get",
+export const REQUIRED_PENCIL_TOOLS = [
+  "mcp__pencil_open_document",
+  "mcp__pencil_get_editor_state",
+  "mcp__pencil_batch_get",
+  "mcp__pencil_batch_design",
+  "mcp__pencil_get_screenshot",
+  "mcp__pencil_snapshot_layout",
+  "mcp__pencil_search_all_unique_properties",
+  "mcp__pencil_export_nodes",
 ];
 
 /**
  * Check whether the Pencil MCP server is currently connected by inspecting
  * the harness's active tools list. OMP exposes MCP tools as
- * `mcp_<server>_<tool>` — we look for the two critical tools the director
- * actually drives the `.pen` file with.
+ * `mcp__<server>_<tool>` — we require every non-optional tool named by the
+ * Director workflow or its pencil sub-agent templates.
  */
 export function detectPencilMcp(activeTools: string[]): boolean {
   if (!Array.isArray(activeTools) || activeTools.length === 0) return false;
@@ -41,7 +48,7 @@ export interface PencilMcpStartOptions extends BackendStartSessionOptions {
 
 /**
  * Pencil-MCP backend. Owns no long-running process — edits happen through
- * `mcp_pencil_*` tool calls driven by the Design Director. `startSession`
+ * `mcp__pencil_*` tool calls driven by the Design Director. `startSession`
  * validates that the server is still connected and pins the chosen `.pen`
  * path for later `artifactUrl` lookups.
  */
@@ -56,7 +63,7 @@ export function createPencilMcpBackend(
     async startSession(opts: PencilMcpStartOptions): Promise<BackendStartResult> {
       if (!detectPencilMcp(deps.getActiveTools())) {
         throw new BackendUnavailableError(
-          "Pencil MCP server is not connected. Start the `pencil` MCP server (exposes `mcp_pencil_batch_design` + `mcp_pencil_batch_get`) and retry.",
+          "Pencil MCP server is not connected. Start the `pencil` MCP server (exposes `mcp__pencil_batch_design` + `mcp__pencil_batch_get`) and retry.",
         );
       }
 

@@ -74,7 +74,7 @@ const REPAIR_COMPLETE_STEER_TEMPLATE_PENCIL = (
   completionIssues: string[],
 ): string => {
   const penInstruction = penFilePath
-    ? `Re-open \`${penFilePath}\` via \`mcp_pencil_open_document\` and inspect`
+    ? `Re-open \`${penFilePath}\` via \`mcp__pencil_open_document\` and inspect`
     : "The manifest is missing `penFilePath` — read `manifest.json`, restore the absolute .pen path, then inspect";
   return [
     "Continue the /supi:ui-design run.",

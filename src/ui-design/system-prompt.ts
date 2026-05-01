@@ -111,14 +111,14 @@ function buildPencilMcpPhaseTable(penPath: string): string[] {
     "| # | Phase | Precondition | Output | Manifest status |",
     "|---|---|---|---|---|",
     "| 1 | Phase 1 — Scope selection | manifest.json with status=in-progress | planning_ask result → update manifest.scope | in-progress |",
-    `| 2 | Phase 2 — Context review | manifest.scope populated | \`<session>/context.md\`; \`mcp_pencil_open_document\` on \`${penPath}\`; \`mcp_pencil_get_editor_state\` + \`mcp_pencil_batch_get\` to inventory existing content | in-progress |`,
-    "| 3 | Phase 3 — Decomposition | `<session>/context.md` exists | `<session>/decomposition.json` (kebab-case unique names); `mcp_pencil_batch_design` creates a top-level `Decomposition` frame with one child frame per section | in-progress |",
+    `| 2 | Phase 2 — Context review | manifest.scope populated | \`<session>/context.md\`; \`mcp__pencil_open_document\` on \`${penPath}\`; \`mcp__pencil_get_editor_state\` + \`mcp__pencil_batch_get\` to inventory existing content | in-progress |`,
+    "| 3 | Phase 3 — Decomposition | `<session>/context.md` exists | `<session>/decomposition.json` (kebab-case unique names); `mcp__pencil_batch_design` creates a top-level `Decomposition` frame with one child frame per section | in-progress |",
     "| 4 | Phase 4 — Parallel components | `<session>/decomposition.json` exists | one reusable node per component under a `Components` frame; update `<session>/node-manifest.json.componentNodeIds` | in-progress |",
-    "| 5 | Phase 5 — Section assembly | components present | section frames composed via `mcp_pencil_batch_design`; update `<session>/node-manifest.json.sectionNodeIds` | in-progress |",
+    "| 5 | Phase 5 — Section assembly | components present | section frames composed via `mcp__pencil_batch_design`; update `<session>/node-manifest.json.sectionNodeIds` | in-progress |",
     "| 6 | Phase 6 — Page composition | sections present | page frame assembled; set `<session>/node-manifest.json.pageNodeId` | critiquing |",
     "| 7 | Phase 7 — Design-critic pass | `pageNodeId` set | `<session>/critique.md` with `## Fixable` + `## Advisory` | awaiting-review |",
-    "| 8 | Phase 8 — Fix loop (≤2) | `<session>/critique.md` exists | `mcp_pencil_batch_design` edits in place (filePath pinned); critic rerun | awaiting-review |",
-    "| 9 | Phase 9 — User review gate | fix loop terminated | `mcp_pencil_export_nodes` writes `<session>/screen-review.png`; planning_ask → approve/request-changes/discard | complete or discarded |",
+    "| 8 | Phase 8 — Fix loop (≤2) | `<session>/critique.md` exists | `mcp__pencil_batch_design` edits in place (filePath pinned); critic rerun | awaiting-review |",
+    "| 9 | Phase 9 — User review gate | fix loop terminated | `mcp__pencil_export_nodes` writes `<session>/screen-review.png`; planning_ask → approve/request-changes/discard | complete or discarded |",
   ];
 }
 
@@ -139,15 +139,15 @@ function buildHardGate(options: UiDesignSystemPromptOptions): string[] {
       : null;
     if (penPath) {
       base.push(
-        `- Every \`mcp_pencil_*\` call MUST pass \`filePath: '${penPath}'\`. Do not \`mcp_pencil_open_document\` against any other path.`,
+        `- Pencil MCP calls that accept \`filePath\` MUST pass \`filePath: '${penPath}'\`. \`mcp__pencil_open_document\` is the only exception: call it with \`filePathOrTemplate: '${penPath}'\`, never any other path.`,
       );
     } else {
       base.push(
-        "- Every `mcp_pencil_*` call MUST pass the absolute `filePath` recorded in `manifest.json` under `penFilePath`. Read the manifest before any `mcp_pencil_*` call. Do not `mcp_pencil_open_document` against any other path.",
+        "- Pencil MCP calls that accept `filePath` MUST pass the absolute path recorded in `manifest.json` under `penFilePath`. `mcp__pencil_open_document` is the only exception: read the manifest first, then call it with that path as `filePathOrTemplate`, never any other path.",
       );
     }
     base.push(
-      "- You **MUST NOT** call `mcp_pencil_set_variables` or `mcp_pencil_replace_all_matching_properties` unless the user explicitly asks for design-system-wide changes.",
+      "- You **MUST NOT** call `mcp__pencil_set_variables` or `mcp__pencil_replace_all_matching_properties` unless the user explicitly asks for design-system-wide changes.",
     );
   }
   return base;
@@ -158,7 +158,7 @@ function buildDirectorSection(options: UiDesignSystemPromptOptions): string {
   // When the pencil backend is active but the caller failed to pin a path,
   // keep the prompt self-consistent (pencil phase table + pencil tool routing
   // + pencil HARD-GATE) and instruct the director to recover the path from
-  // `manifest.json` before any `mcp_pencil_*` write. Mixing an HTML phase
+  // `manifest.json` before any `mcp__pencil_*` write. Mixing an HTML phase
   // table into a pencil session is never correct.
   const penPath = options.penFilePath && options.penFilePath.length > 0
     ? options.penFilePath
@@ -173,7 +173,7 @@ function buildDirectorSection(options: UiDesignSystemPromptOptions): string {
     ? [
         "## Parallelism rules",
         "",
-        "- Phase 4: parallel via a single `task` call with one sub-task per component. Each sub-agent inserts its reusable node via `mcp_pencil_batch_design` and records the returned node id under `<session>/components/<name>.node`.",
+        "- Phase 4: parallel via a single `task` call with one sub-task per component. Each sub-agent inserts its reusable node via `mcp__pencil_batch_design` and records the returned node id under `<session>/components/<name>.node`.",
         "- Phase 5: serial. Later sections may reference earlier section node ids.",
         "- Phase 7: single sub-agent.",
       ]
@@ -202,7 +202,7 @@ function buildDirectorSection(options: UiDesignSystemPromptOptions): string {
         "- `planning_ask` — every user question",
         "- `task` — all sub-agents (Phases 4, 5, 7); never `createAgentSession` directly",
         "- `read` / `write` / `edit` — session files only (context.md, decomposition.json, node-manifest.json, critique.md)",
-        "- `mcp_pencil_*` — every write to the `.pen` file; always pass `filePath` pinned to the HARD-GATE path",
+        "- `mcp__pencil_*` — every read/write to the `.pen` file goes through Pencil MCP; pass `filePath` pinned to the HARD-GATE path when the tool schema accepts it, and pass `filePathOrTemplate` for `mcp__pencil_open_document`",
       ]
     : [
         "## Tool routing",

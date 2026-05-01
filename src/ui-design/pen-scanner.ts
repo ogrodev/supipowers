@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export interface PenFileEntry {
-  /** Absolute path — passed to `mcp_pencil_*` tools as `filePath`. */
+  /** Absolute path — passed to `mcp__pencil_*` tools as `filePath`. */
   absolutePath: string;
   /** Path relative to the repo root, using POSIX separators for display. */
   relativePath: string;

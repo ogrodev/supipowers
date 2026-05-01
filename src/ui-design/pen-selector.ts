@@ -3,7 +3,7 @@ import { scanPenFiles, type PenFileEntry } from "./pen-scanner.js";
 
 export interface PenSelection {
   kind: "existing" | "new";
-  /** Absolute path — passed directly to `mcp_pencil_*` tools. */
+  /** Absolute path — passed directly to `mcp__pencil_*` tools. */
   penFilePath: string;
 }
 
