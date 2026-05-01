@@ -1,4 +1,7 @@
 import type {
+  UltraPlanAuthoringPipelineEvent,
+  UltraPlanAuthoringStage,
+  UltraPlanAuthoringState,
   UltraPlanAuthoredArtifact,
   UltraPlanBlocker,
   UltraPlanSessionSummary,
@@ -290,5 +293,67 @@ function describeBlocker(blocker: { code: string; stack?: string; domainId?: str
       return `${blocker.stack} is missing required slot ${blocker.slot}`;
     default:
       return blocker.code;
+  }
+}
+
+/**
+ * Render the multi-stage authoring pipeline status for a session whose manifest carries an
+ * `authoring` block. Mirrors `renderUltraPlanStatus`'s line-oriented format.
+ */
+export function renderUltraPlanAuthoringStatus(
+  sessionId: string,
+  state: UltraPlanAuthoringState,
+  events: UltraPlanAuthoringPipelineEvent[] = [],
+): string {
+  const lines: string[] = [
+    `Session: ${sessionId}`,
+    `Pipeline: ${state.pipeline}`,
+    `Stage: ${state.stage}`,
+    `Status: ${state.stageStatus}`,
+    `Iteration: ${state.iteration}`,
+  ];
+  if (state.stallReentryCount > 0) {
+    lines.push(`Stall re-entries: ${state.stallReentryCount}`);
+  }
+  const artifactKeys = Object.entries(state.artifacts)
+    .filter(([, v]) => v !== undefined && v !== null && (Array.isArray(v) ? v.length > 0 : true))
+    .map(([k]) => k);
+  lines.push(`Artifacts: ${artifactKeys.length === 0 ? "\u2014" : artifactKeys.join(", ")}`);
+  lines.push(`Started: ${state.startedAt}`);
+  lines.push(`Updated: ${state.updatedAt}`);
+  if (state.blocker) {
+    lines.push(`Blocker: ${state.blocker.code} \u2014 ${state.blocker.message}`);
+    lines.push(`Recovery: ${state.blocker.recoveryMode}`);
+  }
+  lines.push(`Next action: ${describeNextAuthoringAction(state)}`);
+  if (events.length > 0) {
+    lines.push("");
+    lines.push("Recent pipeline events:");
+    for (const ev of events.slice(-5)) {
+      lines.push(`  ${ev.recordedAt} [${ev.stage}/${ev.stageStatus}] ${ev.summary || ""}`.trimEnd());
+    }
+  }
+  return lines.join("\n");
+}
+
+function describeNextAuthoringAction(state: UltraPlanAuthoringState): string {
+  if (state.blocker) return `Resolve blocker ${state.blocker.code}`;
+  if (state.stageStatus === "awaiting-user") return `Confirm ${state.stage} to advance`;
+  if (state.stageStatus === "running") return `Resume ${state.stage}`;
+  if (state.stageStatus === "blocked") return `Repair ${state.stage} blocker`;
+  const next = nextStageOf(state.stage);
+  if (!next) return "Approval pending";
+  return `Run ${next}`;
+}
+
+function nextStageOf(stage: UltraPlanAuthoringStage): UltraPlanAuthoringStage | null {
+  switch (stage) {
+    case "intake": return "scout";
+    case "scout": return "discover";
+    case "discover": return "research";
+    case "research": return "synthesize";
+    case "synthesize": return "review";
+    case "review": return "approve";
+    case "approve": return null;
   }
 }

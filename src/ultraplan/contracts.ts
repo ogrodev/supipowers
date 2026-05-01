@@ -10,6 +10,17 @@ import type {
   UltraPlanAgentSlots,
   UltraPlanAttemptOutcome,
   UltraPlanAttemptRecord,
+  UltraPlanAuthoringFinding,
+  UltraPlanAuthoringFindingSeverity,
+  UltraPlanAuthoringFindingSource,
+  UltraPlanAuthoringFindingsArtifact,
+  UltraPlanAuthoringPipelineEvent,
+  UltraPlanAuthoringPipelineMode,
+  UltraPlanAuthoringSlotName,
+  UltraPlanAuthoringStage,
+  UltraPlanAuthoringStageStatus,
+  UltraPlanAuthoringState,
+  UltraPlanAuthoringArtifactRefs,
   UltraPlanAuthoredArtifact,
   UltraPlanBatchActiveRunLease,
   UltraPlanBatchBlockerCode,
@@ -59,6 +70,17 @@ export type {
   UltraPlanAgentSlots,
   UltraPlanAttemptOutcome,
   UltraPlanAttemptRecord,
+  UltraPlanAuthoringFinding,
+  UltraPlanAuthoringFindingSeverity,
+  UltraPlanAuthoringFindingSource,
+  UltraPlanAuthoringFindingsArtifact,
+  UltraPlanAuthoringPipelineEvent,
+  UltraPlanAuthoringPipelineMode,
+  UltraPlanAuthoringSlotName,
+  UltraPlanAuthoringStage,
+  UltraPlanAuthoringStageStatus,
+  UltraPlanAuthoringState,
+  UltraPlanAuthoringArtifactRefs,
   UltraPlanAuthoredArtifact,
   UltraPlanBatchActiveRunLease,
   UltraPlanBatchBlockerCode,
@@ -151,6 +173,54 @@ export const ULTRAPLAN_RESOLVED_VALUE_SOURCES = [
   "built-in",
   "unset",
 ] as const;
+
+// --- Authoring pipeline constants -------------------------------------------------
+
+export const ULTRAPLAN_AUTHORING_STAGES = [
+  "intake",
+  "scout",
+  "discover",
+  "research",
+  "synthesize",
+  "review",
+  "approve",
+] as const satisfies readonly UltraPlanAuthoringStage[];
+
+export const ULTRAPLAN_AUTHORING_STAGE_STATUSES = [
+  "pending",
+  "running",
+  "blocked",
+  "awaiting-user",
+  "done",
+] as const satisfies readonly UltraPlanAuthoringStageStatus[];
+
+export const ULTRAPLAN_AUTHORING_SLOT_NAMES = [
+  "intake",
+  "scout",
+  "discoverer",
+  "researcher",
+  "planner",
+  "structure-checker",
+  "scope-checker",
+  "tdd-checker",
+] as const satisfies readonly UltraPlanAuthoringSlotName[];
+
+export const ULTRAPLAN_AUTHORING_PIPELINE_MODES = [
+  "single-shot",
+  "multi-stage",
+] as const satisfies readonly UltraPlanAuthoringPipelineMode[];
+
+export const ULTRAPLAN_AUTHORING_FINDING_SEVERITIES = [
+  "BLOCKER",
+  "WARNING",
+] as const satisfies readonly UltraPlanAuthoringFindingSeverity[];
+
+export const ULTRAPLAN_AUTHORING_FINDING_SOURCES = [
+  "structure-checker",
+  "scope-checker",
+  "tdd-checker",
+] as const satisfies readonly UltraPlanAuthoringFindingSource[];
+
 
 function keyedObject(keys: readonly string[], valueSchema: TSchema) {
   return Type.Object(
@@ -480,6 +550,89 @@ export const UltraPlanManifestReviewReferenceSchema = Type.Object(
   { additionalProperties: false },
 );
 
+// --- Authoring pipeline schemas ---------------------------------------------------
+
+export const UltraPlanAuthoringFindingSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    severity: literalUnion(ULTRAPLAN_AUTHORING_FINDING_SEVERITIES),
+    source: literalUnion(ULTRAPLAN_AUTHORING_FINDING_SOURCES),
+    target: Type.Object(
+      {
+        stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
+        domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+        scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+      },
+      { additionalProperties: false },
+    ),
+    message: Type.String({ minLength: 1 }),
+    recommendation: Type.String({ minLength: 1 }),
+    recordedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanAuthoringFindingsArtifactSchema = Type.Object(
+  {
+    iteration: Type.Integer({ minimum: 1 }),
+    draftRef: Type.String({ minLength: 1 }),
+    recordedAt: Type.String({ minLength: 1 }),
+    findings: Type.Array(UltraPlanAuthoringFindingSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanAuthoringResearchRefSchema = Type.Object(
+  {
+    stack: literalUnion(ULTRAPLAN_STACKS),
+    path: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanAuthoringArtifactRefsSchema = Type.Object(
+  {
+    intake: Type.Optional(Type.String({ minLength: 1 })),
+    scout: Type.Optional(Type.String({ minLength: 1 })),
+    discuss: Type.Optional(Type.String({ minLength: 1 })),
+    deferredIdeas: Type.Optional(Type.String({ minLength: 1 })),
+    research: Type.Optional(Type.Array(UltraPlanAuthoringResearchRefSchema)),
+    researchSummary: Type.Optional(Type.String({ minLength: 1 })),
+    draft: Type.Optional(Type.String({ minLength: 1 })),
+    draftMarkdown: Type.Optional(Type.String({ minLength: 1 })),
+    findings: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanAuthoringStateSchema = Type.Object(
+  {
+    pipeline: literalUnion(ULTRAPLAN_AUTHORING_PIPELINE_MODES),
+    stage: literalUnion(ULTRAPLAN_AUTHORING_STAGES),
+    stageStatus: literalUnion(ULTRAPLAN_AUTHORING_STAGE_STATUSES),
+    iteration: Type.Integer({ minimum: 1 }),
+    stallReentryCount: Type.Integer({ minimum: 0 }),
+    artifacts: UltraPlanAuthoringArtifactRefsSchema,
+    blocker: Type.Union([UltraPlanBlockerSchema, Type.Null()]),
+    startedAt: Type.String({ minLength: 1 }),
+    updatedAt: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+export const UltraPlanAuthoringPipelineEventSchema = Type.Object(
+  {
+    recordedAt: Type.String({ minLength: 1 }),
+    stage: literalUnion(ULTRAPLAN_AUTHORING_STAGES),
+    stageStatus: literalUnion(ULTRAPLAN_AUTHORING_STAGE_STATUSES),
+    iteration: Type.Integer({ minimum: 1 }),
+    summary: Type.String(),
+    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { additionalProperties: false },
+);
+
+
 export const UltraPlanManifestSchema = Type.Object(
   {
     sessionId: Type.String({ minLength: 1 }),
@@ -495,6 +648,7 @@ export const UltraPlanManifestSchema = Type.Object(
     reviews: Type.Array(UltraPlanManifestReviewReferenceSchema),
     createdAt: Type.String({ minLength: 1 }),
     updatedAt: Type.String({ minLength: 1 }),
+    authoring: Type.Optional(UltraPlanAuthoringStateSchema),
   },
   { additionalProperties: false },
 );
@@ -509,6 +663,7 @@ export const UltraPlanIndexEntrySchema = Type.Object(
     updatedAt: Type.String({ minLength: 1 }),
     cursor: Type.Union([UltraPlanCursorSchema, Type.Null()]),
     idleReason: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    authoringStage: Type.Optional(Type.Union([literalUnion(ULTRAPLAN_AUTHORING_STAGES), Type.Null()])),
   },
   { additionalProperties: false },
 );
@@ -621,6 +776,24 @@ export function validateUltraPlanIndex(value: unknown) {
 
 export function validateUltraPlanManifest(value: unknown) {
   return buildValidationResult<UltraPlanManifest>(UltraPlanManifestSchema, value);
+}
+
+export function validateUltraPlanAuthoringState(value: unknown) {
+  return buildValidationResult<UltraPlanAuthoringState>(UltraPlanAuthoringStateSchema, value);
+}
+
+export function validateUltraPlanAuthoringFindingsArtifact(value: unknown) {
+  return buildValidationResult<UltraPlanAuthoringFindingsArtifact>(
+    UltraPlanAuthoringFindingsArtifactSchema,
+    value,
+  );
+}
+
+export function validateUltraPlanAuthoringPipelineEvent(value: unknown) {
+  return buildValidationResult<UltraPlanAuthoringPipelineEvent>(
+    UltraPlanAuthoringPipelineEventSchema,
+    value,
+  );
 }
 
 export function validateUltraPlanAuthoredArtifact(value: unknown) {

@@ -24,6 +24,23 @@ export const ULTRAPLAN_BATCH_RUN_FILENAME = "run.json";
 export const ULTRAPLAN_BATCH_JOURNAL_FILENAME = "journal.jsonl";
 export const ULTRAPLAN_ACTIVE_BATCH_RUN_FILENAME = "active-run.json";
 
+// Authoring pipeline filenames (multi-stage GSD-style flow). All live under <session>/authoring/.
+const ULTRAPLAN_AUTHORING_DIRNAME = "authoring";
+export const ULTRAPLAN_AUTHORING_INTAKE_FILENAME = "intake.json";
+export const ULTRAPLAN_AUTHORING_SCOUT_FILENAME = "scout.json";
+export const ULTRAPLAN_AUTHORING_DISCUSS_FILENAME = "discuss.md";
+export const ULTRAPLAN_AUTHORING_DECISIONS_FILENAME = "decisions.jsonl";
+export const ULTRAPLAN_AUTHORING_DEFERRED_IDEAS_FILENAME = "deferred-ideas.md";
+const ULTRAPLAN_AUTHORING_RESEARCH_DIRNAME = "research";
+export const ULTRAPLAN_AUTHORING_RESEARCH_SUMMARY_FILENAME = "SUMMARY.md";
+const ULTRAPLAN_AUTHORING_DRAFTS_DIRNAME = "drafts";
+export const ULTRAPLAN_AUTHORING_DRAFT_AUTHORED_JSON_FILENAME = "authored.json";
+export const ULTRAPLAN_AUTHORING_DRAFT_AUTHORED_MD_FILENAME = "authored.md";
+export const ULTRAPLAN_AUTHORING_DRAFT_PLANNER_JSON_FILENAME = "authored.planner.json";
+export const ULTRAPLAN_AUTHORING_DRAFT_MANIFEST_FILENAME = "manifest.json";
+export const ULTRAPLAN_AUTHORING_DRAFT_FINDINGS_FILENAME = "findings.json";
+export const ULTRAPLAN_AUTHORING_PIPELINE_LOG_FILENAME = "pipeline-log.jsonl";
+
 /**
  * Resolve the active checkout root for the given cwd. Legacy repo-local helpers still target the
  * active checkout, not the canonical UltraPlan identity root.
@@ -157,6 +174,152 @@ export function getUltraplanStackReviewPath(
   return path.join(getUltraplanStackReviewDir(paths, cwd, sessionId, stack), "stack.json");
 }
 
+
+// ---------------------------------------------------------------------------
+// Authoring pipeline path helpers. All paths are anchored under the session dir.
+// ---------------------------------------------------------------------------
+
+export function getUltraplanAuthoringDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanSessionDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_DIRNAME);
+}
+
+export function getUltraplanAuthoringIntakePath(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_INTAKE_FILENAME);
+}
+
+export function getUltraplanAuthoringScoutPath(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_SCOUT_FILENAME);
+}
+
+export function getUltraplanAuthoringDiscussPath(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_DISCUSS_FILENAME);
+}
+
+export function getUltraplanAuthoringDecisionsPath(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_DECISIONS_FILENAME);
+}
+
+export function getUltraplanAuthoringDeferredIdeasPath(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_DEFERRED_IDEAS_FILENAME);
+}
+
+export function getUltraplanAuthoringResearchDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_RESEARCH_DIRNAME);
+}
+
+export function getUltraplanAuthoringResearchSummaryPath(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(
+    getUltraplanAuthoringResearchDir(paths, cwd, sessionId),
+    ULTRAPLAN_AUTHORING_RESEARCH_SUMMARY_FILENAME,
+  );
+}
+
+export function getUltraplanAuthoringResearchStackPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  stack: UltraPlanStackId,
+): string {
+  return path.join(getUltraplanAuthoringResearchDir(paths, cwd, sessionId), `${stack}.md`);
+}
+
+export function getUltraplanAuthoringDraftsDir(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_DRAFTS_DIRNAME);
+}
+
+export function getUltraplanAuthoringDraftIterationDir(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  iteration: number,
+): string {
+  if (!Number.isInteger(iteration) || iteration < 1) {
+    throw new Error(`Iteration must be a positive integer; got ${iteration}`);
+  }
+  return path.join(getUltraplanAuthoringDraftsDir(paths, cwd, sessionId), `iteration-${iteration}`);
+}
+
+export function getUltraplanAuthoringDraftAuthoredJsonPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  iteration: number,
+): string {
+  return path.join(
+    getUltraplanAuthoringDraftIterationDir(paths, cwd, sessionId, iteration),
+    ULTRAPLAN_AUTHORING_DRAFT_AUTHORED_JSON_FILENAME,
+  );
+}
+
+export function getUltraplanAuthoringDraftAuthoredMarkdownPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  iteration: number,
+): string {
+  return path.join(
+    getUltraplanAuthoringDraftIterationDir(paths, cwd, sessionId, iteration),
+    ULTRAPLAN_AUTHORING_DRAFT_AUTHORED_MD_FILENAME,
+  );
+}
+
+export function getUltraplanAuthoringDraftPlannerJsonPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  iteration: number,
+): string {
+  return path.join(
+    getUltraplanAuthoringDraftIterationDir(paths, cwd, sessionId, iteration),
+    ULTRAPLAN_AUTHORING_DRAFT_PLANNER_JSON_FILENAME,
+  );
+}
+
+export function getUltraplanAuthoringDraftManifestPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  iteration: number,
+): string {
+  return path.join(
+    getUltraplanAuthoringDraftIterationDir(paths, cwd, sessionId, iteration),
+    ULTRAPLAN_AUTHORING_DRAFT_MANIFEST_FILENAME,
+  );
+}
+
+export function getUltraplanAuthoringDraftFindingsPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  iteration: number,
+): string {
+  return path.join(
+    getUltraplanAuthoringDraftIterationDir(paths, cwd, sessionId, iteration),
+    ULTRAPLAN_AUTHORING_DRAFT_FINDINGS_FILENAME,
+  );
+}
+
+export function getUltraplanAuthoringPipelineLogPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): string {
+  return path.join(getUltraplanAuthoringDir(paths, cwd, sessionId), ULTRAPLAN_AUTHORING_PIPELINE_LOG_FILENAME);
+}
+
+/**
+ * Returns the relative artifact path for a draft's authored.json under the authoring directory,
+ * used in `StageRunResult.artifactPaths` and log entries. Centralised here so stage files
+ * never need to embed the forbidden `authored.json` filename literal.
+ */
+export function getUltraplanAuthoringDraftAuthoredRelativePath(iteration: number): string {
+  return [
+    ULTRAPLAN_AUTHORING_DIRNAME,
+    ULTRAPLAN_AUTHORING_DRAFTS_DIRNAME,
+    `iteration-${iteration}`,
+    ULTRAPLAN_AUTHORING_DRAFT_AUTHORED_JSON_FILENAME,
+  ].join("/");
+}
 
 // ---------------------------------------------------------------------------
 // Legacy (pre-Slice-2) repo-local path helpers. Only the migration engine uses these; after
