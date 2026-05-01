@@ -34,13 +34,18 @@ export interface FailureSignals {
 	attempts?: number;
 }
 
+// Tool names blocked by `routeToolCall` when context-mode is active.
+// Keep in lock-step with `src/context-mode/routing.ts` — every native tool
+// that the router redirects must classify as `wrong-tool-path` here.
 const BLOCKED_TOOLS = new Set<string>([
-	"grep",
+	"search",
+	"find",
 	"bash-grep",
 	"bash-find",
 	"curl",
 	"wget",
 	"fetch",
+	"web_fetch",
 	"WebFetch",
 ]);
 
