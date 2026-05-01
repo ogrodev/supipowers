@@ -10,6 +10,7 @@
 - `/supi:qa` — structured QA pipeline
 - `/supi:release` — release automation
 - `/supi:fix-pr` — PR review comment assessment and fixing
+- `/supi:ultraplan` — multi-stage authoring pipeline (intake → scout → discover → research → synthesize → review → approve) and execution runtime
 - `/supi:commit` — AI-powered commit with conventional messages
 - `/supi:generate` — documentation drift detection
 - `/supi:agents` — manage review agents
@@ -71,6 +72,17 @@ OMP Runtime
 **`/supi:plan`** uses `platform.sendMessage({ deliverAs: 'steer' })` to steer the active AI session.
 **`/supi:review`** uses headless `createAgentSession()` runs with structured JSON validation at every step.
 **`/supi:checks`** remains deterministic and runs configured gates without AI orchestration.
+
+**Data flow for `/supi:ultraplan` authoring (multi-stage pipeline):**
+
+1. Bare entry: TUI input captures the user's seed prompt, or the resume picker reattaches an in-flight session.
+2. Stage runners spawn fresh `createAgentSession`s in sequence (intake → scout → discover → research → synthesize → review → approve) and persist artifacts under `<session>/authoring/`.
+3. Research stage fans out per applicable stack in parallel; each researcher uses a stack-parameterized model action id (`ultraplan.authoring.researcher.<stack>`) for independent overrides.
+4. Synthesize emits `drafts/iteration-N/authored.json` and opens it as markdown in `$EDITOR` for a round-trip user gate.
+5. Review runs three checkers in parallel (structure / scope / TDD); revision loop bounded to 3 iterations with stall detection.
+6. Approve atomically promotes the draft to canonical `authored.json` + `manifest.json` + `index.json` and clears the manifest's `authoring` block.
+
+Legacy single-shot path is preserved as `/supi:ultraplan quick` for one-release deprecation; removed next release.
 ---
 
 ## Key Directories

@@ -78,3 +78,5 @@ natives-test*
 
 !tests/fixtures/ui-design/react-components/dist/
 !tests/fixtures/ui-design/react-components/dist/Compiled.tsx
+
+repo-*

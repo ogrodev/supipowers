@@ -2,6 +2,12 @@
 
 All notable changes to supipowers are documented in this file.
 
+## [Unreleased]
+
+### Maintenance
+
+- Migrate context-mode `metrics.db` rows persisted under the OMP 14.5.11 "grep" tool name to the canonical "search" key. Runs automatically on the first session after upgrade (no user action). Rewrites `tool='grep'` and `processor='grep'` to `'search'`, and NULLs the `unique_source_hash` of the affected rows so legacy hashes never collide with new `search:`-prefixed dedup state. Historical byte/saved totals are preserved; the `unique_source_hash` for those rows is cleared because the privacy contract forbids reconstructing the original path or pattern to re-hash. Schema version bumped to 2.
+
 ## [1.3.0] — 2026-04-10
 
 ### Features
