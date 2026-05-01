@@ -1,6 +1,6 @@
 // tests/evals/context-mode-routes-large-output.test.ts
 //
-// How to break it: remove the `grep`, `fetch`/`web_fetch`, or bash HTTP
+// How to break it: remove the `search`, `fetch`/`web_fetch`, or bash HTTP
 // branches from routeToolCall — this eval asserts each still returns a block
 // result pointing at a ctx_* tool. Also breaks if allow-list prefixes such as
 // `git` stop being honored (git status should remain unblocked).
@@ -19,7 +19,7 @@ import {
 defineEval({
   name: "context-mode-routes-large-output",
   summary:
-    "context-mode blocks grep/find, bash HTTP, and WebFetch with a reason pointing to ctx_* tools",
+    "context-mode blocks search/find, bash HTTP, and WebFetch with a reason pointing to ctx_* tools",
   regressionClass: "context-mode silently stops enforcing ctx_* tools",
   run: () => {
     const status: ContextModeStatus = detectContextMode([
@@ -36,11 +36,11 @@ defineEval({
       return r!;
     };
 
-    // a) grep → blocked, reason mentions ctx_search or ctx_batch_execute
-    const grepResult = expectBlocked(
-      routeToolCall("grep", { pattern: "TODO" }, status, opts),
+    // a) search → blocked, reason mentions ctx_search or ctx_batch_execute
+    const searchResult = expectBlocked(
+      routeToolCall("search", { pattern: "TODO" }, status, opts),
     );
-    expect(grepResult.reason).toMatch(/ctx_search|ctx_batch_execute/);
+    expect(searchResult.reason).toMatch(/ctx_search|ctx_batch_execute/);
 
     // find → blocked, reason mentions ctx_execute or ctx_batch_execute
     const findResult = expectBlocked(
@@ -123,9 +123,9 @@ defineEval({
       ),
     ).toBeUndefined();
 
-    // Sanity: enforcement flag actually gates grep routing.
+    // Sanity: enforcement flag actually gates search routing.
     expect(
-      routeToolCall("grep", { pattern: "TODO" }, status, {
+      routeToolCall("search", { pattern: "TODO" }, status, {
         enforceRouting: false,
         blockHttpCommands: true,
       }),

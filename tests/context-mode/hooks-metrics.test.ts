@@ -12,6 +12,7 @@ import { Database } from "bun:sqlite";
 
 import {
   _resetCache,
+  getCacheStore,
   getMetricsStore,
   registerContextModeHooks,
 } from "../../src/context-mode/hooks.js";
@@ -268,6 +269,39 @@ describe("registerContextModeHooks — session_shutdown closes metrics store (Ta
         .get() as { last_prune_at: number } | undefined;
       expect(project).not.toBeUndefined();
       expect(project!.last_prune_at).toBeGreaterThan(0);
+    } finally {
+      probe.close();
+    }
+  });
+});
+
+describe("registerContextModeHooks — L3 cache metrics", () => {
+  test("session_shutdown records cache-prune rows before closing metrics", async () => {
+    const platform = createIsolatedPlatform();
+    registerContextModeHooks(platform, DEFAULT_CONFIG);
+
+    const sessionStart = platform._handlers.get("session_start");
+    sessionStart({}, { cwd: tmpDir });
+
+    const metrics = getMetricsStore();
+    const cache = getCacheStore();
+    expect(metrics).not.toBeNull();
+    expect(cache).not.toBeNull();
+    const metricsDb = metrics!.dbPath;
+    cache!.putText({ sessionId: "old", text: "old cache metrics", sourceTool: "read", sourceHash: "old", now: 0 });
+    await metrics!.flushPendingForTest();
+
+    const shutdown = platform._handlers.get("session_shutdown");
+    shutdown({}, {});
+
+    const probe = new Database(metricsDb);
+    try {
+      const row = probe.prepare(`SELECT layer, processor, cache_hit FROM metrics WHERE processor = 'cache-prune'`).get() as {
+        layer: string;
+        processor: string;
+        cache_hit: number;
+      } | undefined;
+      expect(row).toEqual({ layer: "L3", processor: "cache-prune", cache_hit: 0 });
     } finally {
       probe.close();
     }

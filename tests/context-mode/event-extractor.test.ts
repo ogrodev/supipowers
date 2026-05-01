@@ -204,31 +204,27 @@ describe("extractEvents", () => {
     });
   });
 
-  describe("grep extraction", () => {
-    test("emits file event with search op", () => {
+  describe("search extraction", () => {
+    test("emits no events \u2014 the file extractor intentionally skips search results", () => {
       const event = makeToolEvent({
-        toolName: "grep",
+        toolName: "search",
         input: { pattern: "TODO", path: "src/" },
         content: [{ type: "text", text: "src/a.ts:1:TODO fix" }],
       });
       const events = extractEvents(event, SESSION_ID);
-      expect(events[0].category).toBe("file");
-      const data = JSON.parse(events[0].data);
-      expect(data.op).toBe("search");
+      expect(events).toEqual([]);
     });
   });
 
   describe("find extraction", () => {
-    test("emits file event with find op", () => {
+    test("emits no events \u2014 the file extractor intentionally skips find results", () => {
       const event = makeToolEvent({
         toolName: "find",
         input: { pattern: "*.ts" },
         content: [{ type: "text", text: "src/a.ts\nsrc/b.ts" }],
       });
       const events = extractEvents(event, SESSION_ID);
-      expect(events[0].category).toBe("file");
-      const data = JSON.parse(events[0].data);
-      expect(data.op).toBe("find");
+      expect(events).toEqual([]);
     });
   });
 
@@ -239,12 +235,12 @@ describe("extractEvents", () => {
         input: {
           ops: [
             {
-              op: "replace",
-              phases: [
-                { name: "I. Foundation", tasks: [{ content: "Scaffold crate" }] },
+              op: "init",
+              list: [
+                { phase: "Foundation", items: ["Scaffold crate"] },
               ],
             },
-            { op: "start", task: "task-1" },
+            { op: "start", task: "Scaffold crate" },
           ],
         },
         content: [{ type: "text", text: "ok" }],
@@ -254,8 +250,8 @@ describe("extractEvents", () => {
       expect(taskEvent).toBeDefined();
       const data = JSON.parse(taskEvent!.data);
       expect(Array.isArray(data.input.ops)).toBe(true);
-      expect(data.input.ops[0].op).toBe("replace");
-      expect(data.input.ops[1]).toEqual({ op: "start", task: "task-1" });
+      expect(data.input.ops[0].op).toBe("init");
+      expect(data.input.ops[1]).toEqual({ op: "start", task: "Scaffold crate" });
     });
 
     test("ctx_* tools emit mcp event", () => {

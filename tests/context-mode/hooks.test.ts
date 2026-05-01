@@ -6,7 +6,7 @@ import { rmDirWithRetry } from "../helpers/fs.js";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
-import { registerContextModeHooks, _resetCache, getEventStore, getMetricsStore, getSessionId } from "../../src/context-mode/hooks.js";
+import { registerContextModeHooks, _resetCache, getCacheStore, getEventStore, getMetricsStore, getSessionId } from "../../src/context-mode/hooks.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { SupipowersConfig } from "../../src/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
@@ -107,8 +107,8 @@ describe("registerContextModeHooks", () => {
   test("registers native context-mode tools", () => {
     const platform = createMockPlatformWithHandlers();
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
-    // 8 native tools should be registered
-    expect(platform.registerTool).toHaveBeenCalledTimes(8);
+    // 9 native tools should be registered
+    expect(platform.registerTool).toHaveBeenCalledTimes(9);
   });
 
   test("does not register hooks when disabled", () => {
@@ -678,6 +678,76 @@ describe("exported helpers", () => {
     expect(getEventStore()).toBeNull();
     expect(getSessionId()).toBe("");
   });
+
+  test("session_start initializes cache store under the sessions state path", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+
+    const handler = platform._handlers.get("session_start");
+    expect(handler).toBeDefined();
+    handler({}, { cwd: tmpDir });
+
+    const cache = getCacheStore();
+    expect(cache).not.toBeNull();
+    expect(cache!.dbPath).toContain(path.join("projects"));
+    expect(cache!.dbPath).toEndWith(path.join("sessions", "cache.db"));
+    expect(cache!.payloadRoot).toEndWith(path.join("sessions", "cache-payloads"));
+    expect(fs.existsSync(cache!.dbPath)).toBe(true);
+  });
+
+  test("session_shutdown prunes old cache refs, closes the store, and clears the exported ref", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+
+    const sessionStart = platform._handlers.get("session_start");
+    sessionStart({}, { cwd: tmpDir });
+
+    const cache = getCacheStore();
+    expect(cache).not.toBeNull();
+    const dbPath = cache!.dbPath;
+    const payloadRoot = cache!.payloadRoot;
+    cache!.putText({ sessionId: "old", text: "old cache payload", sourceTool: "read", sourceHash: "old", now: 0 });
+
+    const shutdown = platform._handlers.get("session_shutdown");
+    expect(shutdown).toBeDefined();
+    shutdown({}, {});
+
+    expect(getCacheStore()).toBeNull();
+
+    const reopened = new Database(dbPath, { readonly: true });
+    try {
+      const refs = reopened.prepare(`SELECT COUNT(*) AS count FROM cache_refs`).get() as { count: number };
+      const entries = reopened.prepare(`SELECT COUNT(*) AS count FROM cache_entries`).get() as { count: number };
+      expect(refs.count).toBe(0);
+      expect(entries.count).toBe(0);
+    } finally {
+      reopened.close();
+    }
+    expect(fs.existsSync(payloadRoot)).toBe(true);
+  });
+
+  test("_resetCache clears cache store ref", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    expect(getCacheStore()).not.toBeNull();
+
+    _resetCache();
+
+    expect(getCacheStore()).toBeNull();
+  });
+
+  test("large tool_result output remains an L2 compression result, not a cache handle", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const handler = platform._handlers.get("tool_result");
+    const result = handler(largeBashEvent(), { cwd: tmpDir });
+
+    expect(result).toBeDefined();
+    expect(result.content[0].text).toContain("[...compressed:");
+    expect(result.content[0].text).not.toContain("cache://");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -852,7 +922,7 @@ describe("tool_result with MCP tool names", () => {
 
   test("MCP-prefixed tool names pass through tool_result handler without throwing", () => {
     // Documents current behavior: extractEvents checks `toolName.startsWith("ctx_")`
-    // for the mcp category. MCP-prefixed names like "mcp_context_mode_ctx_search"
+    // for the mcp category. MCP-prefixed names like "mcp__context_mode_ctx_search"
     // do NOT start with "ctx_", so they fall through the default branch and no
     // events are emitted. The handler must still run without throwing, and no
     // extraction-failure warnings should be logged. If this behavior changes in
@@ -863,7 +933,7 @@ describe("tool_result with MCP tool names", () => {
     const handler = platform._handlers.get("tool_result");
     const event = {
       type: "tool_result",
-      toolName: "mcp_context_mode_ctx_search",
+      toolName: "mcp__context_mode_ctx_search",
       toolCallId: "test-id",
       input: { queries: ["foo"] },
       content: [{ type: "text", text: "small result" }],

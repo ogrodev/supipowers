@@ -50,10 +50,10 @@ function openResult(
   } as any;
 }
 
-function grepResult(text: string, isError = false) {
+function searchResult(text: string, isError = false) {
   return {
     type: "tool_result",
-    toolName: "grep",
+    toolName: "search",
     toolCallId: "test-id",
     input: { pattern: "test", path: "src/" },
     content: [{ type: "text", text }],
@@ -229,10 +229,10 @@ describe("compressToolResult", () => {
     });
   });
 
-  describe("grep compression", () => {
+  describe("search compression", () => {
     test("compresses to first N matches", () => {
       const lines = Array.from({ length: 50 }, (_, i) => `file${i}.ts:${i}: match ${i}`).join("\n");
-      const result = compressToolResult(grepResult(lines), THRESHOLD);
+      const result = compressToolResult(searchResult(lines), THRESHOLD);
       expect(result).toBeDefined();
       const text = result!.content![0] as { type: string; text: string };
       expect(text.text).toContain("file0.ts"); // first matches kept
@@ -446,11 +446,11 @@ describe("compressToolResultWithLLM", () => {
     expect(calls[0]!.toolName).toBe("open");
   });
 
-  test("grep tool uses grep-specific prompt template", async () => {
+  test("search tool uses search-specific prompt template", async () => {
     const { fn, calls } = makeSummarize();
     const bigText = "x".repeat(LLM_THRESHOLD + 200);
     await compressToolResultWithLLM(
-      grepResult(bigText),
+      searchResult(bigText),
       THRESHOLD,
       LLM_THRESHOLD,
       fn,
@@ -664,21 +664,21 @@ describe("compressToolResult boundary edges", () => {
     expect(text.text).toContain('sel="L81-L81"');
   });
 
-  test("grep: exactly 10 matches (GREP_MAX_MATCHES boundary) returns undefined", () => {
+  test("search: exactly 10 matches (SEARCH_MAX_MATCHES boundary) returns undefined", () => {
     const lines = Array.from(
       { length: 10 },
       (_, i) => `file${i}.ts:${i}: match`,
     ).join("\n");
-    const result = compressToolResult(grepResult(lines), THRESHOLD);
+    const result = compressToolResult(searchResult(lines), THRESHOLD);
     expect(result).toBeUndefined();
   });
 
-  test("grep: 11 matches (boundary + 1) triggers compression", () => {
+  test("search: 11 matches (boundary + 1) triggers compression", () => {
     const lines = Array.from(
       { length: 11 },
       (_, i) => `file${i}.ts:${i}: match`,
     ).join("\n");
-    const result = compressToolResult(grepResult(lines), THRESHOLD);
+    const result = compressToolResult(searchResult(lines), THRESHOLD);
     expect(result).toBeDefined();
     const text = result!.content![0] as { type: string; text: string };
     expect(text.text).toContain("11 matches total");
@@ -742,12 +742,12 @@ describe("compressToolResult boundary edges", () => {
     expect(text.text).toContain("other 9");
   });
 
-  test("isError=true preempts compression for non-bash tools (grep)", () => {
+  test("isError=true preempts compression for non-bash tools (search)", () => {
     const lines = Array.from(
       { length: 50 },
       (_, i) => `file${i}.ts:${i}: match`,
     ).join("\n");
-    const result = compressToolResult(grepResult(lines, true), THRESHOLD);
+    const result = compressToolResult(searchResult(lines, true), THRESHOLD);
     expect(result).toBeUndefined();
   });
 });

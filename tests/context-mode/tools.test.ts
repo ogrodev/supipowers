@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { Database } from "bun:sqlite";
 
 import { KnowledgeStore } from "../../src/context-mode/knowledge/store.js";
 import { registerContextModeTools, _stats, INTENT_THRESHOLD } from "../../src/context-mode/tools.js";
@@ -57,9 +58,9 @@ async function callTool(name: string, params: any): Promise<any> {
 // Registration
 // ─────────────────────────────────────────────────────────────
 describe("registerContextModeTools", () => {
-  test("registers exactly 8 tools", () => {
+  test("registers exactly 9 tools", () => {
     registerAll();
-    expect(registeredTools.size).toBe(8);
+    expect(registeredTools.size).toBe(9);
   });
 
   test("all tools have name, parameters, and execute function", () => {
@@ -107,10 +108,24 @@ describe("registerContextModeTools", () => {
       "ctx_execute_file",
       "ctx_fetch_and_index",
       "ctx_index",
+      "ctx_open_cached",
       "ctx_purge",
       "ctx_search",
       "ctx_stats",
     ]);
+  });
+
+  test("ctx_open_cached exposes the handle/offset/limit schema", () => {
+    registerAll();
+    expect(registeredTools.get("ctx_open_cached")?.parameters).toEqual({
+      type: "object",
+      properties: {
+        handle: { type: "string", description: "cache://<sha256> handle to open" },
+        offset: { type: "number", description: "Character offset in decoded cached text (default: 0)" },
+        limit: { type: "number", description: "Maximum characters to return, capped at 100KB characters" },
+      },
+      required: ["handle"],
+    });
   });
 
   test("does nothing when platform lacks registerTool", () => {
@@ -401,7 +416,8 @@ import {
   __setMetricsStoreForTest,
   _resetMetricsStoreCache,
 } from "../../src/context-mode/metrics-store.js";
-import { _resetCache as _resetHooksCache } from "../../src/context-mode/hooks.js";
+import { _resetCache as _resetHooksCache, __setCacheStoreForTest } from "../../src/context-mode/hooks.js";
+import { CacheStore } from "../../src/context-mode/cache-store.js";
 
 describe("ctx_stats — markdown vs JSON", () => {
   let metricsTmp: string;
@@ -500,5 +516,152 @@ describe("ctx_stats — markdown vs JSON", () => {
     expect(parsed.writeFailures).toBe(0);
     expect(parsed.session.startedAt).toBe(0);
     expect(parsed.session.rowCount).toBe(0);
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// ctx_open_cached
+// ─────────────────────────────────────────────────────────────
+describe("ctx_open_cached", () => {
+  let cache: CacheStore | null = null;
+
+  beforeEach(() => {
+    _resetHooksCache();
+    cache = new CacheStore({
+      dbPath: path.join(tmpDir, "cache.db"),
+      payloadRoot: path.join(tmpDir, "cache-payloads"),
+      projectSlug: "demo",
+    });
+    cache.init();
+    __setCacheStoreForTest(cache);
+  });
+
+  afterEach(() => {
+    __setCacheStoreForTest(null);
+    try {
+      cache?.close();
+    } catch {
+      // already closed
+    }
+    cache = null;
+  });
+
+  test("opens a valid handle with offset and limit metadata", async () => {
+    registerAll();
+    const put = cache!.putText({ sessionId: "s1", text: "abcdef", sourceTool: "read", sourceHash: "one" });
+
+    const result = await callTool("ctx_open_cached", { handle: put.handle, offset: 2, limit: 3 });
+    const text = result.content[0].text;
+
+    expect(text).toContain(`## Cached content ${put.handle}`);
+    expect(text).toContain("- Total: 6 bytes, 6 chars");
+    expect(text).toContain("- Returned: chars 2..5 of 6");
+    expect(text).toContain("- Next offset: 5");
+    expect(text).toEndWith("cde");
+  });
+
+  test("large slice + header stays under MAX_RESPONSE_SIZE without losing advertised content", async () => {
+    registerAll();
+    // 200KB of text \u2014 well over MAX_RESPONSE_SIZE (100KB) and HARD_CACHE_OPEN_CHARS (100KB).
+    const text = "x".repeat(200 * 1024);
+    const put = cache!.putText({ sessionId: "s1", text, sourceTool: "read", sourceHash: "big" });
+
+    const result = await callTool("ctx_open_cached", { handle: put.handle, offset: 0 });
+    const out: string = result.content[0].text;
+
+    // Response must be bounded by the 100KB cap.
+    expect(out.length).toBeLessThanOrEqual(100 * 1024);
+    // The advertised next offset must reflect characters actually returned, not characters
+    // that were silently dropped by capResponseSize. Body length = total length \u2212 header.
+    const headerEnd = out.indexOf("\n---\n");
+    expect(headerEnd).toBeGreaterThan(0);
+    const body = out.slice(headerEnd + "\n---\n".length);
+    const match = /- Returned: chars 0\.\.(\d+) of \d+/.exec(out);
+    expect(match).not.toBeNull();
+    const advertisedReturned = Number(match![1]);
+    expect(body.length).toBe(advertisedReturned);
+  });
+
+  test("returns explicit text for invalid handles", async () => {
+    registerAll();
+
+    const result = await callTool("ctx_open_cached", { handle: "cache://NOPE" });
+
+    expect(result.content[0].text).toContain("Cannot open cached content: invalid cache handle");
+    expect(result.content[0].text).toContain("64 lowercase hexadecimal characters");
+  });
+
+  test("returns explicit text for missing handles", async () => {
+    registerAll();
+    const handle = `cache://${"0".repeat(64)}`;
+
+    const result = await callTool("ctx_open_cached", { handle });
+
+    expect(result.content[0].text).toBe(`Cannot open cached content: handle was not found: ${handle}.`);
+  });
+
+  test("returns explicit text for corrupt payloads", async () => {
+    registerAll();
+    const put = cache!.putText({ sessionId: "s1", text: "corrupt me", sourceTool: "read", sourceHash: "corrupt" });
+    const meta = cache!.getEntryMeta(put.handle)!;
+    fs.writeFileSync(path.join(cache!.payloadRoot, meta.payloadRelpath), "not brotli");
+
+    const result = await callTool("ctx_open_cached", { handle: put.handle });
+
+    expect(result.content[0].text).toBe(`Cannot open cached content: payload is corrupt for ${put.handle}.`);
+  });
+
+  test("returns explicit text when cache store is unavailable", async () => {
+    registerAll();
+    __setCacheStoreForTest(null);
+
+    const result = await callTool("ctx_open_cached", { handle: `cache://${"1".repeat(64)}` });
+
+    expect(result.content[0].text).toBe("Cannot open cached content: cache store is unavailable for this session.");
+  });
+
+  test("records cache-open metrics for hits and misses", async () => {
+    const metrics = new MetricsStore({ dbPath: path.join(tmpDir, "cache-open-metrics.db"), projectSlug: "demo" });
+    metrics.init();
+    __setMetricsStoreForTest(metrics);
+    try {
+      registerAll();
+      const put = cache!.putText({ sessionId: "s1", text: "abcdef", sourceTool: "read", sourceHash: "metric" });
+
+      await callTool("ctx_open_cached", { handle: put.handle, offset: 1, limit: 2 });
+      await callTool("ctx_open_cached", { handle: `cache://${"2".repeat(64)}` });
+      await metrics.flushPendingForTest();
+
+      const probe = new Database(metrics.dbPath);
+      try {
+        const rows = probe.prepare(`SELECT layer, tool, processor, before_bytes, after_bytes, cache_hit FROM metrics WHERE processor = 'cache-open' ORDER BY id ASC`).all() as Array<{
+          layer: string;
+          tool: string;
+          processor: string;
+          before_bytes: number;
+          after_bytes: number;
+          cache_hit: number;
+        }>;
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toEqual({
+          layer: "L3",
+          tool: "ctx_open_cached",
+          processor: "cache-open",
+          before_bytes: put.sizeBytes,
+          after_bytes: 2,
+          cache_hit: 1,
+        });
+        expect(rows[1].layer).toBe("L3");
+        expect(rows[1].tool).toBe("ctx_open_cached");
+        expect(rows[1].processor).toBe("cache-open");
+        expect(rows[1].cache_hit).toBe(0);
+      } finally {
+        probe.close();
+      }
+    } finally {
+      __setMetricsStoreForTest(null);
+      metrics.close();
+    }
   });
 });

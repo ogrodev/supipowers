@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 describe("MetricsStore.init", () => {
-  test("creates schema v1 on a fresh DB", () => {
+  test("creates schema at SCHEMA_VERSION on a fresh DB", () => {
     const probe = new Database(dbPath);
     try {
       const found = probe
@@ -80,7 +80,7 @@ describe("MetricsStore.init", () => {
     }
   });
 
-  test("reopening an existing v1 DB is idempotent", () => {
+  test("reopening an existing DB at SCHEMA_VERSION is idempotent", () => {
     store.close();
     const reopened = new MetricsStore({ dbPath, projectSlug: "demo" });
     reopened.init();
@@ -159,6 +159,142 @@ describe("MetricsStore.init", () => {
 
     const after = fs.readFileSync(eventsPath);
     expect(after.equals(before)).toBe(true);
+  });
+});
+
+describe("MetricsStore.init v1 \u2192 v2 migration", () => {
+  /**
+   * Helper: take a fresh metrics.db at the latest schema and dial it back to
+   * a v1-shaped store, inserting the grep-era rows we expect to see in the
+   * wild after upgrading from OMP 14.5.11 or earlier.
+   */
+  function seedV1WithGrepRows(): void {
+    store.close();
+    const probe = new Database(dbPath);
+    try {
+      probe.exec("PRAGMA user_version = 1;");
+      const insert = probe.prepare(
+        `INSERT INTO metrics
+           (session_id, ts, layer, tool, processor, before_bytes, after_bytes,
+            cache_hit, unique_source_hash, context_tokens, context_window, context_percent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      // Two grep rows (one with a hash, one with a passthrough/null processor)
+      // plus an unrelated read row that must survive the migration unchanged.
+      insert.run("s1", 1, "L2", "grep", "grep", 1000, 100, 0, "legacy-grep-hash", null, null, null);
+      insert.run("s1", 2, "L2", "grep", "passthrough", 50, 50, 0, "legacy-grep-hash-2", null, null, null);
+      insert.run("s1", 3, "L2", "read", "read", 2000, 200, 0, "read-hash", null, null, null);
+    } finally {
+      probe.close();
+    }
+  }
+
+  test("rewrites tool='grep' to 'search', NULLs legacy hashes, bumps user_version", () => {
+    seedV1WithGrepRows();
+
+    const reopened = new MetricsStore({ dbPath, projectSlug: "demo" });
+    reopened.init();
+    reopened.close();
+
+    const probe = new Database(dbPath, { readonly: true });
+    try {
+      const rows = probe
+        .prepare(
+          `SELECT tool, processor, unique_source_hash FROM metrics ORDER BY ts ASC`,
+        )
+        .all() as Array<{ tool: string; processor: string | null; unique_source_hash: string | null }>;
+      expect(rows).toEqual([
+        { tool: "search", processor: "search", unique_source_hash: null },
+        { tool: "search", processor: "passthrough", unique_source_hash: null },
+        { tool: "read", processor: "read", unique_source_hash: "read-hash" },
+      ]);
+      const { user_version } = probe.prepare(`PRAGMA user_version`).get() as {
+        user_version: number;
+      };
+      expect(user_version).toBe(SCHEMA_VERSION);
+    } finally {
+      probe.close();
+    }
+
+    // Re-open the original handle so afterEach's close() does not throw.
+    store = new MetricsStore({ dbPath, projectSlug: "demo" });
+    store.init();
+  });
+
+  test("rewrites processor='grep' even when tool was already 'search'", () => {
+    // Defensive case: a v1 row may have processor='grep' but tool='search'
+    // if a future hot-fix scrubbed the tool column without scrubbing the
+    // processor column. The migration must still rewrite the processor.
+    store.close();
+    const probe = new Database(dbPath);
+    try {
+      probe.exec("PRAGMA user_version = 1;");
+      probe.prepare(
+        `INSERT INTO metrics
+           (session_id, ts, layer, tool, processor, before_bytes, after_bytes,
+            cache_hit, unique_source_hash, context_tokens, context_window, context_percent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("s1", 1, "L2", "search", "grep", 100, 50, 0, "hash-x", null, null, null);
+    } finally {
+      probe.close();
+    }
+
+    const reopened = new MetricsStore({ dbPath, projectSlug: "demo" });
+    reopened.init();
+    reopened.close();
+
+    const probe2 = new Database(dbPath, { readonly: true });
+    try {
+      const row = probe2
+        .prepare(`SELECT tool, processor, unique_source_hash FROM metrics`)
+        .get() as { tool: string; processor: string; unique_source_hash: string | null };
+      // tool stays 'search' (was already 'search'); processor rewrites to
+      // 'search'; the hash survives because tool was never 'grep' \u2014 we
+      // cannot prove the hash was computed under the legacy prefix.
+      expect(row).toEqual({ tool: "search", processor: "search", unique_source_hash: "hash-x" });
+    } finally {
+      probe2.close();
+    }
+
+    store = new MetricsStore({ dbPath, projectSlug: "demo" });
+    store.init();
+  });
+
+  test("v1 DB with no grep rows still bumps to SCHEMA_VERSION", () => {
+    store.close();
+    const probe = new Database(dbPath);
+    try {
+      probe.exec("PRAGMA user_version = 1;");
+      probe.prepare(
+        `INSERT INTO metrics
+           (session_id, ts, layer, tool, processor, before_bytes, after_bytes,
+            cache_hit, unique_source_hash, context_tokens, context_window, context_percent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("s1", 1, "L2", "read", "read", 2000, 200, 0, "read-hash", null, null, null);
+    } finally {
+      probe.close();
+    }
+
+    const reopened = new MetricsStore({ dbPath, projectSlug: "demo" });
+    reopened.init();
+    reopened.close();
+
+    const probe2 = new Database(dbPath, { readonly: true });
+    try {
+      const row = probe2
+        .prepare(`SELECT tool, processor, unique_source_hash FROM metrics`)
+        .get() as { tool: string; processor: string; unique_source_hash: string };
+      expect(row).toEqual({ tool: "read", processor: "read", unique_source_hash: "read-hash" });
+      const { user_version } = probe2.prepare(`PRAGMA user_version`).get() as {
+        user_version: number;
+      };
+      expect(user_version).toBe(SCHEMA_VERSION);
+    } finally {
+      probe2.close();
+    }
+
+    store = new MetricsStore({ dbPath, projectSlug: "demo" });
+    store.init();
   });
 });
 
@@ -473,7 +609,7 @@ describe("MetricsStore SUPI_DEBUG trace", () => {
     debugStore.upsertSession({ session_id: "s1", cwd: "/tmp/x" });
     debugStore.record(row({ session_id: "s1", tool: "bash", before_bytes: 100, after_bytes: 10 }));
     debugStore.record(row({ session_id: "s1", tool: "read", before_bytes: 200, after_bytes: 20 }));
-    debugStore.record(row({ session_id: "s1", tool: "grep", before_bytes: 300, after_bytes: 30 }));
+    debugStore.record(row({ session_id: "s1", tool: "search", before_bytes: 300, after_bytes: 30 }));
     await debugStore.flushPendingForTest();
 
     const tracePath = debugStore.tracePathForTest;

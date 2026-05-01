@@ -154,7 +154,7 @@ describe("uniqueSourceHash — bash command truncation", () => {
   });
 });
 
-describe("uniqueSourceHash — find / grep / unknown", () => {
+describe("uniqueSourceHash — find / search / unknown", () => {
   test("find hashes the pattern with project salt", () => {
     const p1 = uniqueSourceHash({
       tool: "find",
@@ -172,9 +172,9 @@ describe("uniqueSourceHash — find / grep / unknown", () => {
     expect(p1).not.toBeNull();
   });
 
-  test("grep without a path falls back to pattern-only hash", () => {
+  test("search without a path falls back to pattern-only hash", () => {
     const a = uniqueSourceHash({
-      tool: "grep",
+      tool: "search",
       input: { pattern: "TODO" },
       cwd: "/repo",
       projectSlug: "demo",

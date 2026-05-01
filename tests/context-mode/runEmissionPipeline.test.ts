@@ -21,13 +21,13 @@ function toolResult(
 }
 
 describe("runEmissionPipeline", () => {
-  test("large legacy read, grep, and find results report matching processor keys", () => {
+  test("large legacy read, search, and find results report matching processor keys", () => {
     const readText = Array.from({ length: 120 }, (_, i) => `${i + 1}aa|line ${i}`).join("\n");
-    const grepText = Array.from({ length: 20 }, (_, i) => `src/file${i}.ts:${i}: match`).join("\n");
+    const searchText = Array.from({ length: 20 }, (_, i) => `src/file${i}.ts:${i}: match`).join("\n");
     const findText = Array.from({ length: 30 }, (_, i) => `src/file${i}.ts`).join("\n");
 
     expect(runEmissionPipeline(toolResult("read", readText, { path: "src/file.ts" }), THRESHOLD).processorKey).toBe("read");
-    expect(runEmissionPipeline(toolResult("grep", grepText, { pattern: "match", path: "src" }), THRESHOLD).processorKey).toBe("grep");
+    expect(runEmissionPipeline(toolResult("search", searchText, { pattern: "match", path: "src" }), THRESHOLD).processorKey).toBe("search");
     expect(runEmissionPipeline(toolResult("find", findText, { pattern: "src/**/*.ts" }), THRESHOLD).processorKey).toBe("find");
   });
 

@@ -21,7 +21,7 @@ describe("detectContextMode", () => {
   });
 
   test("active list with no ctx_* names ignores non-ctx tools", () => {
-    const status = detectContextMode(["bash", "read", "grep"]);
+    const status = detectContextMode(["bash", "read", "search"]);
     expect(status.available).toBe(false);
     expect(status.tools.ctxExecute).toBe(false);
     expect(status.tools.ctxSearch).toBe(false);
@@ -37,6 +37,7 @@ describe("detectContextMode", () => {
       ctxExecuteFile: false,
       ctxIndex: false,
       ctxFetchAndIndex: false,
+      ctxOpenCached: false,
       ctxStats: false,
       ctxPurge: false,
     });
@@ -53,6 +54,7 @@ describe("detectContextMode", () => {
       "ctxIndex",
       "ctxSearch",
       "ctxFetchAndIndex",
+      "ctxOpenCached",
       "ctxStats",
       "ctxPurge",
     ] as const) {

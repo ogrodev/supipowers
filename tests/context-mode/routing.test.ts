@@ -175,7 +175,7 @@ const STATUS: ContextModeStatus = {
   tools: {
     ctxExecute: true, ctxBatchExecute: true, ctxExecuteFile: true,
     ctxIndex: true, ctxSearch: true, ctxFetchAndIndex: true,
-    ctxStats: true, ctxPurge: true,
+    ctxOpenCached: true, ctxStats: true, ctxPurge: true,
   },
 };
 
@@ -209,15 +209,15 @@ describe("detectContextMode", () => {
 });
 
 describe("routeToolCall", () => {
-  test("blocks Grep when enforceRouting enabled", () => {
-    const result = routeToolCall("grep", { pattern: "foo" }, STATUS, ENFORCE);
+  test("blocks Search when enforceRouting enabled", () => {
+    const result = routeToolCall("search", { pattern: "foo" }, STATUS, ENFORCE);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.reason).toContain("ctx_search");
   });
 
-  test("allows Grep when enforceRouting disabled", () => {
-    const result = routeToolCall("grep", { pattern: "foo" }, STATUS, NO_ENFORCE);
+  test("allows Search when enforceRouting disabled", () => {
+    const result = routeToolCall("search", { pattern: "foo" }, STATUS, NO_ENFORCE);
     expect(result).toBeUndefined();
   });
 
@@ -287,14 +287,14 @@ describe("routeToolCall", () => {
     expect(result).toBeUndefined();
   });
 
-  test("allows Grep when active search replacements are missing", () => {
-    const result = routeToolCall("grep", { pattern: "foo" }, INACTIVE_STATUS, ENFORCE);
+  test("allows Search when active search replacements are missing", () => {
+    const result = routeToolCall("search", { pattern: "foo" }, INACTIVE_STATUS, ENFORCE);
     expect(result).toBeUndefined();
   });
 
-  test("blocks Grep with ctx_batch_execute when ctx_search is inactive", () => {
+  test("blocks Search with ctx_batch_execute when ctx_search is inactive", () => {
     const result = routeToolCall(
-      "grep",
+      "search",
       { pattern: "foo" },
       detectContextMode(["ctx_batch_execute"]),
       ENFORCE,
@@ -303,9 +303,9 @@ describe("routeToolCall", () => {
     expect(result!.reason).toContain("ctx_batch_execute");
   });
 
-  test("blocks Grep with ctx_execute when indexed search replacements are inactive", () => {
+  test("blocks Search with ctx_execute when indexed search replacements are inactive", () => {
     const result = routeToolCall(
-      "grep",
+      "search",
       { pattern: "foo" },
       detectContextMode(["ctx_execute"]),
       ENFORCE,
