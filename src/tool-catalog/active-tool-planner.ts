@@ -141,6 +141,9 @@ function getTriggeredTools(prompt: string, keywordTools: Record<string, string[]
   if (/https?:\/\/\S+/i.test(prompt)) {
     triggeredTools.push("ctx_fetch_and_index");
   }
+  if (/cache:\/\/[a-f0-9]{8,}/i.test(prompt)) {
+    triggeredTools.push("ctx_open_cached");
+  }
 
   for (const [term, tools] of Object.entries(keywordTools)) {
     if (literalTermMatches(normalizedPrompt, term)) {

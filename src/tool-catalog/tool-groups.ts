@@ -4,6 +4,7 @@ export const CONTEXT_MODE_TOOL_NAMES = [
   "ctx_batch_execute",
   "ctx_index",
   "ctx_search",
+  "ctx_open_cached",
   "ctx_fetch_and_index",
   "ctx_stats",
   "ctx_purge",
@@ -17,6 +18,7 @@ export const MCPC_TOOL_PREFIX = "mcpc_";
 export const OWNED_TOOL_PRIORITY = [
   "ctx_execute",
   "ctx_search",
+  "ctx_open_cached",
   "ctx_batch_execute",
   "ctx_execute_file",
   "ctx_fetch_and_index",
@@ -33,8 +35,8 @@ const OWNED_PRIORITY_INDEX = new Map<string, number>(
 
 export const BALANCED_KEYWORD_TOOLS: Record<string, string[]> = {
   search: ["ctx_batch_execute"],
-  find: ["ctx_batch_execute"],
   grep: ["ctx_batch_execute"],
+  find: ["ctx_batch_execute"],
   scan: ["ctx_batch_execute"],
   inspect: ["ctx_batch_execute"],
   explore: ["ctx_batch_execute"],
@@ -62,6 +64,9 @@ export const BALANCED_KEYWORD_TOOLS: Record<string, string[]> = {
   "ctx purge": ["ctx_purge"],
   "purge knowledge": ["ctx_purge"],
   "reset knowledge index": ["ctx_purge"],
+  "open cached": ["ctx_open_cached"],
+  "cached handle": ["ctx_open_cached"],
+  ctx_open_cached: ["ctx_open_cached"],
 };
 
 export function isContextModeTool(name: string): boolean {
