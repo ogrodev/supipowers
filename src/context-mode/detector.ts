@@ -10,6 +10,7 @@ export interface ContextModeStatus {
     ctxIndex: boolean;
     ctxSearch: boolean;
     ctxFetchAndIndex: boolean;
+    ctxOpenCached: boolean;
     ctxStats: boolean;
     ctxPurge: boolean;
   };
@@ -30,6 +31,7 @@ export function detectContextMode(activeTools?: string[]): ContextModeStatus {
       ctxIndex: active.has("ctx_index"),
       ctxSearch: active.has("ctx_search"),
       ctxFetchAndIndex: active.has("ctx_fetch_and_index"),
+      ctxOpenCached: active.has("ctx_open_cached"),
       ctxStats: active.has("ctx_stats"),
       ctxPurge: active.has("ctx_purge"),
     };
@@ -48,6 +50,7 @@ export function detectContextMode(activeTools?: string[]): ContextModeStatus {
       ctxIndex: true,
       ctxSearch: true,
       ctxFetchAndIndex: true,
+      ctxOpenCached: true,
       ctxStats: true,
       ctxPurge: true,
     },

@@ -87,12 +87,11 @@ export function extractEvents(
     case "write":
       extractFile(events, event, sessionId, "write", PRIORITY.high);
       break;
-    case "grep":
-      extractFile(events, event, sessionId, "search");
-      break;
-    case "find":
-      extractFile(events, event, sessionId, "find");
-      break;
+    // `search` and `find` are intentionally not extracted: their `path`
+    // input is usually a directory or a glob, not a real file the caller
+    // touched. The downstream snapshot builder only consumes
+    // `op === "edit"|"write"|"read"` file events, so emitting here would
+    // (a) be silently dropped and (b) waste the 200-event read window.
     case "todo_write":
       events.push(makeEvent(sessionId, "task", {
         input: event.input,

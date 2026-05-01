@@ -12,6 +12,7 @@
 
 import { OMP_MINIMIZER_FOOTER_RE } from "./compressor.js";
 import type { LayerKey, MetricRow, ProcessorKey } from "./metrics-store.js";
+import { processorKeyForTool } from "./processor-keys.js";
 import { uniqueSourceHash } from "./source-hash.js";
 import { canonicalToolName } from "./tool-name.js";
 
@@ -50,16 +51,6 @@ export interface ToMetricRowOpts {
   sourceHash?: string | null;
 }
 
-const PROCESSOR_BY_TOOL: Record<string, ProcessorKey> = {
-  bash: "bash",
-  read: "read",
-  grep: "grep",
-  find: "find",
-};
-
-function processorFor(canonicalTool: string): ProcessorKey {
-  return PROCESSOR_BY_TOOL[canonicalTool] ?? null;
-}
 
 function bytesOfContent(
   content: Array<{ type: string; text?: string }> | undefined,
@@ -108,7 +99,7 @@ export function toMetricRow(opts: ToMetricRowOpts): MetricRow {
   const explicitSourceHash = opts.sourceHash;
 
   const canonical = canonicalToolName(event.toolName);
-  const knownProcessor = processorFor(canonical);
+  const knownProcessor = processorKeyForTool(canonical);
   const isKnown = knownProcessor !== null;
 
   const before_bytes = bytesOfContent(event.content);

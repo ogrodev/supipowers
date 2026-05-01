@@ -353,18 +353,36 @@ function extractTaskContent(data: Record<string, unknown> | null): string | null
     if (!rawOp || typeof rawOp !== "object") continue;
     const verb = typeof rawOp.op === "string" ? rawOp.op : "task";
 
-    if (verb === "replace" && Array.isArray(rawOp.phases)) {
+    if (verb === "init" && Array.isArray(rawOp.list)) {
+      for (const phase of rawOp.list as Array<Record<string, unknown>>) {
+        const items = Array.isArray(phase?.items) ? phase.items : [];
+        for (const item of items) {
+          if (typeof item === "string" && item) parts.push(`init: ${item}`);
+          else if (item && typeof item === "object" && typeof (item as { label?: unknown }).label === "string") {
+            parts.push(`init: ${(item as { label: string }).label}`);
+          }
+        }
+      }
+    } else if (verb === "replace" && Array.isArray(rawOp.phases)) {
+      // Legacy `todo_write` shape (pre-14.5.11): `op:"replace", phases:[{ name, tasks:[{ content }] }]`.
+      // Persisted event rows still carry this shape until 7-day retention expires; we keep
+      // read-side compatibility here so resume snapshots remain truthful for those rows.
       for (const phase of rawOp.phases as Array<Record<string, unknown>>) {
         const tasks = Array.isArray(phase?.tasks) ? phase.tasks : [];
-        for (const task of tasks as Array<Record<string, unknown>>) {
-          const content = typeof task?.content === "string" ? task.content : "";
+        for (const task of tasks) {
+          const content = task && typeof task === "object" && typeof (task as { content?: unknown }).content === "string"
+            ? (task as { content: string }).content
+            : "";
           if (content) parts.push(`replace: ${content}`);
         }
       }
     } else if (verb === "append" && Array.isArray(rawOp.items)) {
-      for (const item of rawOp.items as Array<Record<string, unknown>>) {
-        const label = typeof item?.label === "string" ? item.label : "";
-        if (label) parts.push(`append: ${label}`);
+      for (const item of rawOp.items) {
+        if (typeof item === "string" && item) parts.push(`append: ${item}`);
+        else if (item && typeof item === "object" && typeof (item as { label?: unknown }).label === "string") {
+          // Legacy append items shaped as objects with `label`.
+          parts.push(`append: ${(item as { label: string }).label}`);
+        }
       }
     } else if (verb === "note") {
       const text = typeof rawOp.text === "string" ? rawOp.text : "";

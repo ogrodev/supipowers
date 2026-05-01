@@ -123,15 +123,15 @@ export function uniqueSourceHash(opts: UniqueSourceHashOpts): string | null {
       const absolute = canonicalizePath(p, cwd);
       return sha256Hex(`read:${absolute}:${projectSlug}`);
     }
-    case "grep": {
+    case "search": {
       const p = typeof input?.path === "string" ? input.path : "";
       if (!p) {
-        // Pattern-only grep without an explicit path target.
+        // Pattern-only search without an explicit path target.
         const pattern = typeof input?.pattern === "string" ? input.pattern : "";
-        return sha256Hex(`grep:${pattern}:${projectSlug}`);
+        return sha256Hex(`search:${pattern}:${projectSlug}`);
       }
       const absolute = canonicalizePath(p, cwd);
-      return sha256Hex(`grep:${absolute}:${projectSlug}`);
+      return sha256Hex(`search:${absolute}:${projectSlug}`);
     }
     case "find": {
       const pattern = typeof input?.pattern === "string" ? input.pattern : "";

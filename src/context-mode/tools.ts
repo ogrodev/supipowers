@@ -1,6 +1,6 @@
 // src/context-mode/tools.ts
 //
-// Registers 8 native context-mode tools via platform.registerTool().
+// Registers 9 native context-mode tools via platform.registerTool().
 // Orchestration layer: delegates execution to sandbox, owns intent-driven
 // filtering (auto-indexing large output into knowledge store).
 
@@ -10,8 +10,10 @@ import { executeCode } from "./sandbox/executor.js";
 import { getSupportedLanguages } from "./sandbox/runners.js";
 import { chunkMarkdown } from "./knowledge/chunker.js";
 import { KnowledgeStore } from "./knowledge/store.js";
-import { getMetricsStore, getSessionId } from "./hooks.js";
+import { getCacheStore, getMetricsStore, getSessionId } from "./hooks.js";
 import { fetchAndIndex } from "./web/fetcher.js";
+import { parseCacheHandle } from "./cache-handle.js";
+import { sliceCachedText } from "./cache-preview.js";
 
 /** Threshold (bytes) above which intent-driven filtering kicks in. */
 const INTENT_THRESHOLD = 5 * 1024;
@@ -46,6 +48,34 @@ const stats: ToolStats = { calls: {}, bytesReturned: 0 };
 function trackCall(toolName: string, outputBytes: number): void {
   stats.calls[toolName] = (stats.calls[toolName] ?? 0) + 1;
   stats.bytesReturned += outputBytes;
+}
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+function recordCacheOpenMetric(opts: { beforeBytes: number; afterBytes: number; cacheHit: 0 | 1 }): void {
+  const metrics = getMetricsStore();
+  if (!metrics) return;
+
+  try {
+    metrics.record({
+      session_id: getSessionId(),
+      ts: Date.now(),
+      layer: "L3",
+      tool: "ctx_open_cached",
+      processor: "cache-open",
+      before_bytes: Math.max(0, Math.floor(opts.beforeBytes)),
+      after_bytes: Math.max(0, Math.floor(opts.afterBytes)),
+      cache_hit: opts.cacheHit,
+      unique_source_hash: null,
+      context_tokens: null,
+      context_window: null,
+      context_percent: null,
+    });
+  } catch {
+    // Cache reads must not depend on metrics health.
+  }
 }
 
 /**
@@ -379,6 +409,79 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       const output = formatSearchResults(results);
 
       trackCall("ctx_search", output.length);
+      return { content: [{ type: "text", text: capResponseSize(output) }] };
+    },
+  });
+
+  // ── ctx_open_cached ────────────────────────────────────────
+  platform.registerTool({
+    name: "ctx_open_cached",
+    label: "Open Cached Context Handle",
+    description:
+      "Open a cache://<sha256> handle and return a bounded slice of cached text with offset metadata.",
+    promptSnippet: "ctx_open_cached — open a cache:// handle with bounded offset/limit reads",
+    promptGuidelines: [
+      "Use when the user provides a cache:// handle or asks to open cached content",
+      "Always use offset/limit for follow-up reads instead of requesting the whole payload",
+      "Invalid, missing, or corrupt handles return explicit text instead of throwing",
+    ],
+    parameters: {
+      type: "object",
+      properties: {
+        handle: { type: "string", description: "cache://<sha256> handle to open" },
+        offset: { type: "number", description: "Character offset in decoded cached text (default: 0)" },
+        limit: { type: "number", description: "Maximum characters to return, capped at 100KB characters" },
+      },
+      required: ["handle"],
+    },
+    async execute(_toolCallId: string, params: any) {
+      const parsed = parseCacheHandle(String(params?.handle ?? ""));
+      if (!parsed.ok) {
+        const output = `Cannot open cached content: ${parsed.message}.`;
+        recordCacheOpenMetric({ beforeBytes: 0, afterBytes: byteLength(output), cacheHit: 0 });
+        trackCall("ctx_open_cached", output.length);
+        return { content: [{ type: "text", text: capResponseSize(output) }] };
+      }
+
+      const cacheStore = getCacheStore();
+      if (!cacheStore) {
+        const output = "Cannot open cached content: cache store is unavailable for this session.";
+        recordCacheOpenMetric({ beforeBytes: 0, afterBytes: byteLength(output), cacheHit: 0 });
+        trackCall("ctx_open_cached", output.length);
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      const opened = cacheStore.openText(parsed.handle);
+      if (!opened.ok) {
+        recordCacheOpenMetric({ beforeBytes: 0, afterBytes: byteLength(opened.message), cacheHit: 0 });
+        trackCall("ctx_open_cached", opened.message.length);
+        return { content: [{ type: "text", text: capResponseSize(opened.message) }] };
+      }
+
+      // Reserve headroom for the metadata block so capResponseSize never silently drops
+      // characters that we already advertised in `Returned`/`Next offset`.
+      const HEADER_HEADROOM_CHARS = 512;
+      const userLimit = typeof params?.limit === "number" ? params.limit : undefined;
+      const responseBudget = Math.max(0, MAX_RESPONSE_SIZE - HEADER_HEADROOM_CHARS);
+      const cappedLimit = userLimit === undefined
+        ? responseBudget
+        : Math.min(userLimit, responseBudget);
+      const slice = sliceCachedText(opened.text, params?.offset, cappedLimit);
+      const end = slice.offset + slice.returnedChars;
+      let output = `## Cached content ${opened.handle}\n\n`;
+      output += `- Total: ${opened.meta.sizeBytes} bytes, ${slice.totalChars} chars\n`;
+      output += `- Returned: chars ${slice.offset}..${end} of ${slice.totalChars}\n`;
+      if (slice.nextOffset !== null) {
+        output += `- Next offset: ${slice.nextOffset}\n`;
+      }
+      output += `\n---\n${slice.text}`;
+
+      recordCacheOpenMetric({
+        beforeBytes: opened.meta.sizeBytes,
+        afterBytes: byteLength(slice.text),
+        cacheHit: 1,
+      });
+      trackCall("ctx_open_cached", output.length);
       return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
   });

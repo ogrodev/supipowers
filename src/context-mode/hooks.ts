@@ -10,6 +10,7 @@ import { routeToolCall } from "./routing.js";
 import { KnowledgeStore } from "./knowledge/store.js";
 import { registerContextModeTools } from "./tools.js";
 import { MetricsStore, __setMetricsStoreForTest, _resetMetricsStoreCache } from "./metrics-store.js";
+import { CacheStore } from "./cache-store.js";
 import { toMetricRow } from "./metrics-recorder.js";
 import { combinedTextOf, createDedupState, maybeSubstitute, type DedupState } from "./dedup.js";
 import { uniqueSourceHash } from "./source-hash.js";
@@ -44,7 +45,7 @@ function buildActiveRoutingGuidance(status: ContextModeStatus): string | null {
   ];
 
   if (status.tools.ctxSearch || status.tools.ctxBatchExecute) {
-    lines.push("For search/gather work, prefer active `ctx_search` or `ctx_batch_execute` over Grep/Find outputs.");
+    lines.push("For search/gather work, prefer active `ctx_search` or `ctx_batch_execute` over Search/Find outputs.");
   }
   if (status.tools.ctxExecute) {
     lines.push("Use active `ctx_execute` for shell/data processing that may emit large output.");
@@ -54,6 +55,9 @@ function buildActiveRoutingGuidance(status: ContextModeStatus): string | null {
   }
   if (status.tools.ctxExecuteFile) {
     lines.push("Use active `ctx_execute_file` for analysis-only large-file processing without loading the file into context.");
+  }
+  if (status.tools.ctxOpenCached) {
+    lines.push("Use active `ctx_open_cached` to read `cache://<sha>` handles in bounded slices via offset/limit.");
   }
 
   return lines.join("\n");
@@ -66,6 +70,7 @@ function activeContextToolNames(status: ContextModeStatus): string[] {
   if (status.tools.ctxBatchExecute) names.push("ctx_batch_execute");
   if (status.tools.ctxExecuteFile) names.push("ctx_execute_file");
   if (status.tools.ctxFetchAndIndex) names.push("ctx_fetch_and_index");
+  if (status.tools.ctxOpenCached) names.push("ctx_open_cached");
   if (status.tools.ctxIndex) names.push("ctx_index");
   if (status.tools.ctxStats) names.push("ctx_stats");
   if (status.tools.ctxPurge) names.push("ctx_purge");
@@ -100,6 +105,8 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
   let eventStorePath: string | null = null;
   let metricsStore: MetricsStore | null = null;
   let metricsStorePath: string | null = null;
+  let cacheStore: CacheStore | null = null;
+  let cacheStorePath: string | null = null;
   let sessionCwd = process.cwd();
   let sessionId = deriveSessionId();
   let dedupState: DedupState = createDedupState();
@@ -167,8 +174,49 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
     }
   };
 
+  const ensureCacheStore = (cwd: string): CacheStore | null => {
+    const sessionsDir = getProjectStatePath(platform.paths, cwd, "sessions");
+    const dbPath = join(sessionsDir, "cache.db");
+    const payloadRoot = join(sessionsDir, "cache-payloads");
+    if (cacheStore && cacheStorePath === dbPath) {
+      cacheStore.setMetricsRecorder(metricsStore, sessionId);
+      return cacheStore;
+    }
+
+    if (cacheStore) {
+      try {
+        cacheStore.close();
+      } catch {
+        // Best effort: we are about to reopen against the active project's cache.db.
+      }
+    }
+
+    try {
+      mkdirSync(sessionsDir, { recursive: true });
+      const slug = basename(getProjectStateDir(platform.paths, cwd));
+      cacheStore = new CacheStore({
+        dbPath,
+        payloadRoot,
+        projectSlug: slug,
+        metricsStore,
+        metricsSessionId: sessionId,
+      });
+      cacheStore.init();
+      cacheStorePath = dbPath;
+      _cacheStoreRef = cacheStore;
+      return cacheStore;
+    } catch (e) {
+      cacheStore = null;
+      cacheStorePath = null;
+      _cacheStoreRef = null;
+      (platform as any).logger?.error?.("supi-context-mode: failed to initialize cache store", e);
+      return null;
+    }
+  };
+
   ensureEventStore(sessionCwd);
   ensureMetricsStore(sessionCwd);
+  ensureCacheStore(sessionCwd);
 
   _sessionIdRef = sessionId;
 
@@ -218,6 +266,8 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
         (platform as any).logger?.warn?.("supi-context-mode: failed to initialize metrics session metadata", e);
       }
     }
+
+    ensureCacheStore(sessionCwd);
   });
 
   platform.on("session_shutdown", () => {
@@ -233,6 +283,22 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
         _knowledgeStoreRef = null;
       }
     }
+    // Prune + close cache store before metrics so L3 prune rows can be recorded.
+    if (cacheStore) {
+      try {
+        cacheStore.setMetricsRecorder(metricsStore, sessionId);
+        cacheStore.pruneOldSessions(7);
+        cacheStore.close();
+      } catch (e) {
+        (platform as any).logger?.warn?.("supi-context-mode: failed to close cache store", e);
+      } finally {
+        cacheStore = null;
+        cacheStorePath = null;
+        _cacheStoreRef = null;
+      }
+    }
+
+
     // Prune + close metrics store independently of event store status.
     if (metricsStore) {
       try {
@@ -246,6 +312,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
         __setMetricsStoreForTest(null);
       }
     }
+
 
     if (!eventStore) {
       _eventStoreRef = null;
@@ -491,6 +558,16 @@ export function getEventStore(): EventStore | null {
 /** Get the metrics store instance (for use by /supi:context, ctx_stats, /supi:clear). */
 export { getMetricsStore } from "./metrics-store.js";
 
+/** Get the cache store instance (for use by ctx_open_cached and /supi:clear). */
+export function getCacheStore(): CacheStore | null {
+  return _cacheStoreRef;
+}
+
+/** Test-only cache store setter for tool/command tests. */
+export function __setCacheStoreForTest(store: CacheStore | null): void {
+  _cacheStoreRef = store;
+}
+
 /** Get the session ID (for use by compaction hooks) */
 export function getSessionId(): string {
   return _sessionIdRef;
@@ -499,6 +576,7 @@ export function getSessionId(): string {
 // Module-level refs updated by registerContextModeHooks
 let _eventStoreRef: EventStore | null = null;
 let _knowledgeStoreRef: KnowledgeStore | null = null;
+let _cacheStoreRef: CacheStore | null = null;
 let _sessionIdRef = "";
 
 /** Reset cached state (for testing) */
@@ -506,6 +584,7 @@ export function _resetCache(): void {
   cachedStatus = null;
   _eventStoreRef = null;
   _knowledgeStoreRef = null;
+  _cacheStoreRef = null;
   _sessionIdRef = "";
   _resetMetricsStoreCache();
 }

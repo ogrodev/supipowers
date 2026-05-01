@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { isDebugEnabled } from "../debug/logger.js";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const MAX_ROWS_PER_SESSION = 5000;
 export const RETENTION_DAYS = 7;
 
@@ -28,7 +28,7 @@ export type LayerKey = "L1" | "L2" | "L3" | "L4" | "L5" | "L6" | "L7";
 export type ProcessorKey =
   | "bash"
   | "read"
-  | "grep"
+  | "search"
   | "find"
   | "passthrough"
   | "omp-minimizer"
@@ -43,6 +43,10 @@ export type ProcessorKey =
   | "dedup"
   | "lazy-tools"
   | "startup-optimizer"
+  | "cache-store"
+  | "cache-open"
+  | "cache-prune"
+  | "cache-clear"
   | null;
 
 /** A single metric row pending insertion or read from the metrics table. */
@@ -190,8 +194,11 @@ export class MetricsStore {
 
   init(): void {
     this.#ensureDeleteJournalMode();
-    this.#migrate();
+    // CREATE TABLE IF NOT EXISTS guards every statement in SCHEMA, so it is
+    // safe to run before #migrate(). Running the schema first means v1\u2192vN
+    // data fixups can assume their target tables exist on every code path.
     this.#db.exec(SCHEMA);
+    this.#migrate();
     this.#prepareStatements();
 
     if (isDebugEnabled()) {
@@ -247,8 +254,33 @@ export class MetricsStore {
       );
     }
 
-    // Fresh DB or v0 — running SCHEMA is idempotent thanks to IF NOT EXISTS.
-    // Future migrations from v1 → vN go here.
+    // v0 \u2192 v1: schema-only bump. CREATE TABLE IF NOT EXISTS already ran in
+    // init(); no data fixup is required.
+
+    // v1 \u2192 v2: OMP 14.5.12 renamed the canonical "grep" tool key to "search".
+    // Rows persisted under the old name still report `tool='grep'` and
+    // `processor='grep'` \u2014 values the type system no longer admits and which
+    // /supi:doctor / per-processor breakdowns would silently bucket under a
+    // typed-impossible key. Source hashes baked the legacy `grep:` prefix into
+    // SHA256, so they cannot collide with post-rename `search:`-prefixed
+    // hashes; the privacy contract forbids reconstructing the original path
+    // or pattern, so re-hashing is impossible. NULL is the right substitute:
+    // `getUniqueSourceShare` already excludes NULL hashes from numerator and
+    // denominator, and a NULL hash never collides with new dedup state.
+    if (user_version < 2) {
+      const tx = this.#db.transaction(() => {
+        this.#db.exec(
+          `UPDATE metrics SET unique_source_hash = NULL WHERE tool = 'grep'`,
+        );
+        this.#db.exec(
+          `UPDATE metrics SET tool = 'search' WHERE tool = 'grep'`,
+        );
+        this.#db.exec(
+          `UPDATE metrics SET processor = 'search' WHERE processor = 'grep'`,
+        );
+      });
+      tx();
+    }
 
     this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }

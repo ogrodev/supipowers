@@ -66,16 +66,16 @@ export function routeToolCall(
   status: ContextModeStatus,
   options: { enforceRouting: boolean; blockHttpCommands: boolean },
 ): BlockResult | undefined {
-  const grepReplacement = getGrepReplacement(status);
+  const searchReplacement = getSearchReplacement(status);
   const shellSearchReplacement = getShellSearchReplacement(status);
   const fetchReplacement = status.tools.ctxFetchAndIndex ? "ctx_fetch_and_index" : null;
   const bashHttpReplacement = getBashHttpReplacement(status);
 
-  // Grep → block only when an active search/shell replacement exists.
-  if (options.enforceRouting && toolName === "grep" && grepReplacement) {
+  // Search → block only when an active search/shell replacement exists.
+  if (options.enforceRouting && toolName === "search" && searchReplacement) {
     return {
       block: true,
-      reason: formatGrepReplacementReason(grepReplacement),
+      reason: formatSearchReplacementReason(searchReplacement),
     };
   }
 
@@ -127,7 +127,7 @@ export function routeToolCall(
   return undefined;
 }
 
-function getGrepReplacement(status: ContextModeStatus): "ctx_search" | "ctx_batch_execute" | "ctx_execute" | null {
+function getSearchReplacement(status: ContextModeStatus): "ctx_search" | "ctx_batch_execute" | "ctx_execute" | null {
   if (status.tools.ctxSearch) return "ctx_search";
   if (status.tools.ctxBatchExecute) return "ctx_batch_execute";
   if (status.tools.ctxExecute) return "ctx_execute";
@@ -146,14 +146,14 @@ function getBashHttpReplacement(status: ContextModeStatus): "ctx_fetch_and_index
   return null;
 }
 
-function formatGrepReplacementReason(replacement: "ctx_search" | "ctx_batch_execute" | "ctx_execute"): string {
+function formatSearchReplacementReason(replacement: "ctx_search" | "ctx_batch_execute" | "ctx_execute"): string {
   if (replacement === "ctx_search") {
-    return 'Use ctx_search(queries: ["<pattern>"]) or ctx_batch_execute instead of Grep. Results are indexed and compressed to save context window.';
+    return 'Use ctx_search(queries: ["<pattern>"]) or ctx_batch_execute instead of Search. Results are indexed and compressed to save context window.';
   }
   if (replacement === "ctx_batch_execute") {
-    return "Use ctx_batch_execute instead of Grep. Results are indexed and compressed to save context window.";
+    return "Use ctx_batch_execute instead of Search. Results are indexed and compressed to save context window.";
   }
-  return 'Use ctx_execute(language: "shell", code: "grep ...") instead of Grep. Results stay in sandbox to save context window.';
+  return 'Use ctx_execute(language: "shell", code: "grep ...") instead of Search. Results stay in sandbox to save context window.';
 }
 
 function formatBashHttpReplacementReason(replacement: "ctx_fetch_and_index" | "ctx_execute"): string {

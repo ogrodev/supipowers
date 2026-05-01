@@ -2,6 +2,7 @@
 import { canonicalToolName } from "./tool-name.js";
 import type { ContextModeProcessorsConfig } from "../types.js";
 import type { ProcessorKey } from "./metrics-store.js";
+import { processorKeyForTool } from "./processor-keys.js";
 import { lookupProcessor } from "./processors/registry.js";
 
 interface ToolResultEventLike {
@@ -29,7 +30,7 @@ const BASH_HEAD_LINES = 5;
 const BASH_TAIL_LINES = 10;
 const READ_HEAD_LINES = 80;
 const READ_TAIL_LINES = 30;
-const GREP_MAX_MATCHES = 10;
+const SEARCH_MAX_MATCHES = 10;
 const FIND_MAX_PATHS = 20;
 
 /**
@@ -40,12 +41,6 @@ const FIND_MAX_PATHS = 20;
  */
 export const OMP_MINIMIZER_FOOTER_RE = /(?:^|\n)\[raw output: artifact:\/\/[a-zA-Z0-9_-]+\]\s*$/;
 
-const LEGACY_PROCESSOR_KEYS: Record<string, ProcessorKey> = {
-  bash: "bash",
-  read: "read",
-  grep: "grep",
-  find: "find",
-};
 
 /** Measure total byte length of text content entries */
 function measureTextBytes(content: Array<{ type: string; text?: string }>): number {
@@ -141,19 +136,19 @@ function compressRead(text: string, input: Record<string, unknown>): string | un
   ].join("\n");
 }
 
-/** Compress grep tool output */
-function compressGrep(text: string): string | undefined {
+/** Compress search tool output */
+function compressSearch(text: string): string | undefined {
   const lines = text.split("\n").filter((l) => l.length > 0);
   const totalMatches = lines.length;
 
-  if (totalMatches <= GREP_MAX_MATCHES) return undefined;
+  if (totalMatches <= SEARCH_MAX_MATCHES) return undefined;
 
-  const kept = lines.slice(0, GREP_MAX_MATCHES);
+  const kept = lines.slice(0, SEARCH_MAX_MATCHES);
   return [
-    `${totalMatches} matches total, showing first ${GREP_MAX_MATCHES}:`,
+    `${totalMatches} matches total, showing first ${SEARCH_MAX_MATCHES}:`,
     "",
     ...kept,
-    `[...compressed: ${totalMatches - GREP_MAX_MATCHES} more matches omitted...]`,
+    `[...compressed: ${totalMatches - SEARCH_MAX_MATCHES} more matches omitted...]`,
   ].join("\n");
 }
 
@@ -180,8 +175,8 @@ export function runEmissionPipeline(
   options: RunEmissionPipelineOptions = {},
 ): PipelineResult {
   const canonicalTool = canonicalToolName(event.toolName);
-  const legacyProcessorKey = LEGACY_PROCESSOR_KEYS[canonicalTool] ?? null;
-  const passthroughProcessorKey: ProcessorKey = legacyProcessorKey === null ? null : "passthrough";
+  const nativeProcessorKey = processorKeyForTool(canonicalTool);
+  const passthroughProcessorKey: ProcessorKey = nativeProcessorKey === null ? null : "passthrough";
 
   // General rules: pass through errors, non-text content, and small outputs.
   if (event.isError) return { result: undefined, processorKey: passthroughProcessorKey };
@@ -222,8 +217,8 @@ export function runEmissionPipeline(
     case "read":
       compressed = compressRead(text, event.input);
       break;
-    case "grep":
-      compressed = compressGrep(text);
+    case "search":
+      compressed = compressSearch(text);
       break;
     case "find":
       compressed = compressFind(text);
@@ -233,7 +228,7 @@ export function runEmissionPipeline(
   }
 
   if (!compressed) return { result: undefined, processorKey: "passthrough" };
-  return { result: wrapText(compressed), processorKey: legacyProcessorKey };
+  return { result: wrapText(compressed), processorKey: nativeProcessorKey };
 }
 
 /** Compress a tool result if it exceeds the threshold */
@@ -248,7 +243,7 @@ export function compressToolResult(
 const SUMMARIZE_PROMPTS: Record<string, string> = {
   bash: "Summarize this command output. Preserve: exit code, key findings, error messages, file paths mentioned. Be concise (under 200 words).",
   read: "Summarize this file content. Preserve: file structure, key exports/functions, notable patterns. Be concise (under 200 words).",
-  grep: "Summarize these search results. Preserve: match count, most relevant matches, file distribution. Be concise (under 200 words).",
+  search: "Summarize these search results. Preserve: match count, most relevant matches, file distribution. Be concise (under 200 words).",
   find: "Summarize these file paths. Preserve: directory structure, file count, key patterns. Be concise (under 200 words).",
 };
 
