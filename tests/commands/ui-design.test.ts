@@ -7,6 +7,7 @@ import { handleUiDesign, type UiDesignCommandDependencies } from "../../src/comm
 import { cancelPlanTracking, isPlanningActive, startPlanTracking } from "../../src/planning/approval-flow.js";
 import { cancelUiDesignTracking, isUiDesignActive, startUiDesignTracking } from "../../src/ui-design/session.js";
 import { BackendUnavailableError } from "../../src/ui-design/backend-adapter.js";
+import { REQUIRED_PENCIL_TOOLS } from "../../src/ui-design/backends/pencil-mcp.js";
 
 let tmpDir: string;
 
@@ -368,11 +369,7 @@ describe("handleUiDesign", () => {
 
   test("wizard offers pencil-mcp as available when Pencil MCP tools are detected", async () => {
     const platform = createPlatform();
-    (platform as any).getActiveTools = mock(() => [
-      "mcp_pencil_batch_design",
-      "mcp_pencil_batch_get",
-      "mcp_pencil_open_document",
-    ]);
+    (platform as any).getActiveTools = mock(() => [...REQUIRED_PENCIL_TOOLS]);
     const state: { offered: string[] | null } = { offered: null };
     const ctx = createContext({
       ui: {
@@ -420,10 +417,7 @@ describe("handleUiDesign", () => {
 
   test("pencil-mcp flow: selects a .pen file, passes penFilePath to getBackend + manifest", async () => {
     const platform = createPlatform();
-    (platform as any).getActiveTools = mock(() => [
-      "mcp_pencil_batch_design",
-      "mcp_pencil_batch_get",
-    ]);
+    (platform as any).getActiveTools = mock(() => [...REQUIRED_PENCIL_TOOLS]);
     // Pre-create a .pen file in the tmp repo so the selector discovers it.
     const penAbs = path.join(tmpDir, "designs", "home.pen");
     fs.mkdirSync(path.dirname(penAbs), { recursive: true });
@@ -478,10 +472,7 @@ describe("handleUiDesign", () => {
 
   test("loadUiDesignPromptAssets receives backend context for pencil sessions", async () => {
     const platform = createPlatform();
-    (platform as any).getActiveTools = mock(() => [
-      "mcp_pencil_batch_design",
-      "mcp_pencil_batch_get",
-    ]);
+    (platform as any).getActiveTools = mock(() => [...REQUIRED_PENCIL_TOOLS]);
     const ctx = createContext({ hasUI: false });
     const loadUiDesignPromptAssets = mock(() => ({}));
     const deps = createDeps({
@@ -531,10 +522,7 @@ describe("handleUiDesign", () => {
 
   test("pencil flow removes the session dir when the user cancels .pen selection", async () => {
     const platform = createPlatform();
-    (platform as any).getActiveTools = mock(() => [
-      "mcp_pencil_batch_design",
-      "mcp_pencil_batch_get",
-    ]);
+    (platform as any).getActiveTools = mock(() => [...REQUIRED_PENCIL_TOOLS]);
     // Pre-create a .pen so the selector would have non-trivial options, but
     // cancel the prompt — we want to exercise the cleanup path.
     fs.mkdirSync(path.join(tmpDir, "designs"), { recursive: true });

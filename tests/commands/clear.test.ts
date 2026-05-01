@@ -11,6 +11,7 @@ import { Database } from "bun:sqlite";
 import { handleClear } from "../../src/commands/clear.js";
 import {
   _resetCache,
+  getCacheStore,
   getSessionId,
   registerContextModeHooks,
 } from "../../src/context-mode/hooks.js";
@@ -28,6 +29,7 @@ let platform: any;
 let ctx: PlatformContext;
 let store: MetricsStore;
 let dbPath: string;
+let cacheStore: NonNullable<ReturnType<typeof getCacheStore>>;
 let notifyMock: ReturnType<typeof mock>;
 let selectMock: ReturnType<typeof mock>;
 let confirmMock: ReturnType<typeof mock> | undefined;
@@ -66,6 +68,7 @@ function setup(opts: { withConfirm?: boolean } = {}): void {
   store = new MetricsStore({ dbPath, projectSlug: "demo" });
   store.init();
   __setMetricsStoreForTest(store);
+  cacheStore = getCacheStore()!;
 
   notifyMock = mock();
   selectMock = mock(async () => null);
@@ -128,10 +131,15 @@ function recordRow(sessionId?: string): void {
   });
 }
 
+function seedCache(sessionId = getSessionId(), text = "cached payload") {
+  return cacheStore.putText({ sessionId, text, sourceTool: "read", sourceHash: `${sessionId}:${text}` });
+}
+
 describe("/supi:clear — pre-deletion summary (Tasks 39, 41, 55)", () => {
   test("summary contains rows, bytes, started, scope sentence, DB path before any prompt", async () => {
     setup();
     recordRow();
+    const cached = seedCache();
     await store.flushPendingForTest();
 
     selectMock.mockImplementation(async () => "Cancel");
@@ -144,14 +152,21 @@ describe("/supi:clear — pre-deletion summary (Tasks 39, 41, 55)", () => {
     expect(summary).toContain("Approx on-disk:");
     expect(summary).toContain("Started:");
     expect(summary).toContain(
-      "Scope: metrics only. Events, knowledge, and cache are not touched.",
+      "Scope: metrics and cache for this session. Events and knowledge are not touched.",
     );
     expect(summary).toContain(`Metrics DB: ${dbPath}`);
+    expect(summary).toContain("1 cache refs in this session.");
+    expect(summary).toContain("Cache payload bytes reclaimable:");
+    expect(summary).toContain(String(cached.compressedBytes));
+    expect(summary).toContain(`Cache DB: ${cacheStore.dbPath}`);
+    expect(summary).toContain(`Cache payloads: ${cacheStore.payloadRoot}`);
   });
 
   test("cancel preserves rows and notifies 'Clear cancelled'", async () => {
     setup();
     recordRow();
+    const cached = seedCache();
+    const payloadPath = path.join(cacheStore.payloadRoot, cached.payloadRelpath);
     await store.flushPendingForTest();
 
     selectMock.mockImplementation(async () => "Cancel");
@@ -164,6 +179,8 @@ describe("/supi:clear — pre-deletion summary (Tasks 39, 41, 55)", () => {
     } finally {
       probe.close();
     }
+    expect(cacheStore.getStats().refCount).toBe(1);
+    expect(fs.existsSync(payloadPath)).toBe(true);
 
     const notifyCalls = (notifyMock as any).mock.calls.map((c: any[]) => c[0]);
     expect(notifyCalls.some((m: string) => m.includes("Clear cancelled"))).toBe(true);
@@ -185,7 +202,7 @@ describe("/supi:clear — confirmation fallback (Task 40)", () => {
     expect(typeof title).toBe("string");
     expect(options).toEqual(["Confirm", "Cancel"]);
     expect(typeof opts.helpText).toBe("string");
-    expect(opts.helpText).toContain("Scope: metrics only");
+    expect(opts.helpText).toContain("Scope: metrics and cache");
   });
 
   test("uses ctx.ui.confirm when present and skips select for the prompt", async () => {
@@ -205,6 +222,8 @@ describe("/supi:clear — accept path (Task 42)", () => {
   test("clearSession deletes rows, resets row_count, stamps last_clear_at, retains meta", async () => {
     setup({ withConfirm: true });
     recordRow();
+    const cached = seedCache();
+    const payloadPath = path.join(cacheStore.payloadRoot, cached.payloadRelpath);
     await store.flushPendingForTest();
 
     confirmMock!.mockImplementation(async () => true);
@@ -212,7 +231,7 @@ describe("/supi:clear — accept path (Task 42)", () => {
 
     const probe = new Database(dbPath);
     try {
-      const { count } = probe.prepare(`SELECT COUNT(*) AS count FROM metrics`).get() as { count: number };
+      const { count } = probe.prepare(`SELECT COUNT(*) AS count FROM metrics WHERE processor <> 'cache-clear'`).get() as { count: number };
       expect(count).toBe(0);
       const meta = probe.prepare(
         `SELECT row_count, last_clear_at, started_at FROM session_meta_metrics WHERE session_id = ?`,
@@ -220,9 +239,54 @@ describe("/supi:clear — accept path (Task 42)", () => {
       expect(meta.row_count).toBe(0);
       expect(meta.last_clear_at).toBeGreaterThan(0);
       expect(meta.started_at).toBeGreaterThan(0); // retained
+      expect(cacheStore.getEntryMeta(cached.handle)).toBeNull();
+      expect(fs.existsSync(payloadPath)).toBe(false);
     } finally {
       probe.close();
     }
+  });
+
+  test("clearSession records a best-effort L3 cache-clear metric row", async () => {
+    setup({ withConfirm: true });
+    recordRow();
+    await store.flushPendingForTest();
+
+    confirmMock!.mockImplementation(async () => true);
+    await run();
+    await store.flushPendingForTest();
+
+    const probe = new Database(dbPath);
+    try {
+      const row = probe.prepare(`SELECT layer, tool, processor, cache_hit FROM metrics WHERE processor = 'cache-clear'`).get() as {
+        layer: string;
+        tool: string;
+        processor: string;
+        cache_hit: number;
+      } | undefined;
+      expect(row).toEqual({ layer: "L3", tool: "(system)", processor: "cache-clear", cache_hit: 0 });
+    } finally {
+      probe.close();
+    }
+  });
+
+  test("clearSession retains shared payloads still referenced by another session", async () => {
+    setup({ withConfirm: true });
+    recordRow();
+    const shared = seedCache(getSessionId(), "shared cache");
+    cacheStore.putText({ sessionId: "other-session", text: "shared cache", sourceTool: "read", sourceHash: "other-shared" });
+    const activeOnly = seedCache(getSessionId(), "active only cache");
+    const sharedPath = path.join(cacheStore.payloadRoot, shared.payloadRelpath);
+    const activeOnlyPath = path.join(cacheStore.payloadRoot, activeOnly.payloadRelpath);
+    await store.flushPendingForTest();
+
+    confirmMock!.mockImplementation(async () => true);
+    await run();
+
+    expect(cacheStore.getEntryMeta(shared.handle)).not.toBeNull();
+    expect(fs.existsSync(sharedPath)).toBe(true);
+    expect(cacheStore.getEntryMeta(activeOnly.handle)).toBeNull();
+    expect(fs.existsSync(activeOnlyPath)).toBe(false);
+    expect(cacheStore.getStats().refCount).toBe(1);
   });
 });
 
@@ -231,6 +295,8 @@ describe("/supi:clear all — project-wide (Task 43)", () => {
     setup();
     recordRow();
     recordRow("session-x");
+    seedCache(getSessionId(), "project cache a");
+    seedCache("session-x", "project cache b");
     await store.flushPendingForTest();
 
     // First select (project-wide confirm) → Confirm; second select (session list) → Confirm
@@ -238,9 +304,15 @@ describe("/supi:clear all — project-wide (Task 43)", () => {
     selectMock.mockImplementation(async () => (i++ === 0 ? "Confirm" : "Confirm"));
     await run("all");
 
+    const projectSummary = (notifyMock as any).mock.calls[0][0];
+    expect(projectSummary).toContain("Project-wide clear:");
+    expect(projectSummary).toContain("2 cache refs project-wide across 2 sessions.");
+    expect(projectSummary).toContain(`Cache DB: ${cacheStore.dbPath}`);
+    expect(projectSummary).toContain(`Cache payloads: ${cacheStore.payloadRoot}`);
+
     const probe = new Database(dbPath);
     try {
-      const { count } = probe.prepare(`SELECT COUNT(*) AS count FROM metrics`).get() as { count: number };
+      const { count } = probe.prepare(`SELECT COUNT(*) AS count FROM metrics WHERE processor <> 'cache-clear'`).get() as { count: number };
       expect(count).toBe(0);
       const rows = probe.prepare(
         `SELECT session_id, row_count, started_at FROM session_meta_metrics ORDER BY session_id`,
@@ -254,6 +326,13 @@ describe("/supi:clear all — project-wide (Task 43)", () => {
         .prepare(`SELECT last_clear_all_at FROM project_meta_metrics WHERE project_slug = 'demo'`)
         .get() as { last_clear_all_at: number };
       expect(project.last_clear_all_at).toBeGreaterThan(0);
+      expect(cacheStore.getStats()).toEqual({
+        entryCount: 0,
+        refCount: 0,
+        uncompressedBytes: 0,
+        compressedBytes: 0,
+        payloadBytes: 0,
+      });
     } finally {
       probe.close();
     }
@@ -263,6 +342,8 @@ describe("/supi:clear all — project-wide (Task 43)", () => {
     setup();
     recordRow();
     recordRow("session-x");
+    const cached = seedCache("session-x", "cancel project cache");
+    const payloadPath = path.join(cacheStore.payloadRoot, cached.payloadRelpath);
     await store.flushPendingForTest();
 
     // First select Confirm, second select Cancel.
@@ -274,6 +355,8 @@ describe("/supi:clear all — project-wide (Task 43)", () => {
     try {
       const { count } = probe.prepare(`SELECT COUNT(*) AS count FROM metrics`).get() as { count: number };
       expect(count).toBe(2);
+      expect(cacheStore.getStats().refCount).toBe(1);
+      expect(fs.existsSync(payloadPath)).toBe(true);
     } finally {
       probe.close();
     }
@@ -284,6 +367,8 @@ describe("/supi:clear --dry-run (Task 44)", () => {
   test("shows the summary, prompts nothing, deletes nothing", async () => {
     setup();
     recordRow();
+    const cached = seedCache();
+    const payloadPath = path.join(cacheStore.payloadRoot, cached.payloadRelpath);
     await store.flushPendingForTest();
 
     await run("--dry-run");
@@ -296,6 +381,8 @@ describe("/supi:clear --dry-run (Task 44)", () => {
     try {
       const { count } = probe.prepare(`SELECT COUNT(*) AS count FROM metrics`).get() as { count: number };
       expect(count).toBe(1);
+      expect(cacheStore.getStats().refCount).toBe(1);
+      expect(fs.existsSync(payloadPath)).toBe(true);
     } finally {
       probe.close();
     }
@@ -306,6 +393,8 @@ describe("/supi:clear with !ctx.hasUI (Task 45)", () => {
   test("returns silently and does not touch the DB", async () => {
     setup();
     recordRow();
+    const cached = seedCache();
+    const payloadPath = path.join(cacheStore.payloadRoot, cached.payloadRelpath);
     await store.flushPendingForTest();
 
     ctx = { ...ctx, hasUI: false };
@@ -318,6 +407,8 @@ describe("/supi:clear with !ctx.hasUI (Task 45)", () => {
     try {
       const { count } = probe.prepare(`SELECT COUNT(*) AS count FROM metrics`).get() as { count: number };
       expect(count).toBe(1);
+      expect(cacheStore.getStats().refCount).toBe(1);
+      expect(fs.existsSync(payloadPath)).toBe(true);
     } finally {
       probe.close();
     }

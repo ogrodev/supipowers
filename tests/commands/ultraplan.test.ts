@@ -8,6 +8,7 @@ import {
   getUltraplanAuthoredJsonPath,
   getUltraplanBatchRunPath,
   getUltraplanIndexPath,
+  getUltraplanAuthoringIntakePath,
   getUltraplanManifestPath,
   getUltraplanMigrationRecordPath,
   getUltraplanSessionDir,
@@ -293,8 +294,8 @@ function updateAuthored(
   fs.writeFileSync(authoredPath, `${JSON.stringify(authored, null, 2)}\n`);
 }
 
-describe("handleUltraplan conversational authoring", () => {
-  test("undefined args starts agent-driven authoring without TUI prompts", async () => {
+describe("handleUltraplan bare-entry (multi-stage authoring pipeline)", () => {
+  test("undefined args opens TUI input and exits cleanly when input is null", async () => {
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
     const sendMessage = mock(() => {});
@@ -304,17 +305,39 @@ describe("handleUltraplan conversational authoring", () => {
 
     await handleUltraplan(platform, ctx, undefined);
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    const [message, options] = sendMessage.mock.calls[0] as any[];
-    expect(message.customType).toBe("supi-ultraplan-author");
-    expect(message.display).toBe("none");
-    expect(String(message.content[0].text)).toContain("No initial prompt was provided");
-    expect(options).toEqual({ deliverAs: "steer", triggerTurn: true });
-    expect(ctx.input).not.toHaveBeenCalled();
-    expect(ctx.select).not.toHaveBeenCalled();
+    // Bare entry no longer steers the agent; it opens TUI input.
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(ctx.input).toHaveBeenCalled();
   });
 
-  test("hasUI:false still starts chat authoring instead of warning", async () => {
+  test("non-subcommand args start authoring with the inline seed prompt", async () => {
+    const paths = createTestPaths(tmpDir);
+    const cwd = createTestRepo(tmpDir).repoRoot;
+    let capturedAssignment = "";
+    const createAgentSession = mock(async (opts: any) => ({
+      prompt: mock(async (assignment: string) => {
+        capturedAssignment = assignment;
+        const sessionId = String(opts.agentId).replace("ultraplan-authoring-intake-", "");
+        const intakePath = getUltraplanAuthoringIntakePath(paths, cwd, sessionId);
+        fs.mkdirSync(path.dirname(intakePath), { recursive: true });
+        fs.writeFileSync(intakePath, `${JSON.stringify({ rawUserNotes: "build checkout flow" })}\n`);
+      }),
+      dispose: mock(async () => {}),
+    }));
+    const platform = { paths, sendMessage: mock(() => {}), createAgentSession } as any;
+    const ctx = createUltraplanCtx({ hasUI: true });
+    ctx.cwd = cwd;
+    ctx.confirm = mock(async () => false);
+    ctx.ui.confirm = ctx.confirm;
+
+    await handleUltraplan(platform, ctx, "--manual build checkout flow");
+
+    expect(ctx.input).not.toHaveBeenCalled();
+    expect(createAgentSession).toHaveBeenCalledTimes(1);
+    expect(capturedAssignment).toContain("build checkout flow");
+  });
+
+  test("hasUI:false warns and does not open input", async () => {
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
     const sendMessage = mock(() => {});
@@ -324,12 +347,12 @@ describe("handleUltraplan conversational authoring", () => {
 
     await handleUltraplan(platform, ctx, undefined);
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
     const warnings = ctx.notify.mock.calls.filter((c: unknown[]) => c[1] === "warning");
-    expect(warnings).toHaveLength(0);
+    expect(warnings.length).toBeGreaterThan(0);
   });
 
-  test("non-subcommand args are treated as the initial user prompt", async () => {
+  test("`quick` subcommand still steers the legacy single-shot path with deprecation warning", async () => {
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
     const sendMessage = mock(() => {});
@@ -337,31 +360,17 @@ describe("handleUltraplan conversational authoring", () => {
     const ctx = createUltraplanCtx({ hasUI: true });
     ctx.cwd = cwd;
 
-    await handleUltraplan(platform, ctx, "redesign checkout for mobile");
+    await handleUltraplan(platform, ctx, "quick redesign checkout for mobile");
 
+    // Legacy path still fires the steered chat prompt.
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [message] = sendMessage.mock.calls[0] as any[];
     const prompt = String(message.content[0].text);
-    expect(prompt).toContain("Initial user prompt (verbatim)");
     expect(prompt).toContain("redesign checkout for mobile");
     expect(prompt).toContain("ultraplan_create");
-    expect(ctx.input).not.toHaveBeenCalled();
-  });
-
-  test("empty-string args routes identically to undefined", async () => {
-    const paths = createTestPaths(tmpDir);
-    const cwd = createTestRepo(tmpDir).repoRoot;
-    const sendMessage = mock(() => {});
-    const platform = { paths, sendMessage } as any;
-    const ctx = createUltraplanCtx({ hasUI: true, inputResponses: [null] });
-    ctx.cwd = cwd;
-
-    await handleUltraplan(platform, ctx, "");
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    const [message] = sendMessage.mock.calls[0] as any[];
-    expect(String(message.content[0].text)).toContain("No initial prompt was provided");
-    expect(ctx.input).not.toHaveBeenCalled();
+    // Deprecation warning fires.
+    const warnings = ctx.notify.mock.calls.filter((c: unknown[]) => String(c[0]).includes("deprecated"));
+    expect(warnings.length).toBeGreaterThan(0);
   });
 });
 
@@ -382,8 +391,7 @@ describe("handleUltraplan regressions", () => {
     expect(ctx.select).not.toHaveBeenCalled();
   });
 
-  test("subcommand-completions list is unchanged (run, status, next)", async () => {
-    // Load the command registration and verify the SUBCOMMANDS list shape via the registered handler
+  test("subcommand-completions includes the multi-stage authoring subcommands plus run/status/next", async () => {
     const calls: Array<{ name: string; opts: any }> = [];
     const platform = {
       paths: createTestPaths(tmpDir),
@@ -394,11 +402,15 @@ describe("handleUltraplan regressions", () => {
     const registered = calls.find((c) => c.name === "supi:ultraplan");
     expect(registered).toBeDefined();
     const completions = registered!.opts.getArgumentCompletions("");
-    expect(completions).toEqual([
-      { value: "run ", label: "run", description: "Run a session or start/resume a batch" },
-      { value: "status ", label: "status", description: "Inspect status for an existing ultraplan session" },
-      { value: "next ", label: "next", description: "Recommend the next ultraplan session to run" }
-    ]);
+    const labels = completions.map((c: any) => c.label);
+    // New authoring subcommands MUST be present.
+    for (const name of ["plan", "discover", "research", "synthesize", "review", "approve", "resume", "quick"]) {
+      expect(labels).toContain(name);
+    }
+    // Legacy subcommands MUST still be present.
+    for (const name of ["run", "status", "next"]) {
+      expect(labels).toContain(name);
+    }
   });
 });
 
@@ -1674,23 +1686,22 @@ describe("handleUltraplan run command", () => {
 });
 
 describe("handleUltraplan end-to-end integration", () => {
-  test("authoring is delegated to the active agent instead of persisting synchronously", async () => {
+  test("bare entry on a fresh repo opens TUI input and creates no index when user cancels", async () => {
     const { loadUltraPlanIndex } = await import("../../src/ultraplan/storage.js");
     const paths = createTestPaths(tmpDir);
     const cwd = createTestRepo(tmpDir).repoRoot;
     const sendMessage = mock(() => {});
     const platform = { paths, sendMessage } as any;
-    const ctx = createUltraplanCtx({ hasUI: true, inputResponses: ["test", "a session"] });
+    // User cancels the TUI input \u2014 returns null \u2014 so no session is created.
+    const ctx = createUltraplanCtx({ hasUI: true, inputResponses: [null] });
     ctx.cwd = cwd;
 
     await handleUltraplan(platform, ctx, undefined);
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(ctx.input).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(ctx.input).toHaveBeenCalled();
     const indexResult = loadUltraPlanIndex(paths, cwd);
+    // No session was created; the index is missing.
     expect(indexResult.ok).toBe(false);
-
-    const infos = (ctx.notify.mock.calls as unknown[][]).filter((call: unknown[]) => call[1] === "info");
-    expect(String(infos[0]?.[0] ?? "")).toContain("UltraPlan authoring started");
   });
 });
