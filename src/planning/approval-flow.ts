@@ -84,55 +84,94 @@ export function getPlanningDebugLogger(): DebugLogger | null {
 }
 
 /**
- * Mirrors OMP 14.4.0's flat-ops `todo_write` payload shape just enough to
- * hand the agent a ready-to-execute payload after plan approval.
+ * Mirrors OMP 14.5.11+'s `todo_write` payload shape just enough to hand the
+ * agent a ready-to-execute payload after plan approval.
  *
  * The canonical schema lives in OMP \u2014 keep this type local; we only construct
- * the payload to embed in a prompt string.
+ * the payload to embed in a prompt string. Task identity is the task content
+ * verbatim; later progress updates (`start`/`done`/`note`) refer to that exact
+ * string, not synthetic ids.
  */
 type TodoWriteOp =
   | {
-      op: "replace";
-      phases: Array<{ name: string; tasks: Array<{ content: string }> }>;
+      op: "init";
+      list: Array<{ phase: string; items: string[] }>;
     }
   | { op: "note"; task: string; text: string };
 
 /** Cap individual task labels so the embedded payload stays bounded. */
 const TODO_WRITE_TASK_LABEL_MAX_CHARS = 200;
 
+/**
+ * Single phase name supipowers' planner emits today. Imported into the
+ * execution prompt so the prose stays in lock-step with the JSON payload \u2014
+ * change here and `buildExecutionPrompt` follows automatically.
+ */
+const PLAN_PHASE_NAME = "Implementation";
+
 function truncateTaskLabel(label: string): string {
   if (label.length <= TODO_WRITE_TASK_LABEL_MAX_CHARS) return label;
   return `${label.slice(0, TODO_WRITE_TASK_LABEL_MAX_CHARS - 1).trimEnd()}\u2026`;
+}
+
+function appendTaskLabelOrdinal(label: string, ordinal: number): string {
+  const suffix = ` (${ordinal})`;
+  if (label.length + suffix.length <= TODO_WRITE_TASK_LABEL_MAX_CHARS) {
+    return `${label}${suffix}`;
+  }
+  const prefixMax = TODO_WRITE_TASK_LABEL_MAX_CHARS - suffix.length - 1;
+  return `${label.slice(0, prefixMax).trimEnd()}\u2026${suffix}`;
+}
+
+function uniqueTaskLabels(names: string[]): string[] {
+  const used = new Set<string>();
+  const nextOrdinalByBase = new Map<string, number>();
+  return names.map((name) => {
+    const base = truncateTaskLabel(name);
+    let label = base;
+    if (used.has(label)) {
+      let ordinal = nextOrdinalByBase.get(base) ?? 2;
+      do {
+        label = appendTaskLabelOrdinal(base, ordinal);
+        ordinal += 1;
+      } while (used.has(label));
+      nextOrdinalByBase.set(base, ordinal);
+    } else {
+      nextOrdinalByBase.set(base, 2);
+    }
+    used.add(label);
+    return label;
+  });
 }
 
 /**
  * Build the canonical `todo_write` ops payload from a parsed plan.
  *
  * Empty plans return `{ ops: [] }` so callers can skip emit cleanly.
- * Non-empty plans always start with a single `replace` op containing one phase
- * (`I. Implementation`) with one task per `plan.tasks` entry. Tasks that carry
- * acceptance criteria get a follow-up `note` op so the criteria show up when the
- * task becomes `in_progress`.
+ * Non-empty plans always start with a single `init` op containing one phase
+ * (`Implementation`) whose `items` is one task content string per `plan.tasks`
+ * entry. Task names are truncated and de-duplicated before they become todo
+ * identities. Tasks that carry acceptance criteria get a follow-up `note` op
+ * whose `task` field is the exact item label, keeping note targets in lock-step
  */
 export function buildTodoWriteOpsForPlan(plan: Plan): { ops: TodoWriteOp[] } {
   if (plan.tasks.length === 0) return { ops: [] };
 
-  const tasks = plan.tasks.map((task) => ({
-    content: truncateTaskLabel(task.name),
-  }));
+  const items = uniqueTaskLabels(plan.tasks.map((task) => task.name));
 
   const ops: TodoWriteOp[] = [
     {
-      op: "replace",
-      phases: [{ name: "I. Implementation", tasks }],
+      op: "init",
+      list: [{ phase: PLAN_PHASE_NAME, items }],
     },
   ];
 
   for (const [index, task] of plan.tasks.entries()) {
     const trimmed = task.criteria.trim();
     if (!trimmed) continue;
-    // `todo_write` replace assigns task ids by replacement order (`task-1`, `task-2`, ...).
-    ops.push({ op: "note", task: `task-${index + 1}`, text: trimmed });
+    // Note targets MUST equal the item label verbatim \u2014 task identity is the
+    // task content string, never a synthetic id.
+    ops.push({ op: "note", task: items[index], text: trimmed });
   }
 
   return { ops };
@@ -155,6 +194,10 @@ function buildExecutionPrompt(
   const todoBlock: string[] = [];
   if (plan && plan.tasks.length > 0) {
     const payload = buildTodoWriteOpsForPlan(plan);
+    const initOp = payload.ops.find(
+      (op): op is Extract<TodoWriteOp, { op: "init" }> => op.op === "init",
+    );
+    const phaseName = initOp?.list[0]?.phase ?? PLAN_PHASE_NAME;
     todoBlock.push(
       "",
       "## Initialize todo tracker",
@@ -165,7 +208,7 @@ function buildExecutionPrompt(
       JSON.stringify(payload, null, 2),
       "```",
       "",
-      "After that initial call, mark the first task `in_progress` and proceed.",
+      `Task identity is the task content verbatim. Later progress updates (\`start\`, \`done\`, \`note\`) MUST pass \`task\` equal to the exact item string above; phase updates MUST pass \`phase: "${phaseName}"\`. Mark the first task \`in_progress\` and proceed.`,
     );
   }
 
@@ -183,8 +226,6 @@ function buildExecutionPrompt(
     "<instruction>",
     `You **MUST** execute this plan step by step from \`${planPath}\`.`,
     "You **MUST** verify each step before proceeding to the next.",
-    "Before execution, you **MUST** initialize todo tracking with the task list.",
-    "After each completed step, immediately update progress so it stays visible.",
     "</instruction>",
     ...todoBlock,
     "",
