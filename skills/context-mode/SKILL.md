@@ -16,6 +16,7 @@ Pick the highest-priority tool that fits the task:
 |----------|------|---------|
 | 1 — GATHER | `ctx_batch_execute(commands, queries)` | Primary tool. Runs all commands, auto-indexes, returns search results. ONE call replaces 30+ individual calls. |
 | 2 — FOLLOW-UP | `ctx_search(queries: ["q1", "q2", ...])` | Query already-indexed content. Pass ALL questions as array in ONE call. |
+| 2.5 — CACHE | `ctx_open_cached(handle, offset?, limit?)` | Open `cache://<sha>` handles when this tool is active. Returns bounded slices only. |
 | 3 — PROCESSING | `ctx_execute(language, code)` / `ctx_execute_file(path, language, code)` | Sandbox execution. Only stdout enters context. |
 | 4 — WEB | `ctx_fetch_and_index(url, source)` then `ctx_search(queries)` | Fetch, chunk, index, query. Raw HTML never enters context. |
 | 5 — INDEX | `ctx_index(content, source)` | Store content in FTS5 knowledge base for later search. |
@@ -29,14 +30,14 @@ Blocked commands are intercepted only when their replacement `ctx_*` tool is act
 | `curl` / `wget` in Bash | `ctx_fetch_and_index(url, source)` or `ctx_execute` with `fetch()` |
 | Inline HTTP (`fetch('http`, `requests.get(`, etc.) in Bash | `ctx_execute(language, code)` — only stdout enters context |
 | WebFetch / Fetch tool | `ctx_fetch_and_index(url, source)` then `ctx_search(queries)` |
-| Grep tool | `ctx_search(queries)`, `ctx_batch_execute(commands, queries)`, or `ctx_execute(language: "shell", code: "grep ...")` |
+| Search tool | `ctx_search(queries)`, `ctx_batch_execute(commands, queries)`, or `ctx_execute(language: "shell", code: "grep ...")` |
 | Find / Glob tool | `ctx_execute(language: "shell", code: "find ...")` or `ctx_batch_execute(commands, queries)` |
 
-### Example: routing a grep call
+### Example: routing a search call
 
 ```
 // WRONG — blocked, returns error
-grep(pattern: "TODO", path: "src/")
+search(pattern: "TODO", path: "src/")
 
 // CORRECT — runs in sandbox, only printed summary enters context
 ctx_execute(language: "shell", code: "grep -rn TODO src/")
@@ -66,6 +67,10 @@ Reads are never blocked — OMP's native open/read tool preserves hashline ancho
 
 For analysis-only reads where anchors are not needed, prefer `ctx_execute_file(path, language, code)` — only your printed summary enters context.
 
+### Cache handles
+
+When a prompt or prior output contains a `cache://<sha>` handle, open it with `ctx_open_cached(handle, offset?, limit?)` only if `ctx_open_cached` is active in the current tool catalog. Use bounded offsets/limits for follow-up reads; do not assume cached handles can be opened when the tool is inactive.
+
 ## Runtime Routing Guidance
 
 The injected prompt is a compact, active-aware summary generated from the current active tool list. This static file is reference documentation; it is not injected wholesale.
@@ -84,7 +89,7 @@ The injected prompt is a compact, active-aware summary generated from the curren
 
 ## Checklist
 
-- [ ] Used tool hierarchy (batch_execute > search > execute > fetch) — not raw Bash/Grep/Find
+- [ ] Used tool hierarchy (batch_execute > search > execute > fetch) — not raw Bash/Search/Find
 - [ ] No blocked tool calls attempted
 - [ ] Artifacts written to files, not returned inline
 - [ ] Source labels are descriptive for later search
