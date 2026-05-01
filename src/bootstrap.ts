@@ -42,6 +42,7 @@ import {
 } from "./ui-design/session.js";
 import { registerUltraPlanRuntimeTools } from "./ultraplan/execution/runtime-tools.js";
 import { registerUltraPlanAuthoringTool } from "./ultraplan/authoring-tool.js";
+import { registerUltraPlanAuthoringPipelineTools } from "./ultraplan/authoring/authoring-tools.js";
 import { registerActiveToolController } from "./tool-catalog/active-tool-controller.js";
 
 // TUI-only commands — intercepted at the input level to prevent
@@ -104,6 +105,7 @@ export function bootstrap(platform: Platform): void {
 
   registerUltraPlanRuntimeTools(platform);
   registerUltraPlanAuthoringTool(platform);
+  registerUltraPlanAuthoringPipelineTools(platform);
 
   // Register plan approval flow (agent_end hook for plan approval UI)
   registerPlanApprovalHook(platform);

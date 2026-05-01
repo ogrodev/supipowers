@@ -62,8 +62,23 @@ import { resolveSessionMigration } from "../ultraplan/runtime/migration.js";
 import { runUltraPlanSession } from "../ultraplan/execution/session-runner.js";
 import { detectBaseBranch } from "../git/base-branch.js";
 import { resolveRepoIdentityRootFromFs, resolveRepoRoot } from "../workspace/repo-root.js";
+import {
+  driveAuthoringPipeline,
+  handleBareEntry as handleAuthoringBareEntry,
+  handlePlan,
+  handleResume,
+  handleStageSubcommand,
+} from "../ultraplan/authoring/command-handlers.js";
 
 const SUBCOMMANDS = [
+  { name: "plan", description: "Start a new multi-stage authoring pipeline (default flow)" },
+  { name: "discover", description: "Run/advance the discover stage of an authoring session" },
+  { name: "research", description: "Run/advance the research stage of an authoring session" },
+  { name: "synthesize", description: "Run/advance the synthesize stage of an authoring session" },
+  { name: "review", description: "Run/advance the review stage of an authoring session" },
+  { name: "approve", description: "Promote an approved draft to the canonical session" },
+  { name: "resume", description: "Resume an in-flight authoring session" },
+  { name: "quick", description: "Legacy single-shot authoring (deprecated; removed next release)" },
   { name: "run", description: "Run a session or start/resume a batch" },
   { name: "status", description: "Inspect status for an existing ultraplan session" },
   { name: "next", description: "Recommend the next ultraplan session to run" },
@@ -1356,9 +1371,45 @@ async function handleNext(platform: Platform, ctx: any): Promise<void> {
 export async function handleUltraplan(platform: Platform, ctx: any, args?: string): Promise<void> {
   const subcommand = parseUltraplanSubcommand(args);
 
+  // Strip the subcommand from args before forwarding so handlers see only their own positional args.
+  const subcommandArgs = args ? args.replace(/^\s*\S+\s*/, "").trim() : "";
+
   switch (subcommand) {
     case null:
-      await handleAuthoring(platform, ctx, args);
+      if (args?.trim()) {
+        await handlePlan(platform, ctx, args);
+      } else {
+        await handleAuthoringBareEntry({ platform, ctx });
+      }
+      return;
+    case "plan":
+      await handlePlan(platform, ctx, subcommandArgs);
+      return;
+    case "discover":
+      await handleStageSubcommand("discover", platform, ctx, subcommandArgs);
+      return;
+    case "research":
+      await handleStageSubcommand("research", platform, ctx, subcommandArgs);
+      return;
+    case "synthesize":
+      await handleStageSubcommand("synthesize", platform, ctx, subcommandArgs);
+      return;
+    case "review":
+      await handleStageSubcommand("review", platform, ctx, subcommandArgs);
+      return;
+    case "approve":
+      await handleStageSubcommand("approve", platform, ctx, subcommandArgs);
+      return;
+    case "resume":
+      await handleResume(platform, ctx, subcommandArgs);
+      return;
+    case "quick":
+      notifyWarning(
+        ctx,
+        "/supi:ultraplan quick is deprecated",
+        "This single-shot path will be removed next release. Prefer /supi:ultraplan or /supi:ultraplan plan.",
+      );
+      await handleAuthoring(platform, ctx, subcommandArgs);
       return;
     case "run":
       await handleRun(platform, ctx, args);
@@ -1369,7 +1420,7 @@ export async function handleUltraplan(platform: Platform, ctx: any, args?: strin
     case "next":
       await handleNext(platform, ctx);
       return;
-}
+  }
 }
 
 function buildUltraPlanAuthoringPrompt(initialRequest: string): string {

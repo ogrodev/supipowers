@@ -16,6 +16,7 @@ import {
 } from "../context/savings.js";
 import { getMetricsStore, getSessionId } from "../context-mode/hooks.js";
 import { getProjectStateDir, getProjectStatePath } from "../workspace/state-paths.js";
+import { openInEditor } from "../utils/editor.js";
 
 const REPORT_FILE = ".omp-context-breakdown.md";
 
@@ -138,21 +139,5 @@ function writeReport(cwd: string, content: string): string {
     const fallback = join(tmpdir(), REPORT_FILE);
     writeFileSync(fallback, content, "utf-8");
     return fallback;
-  }
-}
-
-/** Open a file in the user's preferred editor */
-async function openInEditor(platform: Platform, filePath: string): Promise<void> {
-  const editor = process.env.VISUAL || process.env.EDITOR;
-  try {
-    if (editor) {
-      await platform.exec(editor, [filePath]);
-    } else {
-      const cmd = process.platform === "darwin" ? "open"
-        : process.platform === "win32" ? "start" : "xdg-open";
-      await platform.exec(cmd, [filePath]);
-    }
-  } catch {
-    // Editor open failed — non-fatal, file was still written
   }
 }
