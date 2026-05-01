@@ -932,6 +932,15 @@ export interface UltraPlanManifest {
   reviews: UltraPlanManifestReviewReference[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * Multi-stage authoring pipeline state. Present only while a session is being authored
+   * via the GSD-style pipeline (stage "approved" or transitioned to `state: "ready"` via the
+   * legacy single-shot `ultraplan_create` tool leaves this field absent).
+   *
+   * Existing manifests written before the multi-stage pipeline shipped will not have this
+   * field, and the schema treats it as optional.
+   */
+  authoring?: UltraPlanAuthoringState;
 }
 
 export interface UltraPlanIndexEntry {
@@ -943,6 +952,13 @@ export interface UltraPlanIndexEntry {
   updatedAt: string;
   cursor: UltraPlanCursor | null;
   idleReason: string | null;
+  /**
+   * Authoring stage for sessions that are still in the multi-stage pipeline. Optional —
+   * absent for sessions authored via the legacy `ultraplan_create` path or for sessions
+   * already promoted to `state: "ready"`. Used by the picker to surface in-flight authoring
+   * sessions ahead of executable ones.
+   */
+  authoringStage?: UltraPlanAuthoringStage | null;
 }
 
 export interface UltraPlanIndex {
@@ -974,6 +990,151 @@ export interface UltraPlanSessionSummary {
   stacks: UltraPlanManifestStackSummary[];
   reviews: UltraPlanManifestReviewReference[];
 }
+
+// ---------------------------------------------------------------------------
+// UltraPlan multi-stage authoring pipeline (GSD-style)
+//
+// These types describe the state captured under `<session>/authoring/` while a
+// new session is being shaped through the intake \u2192 scout \u2192 discover \u2192 research \u2192
+// synthesize \u2192 review \u2192 approve pipeline. Once a session is approved, the
+// manifest's top-level `state` flips to "ready" and the runtime treats the session
+// as ordinary.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pipeline stage identifier. The order is meaningful \u2014 stages execute strictly in this
+ * sequence and the reducer only ever advances one step at a time.
+ *
+ * `revise` is a sub-stage of review that re-spawns the planner with consolidated findings;
+ * its presence is signalled by `iteration > 1`, not by a distinct stage transition.
+ */
+export type UltraPlanAuthoringStage =
+  | "intake"
+  | "scout"
+  | "discover"
+  | "research"
+  | "synthesize"
+  | "review"
+  | "approve";
+
+/** Operational status of the current stage. */
+export type UltraPlanAuthoringStageStatus =
+  | "pending"
+  | "running"
+  | "blocked"
+  | "awaiting-user"
+  | "done";
+
+/** Authoring slot identifier (parallel namespace to execution slots). */
+export type UltraPlanAuthoringSlotName =
+  | "intake"
+  | "scout"
+  | "discoverer"
+  | "researcher"
+  | "planner"
+  | "structure-checker"
+  | "scope-checker"
+  | "tdd-checker";
+
+/** Pipeline mode: how aggressively the pipeline gates on user approval. */
+export type UltraPlanAuthoringPipelineMode =
+  | "single-shot"   // legacy quick path (ultraplan_create)
+  | "multi-stage";  // default GSD-style pipeline
+
+/** Severity of a finding raised by a plan-checker against a draft. */
+export type UltraPlanAuthoringFindingSeverity = "BLOCKER" | "WARNING";
+
+/** Which checker raised a finding. */
+export type UltraPlanAuthoringFindingSource =
+  | "structure-checker"
+  | "scope-checker"
+  | "tdd-checker";
+
+/**
+ * One item raised against a draft during REVIEW. Multiple findings consolidate into one
+ * `findings.json` per iteration.
+ */
+export interface UltraPlanAuthoringFinding {
+  id: string;
+  severity: UltraPlanAuthoringFindingSeverity;
+  source: UltraPlanAuthoringFindingSource;
+  /** Where the finding applies; null when it is session-wide. */
+  target: {
+    stack: UltraPlanStackId | null;
+    domainId: string | null;
+    scenarioId: string | null;
+  };
+  /** Human-readable summary, presented to the user and to the revising planner. */
+  message: string;
+  /** Concrete recommendation for fixing the issue. */
+  recommendation: string;
+  recordedAt: string;
+}
+
+/**
+ * Block of findings persisted to `drafts/iteration-N/findings.json`. The reducer reads it
+ * to decide whether to converge, revise, or escalate.
+ */
+export interface UltraPlanAuthoringFindingsArtifact {
+  iteration: number;
+  draftRef: string;
+  recordedAt: string;
+  findings: UltraPlanAuthoringFinding[];
+}
+
+/**
+ * Per-stage artifact references. Filenames are relative to `<session>/authoring/`.
+ *
+ * `research` is an array of stack-keyed entries because researchers fan out per applicable
+ * stack. `draft` and `findings` reference iteration-numbered files; only the latest is
+ * retained on this struct (older iterations live on disk for forensics).
+ */
+export interface UltraPlanAuthoringArtifactRefs {
+  intake?: string;
+  scout?: string;
+  discuss?: string;
+  deferredIdeas?: string;
+  research?: { stack: UltraPlanStackId; path: string }[];
+  researchSummary?: string;
+  draft?: string;
+  draftMarkdown?: string;
+  findings?: string;
+}
+
+/**
+ * The `authoring` block embedded inside `manifest.json` for sessions that have not yet been
+ * approved. Once a session reaches APPROVE and is promoted, this block is cleared and the
+ * top-level `state` becomes `"ready"`.
+ */
+export interface UltraPlanAuthoringState {
+  pipeline: UltraPlanAuthoringPipelineMode;
+  stage: UltraPlanAuthoringStage;
+  stageStatus: UltraPlanAuthoringStageStatus;
+  /** Iteration counter for the REVIEW \u2194 SYNTHESIZE revision loop. 1-indexed. */
+  iteration: number;
+  /** How many times the user has re-entered the loop after a stall warning. */
+  stallReentryCount: number;
+  artifacts: UltraPlanAuthoringArtifactRefs;
+  blocker: UltraPlanBlocker | null;
+  startedAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Append-only event written to `<session>/authoring/pipeline-log.jsonl` whenever the pipeline
+ * transitions. Mirrors `execution-log.jsonl` so the same reader can consume both streams.
+ */
+export interface UltraPlanAuthoringPipelineEvent {
+  recordedAt: string;
+  stage: UltraPlanAuthoringStage;
+  stageStatus: UltraPlanAuthoringStageStatus;
+  iteration: number;
+  /** Human-readable summary; empty allowed when the event is purely structural. */
+  summary: string;
+  /** Optional structured payload (artifact path, finding count, model id, etc.). */
+  details?: Record<string, unknown>;
+}
+
 
 // ---------------------------------------------------------------------------
 // UltraPlan Slice-2 runtime contracts
