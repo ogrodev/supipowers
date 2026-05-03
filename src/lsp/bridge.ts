@@ -2,6 +2,8 @@
 import type { GateExecutionContext, GateIssue } from "../types.js";
 import { parseStructuredOutput, runWithOutputValidation, type ReliabilityReporter } from "../ai/structured-output.js";
 import { renderSchemaText } from "../ai/schema-text.js";
+import { appendReliabilityRecord } from "../storage/reliability-metrics.js";
+import { probeLspCapabilities } from "./capabilities.js";
 import {
   LspDiagnosticsResultsSchema,
   type LspDiagnostic,
@@ -60,6 +62,36 @@ export async function collectLspDiagnostics(options: {
   reviewModel?: GateExecutionContext["reviewModel"];
   reliability?: ReliabilityReporter;
 }): Promise<GateIssue[]> {
+  const caps = await probeLspCapabilities({
+    cwd: options.cwd,
+    createAgentSession: options.createAgentSession,
+    reviewModel: options.reviewModel,
+    reliability: options.reliability,
+  });
+  if (!caps.diagnostics) {
+    // Active LSP server is registered but advertises no
+    // textDocument/diagnostic support — fail the gate cleanly with an
+    // empty issue list rather than throwing on a vacuous probe error.
+    // Emit a single reliability record so /supi:doctor surfaces the skip.
+    if (options.reliability) {
+      try {
+        appendReliabilityRecord(options.reliability.paths, options.reliability.cwd, {
+          ts: new Date().toISOString(),
+          command: options.reliability.command,
+          operation: options.reliability.operation,
+          outcome: "fallback",
+          attempts: 0,
+          reason: "lsp-server-lacks-diagnostics",
+          cwd: options.reliability.cwd,
+        });
+      } catch {
+        // appendReliabilityRecord already swallows its own errors; this
+        // try/catch is belt-and-braces in case the helper itself throws.
+      }
+    }
+    return [];
+  }
+
   const result = await runWithOutputValidation<LspDiagnosticsResults>(options.createAgentSession, {
     cwd: options.cwd,
     prompt: buildLspDiagnosticsPrompt(options.scopeFiles, options.fileScope),

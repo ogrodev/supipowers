@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { Type } from "@sinclair/typebox";
 import { runQualityGates } from "../../src/quality/runner.js";
 import { lspDiagnosticsGate } from "../../src/quality/gates/lsp-diagnostics.js";
+import { FULL_LSP_SUPPORT } from "../../src/lsp/capabilities.js";
 import type { AgentSession, ExecOptions, ExecResult, Platform } from "../../src/platform/types.js";
 import type {
   GateDefinition,
@@ -83,24 +84,33 @@ function createPlatformWithLspSession(options?: {
   activeTools?: string[];
   finalAssistantText?: string;
 }): Pick<Platform, "exec" | "getActiveTools" | "createAgentSession"> {
+  const diagnosticsText =
+    options?.finalAssistantText ??
+    JSON.stringify([
+      {
+        file: "src/review.ts",
+        diagnostics: [
+          { severity: "warning", message: "Unused value", line: 4, column: 2 },
+        ],
+      },
+    ]);
+  // The lsp diagnostics flow now probes capabilities before collecting.
+  // The first session-prompt that comes through `collectLspDiagnostics` is
+  // the probe; subsequent sessions are the diagnostics retries. Hand back
+  // a capabilities payload first, then the diagnostics text on every
+  // subsequent call (so retries still see valid output).
+  let promptIndex = 0;
   return {
     ...createPlatform({
       changedFiles: options?.changedFiles ?? ["src/review.ts"],
       trackedFiles: options?.trackedFiles,
     }),
     getActiveTools: () => options?.activeTools ?? ["lsp"],
-    createAgentSession: async () =>
-      createAgentSessionWithText(
-        options?.finalAssistantText ??
-          JSON.stringify([
-            {
-              file: "src/review.ts",
-              diagnostics: [
-                { severity: "warning", message: "Unused value", line: 4, column: 2 },
-              ],
-            },
-          ]),
-      ),
+    createAgentSession: async () => {
+      const text = promptIndex === 0 ? JSON.stringify(FULL_LSP_SUPPORT) : diagnosticsText;
+      promptIndex += 1;
+      return createAgentSessionWithText(text);
+    },
   };
 }
 

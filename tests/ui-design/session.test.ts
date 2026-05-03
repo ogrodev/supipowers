@@ -305,27 +305,27 @@ describe("ui-design session — tool guard", () => {
     startUiDesignTracking(makeSession(sessionDir), async () => {});
 
     const { fire } = registerToolGuardPlatform();
-    expect(fire("ast_edit", { path: path.join(sessionDir, "app shell.tsx") })).toBeUndefined();
+    expect(fire("ast_edit", { paths: [path.join(sessionDir, "app shell.tsx")] })).toBeUndefined();
   });
 
-  test("ast_edit comma-separated literal paths all inside session dir are allowed", () => {
+  test("ast_edit paths array all inside session dir is allowed", () => {
     const sessionDir = path.join(tmpDir, "guard-ast-edit-list");
     fs.mkdirSync(sessionDir, { recursive: true });
     startUiDesignTracking(makeSession(sessionDir), async () => {});
 
     const { fire } = registerToolGuardPlatform();
-    const paths = `${path.join(sessionDir, "a.tsx")},${path.join(sessionDir, "b.tsx")}`;
-    expect(fire("ast_edit", { path: paths })).toBeUndefined();
+    const paths = [path.join(sessionDir, "a.tsx"), path.join(sessionDir, "b.tsx")];
+    expect(fire("ast_edit", { paths })).toBeUndefined();
   });
 
-  test("ast_edit comma-separated mix with one path outside is blocked", () => {
+  test("ast_edit paths array with one path outside is blocked", () => {
     const sessionDir = path.join(tmpDir, "guard-ast-edit-escape");
     fs.mkdirSync(sessionDir, { recursive: true });
     startUiDesignTracking(makeSession(sessionDir), async () => {});
 
     const { fire } = registerToolGuardPlatform();
-    const mix = `${path.join(sessionDir, "a.tsx")},${path.join(tmpDir, "outside.tsx")}`;
-    const result = fire("ast_edit", { path: mix }) as { block: true; reason: string } | undefined;
+    const mix = [path.join(sessionDir, "a.tsx"), path.join(tmpDir, "outside.tsx")];
+    const result = fire("ast_edit", { paths: mix }) as { block: true; reason: string } | undefined;
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("may only write");
   });
@@ -337,7 +337,7 @@ describe("ui-design session — tool guard", () => {
 
     const { fire } = registerToolGuardPlatform();
     const glob = path.join(sessionDir, "**/*.tsx");
-    const result = fire("ast_edit", { path: glob }) as { block: true; reason: string } | undefined;
+    const result = fire("ast_edit", { paths: [glob] }) as { block: true; reason: string } | undefined;
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("cannot use glob pattern");
   });
@@ -351,11 +351,11 @@ describe("ui-design session — tool guard", () => {
     const bracketEscape = path.join(sessionDir, "[.][.]", "outside.tsx");
     const bracePattern = path.join(sessionDir, "{a,b}.tsx");
 
-    const bracketResult = fire("ast_edit", { path: bracketEscape }) as { block: true; reason: string } | undefined;
+    const bracketResult = fire("ast_edit", { paths: [bracketEscape] }) as { block: true; reason: string } | undefined;
     expect(bracketResult?.block).toBe(true);
     expect(bracketResult?.reason).toContain("cannot use glob pattern");
 
-    const braceResult = fire("ast_edit", { path: bracePattern }) as { block: true; reason: string } | undefined;
+    const braceResult = fire("ast_edit", { paths: [bracePattern] }) as { block: true; reason: string } | undefined;
     expect(braceResult?.block).toBe(true);
     expect(braceResult?.reason).toContain("cannot use glob pattern");
   });
@@ -366,9 +366,30 @@ describe("ui-design session — tool guard", () => {
     startUiDesignTracking(makeSession(sessionDir), async () => {});
 
     const { fire } = registerToolGuardPlatform();
-    const result = fire("ast_edit", { path: "" }) as { block: true; reason: string } | undefined;
+    const result = fire("ast_edit", { paths: [""] }) as { block: true; reason: string } | undefined;
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("cannot verify ast_edit");
+  });
+
+  test("ast_edit legacy `path` field is still accepted (pre-14.6.0 fallback)", () => {
+    // TODO(omp-14.7): drop this test together with the `input.path` fallback.
+    const sessionDir = path.join(tmpDir, "guard-ast-edit-legacy");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    startUiDesignTracking(makeSession(sessionDir), async () => {});
+
+    const { fire } = registerToolGuardPlatform();
+    expect(fire("ast_edit", { path: path.join(sessionDir, "legacy.tsx") })).toBeUndefined();
+  });
+
+  test("ast_edit legacy comma-separated `path` string is still accepted", () => {
+    // TODO(omp-14.7): drop this test together with the `input.path` fallback.
+    const sessionDir = path.join(tmpDir, "guard-ast-edit-legacy-list");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    startUiDesignTracking(makeSession(sessionDir), async () => {});
+
+    const { fire } = registerToolGuardPlatform();
+    const joined = `${path.join(sessionDir, "a.tsx")},${path.join(sessionDir, "b.tsx")}`;
+    expect(fire("ast_edit", { path: joined })).toBeUndefined();
   });
 });
 

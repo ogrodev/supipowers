@@ -155,16 +155,16 @@ describe("uniqueSourceHash — bash command truncation", () => {
 });
 
 describe("uniqueSourceHash — find / search / unknown", () => {
-  test("find hashes the pattern with project salt", () => {
+  test("find hashes the paths array with project salt", () => {
     const p1 = uniqueSourceHash({
       tool: "find",
-      input: { pattern: "*.ts" },
+      input: { paths: ["*.ts"] },
       cwd: "/repo",
       projectSlug: "p1",
     });
     const p2 = uniqueSourceHash({
       tool: "find",
-      input: { pattern: "*.ts" },
+      input: { paths: ["*.ts"] },
       cwd: "/repo",
       projectSlug: "p2",
     });
@@ -172,7 +172,7 @@ describe("uniqueSourceHash — find / search / unknown", () => {
     expect(p1).not.toBeNull();
   });
 
-  test("search without a path falls back to pattern-only hash", () => {
+  test("search without paths falls back to pattern-only hash", () => {
     const a = uniqueSourceHash({
       tool: "search",
       input: { pattern: "TODO" },
@@ -180,6 +180,81 @@ describe("uniqueSourceHash — find / search / unknown", () => {
       projectSlug: "demo",
     });
     expect(a).not.toBeNull();
+  });
+
+  test("search hashes paths array order-sensitively with project salt", () => {
+    const ab = uniqueSourceHash({
+      tool: "search",
+      input: { paths: ["a/", "b/"], pattern: "x" },
+      cwd: "/repo",
+      projectSlug: "p",
+    });
+    const ba = uniqueSourceHash({
+      tool: "search",
+      input: { paths: ["b/", "a/"], pattern: "x" },
+      cwd: "/repo",
+      projectSlug: "p",
+    });
+    expect(ab).not.toBeNull();
+    expect(ba).not.toBeNull();
+    expect(ab).not.toBe(ba);
+  });
+
+  test("search distinguishes patterns even when paths match", () => {
+    const todo = uniqueSourceHash({
+      tool: "search",
+      input: { paths: ["src/"], pattern: "TODO" },
+      cwd: "/repo",
+      projectSlug: "demo",
+    });
+    const fixme = uniqueSourceHash({
+      tool: "search",
+      input: { paths: ["src/"], pattern: "FIXME" },
+      cwd: "/repo",
+      projectSlug: "demo",
+    });
+    expect(todo).not.toBeNull();
+    expect(fixme).not.toBeNull();
+    expect(todo).not.toBe(fixme);
+  });
+
+  test("search legacy `path: string` is still accepted (pre-14.6.0 fallback)", () => {
+    // TODO(omp-14.7): drop this test together with the legacy fallback.
+    const h = uniqueSourceHash({
+      tool: "search",
+      input: { path: "src/", pattern: "TODO" },
+      cwd: "/repo",
+      projectSlug: "demo",
+    });
+    expect(h).not.toBeNull();
+  });
+
+  test("find hashes paths array, distinct across project slugs", () => {
+    const p1 = uniqueSourceHash({
+      tool: "find",
+      input: { paths: ["**/*.ts"] },
+      cwd: "/repo",
+      projectSlug: "p1",
+    });
+    const p2 = uniqueSourceHash({
+      tool: "find",
+      input: { paths: ["**/*.ts"] },
+      cwd: "/repo",
+      projectSlug: "p2",
+    });
+    expect(p1).not.toBe(p2);
+    expect(p1).not.toBeNull();
+  });
+
+  test("find legacy `pattern: string` is still accepted (pre-14.6.0 fallback)", () => {
+    // TODO(omp-14.7): drop this test together with the legacy fallback.
+    const h = uniqueSourceHash({
+      tool: "find",
+      input: { pattern: "*.ts" },
+      cwd: "/repo",
+      projectSlug: "demo",
+    });
+    expect(h).not.toBeNull();
   });
 
   test("unknown tool returns null", () => {

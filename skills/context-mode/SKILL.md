@@ -37,7 +37,7 @@ Blocked commands are intercepted only when their replacement `ctx_*` tool is act
 
 ```
 // WRONG — blocked, returns error
-search(pattern: "TODO", path: "src/")
+search(pattern: "TODO", paths: ["src/"])
 
 // CORRECT — runs in sandbox, only printed summary enters context
 ctx_execute(language: "shell", code: "grep -rn TODO src/")

@@ -19,7 +19,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { isDebugEnabled } from "../debug/logger.js";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const MAX_ROWS_PER_SESSION = 5000;
 export const RETENTION_DAYS = 7;
 
@@ -44,6 +44,7 @@ export type ProcessorKey =
   | "lazy-tools"
   | "startup-optimizer"
   | "cache-store"
+  | "cache-spill"
   | "cache-open"
   | "cache-prune"
   | "cache-clear"
@@ -280,6 +281,21 @@ export class MetricsStore {
         );
       });
       tx();
+    }
+
+    // v2 → v3: OMP 14.6.0 renamed `search`/`find` tool params from
+    // `path: string` / `pattern: string` to `paths: string[]`. Source hashes
+    // computed under the old salts (`search:<single-path>:<slug>`,
+    // `find:<pattern>:<slug>`) cannot collide with the new salts
+    // (`search:<joined-paths>:<pattern>:<slug>`, `find:<joined-paths>:<slug>`)
+    // because the input strings differ; but the privacy contract forbids
+    // re-hashing, so NULL is the correct substitute. `getUniqueSourceShare`
+    // already excludes NULLs from numerator/denominator. Newly-recorded rows
+    // from this point on use the post-rename salt.
+    if (user_version < 3) {
+      this.#db.exec(
+        `UPDATE metrics SET unique_source_hash = NULL WHERE tool IN ('search', 'find')`,
+      );
     }
 
     this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);

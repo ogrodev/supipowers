@@ -249,9 +249,10 @@ describe("MetricsStore.init v1 \u2192 v2 migration", () => {
         .prepare(`SELECT tool, processor, unique_source_hash FROM metrics`)
         .get() as { tool: string; processor: string; unique_source_hash: string | null };
       // tool stays 'search' (was already 'search'); processor rewrites to
-      // 'search'; the hash survives because tool was never 'grep' \u2014 we
-      // cannot prove the hash was computed under the legacy prefix.
-      expect(row).toEqual({ tool: "search", processor: "search", unique_source_hash: "hash-x" });
+      // 'search'; the hash that survived v1→v2 is NULL'd by the v2→v3
+      // migration because tool='search' falls in the post-rename scope and
+      // the privacy contract forbids re-hashing.
+      expect(row).toEqual({ tool: "search", processor: "search", unique_source_hash: null });
     } finally {
       probe2.close();
     }
@@ -265,6 +266,105 @@ describe("MetricsStore.init v1 \u2192 v2 migration", () => {
     const probe = new Database(dbPath);
     try {
       probe.exec("PRAGMA user_version = 1;");
+      probe.prepare(
+        `INSERT INTO metrics
+           (session_id, ts, layer, tool, processor, before_bytes, after_bytes,
+            cache_hit, unique_source_hash, context_tokens, context_window, context_percent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run("s1", 1, "L2", "read", "read", 2000, 200, 0, "read-hash", null, null, null);
+    } finally {
+      probe.close();
+    }
+
+    const reopened = new MetricsStore({ dbPath, projectSlug: "demo" });
+    reopened.init();
+    reopened.close();
+
+    const probe2 = new Database(dbPath, { readonly: true });
+    try {
+      const row = probe2
+        .prepare(`SELECT tool, processor, unique_source_hash FROM metrics`)
+        .get() as { tool: string; processor: string; unique_source_hash: string };
+      expect(row).toEqual({ tool: "read", processor: "read", unique_source_hash: "read-hash" });
+      const { user_version } = probe2.prepare(`PRAGMA user_version`).get() as {
+        user_version: number;
+      };
+      expect(user_version).toBe(SCHEMA_VERSION);
+    } finally {
+      probe2.close();
+    }
+
+    store = new MetricsStore({ dbPath, projectSlug: "demo" });
+    store.init();
+  });
+});
+
+describe("MetricsStore.init v2 → v3 migration", () => {
+  /**
+   * Helper: dial the store back to a v2-shaped DB and seed rows that exercise
+   * every branch of the v2→v3 migration:
+   *   - search/find rows must have their unique_source_hash NULL'd because
+   *     the OMP 14.6.0 path/pattern → paths[] rename changes the salt,
+   *     and the privacy contract forbids re-hashing.
+   *   - read/bash rows must survive untouched (their salts are unchanged).
+   */
+  function seedV2WithSearchFindRows(): void {
+    store.close();
+    const probe = new Database(dbPath);
+    try {
+      probe.exec("PRAGMA user_version = 2;");
+      const insert = probe.prepare(
+        `INSERT INTO metrics
+           (session_id, ts, layer, tool, processor, before_bytes, after_bytes,
+            cache_hit, unique_source_hash, context_tokens, context_window, context_percent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      insert.run("s1", 1, "L2", "search", "search", 1000, 100, 0, "legacy-search-hash", null, null, null);
+      insert.run("s1", 2, "L2", "find", "find", 500, 50, 0, "legacy-find-hash", null, null, null);
+      insert.run("s1", 3, "L2", "read", "read", 2000, 200, 0, "read-hash", null, null, null);
+      insert.run("s1", 4, "L2", "bash", "bash", 800, 80, 0, "bash-hash", null, null, null);
+    } finally {
+      probe.close();
+    }
+  }
+
+  test("NULLs unique_source_hash for tool IN ('search','find'), preserves others, bumps user_version", () => {
+    seedV2WithSearchFindRows();
+
+    const reopened = new MetricsStore({ dbPath, projectSlug: "demo" });
+    reopened.init();
+    reopened.close();
+
+    const probe = new Database(dbPath, { readonly: true });
+    try {
+      const rows = probe
+        .prepare(
+          `SELECT tool, processor, unique_source_hash FROM metrics ORDER BY ts ASC`,
+        )
+        .all() as Array<{ tool: string; processor: string | null; unique_source_hash: string | null }>;
+      expect(rows).toEqual([
+        { tool: "search", processor: "search", unique_source_hash: null },
+        { tool: "find", processor: "find", unique_source_hash: null },
+        { tool: "read", processor: "read", unique_source_hash: "read-hash" },
+        { tool: "bash", processor: "bash", unique_source_hash: "bash-hash" },
+      ]);
+      const { user_version } = probe.prepare(`PRAGMA user_version`).get() as {
+        user_version: number;
+      };
+      expect(user_version).toBe(SCHEMA_VERSION);
+    } finally {
+      probe.close();
+    }
+
+    store = new MetricsStore({ dbPath, projectSlug: "demo" });
+    store.init();
+  });
+
+  test("v2 DB with no search/find rows still bumps to SCHEMA_VERSION", () => {
+    store.close();
+    const probe = new Database(dbPath);
+    try {
+      probe.exec("PRAGMA user_version = 2;");
       probe.prepare(
         `INSERT INTO metrics
            (session_id, ts, layer, tool, processor, before_bytes, after_bytes,
