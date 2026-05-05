@@ -157,7 +157,7 @@ export class MemoryStore {
     const byteBudget = Math.max(0, options.byteBudget ?? DEFAULT_BYTE_BUDGET);
     if (byteBudget === 0) return [];
     const limit = Math.max(1, options.limit ?? DEFAULT_LIMIT);
-    const epoch = this.#readClearEpoch(options.sessionId);
+    const epoch = this.#readClearEpoch(options.sessionId) ?? -1;
 
     const sql = `
       SELECT id, owner_scope AS ownerScope, owner_id AS ownerId, type, body,
@@ -287,11 +287,11 @@ export class MemoryStore {
     ).get(ownerScope, ownerId, type, bodyHash) as MemoryRow | undefined) ?? null;
   }
 
-  #readClearEpoch(sessionId: string): number {
+  #readClearEpoch(sessionId: string): number | null {
     const row = this.#db.prepare(
       `SELECT cleared_at AS clearedAt FROM memory_clear_epochs WHERE session_id = ?`,
     ).get(sessionId) as { clearedAt: number } | undefined;
-    return row?.clearedAt ?? 0;
+    return row?.clearedAt ?? null;
   }
 
   #assertOpen(): void {

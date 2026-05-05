@@ -54,6 +54,7 @@ export function extractEvents(
     details: unknown;
   },
   sessionId: string,
+  sourceHash?: string | null,
 ): Event[] {
   const events: Event[] = [];
   const text = getTextContent(event.content);
@@ -78,14 +79,14 @@ export function extractEvents(
       if (readPath.includes("/skills/")) {
         events.push(makeEvent(sessionId, "skill", { path: readPath }, PRIORITY.medium, "tool_result"));
       }
-      extractFile(events, event, sessionId, "read");
+      extractFile(events, event, sessionId, "read", PRIORITY.medium, sourceHash);
       break;
     }
     case "edit":
-      extractFile(events, event, sessionId, "edit", PRIORITY.high);
+      extractFile(events, event, sessionId, "edit", PRIORITY.high, sourceHash);
       break;
     case "write":
-      extractFile(events, event, sessionId, "write", PRIORITY.high);
+      extractFile(events, event, sessionId, "write", PRIORITY.high, sourceHash);
       break;
     // `search` and `find` are intentionally not extracted: their `path`
     // input is usually a directory or a glob, not a real file the caller
@@ -171,9 +172,10 @@ function extractFile(
   sessionId: string,
   op: string,
   priority: EventPriority = PRIORITY.medium,
+  sourceHash?: string | null,
 ): void {
   const path = typeof event.input.path === "string" ? event.input.path : "unknown";
-  events.push(makeEvent(sessionId, "file", { op, path }, priority, "tool_result"));
+  events.push(makeEvent(sessionId, "file", { op, path, ...(sourceHash ? { sourceHash } : {}) }, priority, "tool_result"));
 }
 
 /** Extract events from a user prompt (called from before_agent_start handler) */

@@ -1,11 +1,14 @@
 import { constants, Database } from "bun:sqlite";
 import fs from "node:fs";
+import type { KnowledgeOwner, KnowledgeOwnerScope } from "../../types.js";
 import type { Chunk } from "./chunker.js";
 
 export interface SearchOptions {
   source?: string;
   contentType?: "code" | "prose";
   limit?: number;
+  owner?: KnowledgeOwner;
+  includeAllSessions?: boolean;
 }
 
 export interface SearchResult {
@@ -14,6 +17,8 @@ export interface SearchResult {
   source: string;
   contentType: string;
   score: number;
+  ownerScope: KnowledgeOwnerScope;
+  ownerId: string;
 }
 
 export interface QueryGroupedResults {
@@ -27,13 +32,22 @@ export interface StoreStats {
   dbSizeBytes: number;
 }
 
+export interface KnowledgeClearResult {
+  chunksDeleted: number;
+  urlCacheDeleted: number;
+}
+
+const SCHEMA_VERSION = 2;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS content_chunks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,
   title TEXT NOT NULL DEFAULT '',
   body TEXT NOT NULL,
-  content_type TEXT NOT NULL DEFAULT 'prose'
+  content_type TEXT NOT NULL DEFAULT 'prose',
+  owner_scope TEXT NOT NULL DEFAULT 'project',
+  owner_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS content_chunks_fts USING fts5(
@@ -52,13 +66,22 @@ CREATE TRIGGER IF NOT EXISTS content_chunks_ad AFTER DELETE ON content_chunks BE
   INSERT INTO content_chunks_fts(content_chunks_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
 END;
 
+CREATE INDEX IF NOT EXISTS idx_content_chunks_owner ON content_chunks(owner_scope, owner_id);
+CREATE INDEX IF NOT EXISTS idx_content_chunks_source_owner ON content_chunks(source, owner_scope, owner_id);
+
 CREATE TABLE IF NOT EXISTS url_cache (
   url TEXT NOT NULL,
   source TEXT NOT NULL,
+  owner_scope TEXT NOT NULL DEFAULT 'project',
+  owner_id TEXT NOT NULL DEFAULT '',
   fetched_at INTEGER NOT NULL,
-  PRIMARY KEY (url, source)
+  PRIMARY KEY (url, source, owner_scope, owner_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_url_cache_owner ON url_cache(owner_scope, owner_id);
 `;
+
+const PROJECT_OWNER: Required<KnowledgeOwner> = { ownerScope: "project", ownerId: "" };
 
 export class KnowledgeStore {
   private _db: Database;
@@ -70,6 +93,10 @@ export class KnowledgeStore {
     return this._db;
   }
 
+  get path(): string {
+    return this.dbPath;
+  }
+
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     this._db = new Database(dbPath);
@@ -77,7 +104,9 @@ export class KnowledgeStore {
 
   init(): void {
     this.#ensureDeleteJournalMode();
+    this.#migrate();
     this._db.exec(SCHEMA);
+    this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
   }
 
   #ensureDeleteJournalMode(): void {
@@ -111,16 +140,71 @@ export class KnowledgeStore {
       // Best effort only: close() still releases the handle in finally.
     }
   }
-  index(chunks: Chunk[], source: string): void {
-    const del = this._db.prepare("DELETE FROM content_chunks WHERE source = ?");
+
+  #migrate(): void {
+    const { user_version } = this._db.prepare("PRAGMA user_version").get() as {
+      user_version: number;
+    };
+    if (user_version >= SCHEMA_VERSION) return;
+
+    const hasContentChunks = tableExists(this._db, "content_chunks");
+    if (hasContentChunks) {
+      addColumnIfMissing(this._db, "content_chunks", "owner_scope", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(this._db, "content_chunks", "owner_id", "TEXT NOT NULL DEFAULT ''");
+      this._db.prepare(
+        `UPDATE content_chunks
+         SET owner_scope = 'legacy'
+         WHERE owner_scope IS NULL OR owner_scope = ''`,
+      ).run();
+    }
+
+    const hasUrlCache = tableExists(this._db, "url_cache");
+    if (hasUrlCache && !columnExists(this._db, "url_cache", "owner_scope")) {
+      this._db.exec(`
+        CREATE TABLE IF NOT EXISTS url_cache_v2 (
+          url TEXT NOT NULL,
+          source TEXT NOT NULL,
+          owner_scope TEXT NOT NULL DEFAULT 'legacy',
+          owner_id TEXT NOT NULL DEFAULT '',
+          fetched_at INTEGER NOT NULL,
+          PRIMARY KEY (url, source, owner_scope, owner_id)
+        );
+        INSERT OR REPLACE INTO url_cache_v2 (url, source, owner_scope, owner_id, fetched_at)
+          SELECT url, source, 'legacy', '', fetched_at FROM url_cache;
+        DROP TABLE url_cache;
+        ALTER TABLE url_cache_v2 RENAME TO url_cache;
+      `);
+    }
+
+    this._db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  }
+
+  index(chunks: Chunk[], source: string, owner?: KnowledgeOwner): void {
+    const resolvedOwner = normalizeOwner(owner);
+    const del = this._db.prepare(
+      `DELETE FROM content_chunks
+       WHERE source = ?
+         AND (
+           (owner_scope = ? AND owner_id = ?)
+           OR (? = 'project' AND owner_scope = 'legacy')
+         )`,
+    );
     const ins = this._db.prepare(
-      "INSERT INTO content_chunks (source, title, body, content_type) VALUES (?, ?, ?, ?)",
+      `INSERT INTO content_chunks (source, title, body, content_type, owner_scope, owner_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
 
     this._db.transaction(() => {
-      del.run(source);
+      del.run(source, resolvedOwner.ownerScope, resolvedOwner.ownerId, resolvedOwner.ownerScope);
       for (const chunk of chunks) {
-        ins.run(source, chunk.title, chunk.body, chunk.contentType);
+        ins.run(
+          source,
+          chunk.title,
+          chunk.body,
+          chunk.contentType,
+          resolvedOwner.ownerScope,
+          resolvedOwner.ownerId,
+        );
       }
     })();
   }
@@ -140,6 +224,8 @@ export class KnowledgeStore {
 
       let sql = `
         SELECT c.title, c.body, c.source, c.content_type AS contentType,
+               c.owner_scope AS ownerScope,
+               c.owner_id AS ownerId,
                bm25(content_chunks_fts, 5.0, 1.0) AS score
         FROM content_chunks_fts f
         JOIN content_chunks c ON c.id = f.rowid
@@ -154,6 +240,12 @@ export class KnowledgeStore {
       if (options?.contentType) {
         sql += " AND c.content_type = ?";
         params.push(options.contentType);
+      }
+
+      const visibility = buildVisibilityClause(options);
+      if (visibility) {
+        sql += ` AND ${visibility.sql}`;
+        params.push(...visibility.params);
       }
 
       sql += " ORDER BY score LIMIT ?";
@@ -182,6 +274,73 @@ export class KnowledgeStore {
     return count;
   }
 
+  listSessions(): { session_id: string; chunk_count: number; url_cache_count: number }[] {
+    const merged = new Map<string, { session_id: string; chunk_count: number; url_cache_count: number }>();
+    const chunkRows = this._db.prepare(
+      `SELECT owner_id AS session_id, COUNT(*) AS chunk_count
+         FROM content_chunks
+        WHERE owner_scope = 'session'
+        GROUP BY owner_id`,
+    ).all() as Array<{ session_id: string; chunk_count: number }>;
+    const urlRows = this._db.prepare(
+      `SELECT owner_id AS session_id, COUNT(*) AS url_cache_count
+         FROM url_cache
+        WHERE owner_scope = 'session'
+        GROUP BY owner_id`,
+    ).all() as Array<{ session_id: string; url_cache_count: number }>;
+
+    for (const row of chunkRows) {
+      merged.set(row.session_id, {
+        session_id: row.session_id,
+        chunk_count: row.chunk_count,
+        url_cache_count: 0,
+      });
+    }
+    for (const row of urlRows) {
+      const existing = merged.get(row.session_id);
+      if (existing) {
+        existing.url_cache_count = row.url_cache_count;
+      } else {
+        merged.set(row.session_id, {
+          session_id: row.session_id,
+          chunk_count: 0,
+          url_cache_count: row.url_cache_count,
+        });
+      }
+    }
+    return [...merged.values()].sort((a, b) => a.session_id.localeCompare(b.session_id));
+  }
+
+  clearSession(ownerId: string): KnowledgeClearResult {
+    const chunks = this._db.prepare(
+      "SELECT COUNT(*) AS cnt FROM content_chunks WHERE owner_scope = 'session' AND owner_id = ?",
+    ).get(ownerId) as { cnt: number };
+    const urls = this._db.prepare(
+      "SELECT COUNT(*) AS cnt FROM url_cache WHERE owner_scope = 'session' AND owner_id = ?",
+    ).get(ownerId) as { cnt: number };
+    this._db.prepare(
+      "DELETE FROM content_chunks WHERE owner_scope = 'session' AND owner_id = ?",
+    ).run(ownerId);
+    this._db.prepare(
+      "DELETE FROM url_cache WHERE owner_scope = 'session' AND owner_id = ?",
+    ).run(ownerId);
+    this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
+    return { chunksDeleted: chunks.cnt, urlCacheDeleted: urls.cnt };
+  }
+
+  clearProject(): KnowledgeClearResult {
+    const chunks = this._db.prepare("SELECT COUNT(*) AS cnt FROM content_chunks").get() as {
+      cnt: number;
+    };
+    const urls = this._db.prepare("SELECT COUNT(*) AS cnt FROM url_cache").get() as {
+      cnt: number;
+    };
+    this._db.exec("DELETE FROM content_chunks");
+    this._db.exec("DELETE FROM url_cache");
+    this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
+    return { chunksDeleted: chunks.cnt, urlCacheDeleted: urls.cnt };
+  }
+
   getStats(): StoreStats {
     const countRow = this._db.prepare("SELECT COUNT(*) AS cnt FROM content_chunks").get() as {
       cnt: number;
@@ -201,7 +360,7 @@ export class KnowledgeStore {
   pruneExpiredUrls(ttlHours = 24): number {
     const cutoff = Math.floor(Date.now() / 1000) - ttlHours * 3600;
     const result = this._db.prepare("DELETE FROM url_cache WHERE fetched_at < ?").run(cutoff);
-    return result.changes;
+    return result.changes as number;
   }
 
   close(): void {
@@ -220,6 +379,45 @@ export class KnowledgeStore {
       this.#closed = true;
     }
   }
+}
+
+function normalizeOwner(owner: KnowledgeOwner | undefined): Required<KnowledgeOwner> {
+  if (!owner) return PROJECT_OWNER;
+  return {
+    ownerScope: owner.ownerScope,
+    ownerId: owner.ownerScope === "session" ? owner.ownerId ?? "" : owner.ownerId ?? "",
+  };
+}
+
+function buildVisibilityClause(options: SearchOptions | undefined): { sql: string; params: string[] } | null {
+  if (options?.includeAllSessions) return null;
+
+  const owner = options?.owner;
+  if (owner?.ownerScope === "session") {
+    return {
+      sql: "(c.owner_scope IN ('project', 'legacy') OR (c.owner_scope = 'session' AND c.owner_id = ?))",
+      params: [owner.ownerId ?? ""],
+    };
+  }
+
+  return {
+    sql: "c.owner_scope IN ('project', 'legacy')",
+    params: [],
+  };
+}
+
+function tableExists(db: Database, table: string): boolean {
+  return db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(table) != null;
+}
+
+function columnExists(db: Database, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === column);
+}
+
+function addColumnIfMissing(db: Database, table: string, column: string, definition: string): void {
+  if (columnExists(db, table, column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 /** Strip FTS5 special operators to prevent syntax errors. Keep alphanumeric + spaces. */

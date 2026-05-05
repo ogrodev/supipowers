@@ -13,6 +13,8 @@ export interface ContextModeStatus {
     ctxOpenCached: boolean;
     ctxStats: boolean;
     ctxPurge: boolean;
+    ctxRepomap: boolean;
+    ctxSymbol: boolean;
   };
 }
 
@@ -34,6 +36,8 @@ export function detectContextMode(activeTools?: string[]): ContextModeStatus {
       ctxOpenCached: active.has("ctx_open_cached"),
       ctxStats: active.has("ctx_stats"),
       ctxPurge: active.has("ctx_purge"),
+      ctxRepomap: active.has("ctx_repomap"),
+      ctxSymbol: active.has("ctx_symbol"),
     };
     return {
       available: Object.values(tools).some(Boolean),
@@ -53,6 +57,8 @@ export function detectContextMode(activeTools?: string[]): ContextModeStatus {
       ctxOpenCached: true,
       ctxStats: true,
       ctxPurge: true,
+      ctxRepomap: true,
+      ctxSymbol: true,
     },
   };
 }

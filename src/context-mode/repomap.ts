@@ -13,6 +13,7 @@ export interface RepoMapResult {
   text: string;
   fileCount: number;
   emittedBytes: number;
+  emittedSourceBytes: number;
   consideredFiles: number;
 }
 
@@ -41,6 +42,7 @@ interface CandidateFile {
 
 interface RepoMapEntry {
   file: string;
+  sourceBytes: number;
   symbols: string[];
   imports: string[];
   resolvedImports: string[];
@@ -54,10 +56,10 @@ export async function buildRepoMap(platform: Platform, opts: RepoMapOptions): Pr
   const tokenBudget = normalizePositiveInteger(opts.tokenBudget, DEFAULT_TOKEN_BUDGET);
   const maxFiles = normalizePositiveInteger(opts.maxFiles, DEFAULT_MAX_FILES);
   const budgetBytes = tokenBudget * 4;
-  const tokenignore = loadTokenignore(cwd);
+  const ignorePatterns = loadIgnorePatterns(cwd);
   const focus = new Set((opts.focus ?? []).map(normalizePath));
 
-  const candidates = await listCandidateFiles(platform, cwd, tokenignore);
+  const candidates = await listCandidateFiles(platform, cwd, ignorePatterns);
   const fileSet = new Set(candidates.map((file) => file.relPath));
 
   const entries: RepoMapEntry[] = [];
@@ -81,6 +83,7 @@ export async function buildRepoMap(platform: Platform, opts: RepoMapOptions): Pr
   const lines: string[] = [...headerLines];
   let usedBytes = byteLength(lines.join("\n"));
   let emittedFiles = 0;
+  let emittedSourceBytes = 0;
   for (const entry of entries) {
     const section = renderEntry(entry);
     const nextBytes = usedBytes + byteLength("\n" + section);
@@ -88,12 +91,14 @@ export async function buildRepoMap(platform: Platform, opts: RepoMapOptions): Pr
     lines.push(section);
     usedBytes = nextBytes;
     emittedFiles += 1;
+    emittedSourceBytes += entry.sourceBytes;
   }
   const text = lines.join("\n");
   return {
     text,
     fileCount: emittedFiles,
     emittedBytes: byteLength(text),
+    emittedSourceBytes,
     consideredFiles: candidates.length,
   };
 }
@@ -101,18 +106,22 @@ export async function buildRepoMap(platform: Platform, opts: RepoMapOptions): Pr
 async function listCandidateFiles(
   platform: Platform,
   cwd: string,
-  tokenignore: RegExp[],
+  ignorePatterns: { gitignore: RegExp[]; tokenignore: RegExp[] },
 ): Promise<CandidateFile[]> {
-  const git = await safeExec(platform, "git", ["ls-files"], { cwd });
-  const rawFiles = git && git.code === 0 && git.stdout.trim().length > 0
+  const git = await safeExec(platform, "git", ["ls-files", "--cached", "--others", "--exclude-standard"], { cwd });
+  const usedGit = git && git.code === 0 && git.stdout.trim().length > 0;
+  const rawFiles = usedGit
     ? git.stdout.split(/\r?\n/).filter(Boolean)
     : walkFiles(cwd).map((file) => normalizePath(path.relative(cwd, file)));
+  const activeIgnorePatterns = usedGit
+    ? ignorePatterns.tokenignore
+    : [...ignorePatterns.gitignore, ...ignorePatterns.tokenignore];
 
   const files: CandidateFile[] = [];
   for (const raw of rawFiles) {
     const relPath = normalizePath(raw);
     if (!relPath || relPath.startsWith("..")) continue;
-    if (isIgnored(relPath, tokenignore)) continue;
+    if (isIgnored(relPath, activeIgnorePatterns)) continue;
     const ext = path.extname(relPath).toLowerCase();
     if (BINARY_EXTENSIONS.has(ext)) continue;
     const absPath = path.join(cwd, relPath);
@@ -166,6 +175,7 @@ function summarizeFile(file: CandidateFile, fileSet: Set<string>): RepoMapEntry 
   const baseScore = symbols.length * 3 + imports.length;
   return {
     file: file.relPath,
+    sourceBytes: file.size,
     symbols,
     imports,
     resolvedImports,
@@ -288,30 +298,71 @@ function resolveImport(spec: string, importer: string, fileSet: Set<string>): st
   return candidates[0] ?? null;
 }
 
-function loadTokenignore(cwd: string): RegExp[] {
-  const file = path.join(cwd, ".omp", "supipowers", ".tokenignore");
+function loadIgnorePatterns(cwd: string): { gitignore: RegExp[]; tokenignore: RegExp[] } {
+  return {
+    gitignore: loadIgnoreFile(path.join(cwd, ".gitignore")),
+    tokenignore: loadIgnoreFile(path.join(cwd, ".omp", "supipowers", ".tokenignore")),
+  };
+}
+
+function loadIgnoreFile(file: string): RegExp[] {
   try {
     return fs.readFileSync(file, "utf8")
       .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"))
-      .map(globToRegExp);
+      .map(parseIgnorePattern)
+      .filter((pattern): pattern is RegExp => Boolean(pattern));
   } catch {
     return [];
   }
 }
 
-function isIgnored(file: string, tokenignore: RegExp[]): boolean {
-  if (file.includes("node_modules/") || file.startsWith(".git/")) return true;
-  return tokenignore.some((pattern) => pattern.test(file));
+function parseIgnorePattern(line: string): RegExp | null {
+  const pattern = line.trim();
+  if (!pattern || pattern.startsWith("#") || pattern.startsWith("!")) return null;
+  return globToRegExp(pattern);
 }
 
-function globToRegExp(glob: string): RegExp {
-  const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*");
-  return new RegExp(`^${escaped}$|/${escaped}$|^${escaped}/`);
+function isIgnored(file: string, patterns: RegExp[]): boolean {
+  if (file.includes("node_modules/") || file.startsWith(".git/")) return true;
+  return patterns.some((pattern) => pattern.test(file));
+}
+
+function globToRegExp(glob: string): RegExp | null {
+  const normalized = normalizePath(glob).replace(/^\//, "");
+  const directoryOnly = normalized.endsWith("/");
+  const body = directoryOnly ? normalized.slice(0, -1) : normalized;
+  if (!body) return null;
+  const anchored = glob.startsWith("/") || body.includes("/");
+  const prefix = anchored ? "" : "(?:.*/)?";
+  const source = globToRegExpSource(body);
+  const suffix = directoryOnly ? "(?:/.*)?$" : "$";
+  return new RegExp(`^${prefix}${source}${suffix}`);
+}
+
+function globToRegExpSource(glob: string): string {
+  let source = "";
+  for (let index = 0; index < glob.length; index += 1) {
+    const char = glob[index];
+    if (char === "*") {
+      if (glob[index + 1] === "*") {
+        source += ".*";
+        index += 1;
+      } else {
+        source += "[^/]*";
+      }
+      continue;
+    }
+    if (char === "?") {
+      source += "[^/]";
+      continue;
+    }
+    source += escapeRegExpChar(char);
+  }
+  return source;
+}
+
+function escapeRegExpChar(char: string): string {
+  return /[\\^$.*+?()[\]{}|]/.test(char) ? `\\${char}` : char;
 }
 
 function walkFiles(root: string): string[] {

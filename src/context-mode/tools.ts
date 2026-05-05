@@ -1,10 +1,11 @@
 // src/context-mode/tools.ts
 //
-// Registers 9 native context-mode tools via platform.registerTool().
+// Registers native context-mode tools via platform.registerTool().
 // Orchestration layer: delegates execution to sandbox, owns intent-driven
 // filtering (auto-indexing large output into knowledge store).
 
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { Platform } from "../platform/types.js";
 import { executeCode } from "./sandbox/executor.js";
 import { getSupportedLanguages } from "./sandbox/runners.js";
@@ -14,6 +15,8 @@ import { getCacheStore, getMetricsStore, getSessionId } from "./hooks.js";
 import { fetchAndIndex } from "./web/fetcher.js";
 import { parseCacheHandle } from "./cache-handle.js";
 import { sliceCachedText } from "./cache-preview.js";
+import { buildRepoMap } from "./repomap.js";
+import { canonicalizeSourcePath } from "./source-hash.js";
 
 /** Threshold (bytes) above which intent-driven filtering kicks in. */
 const INTENT_THRESHOLD = 5 * 1024;
@@ -54,7 +57,27 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
+function currentKnowledgeOwner() {
+  return { ownerScope: "session" as const, ownerId: getSessionId() };
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function recordCacheOpenMetric(opts: { beforeBytes: number; afterBytes: number; cacheHit: 0 | 1 }): void {
+
   const metrics = getMetricsStore();
   if (!metrics) return;
 
@@ -78,6 +101,65 @@ function recordCacheOpenMetric(opts: { beforeBytes: number; afterBytes: number; 
   }
 }
 
+
+function recordRequestCacheMetric(opts: { tool: string; beforeBytes: number; afterBytes: number; cacheHit: 0 | 1 }): void {
+  const metrics = getMetricsStore();
+  if (!metrics) return;
+  try {
+    metrics.record({
+      session_id: getSessionId(),
+      ts: Date.now(),
+      layer: "L3",
+      tool: opts.tool,
+      processor: "cache-open",
+      before_bytes: Math.max(0, Math.floor(opts.beforeBytes)),
+      after_bytes: Math.max(0, Math.floor(opts.afterBytes)),
+      cache_hit: opts.cacheHit,
+      unique_source_hash: null,
+      context_tokens: null,
+      context_window: null,
+      context_percent: null,
+    });
+  } catch {
+    // Request-cache metrics are best-effort.
+  }
+}
+
+function recordL4RetrievalMetric(tool: "ctx_repomap" | "ctx_symbol", beforeBytes: number, afterBytes: number): void {
+  const metrics = getMetricsStore();
+  if (!metrics) return;
+  try {
+    metrics.record({
+      session_id: getSessionId(),
+      ts: Date.now(),
+      layer: "L4",
+      tool,
+      processor: "passthrough",
+      before_bytes: Math.max(0, Math.floor(beforeBytes)),
+      after_bytes: Math.max(0, Math.floor(afterBytes)),
+      cache_hit: 0,
+      unique_source_hash: null,
+      context_tokens: null,
+      context_window: null,
+      context_percent: null,
+    });
+  } catch {
+    // Retrieval metrics are diagnostic-only and must never break tool responses.
+  }
+}
+
+type KnowledgeStoreProvider = KnowledgeStore | (() => KnowledgeStore | null);
+
+function resolveKnowledgeStore(provider: KnowledgeStoreProvider): KnowledgeStore | null {
+  return typeof provider === "function" ? provider() : provider;
+}
+
+function requireKnowledgeStore(provider: KnowledgeStoreProvider): KnowledgeStore {
+  const store = resolveKnowledgeStore(provider);
+  if (!store) throw new Error("Knowledge store unavailable for the active session.");
+  return store;
+}
+
 /**
  * If output exceeds INTENT_THRESHOLD and an intent is provided, auto-index
  * the output and return search results instead of raw text.
@@ -86,15 +168,16 @@ function maybeFilterByIntent(
   output: string,
   intent: string | undefined,
   source: string,
-  store: KnowledgeStore,
+  store: KnowledgeStore | null,
 ): string {
+  if (!store) return output;
   if (!intent || output.length < INTENT_THRESHOLD) return output;
 
   const chunks = chunkMarkdown(output, source);
   if (chunks.length === 0) return output;
 
-  store.index(chunks, source);
-  const results = store.search([intent], { source, limit: 5 });
+  store.index(chunks, source, currentKnowledgeOwner());
+  const results = store.search([intent], { source, limit: 5, owner: currentKnowledgeOwner() });
 
   const sections = chunks.map((c) => `- ${c.title || "(untitled)"} (${c.body.length}B)`).join("\n");
 
@@ -181,10 +264,20 @@ function formatSearchResults(grouped: ReturnType<KnowledgeStore["search"]>): str
   return text;
 }
 
-export function registerContextModeTools(platform: Platform, store: KnowledgeStore): void {
+export interface RegisterContextModeToolsOptions {
+  repomap?: { enabled?: boolean; tokenBudget: number; maxFiles: number };
+  knowledgeToolsEnabled?: boolean;
+}
+
+export function registerContextModeTools(
+  platform: Platform,
+  storeProvider: KnowledgeStoreProvider,
+  options: RegisterContextModeToolsOptions = {},
+): void {
   if (!platform.registerTool) return;
 
   const languages = getSupportedLanguages();
+  const knowledgeToolsEnabled = options.knowledgeToolsEnabled !== false;
 
   // ── ctx_execute ────────────────────────────────────────────
   platform.registerTool({
@@ -218,7 +311,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       if (result.exitCode !== 0) output += `\n[exit code: ${result.exitCode}]`;
 
       const source = `ctx_execute:${language}:${Date.now()}`;
-      output = maybeFilterByIntent(output, intent, source, store);
+      output = maybeFilterByIntent(output, intent, source, resolveKnowledgeStore(storeProvider));
 
       trackCall("ctx_execute", output.length);
       return { content: [{ type: "text", text: capResponseSize(output) }] };
@@ -244,12 +337,50 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
         code: { type: "string", description: "Code to process FILE_CONTENT. Print summary via console.log/print/echo." },
         intent: { type: "string", description: "What you're looking for in the output" },
         timeout: { type: "number", description: "Max execution time in ms (default: 30000)" },
+        cache: { type: "boolean", description: "Opt into request caching for deterministic file-processing calls" },
+        cacheTtlMs: { type: "number", description: "Request cache TTL in milliseconds (default: 300000)" },
       },
       required: ["path", "language", "code"],
     },
     async execute(_toolCallId: string, params: any) {
-      const { path: filePath, language, code, intent, timeout } = params;
-      const fileContent = readFileSync(filePath, "utf-8");
+      const { path: filePath, language, code, intent, timeout, cache, cacheTtlMs } = params;
+      const canonicalFilePath = canonicalizeSourcePath(String(filePath), process.cwd());
+      const fileContent = readFileSync(canonicalFilePath, "utf-8");
+      const fileHash = sha256Text(fileContent);
+      const cacheStore = cache === true ? getCacheStore() : null;
+      const requestCacheArgs = {
+        path: canonicalFilePath,
+        language,
+        codeHash: sha256Text(String(code)),
+        timeout: timeout ?? null,
+        intent: typeof intent === "string" ? intent : null,
+        fileHash,
+      };
+      const argsHash = sha256Text(stableStringify(requestCacheArgs));
+      const fingerprint = fileHash;
+      if (cacheStore) {
+        const cached = cacheStore.getRequestCache({
+          tool: "ctx_execute_file",
+          argsHash,
+          cwd: process.cwd(),
+          fingerprint,
+        });
+        if (cached.hit) {
+          const opened = cacheStore.openText(cached.handle);
+          if (opened.ok) {
+            const output = `[cache hit: ${cached.handle}]\n${opened.text}`;
+            recordRequestCacheMetric({
+              tool: "ctx_execute_file",
+              beforeBytes: opened.meta.sizeBytes,
+              afterBytes: byteLength(output),
+              cacheHit: 1,
+            });
+            trackCall("ctx_execute_file", output.length);
+            return { content: [{ type: "text", text: capResponseSize(output) }] };
+          }
+        }
+      }
+
       const augmentedCode = injectFileContent(language, fileContent, code);
 
       const result = await executeCode(language, augmentedCode, { timeout });
@@ -258,14 +389,38 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       if (result.stderr) output += `\n[stderr]\n${result.stderr}`;
       if (result.exitCode !== 0) output += `\n[exit code: ${result.exitCode}]`;
 
-      const source = `ctx_execute_file:${filePath}:${Date.now()}`;
-      output = maybeFilterByIntent(output, intent, source, store);
+      const source = `ctx_execute_file:${canonicalFilePath}:${Date.now()}`;
+      output = maybeFilterByIntent(output, intent, source, resolveKnowledgeStore(storeProvider));
+      if (cacheStore && result.exitCode === 0) {
+        const meta = cacheStore.putText({
+          sessionId: getSessionId(),
+          text: output,
+          sourceTool: "ctx_execute_file",
+          sourceHash: argsHash,
+          recordMetric: false,
+        });
+        cacheStore.putRequestCache({
+          tool: "ctx_execute_file",
+          argsHash,
+          cwd: process.cwd(),
+          fingerprint,
+          handle: meta.handle,
+          ttlMs: typeof cacheTtlMs === "number" ? cacheTtlMs : 5 * 60 * 1000,
+        });
+        recordRequestCacheMetric({
+          tool: "ctx_execute_file",
+          beforeBytes: byteLength(output),
+          afterBytes: byteLength(output),
+          cacheHit: 0,
+        });
+      }
 
       trackCall("ctx_execute_file", output.length);
       return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
   });
 
+  if (knowledgeToolsEnabled) {
   // ── ctx_batch_execute ──────────────────────────────────────
   platform.registerTool({
     name: "ctx_batch_execute",
@@ -303,6 +458,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       required: ["commands", "queries"],
     },
     async execute(_toolCallId: string, params: any) {
+      const store = requireKnowledgeStore(storeProvider);
       const { commands, queries, timeout = 60000 } = params;
       const sections: string[] = [];
 
@@ -315,13 +471,13 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
         const source = `batch:${cmd.label}`;
         const chunks = chunkMarkdown(output, source);
         if (chunks.length > 0) {
-          store.index(chunks, source);
+          store.index(chunks, source, currentKnowledgeOwner());
         }
         sections.push(`- ${cmd.label} (${(output.length / 1024).toFixed(1)}KB)`);
       }
 
       // Search across all indexed content
-      const results = store.search(queries, { limit: 5 });
+      const results = store.search(queries, { limit: 5, owner: currentKnowledgeOwner() });
 
       let text = `Executed ${commands.length} commands. Indexed ${sections.length} sections.\n\n`;
       text += `## Indexed Sections\n\n${sections.join("\n")}\n\n`;
@@ -338,7 +494,9 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       return { content: [{ type: "text", text: capResponseSize(text) }] };
     },
   });
+  }
 
+  if (knowledgeToolsEnabled) {
   // ── ctx_index ──────────────────────────────────────────────
   platform.registerTool({
     name: "ctx_index",
@@ -361,6 +519,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       required: ["source"],
     },
     async execute(_toolCallId: string, params: any) {
+      const store = requireKnowledgeStore(storeProvider);
       const { content, path: filePath, source } = params;
 
       if ((content && filePath) || (!content && !filePath)) {
@@ -369,14 +528,16 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
 
       const text = filePath ? readFileSync(filePath, "utf-8") : content;
       const chunks = chunkMarkdown(text, source);
-      store.index(chunks, source);
+      store.index(chunks, source, currentKnowledgeOwner());
 
       const output = `Indexed ${chunks.length} chunks under source "${source}".`;
       trackCall("ctx_index", output.length);
       return { content: [{ type: "text", text: output }] };
     },
   });
+  }
 
+  if (knowledgeToolsEnabled) {
   // ── ctx_search ─────────────────────────────────────────────
   platform.registerTool({
     name: "ctx_search",
@@ -404,12 +565,79 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       required: ["queries"],
     },
     async execute(_toolCallId: string, params: any) {
+      const store = requireKnowledgeStore(storeProvider);
       const { queries, source, contentType, limit } = params;
-      const results = store.search(queries, { source, contentType, limit });
+      const results = store.search(queries, { source, contentType, limit, owner: currentKnowledgeOwner() });
       const output = formatSearchResults(results);
 
       trackCall("ctx_search", output.length);
       return { content: [{ type: "text", text: capResponseSize(output) }] };
+    },
+  });
+  }
+
+  // ── ctx_repomap ─────────────────────────────────────────────
+  if (options.repomap?.enabled !== false) {
+    platform.registerTool({
+      name: "ctx_repomap",
+      label: "Repository Map",
+      description: "Build a deterministic structural repository map capped by an estimated token budget.",
+      promptSnippet: "ctx_repomap — structural repository map with symbols/imports",
+      promptGuidelines: [
+        "Use before broad code exploration when you need a bounded overview",
+        "Pass focus files to personalize ranking toward the current task",
+      ],
+      parameters: {
+        type: "object",
+        properties: {
+          focus: { type: "array", items: { type: "string" }, description: "Optional focus files for personalized ranking" },
+          tokenBudget: { type: "number", description: "Estimated token budget for the emitted map (default: 4000)" },
+        },
+      },
+      async execute(_toolCallId: string, params: any, _abortSignal?: any, _onUpdate?: any, ctx?: any) {
+        const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : process.cwd();
+        const result = await buildRepoMap(platform, {
+          cwd,
+          focus: Array.isArray(params?.focus) ? params.focus : [],
+          tokenBudget: typeof params?.tokenBudget === "number" ? params.tokenBudget : options.repomap?.tokenBudget,
+          maxFiles: options.repomap?.maxFiles,
+        });
+        const output = capResponseSize(result.text);
+        const outputBytes = byteLength(output);
+        recordL4RetrievalMetric("ctx_repomap", result.emittedSourceBytes, outputBytes);
+        trackCall("ctx_repomap", output.length);
+        return { content: [{ type: "text", text: output }] };
+      },
+    });
+  }
+
+  // ── ctx_symbol ──────────────────────────────────────────────
+  platform.registerTool({
+    name: "ctx_symbol",
+    label: "Symbol Summary",
+    description: "Capability-gated facade for native LSP symbol summaries. Returns an explicit diagnostic when the platform has no callable LSP API.",
+    promptSnippet: "ctx_symbol — bounded symbol summary when platform LSP facade is available",
+    promptGuidelines: [
+      "Use native lsp directly when this reports platform_lsp_facade_unavailable",
+    ],
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Symbol name or query" },
+        action: { type: "string", enum: ["definition", "references", "hover", "symbols"], description: "LSP action" },
+      },
+      required: ["query"],
+    },
+    async execute() {
+      const text = [
+        "platform_lsp_facade_unavailable",
+        "The current OMP Platform adapter does not expose a callable native LSP/tool API to extensions.",
+        "Use the native lsp tool directly for definitions, references, hover, and symbols.",
+      ].join("\n");
+      const diagnosticBytes = byteLength(text);
+      recordL4RetrievalMetric("ctx_symbol", diagnosticBytes, diagnosticBytes);
+      trackCall("ctx_symbol", text.length);
+      return { content: [{ type: "text", text }] };
     },
   });
 
@@ -486,6 +714,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     },
   });
 
+  if (knowledgeToolsEnabled) {
   // ── ctx_fetch_and_index ────────────────────────────────────
   platform.registerTool({
     name: "ctx_fetch_and_index",
@@ -507,8 +736,9 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       required: ["url"],
     },
     async execute(_toolCallId: string, params: any) {
+      const store = requireKnowledgeStore(storeProvider);
       const { url, source, force } = params;
-      const result = await fetchAndIndex(url, store, { source, force });
+      const result = await fetchAndIndex(url, store, { source, force, owner: currentKnowledgeOwner() });
 
       let output = result.preview;
       if (!result.cached) {
@@ -521,6 +751,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
   });
+  }
 
   // ── ctx_stats ──────────────────────────────────────────────
   platform.registerTool({
@@ -544,6 +775,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       },
     },
     async execute(_id: string, params: any = {}) {
+      const store = resolveKnowledgeStore(storeProvider);
       const format = params?.format === "json" ? "json" : "markdown";
       const metricsStore = getMetricsStore();
       const sessionId = getSessionId();
@@ -591,7 +823,9 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
       }
 
       // Markdown (default; existing behavior preserved).
-      const storeStats = store.getStats();
+      const storeStats = store
+        ? store.getStats()
+        : { totalChunks: 0, sources: [], dbSizeBytes: 0 };
       const totalCalls = Object.values(stats.calls).reduce((sum, n) => sum + n, 0);
       const estimatedTokens = Math.ceil(stats.bytesReturned / 4); // rough estimate
 
@@ -627,6 +861,7 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     },
   });
 
+  if (knowledgeToolsEnabled) {
   // ── ctx_purge ──────────────────────────────────────────────
   platform.registerTool({
     name: "ctx_purge",
@@ -640,12 +875,14 @@ export function registerContextModeTools(platform: Platform, store: KnowledgeSto
     ],
     parameters: { type: "object", properties: {} },
     async execute() {
+      const store = requireKnowledgeStore(storeProvider);
       const count = store.purge();
       const output = `Purged ${count} chunks from knowledge base.`;
       trackCall("ctx_purge", output.length);
       return { content: [{ type: "text", text: output }] };
     },
   });
+  }
 }
 
 // Exported for testing

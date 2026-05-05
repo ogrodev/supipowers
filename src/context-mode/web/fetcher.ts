@@ -1,3 +1,4 @@
+import type { KnowledgeOwner } from "../../types.js";
 import { type Chunk, chunkMarkdown } from "../knowledge/chunker.js";
 import type { KnowledgeStore } from "../knowledge/store.js";
 import { htmlToMarkdown } from "./html-to-md.js";
@@ -7,6 +8,8 @@ export interface FetchOptions {
   source?: string;
   /** Bypass 24h TTL cache. */
   force?: boolean;
+  /** Ownership scope for indexed/cached content. Defaults to project-owned when omitted. */
+  owner?: KnowledgeOwner;
 }
 
 export interface FetchResult {
@@ -28,15 +31,22 @@ export async function fetchAndIndex(
   options?: FetchOptions,
 ): Promise<FetchResult> {
   const source = options?.source ?? new URL(url).hostname;
+  const owner = options?.owner;
+  const resolvedOwner = resolveOwner(owner);
 
-  // Check cache unless forced
+  // Check cache unless forced. Explicit owners must be isolated exactly; the
+  // default project-owned path also accepts migrated legacy rows so upgraded
+  // stores do not refetch and duplicate visible search results.
   if (!options?.force) {
-    const cached = store.db
-      .prepare("SELECT fetched_at FROM url_cache WHERE url = ? AND source = ?")
-      .get(url, source) as { fetched_at: number } | null;
+    const cacheOwners = owner ? [resolvedOwner] : [resolvedOwner, { ownerScope: "legacy" as const, ownerId: "" }];
+    for (const cacheOwner of cacheOwners) {
+      const cached = store.db
+        .prepare("SELECT fetched_at FROM url_cache WHERE url = ? AND source = ? AND owner_scope = ? AND owner_id = ?")
+        .get(url, source, cacheOwner.ownerScope, cacheOwner.ownerId) as { fetched_at: number } | null;
 
-    if (cached && Date.now() - cached.fetched_at < TTL_MS) {
-      return buildCachedResult(store, source);
+      if (cached && Date.now() - cached.fetched_at < TTL_MS) {
+        return buildCachedResult(store, source, cacheOwner);
+      }
     }
   }
 
@@ -51,11 +61,11 @@ export async function fetchAndIndex(
   const markdown = toMarkdown(rawText, contentType);
 
   const chunks = chunkMarkdown(markdown, source);
-  store.index(chunks, source);
+  store.index(chunks, source, owner);
 
   store.db.run(
-    "INSERT OR REPLACE INTO url_cache (url, source, fetched_at) VALUES (?, ?, ?)",
-    [url, source, Date.now()],
+    "INSERT OR REPLACE INTO url_cache (url, source, owner_scope, owner_id, fetched_at) VALUES (?, ?, ?, ?, ?)",
+    [url, source, resolvedOwner.ownerScope, resolvedOwner.ownerId, Date.now()],
   );
 
   return {
@@ -102,11 +112,20 @@ function buildPreview(chunks: Chunk[]): string {
   return out;
 }
 
+function resolveOwner(owner: KnowledgeOwner | undefined): Required<KnowledgeOwner> {
+  return {
+    ownerScope: owner?.ownerScope ?? "project",
+    ownerId: owner?.ownerId ?? "",
+  };
+}
+
 /** Reconstruct a cached result by querying stored chunks. */
-function buildCachedResult(store: KnowledgeStore, source: string): FetchResult {
+function buildCachedResult(store: KnowledgeStore, source: string, owner: Required<KnowledgeOwner>): FetchResult {
   const rows = store.db
-    .prepare("SELECT title, body, content_type AS contentType FROM content_chunks WHERE source = ? ORDER BY id")
-    .all(source) as Chunk[];
+    .prepare(
+      "SELECT title, body, content_type AS contentType FROM content_chunks WHERE source = ? AND owner_scope = ? AND owner_id = ? ORDER BY id",
+    )
+    .all(source, owner.ownerScope, owner.ownerId) as Chunk[];
 
   return {
     preview: buildPreview(rows),

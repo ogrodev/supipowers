@@ -51,6 +51,8 @@ export interface PutCacheTextInput {
   sourceTool?: string | null;
   sourceHash?: string | null;
   now?: number;
+  previewBytes?: number;
+  recordMetric?: boolean;
 }
 
 export interface CacheEntryMeta {
@@ -70,6 +72,28 @@ export interface PutCacheTextResult extends CacheEntryMeta {}
 export type OpenCacheTextResult =
   | { ok: true; handle: string; text: string; meta: CacheEntryMeta }
   | { ok: false; reason: "invalid_handle" | "not_found" | "missing_payload" | "corrupt_payload"; handle: string | null; message: string };
+
+export interface RequestCachePutInput {
+  tool: string;
+  argsHash: string;
+  cwd: string;
+  fingerprint: string;
+  handle: string;
+  ttlMs: number;
+  now?: number;
+}
+
+export interface RequestCacheLookupInput {
+  tool: string;
+  argsHash: string;
+  cwd: string;
+  fingerprint: string;
+  now?: number;
+}
+
+export type RequestCacheLookupResult =
+  | { hit: true; handle: string; expiresAt: number }
+  | { hit: false; reason: "miss" | "expired" };
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS cache_entries (
   handle TEXT PRIMARY KEY,
@@ -96,6 +120,20 @@ CREATE TABLE IF NOT EXISTS cache_refs (
 CREATE INDEX IF NOT EXISTS idx_cache_refs_session ON cache_refs(session_id);
 CREATE INDEX IF NOT EXISTS idx_cache_refs_handle ON cache_refs(handle);
 CREATE INDEX IF NOT EXISTS idx_cache_entries_last_accessed ON cache_entries(last_accessed_at);
+
+CREATE TABLE IF NOT EXISTS request_cache (
+  tool TEXT NOT NULL,
+  args_hash TEXT NOT NULL,
+  project_slug TEXT NOT NULL,
+  cwd TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  handle TEXT NOT NULL REFERENCES cache_entries(handle) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (tool, args_hash, project_slug, cwd, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_request_cache_expiry ON request_cache(expires_at);
 `;
 
 export class CacheStore {
@@ -150,7 +188,7 @@ export class CacheStore {
     const bytes = Buffer.from(input.text, "utf8");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const handle = renderCacheHandle(sha256);
-    const preview = buildCachePreview(input.text);
+    const preview = buildCachePreview(input.text, input.previewBytes);
     const payloadRelpath = path.join(sha256.slice(0, 2), `${sha256}.br`);
     const payloadPath = path.join(this.#payloadRoot, payloadRelpath);
     const compressed = brotliCompressSync(bytes);
@@ -198,13 +236,15 @@ export class CacheStore {
     if (!meta) {
       throw new Error("cache-store: failed to read metadata after cache write");
     }
-    this.#recordCacheMetric({
-      sessionId: input.sessionId,
-      processor: "cache-store",
-      beforeBytes: bytes.length,
-      afterBytes: 0,
-      cacheHit: 0,
-    });
+    if (input.recordMetric !== false) {
+      this.#recordCacheMetric({
+        sessionId: input.sessionId,
+        processor: "cache-store",
+        beforeBytes: bytes.length,
+        afterBytes: 0,
+        cacheHit: 0,
+      });
+    }
 
     return meta;
   }
@@ -263,6 +303,50 @@ export class CacheStore {
 
     const meta = this.#readEntryMeta(parsed.handle) ?? metaBefore;
     return { ok: true, handle: parsed.handle, text, meta };
+  }
+
+  putRequestCache(input: RequestCachePutInput): void {
+    this.#assertOpen();
+    const now = input.now ?? Date.now();
+    this.#db.prepare(
+      `INSERT INTO request_cache
+         (tool, args_hash, project_slug, cwd, fingerprint, handle, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tool, args_hash, project_slug, cwd, fingerprint) DO UPDATE SET
+         handle = excluded.handle,
+         created_at = excluded.created_at,
+         expires_at = excluded.expires_at`,
+    ).run(
+      input.tool,
+      input.argsHash,
+      this.#projectSlug,
+      input.cwd,
+      input.fingerprint,
+      input.handle,
+      now,
+      now + Math.max(0, Math.floor(input.ttlMs)),
+    );
+  }
+
+  getRequestCache(input: RequestCacheLookupInput): RequestCacheLookupResult {
+    this.#assertOpen();
+    const now = input.now ?? Date.now();
+    const row = this.#db.prepare(
+      `SELECT handle, expires_at AS expiresAt
+       FROM request_cache
+       WHERE tool = ? AND args_hash = ? AND project_slug = ? AND cwd = ? AND fingerprint = ?`,
+    ).get(input.tool, input.argsHash, this.#projectSlug, input.cwd, input.fingerprint) as
+      | { handle: string; expiresAt: number }
+      | undefined;
+    if (!row) return { hit: false, reason: "miss" };
+    if (row.expiresAt <= now) {
+      this.#db.prepare(
+        `DELETE FROM request_cache
+         WHERE tool = ? AND args_hash = ? AND project_slug = ? AND cwd = ? AND fingerprint = ?`,
+      ).run(input.tool, input.argsHash, this.#projectSlug, input.cwd, input.fingerprint);
+      return { hit: false, reason: "expired" };
+    }
+    return { hit: true, handle: row.handle, expiresAt: row.expiresAt };
   }
 
   getEntryMeta(handle: string): CacheEntryMeta | null {

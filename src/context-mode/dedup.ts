@@ -63,6 +63,7 @@ export function maybeSubstitute(input: DedupSubstitutionInput): DedupSubstitutio
   const contentHash = contentHashFor(result);
   const existing = dedupState.records.get(key);
   if (!existing || existing.contentHash !== contentHash) {
+    const supersedes = existing && existing.contentHash !== contentHash ? existing : null;
     dedupState.turnCounter += 1;
     dedupState.records.set(key, {
       contentHash,
@@ -70,6 +71,10 @@ export function maybeSubstitute(input: DedupSubstitutionInput): DedupSubstitutio
       bytes: processedBytes,
       tsMonotonic: dedupState.turnCounter,
     });
+    if (supersedes) {
+      const annotated = withSupersedesAnnotation(result, supersedes);
+      return { result: annotated, processorKey };
+    }
     return { result, processorKey };
   }
 
@@ -88,5 +93,16 @@ export function maybeSubstitute(input: DedupSubstitutionInput): DedupSubstitutio
   return {
     result: { content: [{ type: "text", text: placeholderText }] },
     processorKey: "dedup",
+  };
+}
+
+function withSupersedesAnnotation(
+  result: ToolResultEventResult,
+  prior: DedupRecord,
+): ToolResultEventResult {
+  const banner = `[\u2026 supersedes turn ${prior.turnId} (was ${prior.bytes} B); old bytes remain in transcript history]`;
+  const text = combinedTextOf(result.content);
+  return {
+    content: [{ type: "text", text: text.length > 0 ? `${banner}\n${text}` : banner }],
   };
 }

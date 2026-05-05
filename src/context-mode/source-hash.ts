@@ -47,8 +47,8 @@ function toPosix(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
-/** Internal helper: resolve `pathInput` to a canonical absolute POSIX form. */
-function canonicalizePath(pathInput: string, cwd: string): string {
+/** Resolve `pathInput` to a canonical absolute POSIX form. */
+export function canonicalizeSourcePath(pathInput: string, cwd: string): string {
   const posix = toPosix(pathInput);
   if (isAbsolutePath(pathInput)) {
     return collapsePosix(posix);
@@ -120,8 +120,8 @@ export function uniqueSourceHash(opts: UniqueSourceHashOpts): string | null {
     case "open": {
       const p = typeof input?.path === "string" ? input.path : null;
       if (!p) return null;
-      const absolute = canonicalizePath(p, cwd);
-      return sha256Hex(`read:${absolute}:${projectSlug}`);
+      const absolute = canonicalizeSourcePath(p, cwd);
+      return sha256Hex(`file:${absolute}:${projectSlug}`);
     }
     case "search": {
       // OMP 14.6.0: search params changed from `path: string` → `paths: string[]`.
@@ -139,7 +139,7 @@ export function uniqueSourceHash(opts: UniqueSourceHashOpts): string | null {
       }
       // Order matters: OMP runs each path under root-level resolution, so [a,b] != [b,a].
       // Use SOH (\u0001) as the joiner — it cannot appear in a path on any platform.
-      const joined = paths.map((p) => canonicalizePath(p, cwd)).join("\u0001");
+      const joined = paths.map((p) => canonicalizeSourcePath(p, cwd)).join("\u0001");
       return sha256Hex(`search:${joined}:${pattern}:${projectSlug}`);
     }
     case "find": {
@@ -155,8 +155,15 @@ export function uniqueSourceHash(opts: UniqueSourceHashOpts): string | null {
         // Defensive: 14.6.0+ requires `paths`, so this should not happen.
         return sha256Hex(`find::${projectSlug}`);
       }
-      const joined = paths.map((p) => canonicalizePath(p, cwd)).join("\u0001");
+      const joined = paths.map((p) => canonicalizeSourcePath(p, cwd)).join("\u0001");
       return sha256Hex(`find:${joined}:${projectSlug}`);
+    }
+    case "edit":
+    case "write": {
+      const p = typeof input?.path === "string" ? input.path : null;
+      if (!p) return null;
+      const absolute = canonicalizeSourcePath(p, cwd);
+      return sha256Hex(`file:${absolute}:${projectSlug}`);
     }
     case "bash": {
       const command = typeof input?.command === "string" ? input.command : "";

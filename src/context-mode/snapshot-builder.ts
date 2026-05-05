@@ -19,6 +19,14 @@ function escapeXML(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
+function latestFirst(events: TrackedEvent[]): TrackedEvent[] {
+  return [...events].sort((a, b) => {
+    const byTimestamp = b.timestamp - a.timestamp;
+    if (byTimestamp !== 0) return byTimestamp;
+    return (b.id ?? 0) - (a.id ?? 0);
+  });
+}
+
 interface SnapshotOpts {
   compactCount?: number;
   searchTool?: string;
@@ -81,22 +89,47 @@ function buildReferenceSnapshot(eventStore: EventStore, sessionId: string, opts:
   }
 
   // --- files ---
-  const fileEvents = eventStore.getEvents(sessionId, { categories: ["file"], limit: 200 });
+  const fileEvents = latestFirst(eventStore.getEvents(sessionId, { categories: ["file"], limit: 200 }));
   if (fileEvents.length > 0) {
     const edited = new Set<string>();
     const read = new Set<string>();
+    const modSeen = new Set<string>();
+    const readSeen = new Set<string>();
+    let maskedStale = 0;
     for (const f of fileEvents) {
       const data = safeParse(f.data);
       const p = typeof data?.path === "string" ? data.path : null;
       if (!p) continue;
-      if (data?.op === "edit" || data?.op === "write") edited.add(p);
-      else if (data?.op === "read") read.add(p);
+      const op = data?.op;
+      const sourceKey = typeof data?.sourceHash === "string" ? data.sourceHash : p.replace(/\\/g, "/");
+      if (op === "edit" || op === "write") {
+        if (modSeen.has(sourceKey)) {
+          maskedStale += 1;
+          continue;
+        }
+        modSeen.add(sourceKey);
+        edited.add(p);
+      } else if (op === "read") {
+        if (modSeen.has(sourceKey)) {
+          maskedStale += 1;
+          continue;
+        }
+        if (readSeen.has(sourceKey)) {
+          maskedStale += 1;
+          continue;
+        }
+        readSeen.add(sourceKey);
+        read.add(p);
+      }
     }
+    // Modifications dominate: do not double-list a path that was both edited and read.
+    for (const p of edited) read.delete(p);
     if (edited.size > 0 || read.size > 0) {
       sections.push("");
-      sections.push(`  <files count="${edited.size + read.size}">`);
+      sections.push(`  <files count="${edited.size + read.size}" stale_masked="${maskedStale}">`);
       if (edited.size > 0) sections.push(`    Edited: ${[...edited].map(escapeXML).join(", ")}`);
       if (read.size > 0) sections.push(`    Read: ${[...read].map(escapeXML).join(", ")}`);
+      if (maskedStale > 0) sections.push(`    Masked stale observations: ${maskedStale}`);
       const queryPaths = [...edited, ...read].slice(0, 5);
       sections.push(`    For full details:`);
       sections.push(`    ctx_search(queries: [${queryPaths.map((p) => `"${escapeXML(p)}"`).join(", ")}], source: "session-events")`);
@@ -288,18 +321,28 @@ function buildFallbackSnapshot(eventStore: EventStore, sessionId: string): strin
   }
 
   // Files modified (write/edit only, deduplicated)
-  const fileEvents = eventStore.getEvents(sessionId, { categories: ["file"], limit: 200 });
+  const fileEvents = latestFirst(eventStore.getEvents(sessionId, { categories: ["file"], limit: 200 }));
   const modifiedPaths = new Set<string>();
+  const seenSources = new Set<string>();
+  let maskedStaleFiles = 0;
   for (const f of fileEvents) {
     const data = safeParse(f.data);
-    if (data?.op === "edit" || data?.op === "write") {
-      if (typeof data.path === "string") modifiedPaths.add(data.path);
+    const p = typeof data?.path === "string" ? data.path : null;
+    if (!p) continue;
+    if (data?.op !== "edit" && data?.op !== "write") continue;
+    const sourceKey = typeof data?.sourceHash === "string" ? data.sourceHash : p.replace(/\\/g, "/");
+    if (seenSources.has(sourceKey)) {
+      maskedStaleFiles += 1;
+      continue;
     }
+    seenSources.add(sourceKey);
+    modifiedPaths.add(p);
   }
   if (modifiedPaths.size > 0) {
     sections.push("  <files_modified>");
     const paths = [...modifiedPaths].slice(0, CAPS.files);
     for (const p of paths) sections.push(`    - ${escapeXML(p)}`);
+    if (maskedStaleFiles > 0) sections.push(`    - stale observations masked: ${maskedStaleFiles}`);
     sections.push("  </files_modified>");
   }
 
