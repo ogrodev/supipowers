@@ -480,6 +480,39 @@ export interface ContextModeLazyToolsConfig {
   keywordTools: Record<string, string[]>;
 }
 
+export type KnowledgeOwnerScope = "session" | "project" | "legacy";
+
+export interface KnowledgeOwner {
+  ownerScope: KnowledgeOwnerScope;
+  ownerId?: string;
+}
+
+export interface ContextModeCacheHandlesConfig {
+  enabled: boolean;
+  spillThresholdBytes: number;
+  previewBytes: number;
+}
+
+export interface ContextModeRepomapConfig {
+  enabled: boolean;
+  tokenBudget: number;
+  maxFiles: number;
+}
+
+export interface ContextModeMemoryConfig {
+  enabled: boolean;
+  byteBudget: number;
+  maxRows: number;
+  retentionDays: number;
+  /**
+   * Cadence at which the focus-chain block is reinjected into the system
+   * prompt at `before_agent_start`. Turn 1 always injects; subsequent turns
+   * inject only when `turnCount % focusChainCadence === 0`. Default 6
+   * (matches Cline v3.25). Must be >= 1.
+   */
+  focusChainCadence: number;
+}
+
 /** Context-mode integration settings */
 export interface ContextModeConfig {
   /** Master toggle for all supi-context-mode integration (default: true) */
@@ -504,6 +537,12 @@ export interface ContextModeConfig {
   processors: ContextModeProcessorsConfig;
   /** Lazy active-tool filtering policy for supipowers-owned tools (default: balanced) */
   lazyTools: ContextModeLazyToolsConfig;
+  /** Cache-handle spill policy for oversized current tool results (default: enabled at 50KiB) */
+  cacheHandles: ContextModeCacheHandlesConfig;
+  /** Repo-map retrieval policy for ctx_repomap */
+  repomap: ContextModeRepomapConfig;
+  /** Cross-session memory injection policy */
+  memory: ContextModeMemoryConfig;
 }
 
 /** MCP management settings */
@@ -511,6 +550,47 @@ export interface McpManagementConfig {
   /** Close mcpc sessions on agent shutdown (default: false) */
   closeSessionsOnExit: boolean;
 }
+
+/** MemPalace native integration default wing derivation mode */
+export type MempalaceWingStrategy = "repo-name" | "project-slug" | "explicit";
+
+/** MemPalace native integration settings */
+export interface MempalaceConfig {
+  /** Enable native MemPalace memory integration */
+  enabled: boolean;
+  /** Exact PyPI package version installed by managed setup */
+  packageVersion: string;
+  /** Managed Python virtual environment path; supports ~ expansion */
+  managedVenvPath: string;
+  /** MemPalace palace path; supports ~ expansion */
+  palacePath: string;
+  /** How to derive the default project wing */
+  defaultWingStrategy: MempalaceWingStrategy;
+  /** Required non-empty wing when defaultWingStrategy is explicit */
+  explicitWing: string | null;
+  /** Agent name used for diary/checkpoint metadata */
+  defaultAgentName: string;
+  /** Permit explicit tool calls to setup automatically before dispatch */
+  autoSetup: boolean;
+  hooks: {
+    wakeUp: boolean;
+    searchGuidance: boolean;
+    compactionCheckpoint: boolean;
+    shutdownDiary: boolean;
+  };
+  budgets: {
+    wakeUpTokens: number;
+    searchResultChars: number;
+    listResultChars: number;
+    diaryChars: number;
+  };
+  timeouts: {
+    setupMs: number;
+    bridgeMs: number;
+    hookMs: number;
+  };
+}
+
 
 /** Thinking level for model configuration */
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -579,6 +659,7 @@ export interface SupipowersConfig {
   ultraplan: UltraPlanConfig;
   contextMode: ContextModeConfig;
   mcp: McpManagementConfig;
+  mempalace: MempalaceConfig;
 }
 
 
@@ -1435,6 +1516,342 @@ export interface UltraPlanBatchJournalEvent {
   sessionId: string | null;
   type: UltraPlanBatchJournalEventType;
   recordedAt: string;
+  summary: string;
+  details?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Harness pipeline (Tier 1 + Tier 2 + Tier 3 anti-slop)
+//
+// Persisted under `~/.omp/supipowers/projects/<slug>/harness/<sessionId>/`. Output writes to
+// the repo root (Tier 1 agent-neutral artifacts) and `.omp/supipowers/` (Tier 2 + Tier 3
+// supipowers-aware artifacts and project-scoped queue/score files).
+// ---------------------------------------------------------------------------
+
+/** Stages of the harness pipeline. Order is meaningful. */
+export type HarnessStage =
+  | "discover"
+  | "research"
+  | "design"
+  | "plan"
+  | "implement"
+  | "validate";
+
+/** Operational status of a harness stage. Mirrors UltraPlanAuthoringStageStatus. */
+export type HarnessStageStatus =
+  | "pending"
+  | "running"
+  | "blocked"
+  | "awaiting-user"
+  | "done";
+
+/** Pipeline gate mode (mirrors PipelineGateMode in ultraplan). */
+export type HarnessGateMode = "default" | "auto" | "manual";
+
+/** Re-run behavior decided by bare entry when an existing harness is detected. */
+export type HarnessReRunMode = "harden" | "rebuild" | "cancel";
+
+/** Anti-slop backend selection (Design stage). */
+export type HarnessAntiSlopBackend =
+  | "fallow"
+  | "desloppify"
+  | "supi-native"
+  | "hybrid";
+
+/** Slop-violation kind. Open-ended on purpose so adapters can add new sources. */
+export type HarnessSlopViolationKind =
+  | "duplicate"
+  | "dead-code"
+  | "layer-violation"
+  | "naming"
+  | "file-too-large"
+  | "complexity"
+  | "circular-dependency"
+  | "other";
+
+/** Source of a slop-queue entry. */
+export type HarnessSlopSource = "fallow" | "desloppify" | "checks" | "review" | "supi-native";
+
+/** Severity tier for queue entries. */
+export type HarnessSlopSeverity = "blocker" | "warning" | "info";
+
+/** Lifecycle state of a queue entry. */
+export type HarnessSlopState = "open" | "resolved" | "wontfix";
+
+/** A single slop-queue entry. JSONL-persisted, append-only with replacement on resolve. */
+export interface HarnessSlopQueueEntry {
+  id: string;
+  kind: HarnessSlopViolationKind;
+  file: string;
+  /** Range as (start_line, end_line) or null when range is the whole file. */
+  range: { startLine: number; endLine: number } | null;
+  severity: HarnessSlopSeverity;
+  source: HarnessSlopSource;
+  state: HarnessSlopState;
+  message: string;
+  remediation?: string;
+  /** Ids of related/clustered entries (e.g. duplicate-cluster siblings). */
+  clusters?: string[];
+  /** ISO8601 timestamp the entry was first observed. */
+  ts: string;
+  /** ISO8601 timestamp of the last state change. */
+  resolvedAt?: string;
+  /** Free-form metadata (e.g. fallow rule id, near-dup partner path:line). */
+  details?: Record<string, unknown>;
+}
+
+/** Harness scorecard breakdown. */
+export interface HarnessScoreDimension {
+  name: string;
+  /** Lenient: ignores wontfix items. Range 0-100. */
+  lenient: number;
+  /** Strict: counts wontfix items as cost. Range 0-100. */
+  strict: number;
+  /** Total entries that contributed to the score. */
+  total: number;
+  open: number;
+  resolved: number;
+  wontfix: number;
+}
+
+/** Aggregate harness score. */
+export interface HarnessScore {
+  /** ISO8601 of computation. */
+  computedAt: string;
+  lenient: number;
+  strict: number;
+  dimensions: HarnessScoreDimension[];
+  /** Optional trend buckets, oldest first. */
+  trend?: { ts: string; lenient: number; strict: number }[];
+}
+
+/** Layer rule parsed from docs/architecture.md. */
+export interface HarnessLayerRule {
+  /** Layer label, e.g. "domain", "infrastructure", "ui". */
+  layer: string;
+  /** Glob patterns matching files belonging to this layer. */
+  globs: string[];
+  /** Layers (or path globs) this layer is permitted to import. */
+  allowedImports: string[];
+  /** Layers (or path globs) this layer is forbidden from importing. */
+  forbiddenImports: string[];
+  /** Optional human-readable description. */
+  description?: string;
+}
+
+/** Per-hook configuration. */
+export interface HarnessHookConfig {
+  pre_edit_dupe_probe: {
+    enabled: boolean;
+    /** Minimum similarity threshold (0-1). Default 0.85. */
+    threshold: number;
+    /** Minimum token count below which probe is skipped. Default 30. */
+    min_token_count: number;
+  };
+  post_session_sweep: {
+    enabled: boolean;
+    /** Whether to surface a blocking steer message on new dead code. Default false. */
+    block_on_new_dead_code: boolean;
+  };
+  layer_context_inject: {
+    enabled: boolean;
+    /** Maximum characters of addendum to inject. Default 800. */
+    addendum_max_chars: number;
+  };
+  score_floor: {
+    /** Strict score floor for /supi:checks blocking. Default 75. */
+    strict: number;
+    /** Lenient score floor. Default 90. */
+    lenient: number;
+    /** When true, GC exits non-zero if strict < strict floor. Default false. */
+    release_blocking: boolean;
+  };
+}
+
+/** The harness section of SupipowersConfig. */
+export interface HarnessConfig {
+  anti_slop: HarnessHookConfig;
+  /** Selected backend (recorded by Design). */
+  backend?: HarnessAntiSlopBackend;
+  /** Threshold above which Implement defers to ultraplan batch. Default 10. */
+  implement_in_session_threshold?: number;
+}
+
+/** Discover artifact (`<session>/discover.json`). */
+export interface HarnessDiscoverArtifact {
+  sessionId: string;
+  recordedAt: string;
+  /** Detected primary languages (lowercase). */
+  languages: string[];
+  /** Detected frameworks/libraries by category. */
+  frameworks: string[];
+  packageManagers: string[];
+  buildTools: string[];
+  testTools: string[];
+  lintTools: string[];
+  /** Repo shape: monorepo/single-package. */
+  monorepoShape: "single-package" | "monorepo" | "polyglot" | "unknown";
+  ci: { detected: boolean; provider?: string; configFiles: string[] };
+  /** Existing OMP/supipowers infra detected. */
+  ompInfra: {
+    hasSupipowers: boolean;
+    skills: string[];
+    reviewAgents: string[];
+    mcpServers: string[];
+    plansCount: number;
+  };
+  /** Existing anti-slop tooling. */
+  antiSlopExisting: {
+    fallowConfig: string | null;
+    desloppifyConfig: string | null;
+    knipConfig: string | null;
+    jscpdConfig: string | null;
+    dependencyCruiserConfig: string | null;
+    eslintConfig: string | null;
+    biomeConfig: string | null;
+  };
+  /** Language coverage for backend recommendation. */
+  languageCoverage: { language: string; fileCount: number; share: number }[];
+  /** Recommended anti-slop backend. */
+  recommendedBackend: HarnessAntiSlopBackend;
+  recommendedBackendReason: string;
+  commitConventions: { detected: boolean; style?: string };
+  duplicates: { area: string; existing: string; conflict: string }[];
+  notes: string[];
+}
+
+/** Research artifact (`<session>/research/<topic>.md`). Markdown body, schema for the
+ * frontmatter only. */
+export interface HarnessResearchFrontmatter {
+  topic: string;
+  /** ISO timestamp of last verification (re-run-safe). */
+  lastVerified: string;
+  /** Source URLs cited in the writeup; minimum 2 for the validator to pass. */
+  sources: string[];
+  /** Whether the writeup contains the required `## Options` and `## Recommendation` sections. */
+  hasOptions: boolean;
+  hasRecommendation: boolean;
+}
+
+/** Design spec artifact metadata (`<session>/design-spec.md` + decisions.jsonl). */
+export interface HarnessDesignSpec {
+  sessionId: string;
+  recordedAt: string;
+  /** Layered architecture rules user agreed to. */
+  layerRules: HarnessLayerRule[];
+  /** Taste invariants (text bullets). */
+  tasteInvariants: string[];
+  /** Tooling choices. */
+  tooling: {
+    lint: string | null;
+    structuralTest: string | null;
+    eval: string | null;
+  };
+  /** Top 10 mechanical golden principles. */
+  goldenPrinciples: string[];
+  /** Documentation tree shape (paths under docs/). */
+  docsTree: string[];
+  /** Validation gates the harness should install. */
+  validationGates: string[];
+  /** supipowers wiring opted-in by the user. */
+  supipowersWiring: {
+    addReviewAgent: boolean;
+    wireChecksGate: boolean;
+  };
+  /** Anti-slop section. */
+  antiSlop: {
+    backend: HarnessAntiSlopBackend;
+    hooks: HarnessHookConfig;
+    skillTargets: string[];
+  };
+}
+
+/** A single decision recorded during Design. */
+export interface HarnessDecisionRecord {
+  recordedAt: string;
+  area: string;
+  question: string;
+  decision: string;
+  rationale?: string;
+  impact?: string[];
+}
+
+/** Validate report (`<session>/validate-report.json`). */
+export interface HarnessValidateReport {
+  sessionId: string;
+  recordedAt: string;
+  passed: boolean;
+  /** Sub-check results, one per sub-check name. */
+  checks: {
+    name: string;
+    passed: boolean;
+    summary: string;
+    findings: HarnessValidateFinding[];
+    durationMs?: number;
+  }[];
+  /** Slop scan results merged from the selected backend. */
+  slopScan: {
+    backend: HarnessAntiSlopBackend;
+    duplicates: number;
+    deadCode: number;
+    layerViolations: number;
+    other: number;
+  };
+  score: HarnessScore;
+  scoreFloorPassed: boolean;
+  syntheticEditTest: {
+    ran: boolean;
+    hooksFired: string[];
+    failures: string[];
+  };
+}
+
+/** A single Validate finding (file:line + remediation). */
+export interface HarnessValidateFinding {
+  severity: "error" | "warning" | "info";
+  file: string;
+  line?: number;
+  message: string;
+  remediation: string;
+  source: string;
+}
+
+/** Harness session state (manifest.json under <session>/). */
+export interface HarnessSession {
+  sessionId: string;
+  projectName: string;
+  startedAt: string;
+  updatedAt: string;
+  stage: HarnessStage;
+  stageStatus: HarnessStageStatus;
+  gateMode: HarnessGateMode;
+  /** Iteration counter for retry budget (per-stage). */
+  iteration: number;
+  /** Re-run mode user chose at bare entry (when applicable). */
+  reRunMode?: HarnessReRunMode;
+  /** Recorded blocker, if any. */
+  blocker: { code: string; message: string; detectedAt: string } | null;
+  /** Artifacts produced so far (relative to <session>/). */
+  artifacts: HarnessArtifactRefs;
+}
+
+/** Per-stage artifact references (relative to <session>/). */
+export interface HarnessArtifactRefs {
+  discover?: string;
+  research?: { topic: string; path: string }[];
+  designSpec?: string;
+  decisions?: string;
+  plan?: string;
+  implementLog?: string;
+  validateReport?: string;
+}
+
+/** Append-only pipeline log entry. */
+export interface HarnessPipelineEvent {
+  recordedAt: string;
+  stage: HarnessStage;
+  stageStatus: HarnessStageStatus;
+  iteration: number;
   summary: string;
   details?: Record<string, unknown>;
 }
