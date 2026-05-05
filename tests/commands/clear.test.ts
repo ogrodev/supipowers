@@ -12,6 +12,7 @@ import { handleClear } from "../../src/commands/clear.js";
 import {
   _resetCache,
   getCacheStore,
+  getKnowledgeStore,
   getSessionId,
   registerContextModeHooks,
 } from "../../src/context-mode/hooks.js";
@@ -22,6 +23,7 @@ import {
   MetricsStore,
   __setMetricsStoreForTest,
 } from "../../src/context-mode/metrics-store.js";
+import { getMemoryStore } from "../../src/context-mode/memory-store.js";
 import { rmDirWithRetry } from "../helpers/fs.js";
 
 let tmpDir: string;
@@ -135,6 +137,36 @@ function seedCache(sessionId = getSessionId(), text = "cached payload") {
   return cacheStore.putText({ sessionId, text, sourceTool: "read", sourceHash: `${sessionId}:${text}` });
 }
 
+function seedKnowledge(sessionId = getSessionId()) {
+  const knowledgeStore = getKnowledgeStore();
+  if (!knowledgeStore) throw new Error("knowledge store not initialized");
+  knowledgeStore.index(
+    [{ title: "Session Knowledge", body: "clearable session knowledge", contentType: "prose", source: "session-source" }],
+    "session-source",
+    { ownerScope: "session", ownerId: sessionId },
+  );
+  return knowledgeStore;
+}
+
+function seedMemory(sessionId = getSessionId()) {
+  const memoryStore = getMemoryStore();
+  if (!memoryStore) throw new Error("memory store not initialized");
+  memoryStore.put({
+    ownerScope: "session",
+    ownerId: sessionId,
+    type: "observation",
+    body: "clearable session memory",
+    now: 1,
+  });
+  memoryStore.put({
+    ownerScope: "project",
+    type: "observation",
+    body: "pre-clear project memory",
+    now: 1,
+  });
+  return memoryStore;
+}
+
 describe("/supi:clear — pre-deletion summary (Tasks 39, 41, 55)", () => {
   test("summary contains rows, bytes, started, scope sentence, DB path before any prompt", async () => {
     setup();
@@ -152,7 +184,7 @@ describe("/supi:clear — pre-deletion summary (Tasks 39, 41, 55)", () => {
     expect(summary).toContain("Approx on-disk:");
     expect(summary).toContain("Started:");
     expect(summary).toContain(
-      "Scope: metrics and cache for this session. Events and knowledge are not touched.",
+      "Scope: metrics, cache, current-session knowledge, and current-session memory. Project memory created before this clear is suppressed for this session. Events are not touched.",
     );
     expect(summary).toContain(`Metrics DB: ${dbPath}`);
     expect(summary).toContain("1 cache refs in this session.");
@@ -160,6 +192,10 @@ describe("/supi:clear — pre-deletion summary (Tasks 39, 41, 55)", () => {
     expect(summary).toContain(String(cached.compressedBytes));
     expect(summary).toContain(`Cache DB: ${cacheStore.dbPath}`);
     expect(summary).toContain(`Cache payloads: ${cacheStore.payloadRoot}`);
+    expect(summary).toContain("Knowledge DB:");
+    expect(summary).toContain("Current-session indexed knowledge will be cleared.");
+    expect(summary).toContain("Memory DB:");
+    expect(summary).toContain("session-owned memory rows for this session will be cleared");
   });
 
   test("cancel preserves rows and notifies 'Clear cancelled'", async () => {
@@ -202,7 +238,7 @@ describe("/supi:clear — confirmation fallback (Task 40)", () => {
     expect(typeof title).toBe("string");
     expect(options).toEqual(["Confirm", "Cancel"]);
     expect(typeof opts.helpText).toBe("string");
-    expect(opts.helpText).toContain("Scope: metrics and cache");
+    expect(opts.helpText).toContain("Scope: metrics, cache, current-session knowledge");
   });
 
   test("uses ctx.ui.confirm when present and skips select for the prompt", async () => {
@@ -224,6 +260,9 @@ describe("/supi:clear — accept path (Task 42)", () => {
     recordRow();
     const cached = seedCache();
     const payloadPath = path.join(cacheStore.payloadRoot, cached.payloadRelpath);
+    const sessionId = getSessionId();
+    const knowledgeStore = seedKnowledge(sessionId);
+    const memoryStore = seedMemory(sessionId);
     await store.flushPendingForTest();
 
     confirmMock!.mockImplementation(async () => true);
@@ -241,6 +280,9 @@ describe("/supi:clear — accept path (Task 42)", () => {
       expect(meta.started_at).toBeGreaterThan(0); // retained
       expect(cacheStore.getEntryMeta(cached.handle)).toBeNull();
       expect(fs.existsSync(payloadPath)).toBe(false);
+      expect(knowledgeStore.search(["clearable"], { owner: { ownerScope: "session", ownerId: sessionId } })[0].results).toHaveLength(0);
+      expect(memoryStore.retrieve({ sessionId }).map((row) => row.body)).not.toContain("clearable session memory");
+      expect(memoryStore.retrieve({ sessionId }).map((row) => row.body)).not.toContain("pre-clear project memory");
     } finally {
       probe.close();
     }
@@ -336,6 +378,34 @@ describe("/supi:clear all — project-wide (Task 43)", () => {
     } finally {
       probe.close();
     }
+  });
+
+  test("second confirmation lists memory-only and knowledge-only sessions", async () => {
+    setup();
+    const memoryStore = getMemoryStore();
+    const knowledgeStore = getKnowledgeStore();
+    if (!memoryStore || !knowledgeStore) throw new Error("stores not initialized");
+    memoryStore.put({
+      ownerScope: "session",
+      ownerId: "memory-only",
+      type: "observation",
+      body: "memory-only row",
+    });
+    knowledgeStore.index(
+      [{ title: "Knowledge Only", body: "knowledge-only row", contentType: "prose", source: "knowledge-only" }],
+      "knowledge-only",
+      { ownerScope: "session", ownerId: "knowledge-only" },
+    );
+
+    let i = 0;
+    selectMock.mockImplementation(async () => (i++ === 0 ? "Confirm" : "Cancel"));
+    await run("all");
+
+    const secondConfirmHelp = (selectMock as any).mock.calls[1][2].helpText;
+    expect(secondConfirmHelp).toContain("memory-only");
+    expect(secondConfirmHelp).toContain("1 memory rows");
+    expect(secondConfirmHelp).toContain("knowledge-only");
+    expect(secondConfirmHelp).toContain("1 knowledge chunks");
   });
 
   test("cancelling either confirm preserves all rows", async () => {

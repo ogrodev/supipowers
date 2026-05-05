@@ -221,3 +221,142 @@ describe("handleUpdate — dependency install", () => {
     expect(npmFallback!.opts?.cwd).toBe(extDir);
   });
 });
+
+describe("handleUpdate — MemPalace prompt", () => {
+  let tmpDir: string;
+  let extDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-update-mem-"));
+    extDir = path.join(tmpDir, "agent", "extensions", "supipowers");
+    fs.mkdirSync(extDir, { recursive: true });
+    fs.writeFileSync(path.join(extDir, "package.json"), JSON.stringify({ version: "1.0.0" }));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function platformWithExec(execImpl: (cmd: string, args: string[], opts?: any) => Promise<any>) {
+    return createMockPlatform({
+      paths: {
+        dotDir: ".omp",
+        dotDirDisplay: ".omp",
+        project: (cwd: string, ...s: string[]) => path.join(cwd, ".omp", "supipowers", ...s),
+        global: (...s: string[]) => path.join(tmpDir, "global", ".omp", "supipowers", ...s),
+        agent: (...s: string[]) => path.join(tmpDir, "agent", ...s),
+      },
+      exec: mock(execImpl),
+    });
+  }
+
+  function selectByPrompt(answers: Record<string, string>) {
+    return mock(async (title: string) => {
+      for (const [match, value] of Object.entries(answers)) {
+        if (title.includes(match)) return value;
+      }
+      return null;
+    });
+  }
+
+  test("does not run MemPalace setup when the user picks Skip", async () => {
+    const execCalls: Array<{ cmd: string; args: string[] }> = [];
+    const platform = platformWithExec(async (cmd, args) => {
+      execCalls.push({ cmd, args });
+      if (cmd === "npm" && args[0] === "view") return { stdout: "2.0.0\n", stderr: "", code: 0 };
+      if (cmd === "npm" && args.includes("--prefix")) {
+        const prefix = args[args.indexOf("--prefix") + 1];
+        const pkgDir = path.join(prefix, "node_modules", "supipowers");
+        fs.mkdirSync(path.join(pkgDir, "src"), { recursive: true });
+        fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ version: "2.0.0" }));
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    });
+
+    const ctx = createMockContext({
+      cwd: tmpDir,
+      ui: {
+        select: selectByPrompt({
+          "Update supipowers": "Update supipowers only",
+          "MemPalace memory": "Skip",
+        }),
+        notify: mock(),
+        input: mock(async () => null),
+      },
+    });
+
+    handleUpdate(platform, ctx);
+    await new Promise((r) => setTimeout(r, 250));
+
+    const uvCall = execCalls.find((c) => c.args.includes("venv") || c.args.includes("install") && c.args.some((a) => a.startsWith("mempalace==")));
+    expect(uvCall).toBeUndefined();
+  });
+
+  test("runs MemPalace setup through platform.exec when the user picks Yes", async () => {
+    // Pre-stage a managed uv binary so ensureUv hits the cached path.
+    const binDir = path.join(tmpDir, "global", ".omp", "supipowers", "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, "uv"), "");
+    fs.chmodSync(path.join(binDir, "uv"), 0o755);
+    fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
+    // Pin the managed venv to a tmp path via project config so we never touch ~/.omp.
+    const venvRoot = path.join(tmpDir, "mempalace-venv");
+    const projectConfigDir = path.join(tmpDir, ".omp", "supipowers");
+    fs.mkdirSync(projectConfigDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectConfigDir, "config.json"),
+      JSON.stringify({ mempalace: { managedVenvPath: venvRoot } }),
+    );
+
+    const execCalls: Array<{ cmd: string; args: string[] }> = [];
+    const platform = platformWithExec(async (cmd, args) => {
+      execCalls.push({ cmd, args });
+      if (cmd === "npm" && args[0] === "view") return { stdout: "2.0.0\n", stderr: "", code: 0 };
+      if (cmd === "npm" && args.includes("--prefix")) {
+        const prefix = args[args.indexOf("--prefix") + 1];
+        const pkgDir = path.join(prefix, "node_modules", "supipowers");
+        fs.mkdirSync(path.join(pkgDir, "src"), { recursive: true });
+        fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ version: "2.0.0" }));
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (cmd === path.join(binDir, "uv") && args[0] === "venv") {
+        fs.mkdirSync(path.join(venvRoot, "bin"), { recursive: true });
+        fs.writeFileSync(path.join(venvRoot, "bin", "python"), "");
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (cmd === path.join(binDir, "uv")) return { stdout: "", stderr: "", code: 0 };
+      // Bridge subprocess invocations
+      return { stdout: JSON.stringify({ ok: true, result: {} }), stderr: "", code: 0 };
+    });
+
+    const notify = mock();
+    const ctx = createMockContext({
+      cwd: tmpDir,
+      ui: {
+        select: selectByPrompt({
+          "Update supipowers": "Update supipowers only",
+          "MemPalace memory": "Yes",
+        }),
+        notify,
+        input: mock(async () => null),
+      },
+    });
+
+    try {
+      handleUpdate(platform, ctx);
+      await new Promise((r) => setTimeout(r, 400));
+
+      const venvCall = execCalls.find((c) => c.cmd === path.join(binDir, "uv") && c.args[0] === "venv");
+      expect(venvCall).toBeDefined();
+      const pipCall = execCalls.find(
+        (c) => c.cmd === path.join(binDir, "uv") && c.args[0] === "pip" && c.args.some((a) => a.startsWith("mempalace==")),
+      );
+      expect(pipCall).toBeDefined();
+      const messages = (notify.mock.calls as any[]).map((call) => call[0] as string);
+      expect(messages.some((m) => m.includes("MemPalace v3.3.4 ready"))).toBe(true);
+    } finally {
+      // venvRoot is inside tmpDir; afterEach handles cleanup.
+    }
+  });
+});
