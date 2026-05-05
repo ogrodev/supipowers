@@ -64,7 +64,7 @@ describe("planActiveTools base policy", () => {
       lazyTools: lazyTools(),
     });
 
-    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "mcpc_manager"]);
+    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]);
     expect(plan.deactivated).toEqual(["ctx_batch_execute"]);
   });
 
@@ -76,7 +76,7 @@ describe("planActiveTools base policy", () => {
       lazyTools: lazyTools(),
     });
 
-    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "mcpc_manager"]);
+    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]);
     expect(plan.activeTools).not.toContain("ctx_batch_execute");
     expect(plan.activeTools).not.toContain("mcpc_figma");
   });
@@ -89,7 +89,7 @@ describe("planActiveTools base policy", () => {
       lazyTools: lazyTools({ mode: "balanced" }),
     });
 
-    expect(plan.activeTools).toEqual(["ctx_execute", "ctx_search", "mcpc_manager"]);
+    expect(plan.activeTools).toEqual(["ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]);
   });
 
   test("conservative mode keeps registered context tools except rare destructive tools", () => {
@@ -123,6 +123,18 @@ describe("planActiveTools base policy", () => {
     });
 
     expect(plan.activeTools).toEqual(["ctx_execute"]);
+  });
+
+  test("keeps ctx_open_cached active when cache handles are enabled", () => {
+    const plan = planActiveTools({
+      prompt: "edit the file",
+      currentActive: [],
+      allTools: [...ALL_CTX_TOOLS],
+      lazyTools: lazyTools({ mode: "aggressive", alwaysKeep: ["ctx_execute"] }),
+      cacheHandlesEnabled: true,
+    });
+
+    expect(plan.activeTools).toEqual(["ctx_execute", "ctx_open_cached"]);
   });
 
   test("returns deterministic order and deduplicates owned selections", () => {
@@ -226,6 +238,7 @@ describe("planActiveTools prompt triggers", () => {
     expect(plan.activeTools).toEqual([
       "ctx_execute",
       "ctx_search",
+      "ctx_open_cached",
       "ctx_batch_execute",
       "mcpc_manager",
     ]);
