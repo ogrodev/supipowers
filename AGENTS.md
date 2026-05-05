@@ -11,9 +11,11 @@
 - `/supi:release` — release automation
 - `/supi:fix-pr` — PR review comment assessment and fixing
 - `/supi:ultraplan` — multi-stage authoring pipeline (intake → scout → discover → research → synthesize → review → approve) and execution runtime
+- `/supi:harness` — harness engineering pipeline and anti-slop guardrails (discover → research → design → plan → implement → validate)
 - `/supi:commit` — AI-powered commit with conventional messages
 - `/supi:generate` — documentation drift detection
 - `/supi:agents` — manage review agents
+- `/supi:memory` — manage native MemPalace memory integration (`status`, `setup`)
 
 It is **not** a web application. It runs as a plugin inside the OMP runtime, registered via the `omp.extensions` field in `package.json`.
 
@@ -42,6 +44,7 @@ OMP Runtime
     ├── src/lsp/              ← LSP availability detection via platform.getActiveTools()
     ├── src/mcp/              ← MCP server management (registry, activation, lifecycle)
     ├── src/context-mode/     ← context window protection hooks
+    ├── src/harness/          ← Harness pipeline, anti-slop adapters, hooks, and artifacts
     ├── src/release/          ← release automation logic
     ├── src/fix-pr/           ← PR review comment fixing logic
     ├── src/docs/             ← documentation drift detection
@@ -127,7 +130,8 @@ supipowers/
 │   ├── verification/SKILL.md
 │   ├── receiving-code-review/SKILL.md
 │   ├── context-mode/SKILL.md
-│   └── creating-supi-agents/SKILL.md
+│   ├── creating-supi-agents/SKILL.md
+│   └── harness/SKILL.md
 ├── bin/
 │   └── install.ts            # Interactive CLI installer (@clack/prompts)
 ├── docs/                     # Project documentation
