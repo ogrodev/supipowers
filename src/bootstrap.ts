@@ -23,7 +23,11 @@ import { registerClearCommand, handleClear } from "./commands/clear.js";
 import { registerCommitCommand, handleCommit } from "./commands/commit.js";
 import { registerGenerateCommand } from "./commands/generate.js";
 import { registerAgentsCommand, handleAgents } from "./commands/agents.js";
+import { registerMemoryCommand, handleMemory } from "./commands/memory.js";
 import { registerUltraplanCommand, handleUltraplan } from "./commands/ultraplan.js";
+import { registerHarnessCommand, handleHarness } from "./harness/command.js";
+import { registerHarnessPipelineTools } from "./harness/tools.js";
+import { registerHarnessHooks } from "./harness/hooks/register.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
 import { loadMcpRegistry } from "./mcp/config.js";
@@ -44,6 +48,8 @@ import { registerUltraPlanRuntimeTools } from "./ultraplan/execution/runtime-too
 import { registerUltraPlanAuthoringTool } from "./ultraplan/authoring-tool.js";
 import { registerUltraPlanAuthoringPipelineTools } from "./ultraplan/authoring/authoring-tools.js";
 import { registerActiveToolController } from "./tool-catalog/active-tool-controller.js";
+import { registerMempalaceHooks } from "./mempalace/hooks.js";
+import { registerMempalaceTool } from "./mempalace/tool.js";
 
 // TUI-only commands — intercepted at the input level to prevent
 // message submission and "Working..." indicator
@@ -64,6 +70,8 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:checks": (platform, ctx, args) => handleChecksCommand(platform, ctx, args),
   "supi:agents": (platform, ctx, args) => handleAgents(platform, ctx, args),
   "supi:ultraplan": (platform, ctx, args) => handleUltraplan(platform, ctx, args),
+  "supi:harness": (platform, ctx, args) => { void handleHarness(platform, ctx, args); },
+  "supi:memory": (platform, ctx, args) => handleMemory(platform, ctx, args),
 };
 
 let pendingTags: string[] = [];
@@ -101,11 +109,14 @@ export function bootstrap(platform: Platform): void {
   registerAgentsCommand(platform);
   registerUiDesignCommand(platform);
   registerUltraplanCommand(platform);
+  registerHarnessCommand(platform);
+  registerMemoryCommand(platform);
 
 
   registerUltraPlanRuntimeTools(platform);
   registerUltraPlanAuthoringTool(platform);
   registerUltraPlanAuthoringPipelineTools(platform);
+  registerHarnessPipelineTools(platform);
 
   // Register plan approval flow (agent_end hook for plan approval UI)
   registerPlanApprovalHook(platform);
@@ -155,12 +166,18 @@ export function bootstrap(platform: Platform): void {
     },
   });
   registerContextModeHooks(platform, config);
+  registerMempalaceTool(platform, config);
+  registerMempalaceHooks(platform, config);
 
-
-  // Planning-mode prompt override — registered after context-mode so it wins
+  // Planning-mode prompt override — registered after context-mode and MemPalace so it wins
   // when /supi:plan is active and otherwise stays dormant.
   registerPlanningSystemPromptHook(platform);
   registerUiDesignSystemPromptHook(platform);
+
+  // Register harness anti-slop hooks (gated by per-repo marker file at session start).
+  // Idempotent — safe to call once per process. The hooks themselves no-op on every
+  // event when the marker is missing, so other repos see no behavior change.
+  registerHarnessHooks(platform);
 
 
   // Session start
