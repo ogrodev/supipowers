@@ -207,6 +207,52 @@ describe("validateConfig", () => {
     expect(result.errors.some((error) => error.includes("contextMode.lazyTools"))).toBe(true);
   });
 
+  test("memory.focusChainCadence default is 6 (Cline v3.25)", () => {
+    expect(DEFAULT_CONFIG.contextMode.memory.focusChainCadence).toBe(6);
+  });
+
+  test("rejects memory.focusChainCadence < 1", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      contextMode: {
+        ...DEFAULT_CONFIG.contextMode,
+        memory: {
+          ...DEFAULT_CONFIG.contextMode.memory,
+          focusChainCadence: 0,
+        },
+      },
+    });
+    expect(result.valid).toBe(false);
+  });
+
+  test("rejects non-integer memory.focusChainCadence", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      contextMode: {
+        ...DEFAULT_CONFIG.contextMode,
+        memory: {
+          ...DEFAULT_CONFIG.contextMode.memory,
+          focusChainCadence: 2.5 as unknown as number,
+        },
+      },
+    });
+    expect(result.valid).toBe(false);
+  });
+
+  test("accepts memory.focusChainCadence = 1", () => {
+    const result = validateConfig({
+      ...DEFAULT_CONFIG,
+      contextMode: {
+        ...DEFAULT_CONFIG.contextMode,
+        memory: {
+          ...DEFAULT_CONFIG.contextMode.memory,
+          focusChainCadence: 1,
+        },
+      },
+    });
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
   test("rejects release.tagFormat without exactly one ${version} placeholder", () => {
     const missingPlaceholder = validateConfig({
       ...DEFAULT_CONFIG,

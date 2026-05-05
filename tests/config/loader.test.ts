@@ -173,7 +173,7 @@ describe("loadConfig", () => {
     expect(DEFAULT_CONFIG.contextMode.lazyTools.enabled).toBe(true);
     expect(DEFAULT_CONFIG.contextMode.lazyTools.mode).toBe("balanced");
     expect(DEFAULT_CONFIG.contextMode.lazyTools.alwaysKeep).toEqual(
-      expect.arrayContaining(["ctx_execute", "ctx_search", "mcpc_manager"]),
+      expect.arrayContaining(["ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]),
     );
   });
 
@@ -764,6 +764,11 @@ describe("contextMode config", () => {
     expect(config.contextMode.llmSummarization).toBe(false);
     expect(config.contextMode.llmThreshold).toBe(16384);
     expect(config.contextMode.processors).toEqual({ enabled: true, disable: [] });
+    expect(config.contextMode.cacheHandles).toEqual({
+      enabled: true,
+      spillThresholdBytes: 50 * 1024,
+      previewBytes: 3 * 1024,
+    });
   });
 
   test("deepMerge applies contextMode overrides", () => {
