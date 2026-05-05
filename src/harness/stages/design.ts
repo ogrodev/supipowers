@@ -22,8 +22,13 @@ import {
   loadHarnessDiscover,
   loadHarnessDesignSpec,
   saveHarnessDesignSpec,
+  saveHarnessDesignSpecJson,
 } from "../storage.js";
-import type { HarnessDesignSpec } from "../../types.js";
+import type {
+  HarnessDesignSpec,
+  HarnessDiscoverArtifact,
+} from "../../types.js";
+import { DEFAULT_HARNESS_HOOK_CONFIG } from "../hooks/register.js";
 
 /**
  * Render a HarnessDesignSpec into the markdown that lands at `<session>/design-spec.md`.
@@ -130,6 +135,44 @@ export function validateDesignSpec(spec: HarnessDesignSpec): string[] {
   return errors;
 }
 
+/**
+ * Build a sensible default `HarnessDesignSpec` from a Discover artifact. Used by the
+ * per-stage `/supi:harness design` subcommand when the user has not already authored a
+ * structured spec; lets the pipeline run end-to-end without an interactive Q&A.
+ *
+ * The spec is intentionally conservative — it picks the first discovered tool per
+ * category, leaves layer rules / golden principles empty, and inherits the discover
+ * artifact's recommended anti-slop backend.
+ */
+export function defaultDesignSpecFromDiscover(
+  discover: HarnessDiscoverArtifact,
+  sessionId: string,
+  recordedAt: string,
+): HarnessDesignSpec {
+  const lint = discover.lintTools[0] ?? null;
+  const structuralTest = discover.testTools[0] ?? null;
+  return {
+    sessionId,
+    recordedAt,
+    layerRules: [],
+    tasteInvariants: [],
+    tooling: {
+      lint,
+      structuralTest,
+      eval: null,
+    },
+    goldenPrinciples: [],
+    docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+    validationGates: ["typecheck", "test"],
+    supipowersWiring: { addReviewAgent: true, wireChecksGate: false },
+    antiSlop: {
+      backend: discover.recommendedBackend,
+      hooks: DEFAULT_HARNESS_HOOK_CONFIG,
+      skillTargets: [],
+    },
+  };
+}
+
 export interface DesignStageInput {
   /** Pre-built spec, typically composed by the command handler from interactive Q&A. */
   spec: HarnessDesignSpec;
@@ -174,6 +217,20 @@ export class HarnessDesignStage implements HarnessStageRunner {
         error: `failed to persist design spec: ${persisted.error.message}`,
       };
     }
+    const persistedJson = saveHarnessDesignSpecJson(
+      ctx.paths,
+      ctx.cwd,
+      ctx.sessionId,
+      specWithTimestamp,
+    );
+    if (!persistedJson.ok) {
+      return {
+        status: "failed",
+        stage: this.stage,
+        artifactPaths: [persisted.value],
+        error: `failed to persist design spec JSON: ${persistedJson.error.message}`,
+      };
+    }
     appendHarnessDecision(ctx.paths, ctx.cwd, ctx.sessionId, {
       recordedAt,
       area: "design-spec-saved",
@@ -183,7 +240,7 @@ export class HarnessDesignStage implements HarnessStageRunner {
     return {
       status: "awaiting-user",
       stage: this.stage,
-      artifactPaths: ["design-spec.md"],
+      artifactPaths: ["design-spec.md", "design-spec.json"],
       details: {
         backend: specWithTimestamp.antiSlop.backend,
         layerCount: specWithTimestamp.layerRules.length,

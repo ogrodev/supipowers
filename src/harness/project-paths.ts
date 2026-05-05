@@ -45,6 +45,7 @@ export const HARNESS_MANIFEST_FILENAME = "manifest.json";
 /** Per-session artifact filenames. */
 export const HARNESS_DISCOVER_FILENAME = "discover.json";
 export const HARNESS_DESIGN_SPEC_FILENAME = "design-spec.md";
+export const HARNESS_DESIGN_SPEC_JSON_FILENAME = "design-spec.json";
 export const HARNESS_DECISIONS_FILENAME = "decisions.jsonl";
 export const HARNESS_VALIDATE_REPORT_FILENAME = "validate-report.json";
 export const HARNESS_IMPLEMENT_LOG_FILENAME = "implement-log.jsonl";
@@ -146,6 +147,17 @@ export function getHarnessDesignSpecPath(
   sessionId: string,
 ): string {
   return path.join(getHarnessSessionDir(paths, cwd, sessionId), HARNESS_DESIGN_SPEC_FILENAME);
+}
+
+export function getHarnessDesignSpecJsonPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): string {
+  return path.join(
+    getHarnessSessionDir(paths, cwd, sessionId),
+    HARNESS_DESIGN_SPEC_JSON_FILENAME,
+  );
 }
 
 export function getHarnessDecisionsPath(

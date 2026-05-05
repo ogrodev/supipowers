@@ -22,7 +22,7 @@ import {
 import { HarnessDiscoverStage } from "./stages/discover.js";
 import { HarnessResearchStage } from "./stages/research.js";
 import { HarnessDesignStage, type DesignStageInput } from "./stages/design.js";
-import { HarnessPlanStage } from "./stages/plan.js";
+import { HarnessPlanStage, type PlanStageInput } from "./stages/plan.js";
 import { HarnessImplementStage, type ImplementStageInput } from "./stages/implement.js";
 import { HarnessValidateStage, type ValidateStageInput } from "./stages/validate.js";
 
@@ -65,6 +65,8 @@ function gateStagesFor(mode: HarnessGateMode): ReadonlySet<HarnessStage> {
 export interface BuildRunnerInput {
   /** Required when running the design stage. */
   designInput?: DesignStageInput;
+  /** Optional override for the plan stage (filename only). */
+  planInput?: PlanStageInput;
   /** Required when running the implement stage. */
   implementInput?: ImplementStageInput;
   /** Required when running the validate stage. */
@@ -83,7 +85,7 @@ export function buildHarnessRunner(stage: HarnessStage, input: BuildRunnerInput)
       }
       return new HarnessDesignStage(input.designInput);
     case "plan":
-      return new HarnessPlanStage();
+      return new HarnessPlanStage(input.planInput);
     case "implement":
       if (!input.implementInput) {
         throw new Error("buildHarnessRunner: implement stage requires implementInput");

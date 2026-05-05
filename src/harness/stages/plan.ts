@@ -9,19 +9,21 @@
  * gates `/supi:plan` gates the harness plan, no special-casing.
  */
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { HarnessDesignSpec } from "../../types.js";
 import { validatePlanMarkdown } from "../../planning/validate.js";
 import { savePlan } from "../../storage/plans.js";
+import { getProjectStatePath } from "../../workspace/state-paths.js";
 import {
   type HarnessStageRunResult,
   type HarnessStageRunner,
   type HarnessStageRunnerContext,
+  nowIso,
 } from "../stage-runner.js";
 import {
-  loadHarnessDesignSpec,
-  loadHarnessDiscover,
+  loadHarnessDesignSpecJson,
 } from "../storage.js";
 
 export interface HarnessPlanTask {
@@ -236,56 +238,50 @@ export interface PlanStageInput {
 export class HarnessPlanStage implements HarnessStageRunner {
   readonly stage = "plan" as const;
 
-  // PlanStageInput intentionally unconstructed: the stage runner exposes the
-  // HarnessStageRunner shape but real plan emission happens through
-  // `emitHarnessPlanFromSpec` because the in-memory HarnessDesignSpec is the input.
+  constructor(private readonly input: PlanStageInput = {}) {}
 
   async isReady(ctx: HarnessStageRunnerContext): Promise<boolean> {
-    return loadHarnessDesignSpec(ctx.paths, ctx.cwd, ctx.sessionId).ok;
+    return loadHarnessDesignSpecJson(ctx.paths, ctx.cwd, ctx.sessionId).ok;
   }
 
-  async isComplete(_ctx: HarnessStageRunnerContext): Promise<boolean> {
-    // The plan stage advances when the user approves the generated plan via the standard
-    // approval flow. The stage runner can re-emit the plan on demand; the approval flow's
-    // marker (a follow-on signal from the planning subsystem) is the truth source. We
-    // treat regeneration as idempotent — `run` always overwrites.
-    return false;
+  async isComplete(ctx: HarnessStageRunnerContext): Promise<boolean> {
+    const designResult = loadHarnessDesignSpecJson(ctx.paths, ctx.cwd, ctx.sessionId);
+    if (!designResult.ok) return false;
+    const planName = this.input.planFilename ?? `harness-${ctx.sessionId}`;
+    const planPath = path.join(
+      getProjectStatePath(ctx.paths, ctx.cwd, "plans"),
+      `${planName}.md`,
+    );
+    return fs.existsSync(planPath);
   }
 
   async run(ctx: HarnessStageRunnerContext): Promise<HarnessStageRunResult> {
-    const designResult = loadHarnessDesignSpec(ctx.paths, ctx.cwd, ctx.sessionId);
+    const designResult = loadHarnessDesignSpecJson(ctx.paths, ctx.cwd, ctx.sessionId);
     if (!designResult.ok) {
       return {
         status: "blocked",
         stage: this.stage,
         artifactPaths: [],
-        blocker: { code: "design-missing", message: "Plan requires a completed Design stage" },
+        blocker: {
+          code: "design-spec-missing",
+          message:
+            "Plan stage requires <session>/design-spec.json. Run /supi:harness design first to produce it.",
+        },
       };
     }
-
-    // Discover is required for context (we cite the recommended backend in the plan).
-    const discoverResult = loadHarnessDiscover(ctx.paths, ctx.cwd, ctx.sessionId);
-    if (!discoverResult.ok) {
-      return {
-        status: "blocked",
-        stage: this.stage,
-        artifactPaths: [],
-        blocker: { code: "discover-missing", message: "Plan requires a completed Discover stage" },
-      };
-    }
-
-    // Re-parse the design markdown back into a HarnessDesignSpec is overkill — the design
-    // stage stored a structured spec via decisions.jsonl, but for v1 we accept the raw
-    // markdown path and rebuild a minimal spec from it. Callers that have the structured
-    // spec in-memory (the common case) should call `renderHarnessPlanMarkdown` directly
-    // and skip this stage.
+    const result = emitHarnessPlanFromSpec({
+      ctx: { paths: ctx.paths, cwd: ctx.cwd },
+      spec: designResult.value,
+      recordedAt: nowIso(ctx),
+      planName: this.input.planFilename ?? `harness-${ctx.sessionId}`,
+    });
     return {
-      status: "blocked",
+      status: "awaiting-user",
       stage: this.stage,
-      artifactPaths: [],
-      blocker: {
-        code: "plan-inputs-missing",
-        message: "Plan stage requires the structured HarnessDesignSpec to be supplied via the command handler. Use renderHarnessPlanMarkdown directly with the in-memory spec.",
+      artifactPaths: [result.planPath],
+      details: {
+        taskCount: result.tasks.length,
+        planPath: result.planPath,
       },
     };
   }
@@ -317,8 +313,3 @@ export function validateHarnessPlanMarkdown(markdown: string, planName: string):
   if (result.output) return [];
   return result.errors.map((e: { path: string; message: string }) => `${e.path}: ${e.message}`);
 }
-
-// Suppress "imported but unused" noise — `path` is reserved for future workspace-target
-// integrations. We keep the import so adding workspace-relative plan paths later is a
-// one-line change.
-void path;

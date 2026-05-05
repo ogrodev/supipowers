@@ -16,6 +16,7 @@ import * as path from "node:path";
 
 import type { PlatformPaths } from "../platform/types.js";
 import type {
+  HarnessDesignSpec,
   HarnessDiscoverArtifact,
   HarnessPipelineEvent,
   HarnessSession,
@@ -26,6 +27,7 @@ import type {
 } from "../types.js";
 import {
   getHarnessDecisionsPath,
+  getHarnessDesignSpecJsonPath,
   getHarnessDiscoverPath,
   getHarnessImplementLogPath,
   getHarnessManifestPath,
@@ -340,6 +342,30 @@ export function loadHarnessDesignSpec(
     "design-spec.md",
   );
   return readTextFile(filePath);
+}
+
+export function saveHarnessDesignSpecJson(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  spec: HarnessDesignSpec,
+): UltraPlanStorageResult<string> {
+  return writeJsonAtomic(
+    getHarnessDesignSpecJsonPath(paths, cwd, sessionId),
+    spec,
+  );
+}
+
+export function loadHarnessDesignSpecJson(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): UltraPlanStorageResult<HarnessDesignSpec> {
+  const result = readJsonFile(
+    getHarnessDesignSpecJsonPath(paths, cwd, sessionId),
+  );
+  if (!result.ok) return result;
+  return success(result.value as HarnessDesignSpec);
 }
 
 export function appendHarnessDecision(

@@ -13,9 +13,7 @@
 
 import type { Platform } from "../../platform/types.js";
 import type { HarnessConfig, HarnessHookConfig } from "../../types.js";
-import { FallowAdapter } from "../anti_slop/fallow-adapter.js";
-import { DesloppifyAdapter } from "../anti_slop/desloppify-adapter.js";
-import type { SlopBackend } from "../anti_slop/backend.js";
+import { buildBackendAdapter } from "../anti_slop/backend-factory.js";
 import {
   registerLayerContextInjectHook,
 } from "./layer-context-inject.js";
@@ -58,20 +56,8 @@ export interface RegisterHooksOptions {
   resolveCandidateFile?: (event: unknown, ctx: unknown) => string | null;
 }
 
-function buildBackendAdapter(backend: NonNullable<RegisterHooksOptions["backend"]>): SlopBackend | null {
-  switch (backend) {
-    case "fallow":
-      return new FallowAdapter();
-    case "desloppify":
-      return new DesloppifyAdapter();
-    case "hybrid":
-      // Hybrid prefers fallow for TS subtrees; the hook adapter is a single instance, so
-      // we default to fallow and let GC fan out to desloppify for non-TS.
-      return new FallowAdapter();
-    case "supi-native":
-      return null;
-  }
-}
+// Re-export so existing call sites keep working without an import path change.
+export { buildBackendAdapter };
 
 /**
  * Register every harness hook. Idempotent at the dispose boundary: calling
