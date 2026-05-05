@@ -1,8 +1,7 @@
 // src/commands/clear.ts
 //
-// `/supi:clear` — destructive, scoped to L1 metrics rows only. Cross-store
-// deletion (events / knowledge / cache) is intentionally out of scope; a
-// future spec covers that when L3 lands.
+// `/supi:clear` — destructive cleanup for metrics, cache, current-session
+// knowledge, and memory. Events are intentionally out of scope.
 //
 // UX rules (from L1 design spec §6.4 + plan Tasks 39\u201347):
 //   - Pre-deletion summary is rendered before any prompt.
@@ -15,14 +14,15 @@
 
 import type { Platform, PlatformContext } from "../platform/types.js";
 import { basename } from "node:path";
-import { getCacheStore, getMetricsStore, getSessionId } from "../context-mode/hooks.js";
+import { getCacheStore, getKnowledgeStore, getMetricsStore, getSessionId } from "../context-mode/hooks.js";
+import { getMemoryStore } from "../context-mode/memory-store.js";
 import { getProjectStateDir } from "../workspace/state-paths.js";
 import { formatSize } from "../context/analyzer.js";
 
 const SESSION_SCOPE_SENTENCE =
-  "Scope: metrics and cache for this session. Events and knowledge are not touched.";
+  "Scope: metrics, cache, current-session knowledge, and current-session memory. Project memory created before this clear is suppressed for this session. Events are not touched.";
 const PROJECT_SCOPE_SENTENCE =
-  "Scope: metrics and cache for this project. Events and knowledge are not touched.";
+  "Scope: metrics, cache, all indexed knowledge, and all memory for this project. Events are not touched.";
 
 function formatRelativeTime(startedAtMs: number | null, now = Date.now()): string {
   if (startedAtMs === null) return "unknown";
@@ -87,6 +87,8 @@ function recordCacheClearMetric(
 function buildActiveSessionSummary(
   store: ReturnType<typeof getMetricsStore>,
   cacheStore: ReturnType<typeof getCacheStore>,
+  knowledgeStore: ReturnType<typeof getKnowledgeStore>,
+  memoryStore: ReturnType<typeof getMemoryStore>,
   sessionId: string,
 ): string {
   const lines: string[] = [];
@@ -118,6 +120,25 @@ function buildActiveSessionSummary(
     lines.push("No cache store available.");
   }
 
+  if (knowledgeStore) {
+    lines.push(
+      `Knowledge DB: ${knowledgeStore.path}`,
+      "Current-session indexed knowledge will be cleared.",
+    );
+  } else {
+    lines.push("No knowledge store available.");
+  }
+
+  if (memoryStore) {
+    const sessionRows = memoryStore.countSessionRows(sessionId);
+    lines.push(
+      `Memory DB: ${memoryStore.dbPath}`,
+      `${sessionRows} session-owned memory rows for this session will be cleared; project memory remains.`,
+    );
+  } else {
+    lines.push("No memory store available.");
+  }
+
   lines.push(SESSION_SCOPE_SENTENCE);
   return lines.join("\n");
 }
@@ -126,28 +147,69 @@ function buildActiveSessionSummary(
 function buildProjectSummary(
   store: ReturnType<typeof getMetricsStore>,
   cacheStore: ReturnType<typeof getCacheStore>,
+  knowledgeStore: ReturnType<typeof getKnowledgeStore>,
+  memoryStore: ReturnType<typeof getMemoryStore>,
   projectSlug: string,
 ): { summary: string; sessionLines: string[] } {
   const lines: string[] = [];
   const metricsSessionRows = store ? store.listSessions(projectSlug) : [];
   const cacheSessionRows = cacheStore ? cacheStore.listSessions() : [];
+  const knowledgeSessionRows = knowledgeStore ? knowledgeStore.listSessions() : [];
+  const memorySessionRows = memoryStore ? memoryStore.listSessions() : [];
 
-  // Merge metrics + cache sessions so the second confirmation is truthful when
-  // cache refs exist for sessions that have no metrics rows.
-  const seen = new Set<string>();
-  const sessionLines: string[] = [];
+  // Merge metrics + cache + knowledge + memory sessions so the second
+  // destructive confirmation lists every session with data that will disappear.
+  const sessionMap = new Map<string, {
+    session_id: string;
+    metricsRows?: number;
+    startedAt?: number;
+    cacheRefs?: number;
+    knowledgeChunks?: number;
+    knowledgeUrlCache?: number;
+    memoryRows?: number;
+  }>();
+  const ensureSession = (sessionId: string) => {
+    let row = sessionMap.get(sessionId);
+    if (!row) {
+      row = { session_id: sessionId };
+      sessionMap.set(sessionId, row);
+    }
+    return row;
+  };
+
   for (const s of metricsSessionRows) {
-    seen.add(s.session_id);
-    const cacheRow = cacheSessionRows.find((c) => c.session_id === s.session_id);
-    const cacheSuffix = cacheRow ? `, ${cacheRow.ref_count} cache refs` : "";
-    sessionLines.push(
-      `${s.session_id} \u2014 ${s.row_count} rows${cacheSuffix}, started ${formatRelativeTime(s.started_at)}`,
-    );
+    const row = ensureSession(s.session_id);
+    row.metricsRows = s.row_count;
+    row.startedAt = s.started_at;
   }
   for (const c of cacheSessionRows) {
-    if (seen.has(c.session_id)) continue;
-    sessionLines.push(`${c.session_id} \u2014 cache only (${c.ref_count} refs)`);
+    ensureSession(c.session_id).cacheRefs = c.ref_count;
   }
+  for (const k of knowledgeSessionRows) {
+    const row = ensureSession(k.session_id);
+    row.knowledgeChunks = k.chunk_count;
+    row.knowledgeUrlCache = k.url_cache_count;
+  }
+  for (const m of memorySessionRows) {
+    ensureSession(m.session_id).memoryRows = m.row_count;
+  }
+
+  const sessionLines = [...sessionMap.values()]
+    .sort((a, b) => a.session_id.localeCompare(b.session_id))
+    .map((s) => {
+      const parts: string[] = [];
+      if (s.metricsRows !== undefined) {
+        parts.push(`${s.metricsRows} metrics rows`);
+        if (s.startedAt !== undefined) parts.push(`started ${formatRelativeTime(s.startedAt)}`);
+      }
+      if (s.cacheRefs !== undefined) parts.push(`${s.cacheRefs} cache refs`);
+      if (s.knowledgeChunks !== undefined || s.knowledgeUrlCache !== undefined) {
+        parts.push(`${s.knowledgeChunks ?? 0} knowledge chunks`);
+        if ((s.knowledgeUrlCache ?? 0) > 0) parts.push(`${s.knowledgeUrlCache} URL cache rows`);
+      }
+      if (s.memoryRows !== undefined) parts.push(`${s.memoryRows} memory rows`);
+      return `${s.session_id} — ${parts.join(", ")}`;
+    });
 
   if (store) {
     lines.push(
@@ -169,6 +231,26 @@ function buildProjectSummary(
     );
   } else {
     lines.push("No cache store available.");
+  }
+
+  if (knowledgeStore) {
+    const knowledgeStats = knowledgeStore.getStats();
+    lines.push(
+      `${knowledgeStats.totalChunks} indexed knowledge chunks project-wide.`,
+      "All indexed knowledge scopes, including legacy rows, will be cleared.",
+    );
+  } else {
+    lines.push("No knowledge store available.");
+  }
+
+  if (memoryStore) {
+    const stats = memoryStore.getStats();
+    lines.push(
+      `Memory DB: ${memoryStore.dbPath}`,
+      `${stats.totalRows} memory rows project-wide will be cleared (session: ${stats.sessionRows}, project: ${stats.projectRows}).`,
+    );
+  } else {
+    lines.push("No memory store available.");
   }
 
   lines.push(PROJECT_SCOPE_SENTENCE);
@@ -199,10 +281,12 @@ export function handleClear(
     const store = getMetricsStore();
     const sessionId = getSessionId();
     const cacheStore = getCacheStore();
+    const knowledgeStore = getKnowledgeStore();
+    const memoryStore = getMemoryStore();
     const projectSlug = basename(getProjectStateDir(platform.paths, ctx.cwd));
 
     if (scope === "session") {
-      const summary = buildActiveSessionSummary(store, cacheStore, sessionId);
+      const summary = buildActiveSessionSummary(store, cacheStore, knowledgeStore, memoryStore, sessionId);
       ctx.ui.notify(summary, "info");
 
       if (dryRun) {
@@ -220,9 +304,9 @@ export function handleClear(
         return;
       }
 
-      if (!store && !cacheStore) {
+      if (!store && !cacheStore && !knowledgeStore && !memoryStore) {
         ctx.ui.notify(
-          "Nothing to clear: metrics and cache stores are not initialized.",
+          "Nothing to clear: metrics, cache, knowledge, and memory stores are not initialized.",
           "info",
         );
         return;
@@ -231,6 +315,12 @@ export function handleClear(
       try {
         if (store) {
           store.clearSession(sessionId);
+        }
+        if (knowledgeStore) {
+          knowledgeStore.clearSession(sessionId);
+        }
+        if (memoryStore) {
+          memoryStore.clearSession(sessionId);
         }
         if (cacheStore) {
           const cacheResult = cacheStore.clearSession(sessionId);
@@ -245,14 +335,14 @@ export function handleClear(
           );
           if (cacheResult.retainedPayloadBytes > 0) {
             ctx.ui.notify(
-              `Metrics and cache cleared for this session. ${formatSize(cacheResult.retainedPayloadBytes)} retained for other sessions.`,
+              `Metrics, cache, and current-session knowledge cleared for this session. ${formatSize(cacheResult.retainedPayloadBytes)} retained for other sessions.`,
               "info",
             );
           } else {
-            ctx.ui.notify("Metrics and cache cleared for this session.", "info");
+            ctx.ui.notify("Metrics, cache, and current-session knowledge cleared for this session.", "info");
           }
         } else {
-          ctx.ui.notify("Metrics cleared for this session. (No cache store active.)", "info");
+          ctx.ui.notify("Metrics and current-session knowledge cleared for this session. (No cache store active.)", "info");
         }
       } catch (e) {
         ctx.ui.notify(
@@ -264,7 +354,7 @@ export function handleClear(
     }
 
     // scope === "project"
-    const { summary, sessionLines } = buildProjectSummary(store, cacheStore, projectSlug);
+    const { summary, sessionLines } = buildProjectSummary(store, cacheStore, knowledgeStore, memoryStore, projectSlug);
     ctx.ui.notify(summary, "info");
 
     if (dryRun) {
@@ -299,9 +389,9 @@ export function handleClear(
       return;
     }
 
-    if (!store && !cacheStore) {
+    if (!store && !cacheStore && !knowledgeStore && !memoryStore) {
       ctx.ui.notify(
-        "Nothing to clear: metrics and cache stores are not initialized.",
+        "Nothing to clear: metrics, cache, knowledge, and memory stores are not initialized.",
         "info",
       );
       return;
@@ -316,7 +406,13 @@ export function handleClear(
         // Project-wide clear deletes every cache ref, so retained bytes are always 0.
         recordCacheClearMetric(store, sessionId, cacheResult.deletedPayloadBytes, 0);
       }
-      ctx.ui.notify("Metrics and cache cleared project-wide.", "info");
+      if (knowledgeStore) {
+        knowledgeStore.clearProject();
+      }
+      if (memoryStore) {
+        memoryStore.clearProject();
+      }
+      ctx.ui.notify("Metrics, cache, indexed knowledge, and memory cleared project-wide.", "info");
     } catch (e) {
       ctx.ui.notify(
         `Clear failed: ${(e as Error).message}. See /supi:doctor.`,
@@ -330,7 +426,7 @@ export function handleClear(
 
 export function registerClearCommand(platform: Platform): void {
   platform.registerCommand("supi:clear", {
-    description: "Clear L1 metrics and L3 cache for the active session (or `all` for the project)",
+    description: "Clear metrics, cache, current-session knowledge, and memory for the active session (or `all` for the project)",
     async handler(args: string | undefined, ctx: any) {
       handleClear(platform, ctx, args);
     },
