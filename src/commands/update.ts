@@ -4,6 +4,13 @@ import { scanAll, installAll, formatReport } from "../deps/registry.js";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  checkMempalaceProjectInitialized,
+  runMempalaceSetup,
+  snapshotMempalaceInstall,
+  steerMempalaceInitialization,
+} from "../mempalace/installer-helper.js";
+import { loadConfig } from "../config/loader.js";
 
 // ── Options builder ──────────────────────────────────────
 
@@ -215,7 +222,86 @@ export function handleUpdate(platform: Platform, ctx: PlatformContext): void {
         "warning",
       );
     }
+
+    // 7. Optional: install/update MemPalace memory
+    await offerMempalaceUpdate(platform, ctx);
   })();
+}
+
+async function offerMempalaceUpdate(platform: Platform, ctx: PlatformContext): Promise<void> {
+  const config = loadConfig(platform.paths, ctx.cwd);
+  if (!config.mempalace.enabled) return;
+  const snap = snapshotMempalaceInstall(platform.paths, ctx.cwd, config);
+  if (!snap.bridgeOk) {
+    ctx.ui.notify(
+      `MemPalace bridge missing at ${snap.bridgePath}. Reinstall supipowers to restore it.`,
+      "warning",
+    );
+    return;
+  }
+
+  const promptLabel = snap.ready
+    ? `Reinstall MemPalace memory (mempalace==${snap.packageVersion})?`
+    : "Install MemPalace memory now? Downloads uv (~30MB), Python 3.12, and the mempalace package.";
+
+  const choice = await ctx.ui.select(promptLabel, ["Yes", "Skip"]);
+  if (choice !== "Yes") return;
+
+  ctx.ui.notify("Installing MemPalace... this can take a minute on first install.", "info");
+
+  const runner = async (
+    cmd: string,
+    args: string[],
+    runnerOpts?: { input?: string; timeoutMs?: number },
+  ) => {
+    const result = await platform.exec(cmd, args, {
+      cwd: ctx.cwd,
+      ...(runnerOpts?.timeoutMs ? { timeout: runnerOpts.timeoutMs } : {}),
+    });
+    return { code: result.code, stdout: result.stdout, stderr: result.stderr };
+  };
+
+  const result = await runMempalaceSetup({
+    paths: platform.paths,
+    cwd: ctx.cwd,
+    config,
+    runner,
+    onProgress: (msg) => ctx.ui.notify(`MemPalace: ${msg}`, "info"),
+  });
+
+  if (!result.ok) {
+    const stderr = result.stderrTail ? `\n\n${result.stderrTail}` : "";
+    ctx.ui.notify(
+      `MemPalace setup failed (${result.error.code}): ${result.error.message}\n${result.error.remediation ?? ""}${stderr}`.trim(),
+      "error",
+    );
+    return;
+  }
+
+  ctx.ui.notify(
+    `MemPalace v${result.details.packageVersion} ready (Python ${result.details.managedPython} via uv).`,
+    "info",
+  );
+
+  const initState = await checkMempalaceProjectInitialized({
+    paths: platform.paths,
+    cwd: ctx.cwd,
+    config,
+  });
+  if (initState.initialized) {
+    ctx.ui.notify(`MemPalace project wing \`${initState.wing}\` is already initialized.`, "info");
+    return;
+  }
+  const steered = steerMempalaceInitialization(platform, {
+    wing: initState.wing,
+    cwd: ctx.cwd,
+  });
+  if (steered) {
+    ctx.ui.notify(
+      `Steering the agent to initialize project wing \`${initState.wing}\`.`,
+      "info",
+    );
+  }
 }
 
 // ── Legacy cleanup ───────────────────────────────────────
