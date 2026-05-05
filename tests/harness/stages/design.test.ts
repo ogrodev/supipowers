@@ -8,7 +8,11 @@ import {
   renderDesignSpec,
   validateDesignSpec,
 } from "../../../src/harness/stages/design.js";
-import { saveHarnessDiscover, loadHarnessDesignSpec } from "../../../src/harness/storage.js";
+import {
+  loadHarnessDesignSpec,
+  loadHarnessDesignSpecJson,
+  saveHarnessDiscover,
+} from "../../../src/harness/storage.js";
 import { createTestPaths, createTestRepo } from "../../ultraplan/fixtures.js";
 import type { HarnessDesignSpec, HarnessDiscoverArtifact } from "../../../src/types.js";
 import type { HarnessStageRunnerContext } from "../../../src/harness/stage-runner.js";
@@ -144,6 +148,21 @@ describe("HarnessDesignStage", () => {
     expect(result.status).toBe("awaiting-user");
     const loaded = loadHarnessDesignSpec(paths, cwd, SESSION_ID);
     expect(loaded.ok).toBe(true);
+  });
+
+  test("persists a structured design-spec.json next to the markdown", async () => {
+    const spec = makeSpec();
+    const stage = new HarnessDesignStage({ spec });
+    const result = await stage.run(ctx());
+    expect(result.status).toBe("awaiting-user");
+    expect(result.artifactPaths).toEqual(["design-spec.md", "design-spec.json"]);
+    const loadedJson = loadHarnessDesignSpecJson(paths, cwd, SESSION_ID);
+    expect(loadedJson.ok).toBe(true);
+    if (loadedJson.ok) {
+      expect(loadedJson.value.antiSlop.backend).toBe(spec.antiSlop.backend);
+      expect(loadedJson.value.sessionId).toBe(SESSION_ID);
+      expect(loadedJson.value.recordedAt).toBe("2026-05-03T12:00:00.000Z");
+    }
   });
 
   test("blocks when validation fails", async () => {
