@@ -25,6 +25,11 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { scanAll, installDep, formatReport } from "../src/deps/registry.js";
+import {
+  runMempalaceSetup,
+  snapshotMempalaceInstall,
+} from "../src/mempalace/installer-helper.js";
+import { createPaths } from "../src/platform/types.js";
 import type { ExecResult } from "../src/platform/types.js";
 
 const isWindows = process.platform === "win32";
@@ -128,6 +133,7 @@ async function exec(cmd: string, args: string[]): Promise<ExecResult> {
 
 const cliArgs = process.argv.slice(2);
 const skipDeps = cliArgs.includes("--skip-deps");
+const skipMempalace = cliArgs.includes("--skip-mempalace");
 const FORCE = cliArgs.includes("--force");
 const DEBUG = cliArgs.includes("--debug");
 
@@ -555,6 +561,14 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── Step 5: MemPalace memory (optional) ─────────────────────
+
+  if (!skipMempalace) {
+    await offerMempalaceSetup();
+  } else {
+    log("--skip-mempalace flag set, skipping MemPalace prompt");
+  }
+
   // ── Done ───────────────────────────────────────────────────
 
   const targetNames = targets.map((t) => t.name.toLowerCase()).join(" or ");
@@ -564,6 +578,87 @@ async function main(): Promise<void> {
     "Action required"
   );
   outro(`supipowers is ready!`);
+}
+
+async function offerMempalaceSetup(): Promise<void> {
+  const cwd = process.cwd();
+  const paths = createPaths(".omp");
+  const snap = snapshotMempalaceInstall(paths, cwd);
+
+  if (!snap.bridgeOk) {
+    note(
+      `MemPalace bridge missing at ${snap.bridgePath}.\n` +
+        "The supipowers package was installed without the bundled Python bridge.\n" +
+        "Reinstall supipowers and rerun setup.",
+      "MemPalace",
+    );
+    return;
+  }
+
+  const message = snap.ready
+    ? `Reinstall MemPalace memory (mempalace==${snap.packageVersion})? Recreates the managed venv.`
+    : "Install MemPalace memory now? Downloads uv (~30MB), Python 3.12, and the mempalace package.";
+
+  const ok = await confirm({
+    message,
+    initialValue: !snap.ready,
+  });
+  if (isCancel(ok) || !ok) {
+    note(
+      "Skipped. Run `/supi:memory setup` from inside OMP, or rerun the installer to revisit this step.",
+      "MemPalace",
+    );
+    return;
+  }
+
+  const s = spinner();
+  s.start("Installing MemPalace...");
+
+  const runner = async (
+    cmd: string,
+    args: string[],
+    runnerOpts?: { input?: string; timeoutMs?: number },
+  ) => {
+    const result = run(cmd, args, {
+      ...(runnerOpts?.input ? { input: runnerOpts.input } : {}),
+      ...(runnerOpts?.timeoutMs ? { timeout: runnerOpts.timeoutMs } : {}),
+    });
+    return {
+      code: result.status ?? 1,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  };
+
+  const result = await runMempalaceSetup({
+    paths,
+    cwd,
+    runner,
+    onProgress: (msg) => s.message(msg),
+  });
+
+  if (!result.ok) {
+    s.stop("MemPalace installation failed");
+    note(
+      `${result.error.message}\n\n${result.error.remediation ?? ""}`.trim(),
+      "MemPalace error",
+    );
+    return;
+  }
+
+  s.stop(
+    `MemPalace v${result.details.packageVersion} ready (Python ${result.details.managedPython} via uv)`,
+  );
+  note(
+    `palace path: ~/.mempalace/palace\n` +
+      `managed venv: ${result.details.venvPath}\n` +
+      `uv binary: ${result.details.uvPath} (${result.details.uvVersion})\n\n` +
+      "On the first OMP session in this project, ask the agent to run\n" +
+      `  mempalace(action="init", dir=".", yes=true)\n` +
+      `  mempalace(action="mine", dir=".", limit=20)\n` +
+      "or just say `init mempalace` and the agent will register the project's wing and seed memory.",
+    "MemPalace",
+  );
 }
 
 main().catch((e) => {
