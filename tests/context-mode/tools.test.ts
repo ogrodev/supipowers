@@ -5,6 +5,13 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
+import {
+  MetricsStore,
+  __setMetricsStoreForTest,
+  _resetMetricsStoreCache,
+} from "../../src/context-mode/metrics-store.js";
+import { CacheStore } from "../../src/context-mode/cache-store.js";
+import { __setCacheStoreForTest, _resetCache as _resetHooksCache } from "../../src/context-mode/hooks.js";
 import { KnowledgeStore } from "../../src/context-mode/knowledge/store.js";
 import { registerContextModeTools, _stats, INTENT_THRESHOLD } from "../../src/context-mode/tools.js";
 import { rmDirWithRetry } from "../helpers/fs.js";
@@ -18,6 +25,15 @@ function createMockPlatform() {
   return {
     registerTool: mock((def: any) => {
       registeredTools.set(def.name, def);
+    }),
+    exec: mock(async (cmd: string, _args: string[], opts?: { cwd?: string }) => {
+      if (cmd === "git") {
+        const cwd = opts?.cwd ?? process.cwd();
+        const files = ["src/context-mode/tools.ts", "src/context-mode/hooks.ts"]
+          .filter((file) => fs.existsSync(path.join(cwd, file)));
+        return { stdout: files.join("\n"), stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
     }),
   } as any;
 }
@@ -58,9 +74,9 @@ async function callTool(name: string, params: any): Promise<any> {
 // Registration
 // ─────────────────────────────────────────────────────────────
 describe("registerContextModeTools", () => {
-  test("registers exactly 9 tools", () => {
+  test("registers exactly 11 tools", () => {
     registerAll();
-    expect(registeredTools.size).toBe(9);
+    expect(registeredTools.size).toBe(11);
   });
 
   test("all tools have name, parameters, and execute function", () => {
@@ -110,8 +126,10 @@ describe("registerContextModeTools", () => {
       "ctx_index",
       "ctx_open_cached",
       "ctx_purge",
+      "ctx_repomap",
       "ctx_search",
       "ctx_stats",
+      "ctx_symbol",
     ]);
   });
 
@@ -126,6 +144,45 @@ describe("registerContextModeTools", () => {
       },
       required: ["handle"],
     });
+  });
+
+  test("ctx_symbol reports explicit unavailable diagnostic", async () => {
+    registerAll();
+    const tool = registeredTools.get("ctx_symbol");
+    const result = await tool.execute("id", { query: "KnowledgeStore" });
+    expect(result.content[0].text).toContain("platform_lsp_facade_unavailable");
+    expect(result.content[0].text).toContain("native lsp");
+  });
+
+  test("ctx_repomap returns a bounded repository map", async () => {
+    registerAll();
+    const tool = registeredTools.get("ctx_repomap");
+    const result = await tool.execute("id", { tokenBudget: 200 }, undefined, undefined, { cwd: process.cwd() });
+    expect(result.content[0].text).toContain("# Repository map");
+    expect(result.content[0].text).toContain("Files considered:");
+  });
+
+  test("ctx_repomap is not registered when repomap.enabled is false (F8)", () => {
+    const platform = createMockPlatform();
+    registerContextModeTools(platform, store, {
+      repomap: { enabled: false, tokenBudget: 4000, maxFiles: 500 },
+    });
+    expect(registeredTools.has("ctx_repomap")).toBe(false);
+  });
+
+  test("omits store-dependent knowledge tools when knowledge store is unavailable", () => {
+    const platform = createMockPlatform();
+    registerContextModeTools(platform, () => null, {
+      knowledgeToolsEnabled: false,
+      repomap: { enabled: false, tokenBudget: 4000, maxFiles: 500 },
+    });
+    expect([...registeredTools.keys()].sort()).toEqual([
+      "ctx_execute",
+      "ctx_execute_file",
+      "ctx_open_cached",
+      "ctx_stats",
+      "ctx_symbol",
+    ]);
   });
 
   test("does nothing when platform lacks registerTool", () => {
@@ -206,6 +263,75 @@ describe("ctx_execute_file", () => {
       code: 'echo "$FILE_CONTENT"',
     });
     expect(result.content[0].text).toContain("test content");
+  });
+
+});
+
+// ─────────────────────────────────────────────────────────────
+// ctx_execute_file — request cache (F2 regression coverage)
+// ─────────────────────────────────────────────────────────────
+describe("ctx_execute_file request cache", () => {
+  let cache: CacheStore | null = null;
+
+  beforeEach(() => {
+    _resetHooksCache();
+    cache = new CacheStore({
+      dbPath: path.join(tmpDir, "execfile-cache.db"),
+      payloadRoot: path.join(tmpDir, "execfile-cache-payloads"),
+      projectSlug: "demo",
+    });
+    cache.init();
+    __setCacheStoreForTest(cache);
+  });
+
+  afterEach(() => {
+    __setCacheStoreForTest(null);
+    try { cache?.close(); } catch { /* already closed */ }
+    cache = null;
+  });
+
+  test("cache key includes intent — different intents do not share cached output (F2)", async () => {
+    registerAll();
+    const filePath = path.join(tmpDir, "f2.txt");
+    fs.writeFileSync(filePath, "small");
+
+    const baseParams = {
+      path: filePath,
+      language: "shell",
+      code: 'echo "$FILE_CONTENT"',
+      cache: true,
+    };
+
+    // Call 1: intent A — fresh, must NOT be a cache hit.
+    const first = await callTool("ctx_execute_file", { ...baseParams, intent: "find A" });
+    expect(first.content[0].text).not.toContain("[cache hit:");
+
+    // Call 2: intent A — same args, must be a cache hit.
+    const second = await callTool("ctx_execute_file", { ...baseParams, intent: "find A" });
+    expect(second.content[0].text).toContain("[cache hit:");
+
+    // Call 3: intent B — different cache key, must NOT be a cache hit.
+    const third = await callTool("ctx_execute_file", { ...baseParams, intent: "find B" });
+    expect(third.content[0].text).not.toContain("[cache hit:");
+  });
+
+  test("cache key normalizes equivalent relative path spellings", async () => {
+    registerAll();
+    const filePath = path.join(tmpDir, "normalized.txt");
+    fs.writeFileSync(filePath, "normalized payload");
+    const relativePath = path.relative(process.cwd(), filePath);
+
+    const params = {
+      language: "shell",
+      code: 'printf "%s" "$FILE_CONTENT"',
+      cache: true,
+    };
+
+    const first = await callTool("ctx_execute_file", { ...params, path: relativePath });
+    expect(first.content[0].text).not.toContain("[cache hit:");
+
+    const second = await callTool("ctx_execute_file", { ...params, path: `./${relativePath}` });
+    expect(second.content[0].text).toContain("[cache hit:");
   });
 });
 
@@ -307,6 +433,21 @@ describe("ctx_batch_execute", () => {
     expect(text).toContain("Executed 2 commands");
     expect(text).toContain("Echo test");
     expect(text).toContain("Date");
+  });
+
+  test("ctx_batch_execute search finds chunks indexed in the same call (F1: session-owner round-trip)", async () => {
+    registerAll();
+    const result = await callTool("ctx_batch_execute", {
+      commands: [
+        { label: "Notes", command: "echo 'mango pineapple kiwi watermelon'" },
+      ],
+      queries: ["mango pineapple kiwi watermelon"],
+    });
+    const text = result.content[0].text;
+    // Without the owner round-trip the search would return "No matches" because the
+    // chunks are session-scoped while the search defaulted to project visibility.
+    expect(text).not.toContain("No matches.");
+    expect(text).toContain("mango pineapple kiwi watermelon");
   });
 });
 
@@ -411,13 +552,7 @@ describe("intent-driven filtering", () => {
 // ctx_stats — JSON mode (Tasks 36, 37, 38)
 // ─────────────────────────────────────────────────────────────
 
-import {
-  MetricsStore,
-  __setMetricsStoreForTest,
-  _resetMetricsStoreCache,
-} from "../../src/context-mode/metrics-store.js";
-import { _resetCache as _resetHooksCache, __setCacheStoreForTest } from "../../src/context-mode/hooks.js";
-import { CacheStore } from "../../src/context-mode/cache-store.js";
+
 
 describe("ctx_stats — markdown vs JSON", () => {
   let metricsTmp: string;
@@ -495,6 +630,38 @@ describe("ctx_stats — markdown vs JSON", () => {
     expect(parsed.uniqueSourceShare).toBeGreaterThanOrEqual(0);
     expect(parsed.uniqueSourceShare).toBeLessThanOrEqual(1);
     expect(typeof parsed.writeFailures).toBe("number");
+  });
+
+  test("ctx_repomap records an L4 row visible in JSON stats", async () => {
+    const fixture = path.join(metricsTmp, "src", "context-mode", "tools.ts");
+    fs.mkdirSync(path.dirname(fixture), { recursive: true });
+    fs.writeFileSync(fixture, `export function repomapFixture() { return 1; }\n`, "utf8");
+
+    registerAll();
+    __setMetricsStoreForTest(metrics);
+    await registeredTools.get("ctx_repomap").execute("id", { tokenBudget: 4000 }, undefined, undefined, { cwd: metricsTmp });
+    await metrics.flushPendingForTest();
+
+    const result = await callTool("ctx_stats", { format: "json" });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.perLayer.some((row: any) => row.layer === "L4" && row.rows >= 1)).toBe(true);
+  });
+
+  test("ctx_symbol records diagnostic L4 visibility in JSON stats", async () => {
+    registerAll();
+    __setMetricsStoreForTest(metrics);
+
+    const diagnostic = await callTool("ctx_symbol", { query: "KnowledgeStore" });
+    const text = diagnostic.content[0].text;
+    expect(text.startsWith("platform_lsp_facade_unavailable")).toBe(true);
+    expect(text).toContain("native lsp");
+    await metrics.flushPendingForTest();
+
+    const result = await callTool("ctx_stats", { format: "json" });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.perLayer.some((row: any) => row.layer === "L4" && row.rows >= 1)).toBe(true);
   });
 
   test("format=json with null metricsStore uses documented defaults (Task 38)", async () => {

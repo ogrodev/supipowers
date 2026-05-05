@@ -109,6 +109,137 @@ describe("KnowledgeStore", () => {
     expect(newResults[0].results[0].title).toBe("New");
   });
 
+  test("project re-index removes migrated legacy rows for the same source", () => {
+    const db = (store as any).db;
+    db.prepare(
+      `INSERT INTO content_chunks (source, title, body, content_type, owner_scope, owner_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("replaceable", "Legacy", "deprecated legacy content", "prose", "legacy", "");
+
+    store.index([makeChunk("New", "fresh modern content")], "replaceable");
+
+    expect(store.search(["deprecated legacy"], { limit: 10 })[0].results).toHaveLength(0);
+    const newResults = store.search(["fresh modern"], { limit: 10 });
+    expect(newResults[0].results).toHaveLength(1);
+    expect(newResults[0].results[0].title).toBe("New");
+  });
+
+  test("session ownership replaces only matching source owner", () => {
+    store.index([makeChunk("Active", "active session secret")], "shared", {
+      ownerScope: "session",
+      ownerId: "active-session",
+    });
+    store.index([makeChunk("Other", "other session secret")], "shared", {
+      ownerScope: "session",
+      ownerId: "other-session",
+    });
+    store.index([makeChunk("Project", "project shared knowledge")], "shared", {
+      ownerScope: "project",
+    });
+
+    store.index([makeChunk("Active New", "fresh active session secret")], "shared", {
+      ownerScope: "session",
+      ownerId: "active-session",
+    });
+
+    const activeResults = store.search(["secret"], {
+      owner: { ownerScope: "session", ownerId: "active-session" },
+      limit: 10,
+    });
+    expect(activeResults[0].results.map((r) => r.title).sort()).toEqual(["Active New"]);
+
+    const allResults = store.search(["secret"], { includeAllSessions: true, limit: 10 });
+    expect(allResults[0].results.map((r) => r.title).sort()).toEqual(["Active New", "Other"]);
+  });
+
+  test("default search excludes other session-owned rows", () => {
+    store.index([makeChunk("Active", "visible active content")], "owned", {
+      ownerScope: "session",
+      ownerId: "active-session",
+    });
+    store.index([makeChunk("Other", "hidden other content")], "owned", {
+      ownerScope: "session",
+      ownerId: "other-session",
+    });
+    store.index([makeChunk("Project", "visible project content")], "owned", {
+      ownerScope: "project",
+    });
+
+    const activeResults = store.search(["content"], {
+      owner: { ownerScope: "session", ownerId: "active-session" },
+      limit: 10,
+    });
+    expect(activeResults[0].results.map((r) => r.title).sort()).toEqual(["Active", "Project"]);
+
+    const defaultResults = store.search(["content"], { limit: 10 });
+    expect(defaultResults[0].results.map((r) => r.title)).toEqual(["Project"]);
+  });
+
+  test("clearSession deletes only active-session chunks and URL cache rows", () => {
+    store.index([makeChunk("Active", "active clearable content")], "clear", {
+      ownerScope: "session",
+      ownerId: "active-session",
+    });
+    store.index([makeChunk("Other", "other retained content")], "clear", {
+      ownerScope: "session",
+      ownerId: "other-session",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const db = (store as any).db;
+    db.prepare("INSERT INTO url_cache (url, source, owner_scope, owner_id, fetched_at) VALUES (?, ?, ?, ?, ?)").run(
+      "https://active.example.com",
+      "clear",
+      "session",
+      "active-session",
+      now,
+    );
+    db.prepare("INSERT INTO url_cache (url, source, owner_scope, owner_id, fetched_at) VALUES (?, ?, ?, ?, ?)").run(
+      "https://other.example.com",
+      "clear",
+      "session",
+      "other-session",
+      now,
+    );
+
+    expect(store.clearSession("active-session")).toEqual({ chunksDeleted: 1, urlCacheDeleted: 1 });
+
+    const activeResults = store.search(["active"], {
+      owner: { ownerScope: "session", ownerId: "active-session" },
+    });
+    expect(activeResults[0].results).toHaveLength(0);
+
+    const otherResults = store.search(["other"], {
+      owner: { ownerScope: "session", ownerId: "other-session" },
+    });
+    expect(otherResults[0].results).toHaveLength(1);
+    const remainingUrls = db.prepare("SELECT url FROM url_cache ORDER BY url").all() as Array<{ url: string }>;
+    expect(remainingUrls.map((row) => row.url)).toEqual(["https://other.example.com"]);
+  });
+
+  test("listSessions includes session-owned chunks and URL cache rows", () => {
+    store.index([makeChunk("Active", "active listable content")], "list", {
+      ownerScope: "session",
+      ownerId: "active-session",
+    });
+    store.index([makeChunk("Other", "other listable content")], "list", {
+      ownerScope: "session",
+      ownerId: "other-session",
+    });
+    const db = (store as any).db;
+    db.prepare("INSERT INTO url_cache (url, source, owner_scope, owner_id, fetched_at) VALUES (?, ?, ?, ?, ?)").run(
+      "https://active.example.com",
+      "list",
+      "session",
+      "active-session",
+      Math.floor(Date.now() / 1000),
+    );
+
+    expect(store.listSessions()).toEqual([
+      { session_id: "active-session", chunk_count: 1, url_cache_count: 1 },
+      { session_id: "other-session", chunk_count: 1, url_cache_count: 0 },
+    ]);
+  });
+
   test("per-query grouping with multiple queries", () => {
     store.index(
       [
@@ -158,6 +289,16 @@ describe("KnowledgeStore", () => {
     expect(stats.totalChunks).toBe(0);
     expect(stats.sources).toEqual([]);
     expect(stats.dbSizeBytes).toBeGreaterThan(0);
+  });
+
+  test("schema includes owner-scope indexes for cleanup and replacement", () => {
+    const db = (store as any).db;
+    const contentIndexes = (db.prepare("PRAGMA index_list(content_chunks)").all() as Array<{ name: string }>).map((row) => row.name);
+    const urlIndexes = (db.prepare("PRAGMA index_list(url_cache)").all() as Array<{ name: string }>).map((row) => row.name);
+
+    expect(contentIndexes).toContain("idx_content_chunks_owner");
+    expect(contentIndexes).toContain("idx_content_chunks_source_owner");
+    expect(urlIndexes).toContain("idx_url_cache_owner");
   });
 
   test("pruneExpiredUrls removes old entries", () => {

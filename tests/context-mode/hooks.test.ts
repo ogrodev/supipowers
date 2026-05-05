@@ -6,24 +6,24 @@ import { rmDirWithRetry } from "../helpers/fs.js";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
-import { registerContextModeHooks, _resetCache, getCacheStore, getEventStore, getMetricsStore, getSessionId } from "../../src/context-mode/hooks.js";
+import { registerContextModeHooks, _resetCache, getCacheStore, getEventStore, getKnowledgeStore, getMetricsStore, getSessionId } from "../../src/context-mode/hooks.js";
+import { getMemoryStore } from "../../src/context-mode/memory-store.js";
+import { getProjectStatePath } from "../../src/workspace/state-paths.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { SupipowersConfig } from "../../src/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
 import type { PlatformPaths } from "../../src/platform/types.js";
 
+// All places that use `createMockPlatformWithHandlers` directly read/write into
+// per-project sqlite databases (events.db, metrics.db, cache.db, memory.db).
+// Without an isolated path the suite would leak state into the developer's real
+// `~/.omp/supipowers/projects/<slug>/sessions/*` directory, breaking test
+// isolation across runs (regression: F5 promotion now writes project-scoped
+// rows that survive across sessions).
 function createMockPlatformWithHandlers() {
-  const handlers = new Map<string, Function>();
-  const platform = createMockPlatform({
-    on: mock((event: string, handler: Function) => {
-      handlers.set(event, handler);
-    }) as any,
-    registerTool: mock(),
-  });
-  return Object.assign(platform, {
-    logger: { warn: mock(), error: mock(), debug: mock() },
-    _handlers: handlers,
-  }) as any;
+  const isolatedDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-hooks-iso-"));
+  isolatedDirsToCleanup.push(isolatedDir);
+  return createMockPlatformWithHandlersAndPaths(isolatedDir);
 }
 
 function createMockPlatformWithHandlersAndPaths(rootDir: string) {
@@ -61,6 +61,16 @@ function largeBashEvent(command = "ls") {
   };
 }
 
+
+const isolatedDirsToCleanup: string[] = [];
+
+function cleanupIsolatedTestDirs(): void {
+  while (isolatedDirsToCleanup.length > 0) {
+    const dir = isolatedDirsToCleanup.pop();
+    if (!dir) continue;
+    try { rmDirWithRetry(dir); } catch { /* best effort */ }
+  }
+}
 let activeSessionShutdown: (() => void) | null = null;
 
 function registerTrackedContextModeHooks(platform: any, config: SupipowersConfig): void {
@@ -82,6 +92,7 @@ function cleanupTrackedContextModeHooks(): void {
   } finally {
     activeSessionShutdown = null;
     _resetCache();
+    cleanupIsolatedTestDirs();
   }
 }
 
@@ -107,10 +118,51 @@ describe("registerContextModeHooks", () => {
   test("registers native context-mode tools", () => {
     const platform = createMockPlatformWithHandlers();
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
-    // 9 native tools should be registered
-    expect(platform.registerTool).toHaveBeenCalledTimes(9);
+    // 11 native tools should be registered
+    expect(platform.registerTool).toHaveBeenCalledTimes(11);
   });
 
+  test("omits store-dependent ctx tools when knowledge store initialization fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "supi-hooks-no-knowledge-"));
+    isolatedDirsToCleanup.push(root);
+    fs.writeFileSync(path.join(root, "global"), "not a directory");
+    const platform = createMockPlatformWithHandlersAndPaths(root);
+
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+
+    const names = (platform.registerTool as any).mock.calls.map((call: any[]) => call[0].name);
+    expect(names).toContain("ctx_execute");
+    expect(names).toContain("ctx_open_cached");
+    expect(names).not.toContain("ctx_search");
+    expect(names).not.toContain("ctx_index");
+    expect(names).not.toContain("ctx_batch_execute");
+    expect(names).not.toContain("ctx_fetch_and_index");
+    expect(names).not.toContain("ctx_purge");
+  });
+
+
+  test("rebinds knowledge store when active session cwd changes", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "supi-hooks-cwd-"));
+    isolatedDirsToCleanup.push(root);
+    const platform = createMockPlatformWithHandlersAndPaths(root);
+    const cwdA = path.join(root, "repo-a");
+    const cwdB = path.join(root, "repo-b");
+    fs.mkdirSync(cwdA, { recursive: true });
+    fs.mkdirSync(cwdB, { recursive: true });
+
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    const sessionStart = platform._handlers.get("session_start");
+    expect(typeof sessionStart).toBe("function");
+
+    sessionStart({}, { cwd: cwdA });
+    const firstPath = getKnowledgeStore()?.path;
+    expect(firstPath).toBe(getProjectStatePath(platform.paths, cwdA, "sessions", "knowledge.db"));
+
+    sessionStart({}, { cwd: cwdB });
+    const secondPath = getKnowledgeStore()?.path;
+    expect(secondPath).toBe(getProjectStatePath(platform.paths, cwdB, "sessions", "knowledge.db"));
+    expect(secondPath).not.toBe(firstPath);
+  });
   test("does not register hooks when disabled", () => {
     const platform = createMockPlatformWithHandlers();
     const config: SupipowersConfig = {
@@ -460,7 +512,7 @@ describe("compaction integration", () => {
     }) as any;
   }
 
-  test("session_before_compact returns undefined (does not cancel compaction)", () => {
+  test("session_before_compact returns undefined (does not cancel compaction)", async () => {
     const platform = createPlatformWithRealStore();
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
@@ -476,7 +528,7 @@ describe("compaction integration", () => {
     }, {});
 
     const handler = platform._handlers.get("session_before_compact");
-    const result = handler();
+    const result = await handler();
     expect(result).toBeUndefined();
   });
 
@@ -748,6 +800,229 @@ describe("exported helpers", () => {
     expect(result.content[0].text).toContain("[...compressed:");
     expect(result.content[0].text).not.toContain("cache://");
   });
+
+  test("spills oversized final text emissions into cache handles", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const originalText = `important header\n${"x".repeat(70 * 1024)}\nimportant tail`;
+    const handler = platform._handlers.get("tool_result");
+    const result = handler({
+      type: "tool_result",
+      toolName: "custom_big",
+      toolCallId: "spill-id",
+      input: { id: "spill" },
+      content: [{ type: "text", text: originalText }],
+      isError: false,
+      details: {},
+    }, { cwd: tmpDir });
+
+    expect(result).toBeDefined();
+    const text = result.content[0].text;
+    expect(text).toContain("Cached oversized custom_big result as cache://");
+    expect(text).toContain("ctx_open_cached");
+    expect(text).toContain("--- preview ---");
+    expect(text.length).toBeLessThan(originalText.length);
+    const handle = text.match(/cache:\/\/[a-f0-9]{64}/)?.[0];
+    expect(handle).toBeDefined();
+    const opened = getCacheStore()!.openText(handle!);
+    expect(opened.ok).toBe(true);
+    if (opened.ok) expect(opened.text).toBe(originalText);
+  });
+
+  test("does not spill OMP-minimized output with raw artifact footer", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const minimized = `${"x".repeat(70 * 1024)}\n[raw output: artifact://abc123]`;
+    const handler = platform._handlers.get("tool_result");
+    const result = handler({
+      type: "tool_result",
+      toolName: "bash",
+      toolCallId: "minimized-id",
+      input: { command: "echo large" },
+      content: [{ type: "text", text: minimized }],
+      isError: false,
+      details: { exitCode: 0 },
+    }, { cwd: tmpDir });
+
+    expect(result).toBeUndefined();
+  });
+
+  test("before_agent_start injects bounded cross-session memory blocks", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, {
+      ...DEFAULT_CONFIG,
+      mempalace: { ...DEFAULT_CONFIG.mempalace, enabled: false },
+    });
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const sessionId = getSessionId();
+    const memory = getMemoryStore()!;
+    expect(memory).not.toBeNull();
+    memory.put({ ownerScope: "session", ownerId: sessionId, type: "decision", body: "prefer dedup over masking" });
+    memory.put({ ownerScope: "project", type: "observation", body: "primary cwd is /repo" });
+
+    platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
+    const handler = platform._handlers.get("before_agent_start");
+    const result = handler({ prompt: "", systemPrompt: "existing prompt" }, { cwd: tmpDir });
+
+    expect(result).toBeDefined();
+    const prompt = result.systemPrompt as string;
+    expect(prompt).toContain("existing prompt");
+    expect(prompt).toContain("# Cross-session memory");
+    expect(prompt).toContain("prefer dedup over masking");
+    expect(prompt).toContain("primary cwd is /repo");
+  });
+
+  test("before_agent_start suppresses memory after /supi:clear session epoch", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, {
+      ...DEFAULT_CONFIG,
+      mempalace: { ...DEFAULT_CONFIG.mempalace, enabled: false },
+    });
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const sessionId = getSessionId();
+    const memory = getMemoryStore()!;
+    memory.put({ ownerScope: "project", type: "observation", body: "old project memory", now: 1000 });
+    memory.put({ ownerScope: "session", ownerId: sessionId, type: "decision", body: "old session memory", now: 1000 });
+    memory.clearSession(sessionId, 5000);
+    memory.put({ ownerScope: "project", type: "observation", body: "fresh project memory", now: 9000 });
+
+    platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
+    const handler = platform._handlers.get("before_agent_start");
+    const result = handler({ prompt: "", systemPrompt: "existing" }, { cwd: tmpDir });
+
+    const prompt = result.systemPrompt as string;
+    expect(prompt).toContain("fresh project memory");
+    expect(prompt).not.toContain("old project memory");
+    expect(prompt).not.toContain("old session memory");
+  });
+
+  test("before_agent_start emits focus chain block when task events exist", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const sessionId = getSessionId();
+    const eventStore = getEventStore();
+    expect(eventStore).not.toBeNull();
+    eventStore!.writeEvent({
+      sessionId,
+      category: "task",
+      data: JSON.stringify({
+        input: {
+          ops: [
+            { op: "start", task: "audit ctx_repomap" },
+            { op: "done", phase: "L4 Repo Map" },
+          ],
+        },
+      }),
+      priority: 2,
+      source: "test",
+      timestamp: Date.now(),
+    });
+
+    platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
+    const handler = platform._handlers.get("before_agent_start");
+    const result = handler({ prompt: "", systemPrompt: "existing" }, { cwd: tmpDir });
+    const prompt = result.systemPrompt as string;
+    expect(prompt).toContain("# Focus chain");
+    expect(prompt).toContain("start: audit ctx_repomap");
+    expect(prompt).toContain("done: L4 Repo Map");
+  });
+
+  test("before_agent_start suppresses legacy memory when MemPalace is enabled but keeps focus chain", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const sessionId = getSessionId();
+    const memory = getMemoryStore()!;
+    memory.put({ ownerScope: "session", ownerId: sessionId, type: "decision", body: "legacy memory should not inject" });
+    const eventStore = getEventStore()!;
+    eventStore.writeEvent({
+      sessionId,
+      category: "task",
+      data: JSON.stringify({ input: { ops: [{ op: "start", task: "keep focus chain" }] } }),
+      priority: 2,
+      source: "test",
+      timestamp: Date.now(),
+    });
+
+    platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
+    const result = platform._handlers.get("before_agent_start")({ prompt: "", systemPrompt: "existing" }, { cwd: tmpDir });
+
+    const prompt = result.systemPrompt as string;
+    expect(prompt).not.toContain("# Cross-session memory");
+    expect(prompt).not.toContain("legacy memory should not inject");
+    expect(prompt).toContain("# Focus chain");
+    expect(prompt).toContain("keep focus chain");
+  });
+
+  test("session_before_compact prepends compact.md override into the resume snapshot", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const sessionId = getSessionId();
+    const eventStore = getEventStore();
+    eventStore!.writeEvent({
+      sessionId,
+      category: "file",
+      data: JSON.stringify({ op: "edit", path: "src/foo.ts" }),
+      priority: 2,
+      source: "test",
+      timestamp: Date.now(),
+    });
+
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "compact.md"), "## Project compact rules\n\nKeep test fixtures terse.");
+
+    platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
+    const beforeCompact = platform._handlers.get("session_before_compact");
+    expect(beforeCompact).toBeDefined();
+    beforeCompact({}, {});
+
+    const compactHandler = platform._handlers.get("session_compact");
+    const result = compactHandler({}, {}) as { context?: string[] };
+    const text = (result?.context ?? []).join("\n");
+    expect(text).toContain("## Project compact rules");
+    expect(text).toContain("<files ");
+    expect(text).toContain("src/foo.ts");
+  });
+
+  test("session_before_compact ignores oversized compact.md override", () => {
+    const platform = createPlatformWithTmpPaths();
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: tmpDir });
+
+    const sessionId = getSessionId();
+    const eventStore = getEventStore();
+    eventStore!.writeEvent({
+      sessionId,
+      category: "file",
+      data: JSON.stringify({ op: "edit", path: "src/foo.ts" }),
+      priority: 2,
+      source: "test",
+      timestamp: Date.now(),
+    });
+
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const oversize = "x".repeat(50 * 1024);
+    fs.writeFileSync(path.join(tmpDir, "compact.md"), oversize);
+
+    const beforeCompact = platform._handlers.get("session_before_compact");
+    beforeCompact({}, {});
+    const compactHandler = platform._handlers.get("session_compact");
+    const result = compactHandler({}, {}) as { context?: string[] };
+    const text = (result?.context ?? []).join("\n");
+    expect(text).not.toContain(oversize);
+    expect(text).toContain("src/foo.ts");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -859,13 +1134,12 @@ describe("error handling", () => {
     expect(events).not.toContain("session_compact");
   });
 
-  test("session_before_compact returns undefined on an empty session with no events", () => {
+  test("session_before_compact returns undefined on an empty session with no events", async () => {
     const platform = createPlatformWithTmpPaths();
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("session_before_compact");
-    let result: any = "unset";
-    expect(() => { result = handler(); }).not.toThrow();
+    const result = await handler();
     expect(result).toBeUndefined();
   });
 
@@ -948,6 +1222,62 @@ describe("tool_result with MCP tool names", () => {
 
     const warnCalls = (platform.logger.warn as any).mock.calls;
     expect(warnCalls.some((c: any[]) => String(c[0]).includes("event extraction failed"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Memory promotion on session_shutdown (regression: F5)
+// ---------------------------------------------------------------------------
+
+describe("session_shutdown → memory promotion", () => {
+  let promoTmp: string;
+
+  beforeEach(() => {
+    _resetCache();
+    promoTmp = fs.mkdtempSync(path.join(os.tmpdir(), "supi-promo-"));
+  });
+
+  afterEach(() => {
+    cleanupTrackedContextModeHooks();
+    rmDirWithRetry(promoTmp);
+  });
+
+  test("promotes high-priority decision events as project-scoped memory so future sessions can see them", async () => {
+    const { MemoryStore } = await import("../../src/context-mode/memory-store.js");
+    const platform = createMockPlatformWithHandlersAndPaths(promoTmp);
+    registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
+    platform._handlers.get("session_start")({}, { cwd: promoTmp });
+
+    const sessionId = getSessionId();
+    const eventStore = getEventStore()!;
+    const memoryStore = getMemoryStore()!;
+    const memoryPath = memoryStore.dbPath;
+
+    eventStore.writeEvent({
+      sessionId,
+      category: "decision",
+      data: JSON.stringify({ prompt: "use TDD for retry tests" }),
+      priority: 2,
+      source: "test",
+      timestamp: Date.now(),
+    });
+
+    // session_shutdown promotes decision/task/intent/rule events into memory.
+    platform._handlers.get("session_shutdown")({}, {});
+
+    // Reopen on the same path; the closed store cannot be reused.
+    const reopened = new MemoryStore({ dbPath: memoryPath, projectSlug: "demo" });
+    reopened.init();
+    try {
+      // A different sessionId simulates a future session retrieving cross-session memory.
+      const rows = reopened.retrieve({ sessionId: "future-session-id" });
+      const decisions = rows.filter((r) => r.type === "decision");
+      expect(decisions.length).toBe(1);
+      expect(decisions[0].body).toContain("use TDD for retry tests");
+      expect(decisions[0].ownerScope).toBe("project");
+    } finally {
+      reopened.close();
+    }
   });
 });
 

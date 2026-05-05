@@ -156,6 +156,49 @@ describe("CacheStore Brotli put/open", () => {
       payloadBytes: first.compressedBytes,
     });
   });
+
+  test("request cache stores hits and expires by stable key", () => {
+    const payload = store.putText({
+      sessionId: "s1",
+      text: "cached execution output",
+      sourceTool: "ctx_execute_file",
+      sourceHash: "args",
+    });
+
+    store.putRequestCache({
+      tool: "ctx_execute_file",
+      argsHash: "args-hash",
+      cwd: "/repo",
+      fingerprint: "file-hash",
+      handle: payload.handle,
+      ttlMs: 1000,
+      now: 10,
+    });
+
+    expect(store.getRequestCache({
+      tool: "ctx_execute_file",
+      argsHash: "args-hash",
+      cwd: "/repo",
+      fingerprint: "file-hash",
+      now: 999,
+    })).toEqual({ hit: true, handle: payload.handle, expiresAt: 1010 });
+
+    expect(store.getRequestCache({
+      tool: "ctx_execute_file",
+      argsHash: "args-hash",
+      cwd: "/repo",
+      fingerprint: "changed",
+      now: 999,
+    })).toEqual({ hit: false, reason: "miss" });
+
+    expect(store.getRequestCache({
+      tool: "ctx_execute_file",
+      argsHash: "args-hash",
+      cwd: "/repo",
+      fingerprint: "file-hash",
+      now: 1010,
+    })).toEqual({ hit: false, reason: "expired" });
+  });
 });
 
 function payloadPathFor(handle: string): string {

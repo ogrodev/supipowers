@@ -101,6 +101,29 @@ describe("uniqueSourceHash — read/open path canonicalization", () => {
     });
     expect(o).toBe(r);
   });
+
+  test("read, edit, and write share the same canonical file hash", () => {
+    const read = uniqueSourceHash({
+      tool: "read",
+      input: { path: "/repo/src/foo.ts" },
+      cwd: "/repo",
+      projectSlug: "demo",
+    });
+    const edit = uniqueSourceHash({
+      tool: "edit",
+      input: { path: "src/foo.ts" },
+      cwd: "/repo",
+      projectSlug: "demo",
+    });
+    const write = uniqueSourceHash({
+      tool: "write",
+      input: { path: "src\\foo.ts" },
+      cwd: "/repo",
+      projectSlug: "demo",
+    });
+    expect(edit).toBe(read);
+    expect(write).toBe(read);
+  });
 });
 
 describe("uniqueSourceHash — bash command truncation", () => {

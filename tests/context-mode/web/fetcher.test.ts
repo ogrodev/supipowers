@@ -84,6 +84,25 @@ describe("fetchAndIndex", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
+  test("default cache lookup reuses migrated legacy rows without refetching", async () => {
+    store.index(
+      [{ title: "Legacy", body: "legacy cached body", contentType: "prose", source: "example.com" }],
+      "example.com",
+      { ownerScope: "legacy" },
+    );
+    store.db.run(
+      "INSERT INTO url_cache (url, source, owner_scope, owner_id, fetched_at) VALUES (?, ?, ?, ?, ?)",
+      ["https://example.com/page", "example.com", "legacy", "", Date.now()],
+    );
+    mockFetch(SAMPLE_HTML);
+
+    const result = await fetchAndIndex("https://example.com/page", store);
+
+    expect(result.cached).toBe(true);
+    expect(result.preview).toContain("legacy cached body");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
 
   test("force bypasses cache", async () => {
     mockFetch(SAMPLE_HTML);
@@ -177,5 +196,32 @@ describe("fetchAndIndex", () => {
     expect(result.chunksIndexed).toBe(0);
     expect(result.preview).toBe("");
     expect(result.cached).toBe(false);
+  });
+
+  test("cache reconstruction filters by exact (owner_scope, owner_id) — does not bleed across owners (F6)", async () => {
+    mockFetch(SAMPLE_HTML);
+
+    // Fresh fetch as session "s1".
+    const fresh = await fetchAndIndex("https://example.com/page", store, {
+      owner: { ownerScope: "session", ownerId: "s1" },
+    });
+    expect(fresh.cached).toBe(false);
+    const expectedChunks = fresh.chunksIndexed;
+
+    // Index extra chunks under the same source label but a project owner.
+    // These should NOT be visible when reconstructing a session-owned cache hit.
+    store.index(
+      [{ title: "extra", body: "different body content from project scope", contentType: "prose", source: "example.com" }],
+      "example.com",
+      { ownerScope: "project" },
+    );
+
+    const cached = await fetchAndIndex("https://example.com/page", store, {
+      owner: { ownerScope: "session", ownerId: "s1" },
+    });
+    expect(cached.cached).toBe(true);
+    // The reconstruction must return only the session-owned chunks (not project rows).
+    expect(cached.chunksIndexed).toBe(expectedChunks);
+    expect(cached.preview).not.toContain("different body content from project scope");
   });
 });

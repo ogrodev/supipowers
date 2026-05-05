@@ -176,6 +176,7 @@ const STATUS: ContextModeStatus = {
     ctxExecute: true, ctxBatchExecute: true, ctxExecuteFile: true,
     ctxIndex: true, ctxSearch: true, ctxFetchAndIndex: true,
     ctxOpenCached: true, ctxStats: true, ctxPurge: true,
+    ctxRepomap: true, ctxSymbol: true,
   },
 };
 

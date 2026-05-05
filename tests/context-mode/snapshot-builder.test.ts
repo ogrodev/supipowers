@@ -21,14 +21,19 @@ afterEach(() => {
   rmDirWithRetry(tmpDir);
 });
 
-function writeEvent(category: string, data: Record<string, unknown>, priority: number = 3) {
+function writeEvent(
+  category: string,
+  data: Record<string, unknown>,
+  priority: number = 3,
+  timestamp = Date.now(),
+) {
   store.writeEvent({
     sessionId: SESSION,
     category: category as any,
     data: JSON.stringify(data),
     priority: priority as any,
     source: "test",
-    timestamp: Date.now(),
+    timestamp,
   });
 }
 
@@ -121,6 +126,33 @@ describe("buildResumeSnapshot — fallback mode", () => {
     expect(snapshot).not.toContain("<how_to_search>");
     expect(snapshot).toContain("<files_modified>");
   });
+
+  test("fallback masks stale same-source modified file observations", () => {
+    writeEvent("file", { op: "edit", path: "C:\\repo\\src\\old.ts", sourceHash: "same-source" }, 2, 1);
+    writeEvent("file", { op: "edit", path: "C:\\repo\\src\\new.ts", sourceHash: "same-source" }, 2, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("C:\\repo\\src\\new.ts");
+    expect(snapshot).not.toContain("C:\\repo\\src\\old.ts");
+    expect(snapshot).toContain("stale observations masked: 1");
+  });
+
+  test("fallback masks same-timestamp stale modified observations by insertion order", () => {
+    writeEvent("file", { op: "edit", path: "/src/old.ts", sourceHash: "same-source" }, 2, 1);
+    writeEvent("file", { op: "edit", path: "/src/new.ts", sourceHash: "same-source" }, 2, 1);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("/src/new.ts");
+    expect(snapshot).not.toContain("/src/old.ts");
+    expect(snapshot).toContain("stale observations masked: 1");
+  });
+
+  test("fallback: newer read does not mask older edit on the same source (F3)", () => {
+    // Edit at t=1, read at t=2 with the same path (no sourceHash → fallback to path).
+    writeEvent("file", { op: "edit", path: "/src/foo.ts" }, 2, 1);
+    writeEvent("file", { op: "read", path: "/src/foo.ts" }, 2, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION);
+    expect(snapshot).toContain("<files_modified>");
+    expect(snapshot).toContain("/src/foo.ts");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -176,6 +208,46 @@ describe("buildResumeSnapshot — reference format", () => {
     expect(tasksIdx).toBeGreaterThan(-1);
     expect(rulesIdx).toBeLessThan(filesIdx);
     expect(filesIdx).toBeLessThan(tasksIdx);
+  });
+
+  test("reference snapshot keeps latest observation and reports stale masked count", () => {
+    writeEvent("file", { op: "read", path: "/src/old.ts", sourceHash: "same-source" }, 3, 1);
+    writeEvent("file", { op: "read", path: "/src/new.ts", sourceHash: "same-source" }, 3, 2);
+    writeEvent("file", { op: "read", path: "/src/other.ts", sourceHash: "other-source" }, 3, 3);
+    const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
+    expect(snapshot).toContain('stale_masked="1"');
+    expect(snapshot).toContain("Masked stale observations: 1");
+    expect(snapshot).toContain("/src/new.ts");
+    expect(snapshot).toContain("/src/other.ts");
+    expect(snapshot).not.toContain("/src/old.ts");
+  });
+
+  test("reference snapshot masks same-timestamp stale observations by insertion order", () => {
+    writeEvent("file", { op: "read", path: "/src/old.ts", sourceHash: "same-source" }, 3, 1);
+    writeEvent("file", { op: "read", path: "/src/new.ts", sourceHash: "same-source" }, 3, 1);
+    const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
+    expect(snapshot).toContain('stale_masked="1"');
+    expect(snapshot).toContain("/src/new.ts");
+    expect(snapshot).not.toContain("/src/old.ts");
+  });
+
+  test("reference: newer read does not mask older edit on the same path (F3)", () => {
+    writeEvent("file", { op: "edit", path: "/src/foo.ts" }, 2, 1);
+    writeEvent("file", { op: "read", path: "/src/foo.ts" }, 2, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
+    expect(snapshot).toContain("Edited: /src/foo.ts");
+    // The path appears as Edited; it must not also appear under Read because
+    // modifications dominate the same path.
+    expect(snapshot).not.toContain("Read: /src/foo.ts");
+  });
+
+  test("reference masks older reads after newer edit on the same canonical source", () => {
+    writeEvent("file", { op: "read", path: "/repo/src/foo.ts", sourceHash: "same-source" }, 3, 1);
+    writeEvent("file", { op: "edit", path: "src/foo.ts", sourceHash: "same-source" }, 2, 2);
+    const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
+    expect(snapshot).toContain("Edited: src/foo.ts");
+    expect(snapshot).not.toContain("Read: /repo/src/foo.ts");
+    expect(snapshot).toContain('stale_masked="1"');
   });
 
   test("empty sections omitted", () => {

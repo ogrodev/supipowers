@@ -77,6 +77,55 @@ describe("buildRepoMap", () => {
     expect(result.text).not.toContain("assets/image.png");
   });
 
+  test("enumerates tracked and untracked git files with tokenignore overlay", async () => {
+    write("src/tracked.ts", `export function tracked() { return 1; }`);
+    write("src/untracked.ts", `export function untracked() { return 2; }`);
+    write("src/ignored-by-tokenignore.ts", `export function ignoredByTokenignore() { return 3; }`);
+    write(".omp/supipowers/.tokenignore", "src/ignored-by-tokenignore.ts\n");
+
+    const execCalls: Array<{ cmd: string; args: string[]; cwd: string }> = [];
+    const platform = {
+      ...makePlatform(tmpDir),
+      exec: async (cmd: string, args: string[], opts: { cwd: string }) => {
+        execCalls.push({ cmd, args, cwd: opts.cwd });
+        return {
+          stdout: "src/tracked.ts\nsrc/untracked.ts\nsrc/ignored-by-tokenignore.ts\n",
+          stderr: "",
+          code: 0,
+        };
+      },
+    };
+
+    const result = await buildRepoMap(platform, { cwd: tmpDir, tokenBudget: 4000 });
+
+    expect(execCalls).toEqual([
+      { cmd: "git", args: ["ls-files", "--cached", "--others", "--exclude-standard"], cwd: tmpDir },
+    ]);
+    expect(result.text).toContain("src/tracked.ts");
+    expect(result.text).toContain("src/untracked.ts");
+    expect(result.text).not.toContain("src/ignored-by-tokenignore.ts");
+  });
+
+  test("applies gitignore and tokenignore filters during fallback walking", async () => {
+    write("src/keep.ts", `export function keep() { return 1; }`);
+    write("generated/generated.ts", `export function generated() { return 2; }`);
+    write("src/skip-token.ts", `export function skipToken() { return 3; }`);
+    write(".gitignore", "generated/\n");
+    write(".omp/supipowers/.tokenignore", "src/skip-token.ts\n");
+
+    const platform = {
+      ...makePlatform(tmpDir),
+      exec: async () => ({ stdout: "", stderr: "not a git repository", code: 1 }),
+    };
+
+    const result = await buildRepoMap(platform, { cwd: tmpDir, tokenBudget: 4000 });
+
+    expect(result.text).toContain("src/keep.ts");
+    expect(result.text).not.toContain("generated/generated.ts");
+    expect(result.text).not.toContain("src/skip-token.ts");
+  });
+
+
   test("personalizes ranking toward focus files", async () => {
     write("src/feature.ts", `export function feature() { return 1; }`);
     write("src/other.ts", `export function other() { return 2; }`);
@@ -101,5 +150,20 @@ describe("buildRepoMap", () => {
     const result = await buildRepoMap(makePlatform(tmpDir), { cwd: tmpDir, tokenBudget: 200 });
     expect(result.emittedBytes).toBeLessThanOrEqual(200 * 4 + 200);
     expect(result.fileCount).toBeLessThan(30);
+  });
+
+  test("reports original source bytes for emitted files", async () => {
+    const first = `export function first() { return 1; }\n`;
+    const second = `export function second() { return 2; }\n`;
+    write("src/first.ts", first);
+    write("src/second.ts", second);
+
+    const result = await buildRepoMap(makePlatform(tmpDir), { cwd: tmpDir, tokenBudget: 4000 });
+
+    expect(result.text).toContain("src/first.ts");
+    expect(result.text).toContain("src/second.ts");
+    expect(result.emittedSourceBytes).toBe(
+      new TextEncoder().encode(first).byteLength + new TextEncoder().encode(second).byteLength,
+    );
   });
 });

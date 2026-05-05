@@ -88,7 +88,12 @@ describe("context-mode dedup", () => {
       processedBytes: 15,
     });
 
-    expect(substituted).toEqual({ result: freshResult, processorKey: "git" });
+    expect(substituted.processorKey).toBe("git");
+    const text = substituted.result?.content?.[0]?.text ?? "";
+    expect(text).toContain("supersedes turn 1");
+    expect(text).toContain("was 11 B");
+    expect(text).toContain("old bytes remain in transcript history");
+    expect(text).toContain("changed payload");
     expect(dedupState.turnCounter).toBe(2);
     expect(dedupState.records.get("source-1")?.turnId).toBe(2);
     expect(dedupState.records.get("source-1")?.bytes).toBe(15);
