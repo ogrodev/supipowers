@@ -231,6 +231,8 @@ const CTX_TOOL_NAMES: Record<string, string> = {
   ctxFetchAndIndex: "ctx_fetch_and_index",
   ctxStats: "ctx_stats",
   ctxPurge: "ctx_purge",
+  ctxRepomap: "ctx_repomap",
+  ctxSymbol: "ctx_symbol",
 };
 
 export function checkContextMode(activeTools: string[]): CheckResult {
