@@ -91,6 +91,32 @@ export const ConfigSchema = Type.Object(
           },
           { additionalProperties: false },
         ),
+        cacheHandles: Type.Object(
+          {
+            enabled: Type.Boolean(),
+            spillThresholdBytes: Type.Number({ minimum: 1024 }),
+            previewBytes: Type.Number({ minimum: 256 }),
+          },
+          { additionalProperties: false },
+        ),
+        repomap: Type.Object(
+          {
+            enabled: Type.Boolean(),
+            tokenBudget: Type.Number({ minimum: 100 }),
+            maxFiles: Type.Number({ minimum: 1 }),
+          },
+          { additionalProperties: false },
+        ),
+        memory: Type.Object(
+          {
+            enabled: Type.Boolean(),
+            byteBudget: Type.Number({ minimum: 256 }),
+            maxRows: Type.Number({ minimum: 1 }),
+            retentionDays: Type.Number({ minimum: 1 }),
+            focusChainCadence: Type.Integer({ minimum: 1 }),
+          },
+          { additionalProperties: false },
+        ),
       },
       { additionalProperties: false },
     ),
@@ -100,6 +126,49 @@ export const ConfigSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
+    mempalace: Type.Object(
+      {
+        enabled: Type.Boolean(),
+        packageVersion: Type.String({ minLength: 1 }),
+        managedVenvPath: Type.String({ minLength: 1 }),
+        palacePath: Type.String({ minLength: 1 }),
+        defaultWingStrategy: Type.Union([
+          Type.Literal("repo-name"),
+          Type.Literal("project-slug"),
+          Type.Literal("explicit"),
+        ]),
+        explicitWing: Type.Union([Type.String(), Type.Null()]),
+        defaultAgentName: Type.String({ minLength: 1 }),
+        autoSetup: Type.Boolean(),
+        hooks: Type.Object(
+          {
+            wakeUp: Type.Boolean(),
+            searchGuidance: Type.Boolean(),
+            compactionCheckpoint: Type.Boolean(),
+            shutdownDiary: Type.Boolean(),
+          },
+          { additionalProperties: false },
+        ),
+        budgets: Type.Object(
+          {
+            wakeUpTokens: Type.Integer({ minimum: 1 }),
+            searchResultChars: Type.Integer({ minimum: 1 }),
+            listResultChars: Type.Integer({ minimum: 1 }),
+            diaryChars: Type.Integer({ minimum: 1 }),
+          },
+          { additionalProperties: false },
+        ),
+        timeouts: Type.Object(
+          {
+            setupMs: Type.Integer({ minimum: 1 }),
+            bridgeMs: Type.Integer({ minimum: 1 }),
+            hookMs: Type.Integer({ minimum: 1 }),
+          },
+          { additionalProperties: false },
+        ),
+      },
+      { additionalProperties: false },
+    ), 
   },
   { additionalProperties: false },
 );
