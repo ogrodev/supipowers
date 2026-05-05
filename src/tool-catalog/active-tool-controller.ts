@@ -66,6 +66,7 @@ export function registerActiveToolController(
         lazyTools: config.contextMode.lazyTools,
         mcpServers: registry.servers,
         pendingTags,
+        cacheHandlesEnabled: config.contextMode.cacheHandles.enabled,
       });
     } catch (error) {
       (platform as any).logger?.warn?.("supi-lazy-tools: active-tool planning failed", error);

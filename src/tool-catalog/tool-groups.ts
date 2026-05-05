@@ -8,6 +8,8 @@ export const CONTEXT_MODE_TOOL_NAMES = [
   "ctx_fetch_and_index",
   "ctx_stats",
   "ctx_purge",
+  "ctx_repomap",
+  "ctx_symbol",
 ] as const;
 
 export type ContextModeToolName = (typeof CONTEXT_MODE_TOOL_NAMES)[number];
@@ -25,6 +27,8 @@ export const OWNED_TOOL_PRIORITY = [
   "ctx_index",
   "ctx_stats",
   "ctx_purge",
+  "ctx_repomap",
+  "ctx_symbol",
   MCPC_MANAGER_TOOL_NAME,
 ] as const;
 
@@ -67,6 +71,10 @@ export const BALANCED_KEYWORD_TOOLS: Record<string, string[]> = {
   "open cached": ["ctx_open_cached"],
   "cached handle": ["ctx_open_cached"],
   ctx_open_cached: ["ctx_open_cached"],
+  repomap: ["ctx_repomap"],
+  "repo map": ["ctx_repomap"],
+  symbol: ["ctx_symbol"],
+  symbols: ["ctx_symbol"],
 };
 
 export function isContextModeTool(name: string): boolean {

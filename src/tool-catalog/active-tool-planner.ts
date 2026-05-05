@@ -23,6 +23,7 @@ export interface PlanActiveToolsInput {
   lazyTools: ContextModeLazyToolsConfig;
   mcpServers?: Record<string, ServerConfig>;
   pendingTags?: string[];
+  cacheHandlesEnabled?: boolean;
 }
 
 export interface ActiveToolPlan {
@@ -58,6 +59,10 @@ export function planActiveTools(input: PlanActiveToolsInput): ActiveToolPlan {
 
   for (const toolName of input.lazyTools.alwaysKeep) {
     addRegisteredTool(toolName, "config");
+  }
+
+  if (input.cacheHandlesEnabled) {
+    addRegisteredTool("ctx_open_cached", "policy");
   }
 
   if (input.lazyTools.mode === "conservative") {
