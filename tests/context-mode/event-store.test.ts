@@ -605,7 +605,7 @@ describe("EventStore multi-session behavior", () => {
     // suppressed — confirms dedup is scoped, not globally disabled.
     store.writeEvent(event("file", shared, { sessionId: "s-a" }));
     expect(store.getEvents("s-a")).toHaveLength(1);
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 
   test("getEventCounts is scoped to a single session", () => {
     store.writeEvents([

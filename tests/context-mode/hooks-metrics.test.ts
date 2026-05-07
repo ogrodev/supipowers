@@ -239,7 +239,7 @@ describe("registerContextModeHooks — tool_result records metrics (Tasks 22, 23
     }
 
     shutdownAll(platform);
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 });
 
 describe("registerContextModeHooks — session_shutdown closes metrics store (Task 24)", () => {
@@ -272,7 +272,7 @@ describe("registerContextModeHooks — session_shutdown closes metrics store (Ta
     } finally {
       probe.close();
     }
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 });
 
 describe("registerContextModeHooks — L3 cache metrics", () => {
@@ -305,5 +305,5 @@ describe("registerContextModeHooks — L3 cache metrics", () => {
     } finally {
       probe.close();
     }
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 });

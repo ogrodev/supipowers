@@ -115,9 +115,11 @@ describe("MetricsStore.init", () => {
     expect(() => corrupted.init()).toThrow(/unknown schema version/);
     corrupted.close();
 
-    // Restore a clean store for afterEach.
-    rmDirWithRetry(tmpDir);
-    fs.mkdirSync(tmpDir, { recursive: true });
+    // Restore a clean store for afterEach using a fresh temp dir so Windows does
+    // not depend on immediate release of the prior SQLite handle.
+    const previousTmpDir = tmpDir;
+    rmDirWithRetry(previousTmpDir);
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-metrics-"));
     dbPath = path.join(tmpDir, "metrics.db");
     store = new MetricsStore({ dbPath, projectSlug: "demo" });
     store.init();
