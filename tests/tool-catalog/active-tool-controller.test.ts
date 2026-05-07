@@ -95,9 +95,9 @@ describe("registerActiveToolController degraded mode", () => {
 
     const handler = platform._handlers.get("before_agent_start");
     expect(handler).toBeDefined();
-    const result = await handler({ prompt: "search repo", systemPrompt: "before" }, {
+    const result = await handler({ prompt: "search repo", systemPrompt: ["before"] }, {
       cwd: "/tmp/project",
-      getSystemPrompt: mock(() => "after"),
+      getSystemPrompt: mock(() => ["after"]),
     });
 
     expect(result).toBeUndefined();
@@ -112,9 +112,9 @@ describe("registerActiveToolController degraded mode", () => {
     });
 
     const handler = platform._handlers.get("before_agent_start");
-    const result = await handler({ prompt: "search repo", systemPrompt: "before" }, {
+    const result = await handler({ prompt: "search repo", systemPrompt: ["before"] }, {
       cwd: "/tmp/project",
-      getSystemPrompt: mock(() => "after"),
+      getSystemPrompt: mock(() => ["after"]),
     });
 
     expect(result).toBeUndefined();
@@ -129,7 +129,7 @@ describe("registerActiveToolController degraded mode", () => {
     });
 
     const handler = platform._handlers.get("before_agent_start");
-    const result = await handler({ prompt: "search repo", systemPrompt: "before" }, {
+    const result = await handler({ prompt: "search repo", systemPrompt: ["before"] }, {
       cwd: "/tmp/project",
     });
 
@@ -167,7 +167,7 @@ describe("registerActiveToolController mutation flow", () => {
     });
     const getSystemPrompt = mock(() => {
       calls.push("prompt");
-      return "rebuilt prompt";
+      return ["rebuilt prompt"];
     });
 
     registerActiveToolController(platform, DEFAULT_CONFIG, {
@@ -176,7 +176,7 @@ describe("registerActiveToolController mutation flow", () => {
     });
 
     const handler = platform._handlers.get("before_agent_start");
-    const result = await handler({ prompt: "search repo", systemPrompt: "original prompt" }, {
+    const result = await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {
       cwd: "/tmp/project",
       getSystemPrompt,
     });
@@ -189,14 +189,14 @@ describe("registerActiveToolController mutation flow", () => {
       "mcpc_manager",
     ]);
     expect(calls).toEqual(["set:start", "set:end", "prompt"]);
-    expect(result).toEqual({ systemPrompt: "rebuilt prompt" });
+    expect(result).toEqual({ systemPrompt: ["rebuilt prompt"] });
   });
 
   test("does not rebuild the prompt when the planned tool list is unchanged", async () => {
     const platform = createPlatformWithHandlers({
       getActiveTools: mock(() => ["bash", "ctx_execute", "ctx_search", "mcpc_manager"]),
     });
-    const getSystemPrompt = mock(() => "rebuilt prompt");
+    const getSystemPrompt = mock(() => ["rebuilt prompt"]);
 
     registerActiveToolController(platform, DEFAULT_CONFIG, {
       loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
@@ -204,7 +204,7 @@ describe("registerActiveToolController mutation flow", () => {
     });
 
     const handler = platform._handlers.get("before_agent_start");
-    const result = await handler({ prompt: "edit file", systemPrompt: "original prompt" }, {
+    const result = await handler({ prompt: "edit file", systemPrompt: ["original prompt"] }, {
       cwd: "/tmp/project",
       getSystemPrompt,
     });
@@ -235,13 +235,13 @@ describe("registerActiveToolController mutation flow", () => {
     });
 
     const handler = platform._handlers.get("before_agent_start");
-    await handler({ prompt: "inspect design", systemPrompt: "original prompt" }, {
+    await handler({ prompt: "inspect design", systemPrompt: ["original prompt"] }, {
       cwd: "/tmp/project",
-      getSystemPrompt: mock(() => "rebuilt prompt 1"),
+      getSystemPrompt: mock(() => ["rebuilt prompt 1"]),
     });
-    await handler({ prompt: "inspect design", systemPrompt: "rebuilt prompt 1" }, {
+    await handler({ prompt: "inspect design", systemPrompt: ["rebuilt prompt 1"] }, {
       cwd: "/tmp/project",
-      getSystemPrompt: mock(() => "rebuilt prompt 2"),
+      getSystemPrompt: mock(() => ["rebuilt prompt 2"]),
     });
 
     expect(platform.setActiveTools.mock.calls[0][0]).toContain("mcpc_figma");
@@ -255,7 +255,7 @@ describe("registerActiveToolController mutation flow", () => {
         throw new Error("mutation failed");
       }),
     });
-    const getSystemPrompt = mock(() => "rebuilt prompt");
+    const getSystemPrompt = mock(() => ["rebuilt prompt"]);
 
     registerActiveToolController(platform, DEFAULT_CONFIG, {
       loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
@@ -263,14 +263,100 @@ describe("registerActiveToolController mutation flow", () => {
     });
 
     const handler = platform._handlers.get("before_agent_start");
-    const result = await handler({ prompt: "search repo", systemPrompt: "original prompt" }, {
+    const result = await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {
       cwd: "/tmp/project",
       getSystemPrompt,
     });
 
-    expect(result).toEqual({ systemPrompt: "original prompt" });
+    expect(result).toEqual({ systemPrompt: ["original prompt"] });
     expect(getSystemPrompt).not.toHaveBeenCalled();
     expect(platform.logger.warn).toHaveBeenCalled();
+  });
+
+  test("hides native search/find/fetch when ctx replacements are active and enforceRouting is on", async () => {
+    const platform = createPlatformWithHandlers({
+      getActiveTools: mock(() => [
+        "bash",
+        "search",
+        "find",
+        "fetch",
+        "web_fetch",
+        "ctx_execute",
+      ]),
+      getAllTools: mock(() => [
+        "bash",
+        "search",
+        "find",
+        "fetch",
+        "web_fetch",
+        "ctx_execute",
+        "ctx_search",
+        "ctx_batch_execute",
+        "ctx_fetch_and_index",
+        "ctx_open_cached",
+        "mcpc_manager",
+      ]),
+    });
+    const getSystemPrompt = mock(() => ["rebuilt prompt"]);
+
+    registerActiveToolController(platform, DEFAULT_CONFIG, {
+      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
+      consumePendingTags: mock(() => []),
+    });
+
+    const handler = platform._handlers.get("before_agent_start");
+    await handler({ prompt: "search repo and fetch http docs", systemPrompt: ["original prompt"] }, {
+      cwd: "/tmp/project",
+      getSystemPrompt,
+    });
+
+    const passed = platform.setActiveTools.mock.calls[0][0] as string[];
+    expect(passed).not.toContain("search");
+    expect(passed).not.toContain("find");
+    expect(passed).not.toContain("fetch");
+    expect(passed).not.toContain("web_fetch");
+    expect(passed).toContain("bash");
+    expect(passed).toContain("ctx_execute");
+    expect(passed).toContain("ctx_search");
+    expect(passed).toContain("ctx_fetch_and_index");
+  });
+
+  test("does not hide native tools when enforceRouting is disabled", async () => {
+    const platform = createPlatformWithHandlers({
+      getActiveTools: mock(() => ["bash", "search", "find", "ctx_execute"]),
+      getAllTools: mock(() => [
+        "bash",
+        "search",
+        "find",
+        "ctx_execute",
+        "ctx_search",
+        "ctx_batch_execute",
+        "ctx_open_cached",
+        "mcpc_manager",
+      ]),
+    });
+    const getSystemPrompt = mock(() => ["rebuilt prompt"]);
+
+    const config: SupipowersConfig = {
+      ...DEFAULT_CONFIG,
+      contextMode: { ...DEFAULT_CONFIG.contextMode, enforceRouting: false },
+    };
+    registerActiveToolController(platform, config, {
+      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
+      consumePendingTags: mock(() => []),
+    });
+
+    const handler = platform._handlers.get("before_agent_start");
+    await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {
+      cwd: "/tmp/project",
+      getSystemPrompt,
+    });
+
+    const passed = platform.setActiveTools.mock.calls[0]?.[0] as string[] | undefined;
+    if (passed) {
+      expect(passed).toContain("search");
+      expect(passed).toContain("find");
+    }
   });
 });
 
@@ -290,9 +376,9 @@ describe("registerActiveToolController metrics", () => {
       });
 
       const handler = platform._handlers.get("before_agent_start");
-      await handler({ prompt: "search repo", systemPrompt: "original prompt" }, {
+      await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {
         cwd: tmpDir,
-        getSystemPrompt: mock(() => "rebuilt prompt"),
+        getSystemPrompt: mock(() => ["rebuilt prompt"]),
         getContextUsage: mock(() => ({ tokens: 123, contextWindow: 1000, percent: 12.3 })),
       });
       await store.flushPendingForTest();
