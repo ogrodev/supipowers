@@ -1,4 +1,5 @@
 import type { Platform } from "../platform/types.js";
+import { systemPromptText } from "../platform/system-prompt.js";
 import { createDebugLogger } from "../debug/logger.js";
 import { getPlanningDebugLogger, getPlanningPromptOptions, isPlanningActive } from "./approval-flow.js";
 import { buildPlanWriterPrompt } from "./plan-writer-prompt.js";
@@ -272,7 +273,7 @@ export function registerPlanningSystemPromptHook(platform: Platform): void {
 
     const debugLogger = getPlanningDebugLogger() ?? createDebugLogger(platform.paths, ctx as any, "plan");
     const options = getPlanningPromptOptions();
-    const basePrompt = (event as any).systemPrompt as string | undefined;
+    const basePrompt = systemPromptText((event as any).systemPrompt);
     if (!options || !basePrompt) {
       debugLogger.log("system_prompt_override_skipped", {
         hasPlanningOptions: Boolean(options),
@@ -290,6 +291,6 @@ export function registerPlanningSystemPromptHook(platform: Platform): void {
       systemPrompt,
     });
 
-    return { systemPrompt };
+    return { systemPrompt: [systemPrompt] };
   });
 }
