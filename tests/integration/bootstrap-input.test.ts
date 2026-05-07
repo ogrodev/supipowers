@@ -48,6 +48,11 @@ function createPlatform(options: { withRegisterTool?: boolean } = {}) {
   return { platform, handlers, handlersByEvent };
 }
 
+function promptText(result: any): string {
+  const value = result?.systemPrompt;
+  return Array.isArray(value) ? value.join("\n\n") : (value ?? "");
+}
+
 describe("bootstrap input interception", () => {
   beforeEach(() => {
     cancelUiDesignTracking("bootstrap-test-reset");
@@ -131,8 +136,8 @@ describe("bootstrap input interception", () => {
     expect(beforeHandlers.length).toBeGreaterThan(1);
 
     const result = await beforeHandlers[0](
-      { prompt: "search repo", systemPrompt: "original prompt" },
-      { cwd: process.cwd(), getSystemPrompt: mock(() => "rebuilt prompt") },
+      { prompt: "search repo", systemPrompt: ["original prompt"] },
+      { cwd: process.cwd(), getSystemPrompt: mock(() => ["rebuilt prompt"]) },
     );
 
     expect(platform.setActiveTools).toHaveBeenCalledWith([
@@ -142,38 +147,39 @@ describe("bootstrap input interception", () => {
       "ctx_batch_execute",
       "mcpc_manager",
     ]);
-    expect(result).toEqual({ systemPrompt: "rebuilt prompt" });
+    expect(result).toEqual({ systemPrompt: ["rebuilt prompt"] });
   });
 
   test("context-mode prompt hook appends to active-tool rebuilt prompt", async () => {
     const bootstrapModulePath = "../../src/bootstrap.js?bootstrap-input-lazy-tools-context-prompt";
     const { bootstrap } = await import(bootstrapModulePath);
     const { platform, handlersByEvent } = createPlatform();
-    const event = { prompt: "search repo", systemPrompt: "original prompt" };
+    const event = { prompt: "search repo", systemPrompt: ["original prompt"] };
 
     bootstrap(platform);
 
     const beforeHandlers = handlersByEvent.get("before_agent_start") ?? [];
     const activeToolResult = await beforeHandlers[0](
       event,
-      { cwd: process.cwd(), getSystemPrompt: mock(() => "rebuilt prompt") },
+      { cwd: process.cwd(), getSystemPrompt: mock(() => ["rebuilt prompt"]) },
     );
 
-    let contextModeResult: { systemPrompt?: string } | undefined;
+    let contextModeResult: { systemPrompt?: string[] | string } | undefined;
     for (const handler of beforeHandlers.slice(1)) {
       const result = await handler(
         event,
-        { cwd: process.cwd(), getSystemPrompt: mock(() => activeToolResult?.systemPrompt ?? "") },
+        { cwd: process.cwd(), getSystemPrompt: mock(() => activeToolResult?.systemPrompt ?? []) },
       );
-      if (result?.systemPrompt?.includes("# supi-context-mode")) {
+      if (promptText(result).includes("# supi-context-mode")) {
         contextModeResult = result;
         break;
       }
     }
 
-    expect(contextModeResult?.systemPrompt).toContain("rebuilt prompt");
-    expect(contextModeResult?.systemPrompt).not.toContain("original prompt");
-    expect(contextModeResult?.systemPrompt).toContain("# supi-context-mode");
+    const prompt = promptText(contextModeResult);
+    expect(prompt).toContain("rebuilt prompt");
+    expect(prompt).not.toContain("original prompt");
+    expect(prompt).toContain("# supi-context-mode");
   });
 
   test("uses before_agent_start prompt text for MCP trigger activation", async () => {
@@ -207,8 +213,8 @@ describe("bootstrap input interception", () => {
 
       const beforeHandlers = handlersByEvent.get("before_agent_start") ?? [];
       await beforeHandlers[0](
-        { prompt: "inspect the figma design", systemPrompt: "original prompt" },
-        { cwd: tmpDir, getSystemPrompt: mock(() => "rebuilt prompt") },
+        { prompt: "inspect the figma design", systemPrompt: ["original prompt"] },
+        { cwd: tmpDir, getSystemPrompt: mock(() => ["rebuilt prompt"]) },
       );
 
       expect(platform.setActiveTools).toHaveBeenCalledWith(expect.arrayContaining(["mcpc_figma"]));
