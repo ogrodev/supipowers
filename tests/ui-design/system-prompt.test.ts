@@ -49,6 +49,11 @@ function session(): UiDesignSession {
   };
 }
 
+function promptText(result: any): string {
+  const value = result?.systemPrompt;
+  return Array.isArray(value) ? value.join("\n\n") : (value ?? "");
+}
+
 describe("ui-design system prompt", () => {
   test("injects Design Director block", () => {
     const prompt = buildUiDesignSystemPrompt(BASE_PROMPT, BASE_OPTIONS);
@@ -134,14 +139,14 @@ describe("ui-design system prompt", () => {
     registerUiDesignSystemPromptHook(platform);
 
     cancelUiDesignTracking("test-reset");
-    const result1 = handler!({ systemPrompt: "base" }, { cwd: "/repo", hasUI: true });
+    const result1 = handler!({ systemPrompt: ["base"] }, { cwd: "/repo", hasUI: true });
     expect(result1).toBeUndefined();
 
     // activate
     const s = session();
     startUiDesignTracking(s, async () => {});
-    const result2 = handler!({ systemPrompt: BASE_PROMPT }, { cwd: "/repo", hasUI: true });
-    expect(result2?.systemPrompt).toContain("═══Design Director═══");
+    const result2 = handler!({ systemPrompt: [BASE_PROMPT] }, { cwd: "/repo", hasUI: true });
+    expect(promptText(result2)).toContain("═══Design Director═══");
     cancelUiDesignTracking("test-teardown");
   });
 

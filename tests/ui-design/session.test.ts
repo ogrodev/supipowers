@@ -370,27 +370,6 @@ describe("ui-design session — tool guard", () => {
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("cannot verify ast_edit");
   });
-
-  test("ast_edit legacy `path` field is still accepted (pre-14.6.0 fallback)", () => {
-    // TODO(omp-14.7): drop this test together with the `input.path` fallback.
-    const sessionDir = path.join(tmpDir, "guard-ast-edit-legacy");
-    fs.mkdirSync(sessionDir, { recursive: true });
-    startUiDesignTracking(makeSession(sessionDir), async () => {});
-
-    const { fire } = registerToolGuardPlatform();
-    expect(fire("ast_edit", { path: path.join(sessionDir, "legacy.tsx") })).toBeUndefined();
-  });
-
-  test("ast_edit legacy comma-separated `path` string is still accepted", () => {
-    // TODO(omp-14.7): drop this test together with the `input.path` fallback.
-    const sessionDir = path.join(tmpDir, "guard-ast-edit-legacy-list");
-    fs.mkdirSync(sessionDir, { recursive: true });
-    startUiDesignTracking(makeSession(sessionDir), async () => {});
-
-    const { fire } = registerToolGuardPlatform();
-    const joined = `${path.join(sessionDir, "a.tsx")},${path.join(sessionDir, "b.tsx")}`;
-    expect(fire("ast_edit", { path: joined })).toBeUndefined();
-  });
 });
 
 describe("ui-design session — approval hook terminal branches", () => {
