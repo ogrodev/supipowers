@@ -10,6 +10,7 @@ import { routeToolCall } from "./routing.js";
 import { KnowledgeStore } from "./knowledge/store.js";
 import { registerContextModeTools } from "./tools.js";
 import { MetricsStore, __setMetricsStoreForTest, _resetMetricsStoreCache } from "./metrics-store.js";
+import { _resetAutoIndexAttempts, _forgetAutoIndexSession } from "./tools.js";
 import { CacheStore } from "./cache-store.js";
 import { MemoryStore, _setMemoryStoreRef } from "./memory-store.js";
 import { toMetricRow } from "./metrics-recorder.js";
@@ -28,6 +29,7 @@ import { loadModelConfig } from "../config/model-config.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { createModelBridge, resolveModelForAction } from "../config/model-resolver.js";
 import { extractFinalAssistantText } from "../ai/final-message.js";
+import { normalizeSystemPromptBlocks } from "../platform/system-prompt.js";
 
 type SessionContextLike = {
   cwd?: string;
@@ -51,8 +53,11 @@ function buildActiveRoutingGuidance(status: ContextModeStatus): string | null {
     "Routing blocks native tools only when the named replacement is active. If a specialized ctx tool is absent, use an active rescue tool or proceed with the native tool.",
   ];
 
-  if (status.tools.ctxSearch || status.tools.ctxBatchExecute) {
-    lines.push("For search/gather work, prefer active `ctx_search` or `ctx_batch_execute` over Search/Find outputs.");
+  const searchGatherTools = ["ctx_search", "ctx_batch_execute"].filter((tool) =>
+    tool === "ctx_search" ? status.tools.ctxSearch : status.tools.ctxBatchExecute,
+  );
+  if (searchGatherTools.length > 0) {
+    lines.push(`For search/gather work, prefer active ${searchGatherTools.map((tool) => `\`${tool}\``).join(" or ")} over Search/Find outputs.`);
   }
   if (status.tools.ctxExecute) {
     lines.push("Use active `ctx_execute` for shell/data processing that may emit large output.");
@@ -611,6 +616,7 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
 
   platform.on("session_shutdown", () => {
     dedupState = createDedupState();
+    _forgetAutoIndexSession(sessionId);
     // Close knowledge store
     if (knowledgeStore) {
       try {
@@ -878,18 +884,19 @@ export function registerContextModeHooks(platform: Platform, config: SupipowersC
     if (sections.length === 0) return;
     const injection = sections.join("\n\n");
 
-    let systemPrompt = (event as any).systemPrompt as string | undefined;
+    let systemPromptBlocks = normalizeSystemPromptBlocks((event as any).systemPrompt);
     const getSystemPrompt = (ctx as any)?.getSystemPrompt;
     if (typeof getSystemPrompt === "function") {
       try {
         const currentPrompt = getSystemPrompt();
-        if (typeof currentPrompt === "string") systemPrompt = currentPrompt;
+        if (currentPrompt != null) {
+          systemPromptBlocks = normalizeSystemPromptBlocks(currentPrompt);
+        }
       } catch (e) {
         (platform as any).logger?.warn?.("supi-context-mode: failed to read current system prompt", e);
       }
     }
-    if (!systemPrompt) return { systemPrompt: injection };
-    return { systemPrompt: systemPrompt + "\n\n" + injection };
+    return { systemPrompt: [...systemPromptBlocks, injection] };
   });
 
   // Phase 3: Compaction integration
@@ -1059,4 +1066,5 @@ export function _resetCache(): void {
   _sessionIdRef = "";
   _focusChainTurnCounters.clear();
   _resetMetricsStoreCache();
+  _resetAutoIndexAttempts();
 }

@@ -33,6 +33,28 @@ const READ_TAIL_LINES = 30;
 const SEARCH_MAX_MATCHES = 10;
 const FIND_MAX_PATHS = 20;
 
+
+const READ_PATH_SELECTOR_RE = /:(?:raw|\d+(?:[-+]\d+)?|L\d+(?:-L?\d+|\+L?\d+)?)$/i;
+
+function getReadPath(input: Record<string, unknown>): string | null {
+  const path = input.path ?? input.file_path;
+  return typeof path === "string" && path.length > 0 ? path : null;
+}
+
+function hasEmbeddedReadSelector(input: Record<string, unknown>): boolean {
+  const path = getReadPath(input);
+  return path != null && READ_PATH_SELECTOR_RE.test(path);
+}
+
+function formatReadSelectorHint(input: Record<string, unknown>, start: number, end: number): string {
+  const path = getReadPath(input);
+  const selector = path?.startsWith("http://") || path?.startsWith("https://")
+    ? `L${start}-L${end}`
+    : `${start}-${end}`;
+  return path
+    ? `read(path="${path}:${selector}")`
+    : `read(path="<path>:${selector}")`;
+}
 /**
  * OMP's `shellMinimizer` already shrinks bash output and appends this footer
  * pointing at the full bytes. When we see it, supipowers must NOT re-compress —
@@ -116,8 +138,8 @@ function compressRead(text: string, input: Record<string, unknown>): string | un
   // Already minimized by OMP (e.g. when reading a `bash-original` artifact back). Pass through.
   if (OMP_MINIMIZER_FOOTER_RE.test(text)) return undefined;
 
-  // Scoped reads (offset/limit/sel) are already targeted — pass through
-  if (input.offset != null || input.limit != null || input.sel != null) return undefined;
+  // Scoped reads (offset/limit/path selector) are already targeted — pass through
+  if (input.offset != null || input.limit != null || hasEmbeddedReadSelector(input)) return undefined;
 
   const lines = text.split("\n");
   const totalLines = lines.length;
@@ -129,9 +151,10 @@ function compressRead(text: string, input: Record<string, unknown>): string | un
   const omittedStart = READ_HEAD_LINES + 1;
   const omittedEnd = totalLines - READ_TAIL_LINES;
 
+  const selectorHint = formatReadSelectorHint(input, omittedStart, omittedEnd);
   return [
     ...head,
-    `[...${omittedEnd - omittedStart + 1} lines omitted. Use read(path, sel="L${omittedStart}-L${omittedEnd}") to view...]`,
+    `[...${omittedEnd - omittedStart + 1} lines omitted. Use ${selectorHint} to view...]`,
     ...tail,
   ].join("\n");
 }

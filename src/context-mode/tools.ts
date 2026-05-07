@@ -4,7 +4,8 @@
 // Orchestration layer: delegates execution to sandbox, owns intent-driven
 // filtering (auto-indexing large output into knowledge store).
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { extname, join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Platform } from "../platform/types.js";
 import { executeCode } from "./sandbox/executor.js";
@@ -262,6 +263,155 @@ function formatSearchResults(grouped: ReturnType<KnowledgeStore["search"]>): str
     }
   }
   return text;
+}
+
+// ── Auto-index bootstrap for ctx_search ────────────────────────────
+
+/** Extensions worth scanning when bootstrapping the knowledge store. */
+const AUTO_INDEX_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+  ".py", ".rb", ".go", ".rs", ".java", ".kt", ".swift",
+  ".md", ".mdx", ".txt", ".rst",
+  ".yaml", ".yml", ".toml", ".json",
+  ".sh", ".bash", ".zsh",
+  ".html", ".css", ".scss",
+  ".sql",
+]);
+
+/** Directory names to skip during bootstrap scan. */
+const AUTO_INDEX_SKIP_DIRS = new Set([
+  "node_modules", ".git", ".svn", ".hg",
+  "dist", "build", "out", ".next", ".nuxt", ".cache", ".turbo", ".bun",
+  "coverage", "vendor", "target", "__pycache__", ".venv", "venv",
+  ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+  "tmp", ".tmp", ".idea", ".vscode",
+]);
+
+const AUTO_INDEX_MAX_FILES = 80;
+const AUTO_INDEX_MAX_SCAN = 4000;
+const AUTO_INDEX_MAX_FILE_BYTES = 256 * 1024;
+const AUTO_INDEX_MAX_DEPTH = 8;
+const AUTO_INDEX_MIN_TERM_LEN = 3;
+
+/** Sessions for which we have already attempted bootstrap. Prevents repeat scans. */
+const _autoIndexAttempted = new Set<string>();
+
+/** Reset auto-index attempt tracking. Test-only. */
+export function _resetAutoIndexAttempts(): void {
+  _autoIndexAttempted.clear();
+}
+
+/** Drop bootstrap-attempted entries that belong to a closed session. */
+export function _forgetAutoIndexSession(ownerId: string): void {
+  if (!ownerId) return;
+  const prefix = `${ownerId}|`;
+  for (const key of _autoIndexAttempted) {
+    if (key.startsWith(prefix)) _autoIndexAttempted.delete(key);
+  }
+}
+
+function extractIndexTerms(queries: string[]): string[] {
+  const terms = new Set<string>();
+  for (const query of queries) {
+    if (typeof query !== "string") continue;
+    const tokens = query.toLowerCase().split(/[^\p{L}\p{N}_]+/u);
+    for (const token of tokens) {
+      if (token.length >= AUTO_INDEX_MIN_TERM_LEN) terms.add(token);
+    }
+  }
+  return [...terms];
+}
+
+/**
+ * Bootstrap the knowledge store by scanning `cwd` for files containing any of
+ * the query terms, then indexing those files. Used when ctx_search is called
+ * against an empty store — without this, search can never return useful
+ * results until the agent manually runs ctx_index/ctx_batch_execute.
+ *
+ * Returns the number of chunks indexed. Caller should re-search after.
+ */
+export function autoIndexFromCwd(
+  store: KnowledgeStore,
+  queries: string[],
+  cwd: string,
+  owner: { ownerScope: "session"; ownerId: string },
+): { chunksIndexed: number; filesIndexed: number; filesScanned: number } {
+  const terms = extractIndexTerms(queries);
+  if (terms.length === 0) return { chunksIndexed: 0, filesIndexed: 0, filesScanned: 0 };
+
+  const matched: string[] = [];
+  let filesScanned = 0;
+
+  const walk = (dir: string, depth: number): void => {
+    if (depth > AUTO_INDEX_MAX_DEPTH) return;
+    if (matched.length >= AUTO_INDEX_MAX_FILES) return;
+    if (filesScanned >= AUTO_INDEX_MAX_SCAN) return;
+
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (matched.length >= AUTO_INDEX_MAX_FILES) return;
+      if (filesScanned >= AUTO_INDEX_MAX_SCAN) return;
+      const name = entry.name;
+      if (name.startsWith(".") && name !== "." && name !== "..") {
+        // Allow a few well-known dotted source dirs but skip caches/VCS.
+        if (AUTO_INDEX_SKIP_DIRS.has(name)) continue;
+        if (entry.isDirectory()) continue;
+      }
+      if (entry.isDirectory()) {
+        if (AUTO_INDEX_SKIP_DIRS.has(name)) continue;
+        walk(join(dir, name), depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const ext = extname(name).toLowerCase();
+      if (!AUTO_INDEX_EXTENSIONS.has(ext)) continue;
+      const full = join(dir, name);
+      filesScanned++;
+      let body: string;
+      try {
+        const stat = statSync(full);
+        if (stat.size > AUTO_INDEX_MAX_FILE_BYTES) continue;
+        body = readFileSync(full, "utf8");
+      } catch {
+        continue;
+      }
+      const lower = body.toLowerCase();
+      if (terms.some((t) => lower.includes(t))) {
+        matched.push(full);
+      }
+    }
+  };
+
+  walk(cwd, 0);
+
+  if (matched.length === 0) {
+    return { chunksIndexed: 0, filesIndexed: 0, filesScanned };
+  }
+
+  let chunksIndexed = 0;
+  for (const file of matched) {
+    let body: string;
+    try {
+      body = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const rel = file.startsWith(cwd) ? file.slice(cwd.length).replace(/^[\\/]+/, "") : file;
+    const source = `auto-index:${rel}`;
+    // Wrap with a markdown title so the chunker assigns a useful heading.
+    const chunks = chunkMarkdown(`# ${rel}\n\n${body}`, source);
+    if (chunks.length === 0) continue;
+    store.index(chunks, source, owner);
+    chunksIndexed += chunks.length;
+  }
+
+  return { chunksIndexed, filesIndexed: matched.length, filesScanned };
 }
 
 export interface RegisterContextModeToolsOptions {
@@ -543,12 +693,13 @@ export function registerContextModeTools(
     name: "ctx_search",
     label: "Search Knowledge Base",
     description:
-      "Search indexed content. Requires prior indexing via ctx_batch_execute, ctx_index, or ctx_fetch_and_index. Pass ALL search questions as queries array in ONE call.",
+      "Search indexed content. Auto-bootstraps the knowledge store from the project on the first call when nothing is indexed yet — subsequent calls skip auto-indexing.",
     promptSnippet: "ctx_search — query indexed content with BM25 search",
     promptGuidelines: [
       "Use to retrieve specific sections from previously indexed content",
       "Pass ALL questions in the queries array in one call — do not chain ctx_search calls",
       "Filter by `source` when you know which indexed bundle to search",
+      "Safe to call on a fresh session: the first call bootstraps an index from the project when none exists",
     ],
     parameters: {
       type: "object",
@@ -564,12 +715,48 @@ export function registerContextModeTools(
       },
       required: ["queries"],
     },
-    async execute(_toolCallId: string, params: any) {
+    async execute(_toolCallId: string, params: any, _abortSignal?: any, _onUpdate?: any, ctx?: any) {
       const store = requireKnowledgeStore(storeProvider);
       const { queries, source, contentType, limit } = params;
-      const results = store.search(queries, { source, contentType, limit, owner: currentKnowledgeOwner() });
-      const output = formatSearchResults(results);
+      const owner = currentKnowledgeOwner();
 
+      let results = store.search(queries, { source, contentType, limit, owner });
+      let bootstrapNote = "";
+
+      const allEmpty = results.every((g) => g.results.length === 0);
+      const sessionKey = `${owner.ownerId}|${source ?? ""}`;
+      const canBootstrap =
+        allEmpty &&
+        Array.isArray(queries) &&
+        queries.length > 0 &&
+        !source &&
+        !_autoIndexAttempted.has(sessionKey);
+
+      if (canBootstrap) {
+        _autoIndexAttempted.add(sessionKey);
+        const stats = store.getStats();
+        if (stats.totalChunks === 0) {
+          const cwd = typeof ctx?.cwd === "string" && ctx.cwd.length > 0 ? ctx.cwd : process.cwd();
+          let bootstrap;
+          try {
+            bootstrap = autoIndexFromCwd(store, queries, cwd, owner);
+          } catch {
+            bootstrap = { chunksIndexed: 0, filesIndexed: 0, filesScanned: 0 };
+          }
+          if (bootstrap.chunksIndexed > 0) {
+            results = store.search(queries, { source, contentType, limit, owner });
+            bootstrapNote =
+              `[auto-indexed ${bootstrap.filesIndexed} files (${bootstrap.chunksIndexed} chunks) ` +
+              `from ${bootstrap.filesScanned} scanned to bootstrap the empty knowledge store]\n\n`;
+          } else if (bootstrap.filesScanned > 0) {
+            bootstrapNote =
+              `[scanned ${bootstrap.filesScanned} files but none matched the query terms; ` +
+              `use ctx_batch_execute or ctx_index to index relevant content explicitly]\n\n`;
+          }
+        }
+      }
+
+      const output = bootstrapNote + formatSearchResults(results);
       trackCall("ctx_search", output.length);
       return { content: [{ type: "text", text: capResponseSize(output) }] };
     },
@@ -877,6 +1064,10 @@ export function registerContextModeTools(
     async execute() {
       const store = requireKnowledgeStore(storeProvider);
       const count = store.purge();
+      // Mark the current session as bootstrap-attempted so a follow-up
+      // ctx_search does not undo the explicit purge by re-bootstrapping.
+      const owner = currentKnowledgeOwner();
+      _autoIndexAttempted.add(`${owner.ownerId}|`);
       const output = `Purged ${count} chunks from knowledge base.`;
       trackCall("ctx_purge", output.length);
       return { content: [{ type: "text", text: output }] };

@@ -124,17 +124,13 @@ export function uniqueSourceHash(opts: UniqueSourceHashOpts): string | null {
       return sha256Hex(`file:${absolute}:${projectSlug}`);
     }
     case "search": {
-      // OMP 14.6.0: search params changed from `path: string` → `paths: string[]`.
-      // TODO(omp-14.7): drop the legacy `input.path` branch below.
       const paths = Array.isArray(input?.paths)
         ? (input.paths as unknown[]).filter((p): p is string => typeof p === "string")
-        : typeof input?.path === "string" && input.path.length > 0
-          ? [input.path]
-          : [];
+        : [];
       const pattern = typeof input?.pattern === "string" ? input.pattern : "";
       if (paths.length === 0) {
-        // Pattern-only search (no scope) — keep the legacy salt so any in-flight
-        // dedup state still resolves while we cross the rename boundary.
+        // Pattern-only search (no scope): keep a deterministic salt so distinct
+        // pattern-only calls dedup correctly per-project.
         return sha256Hex(`search:${pattern}:${projectSlug}`);
       }
       // Order matters: OMP runs each path under root-level resolution, so [a,b] != [b,a].
@@ -143,16 +139,11 @@ export function uniqueSourceHash(opts: UniqueSourceHashOpts): string | null {
       return sha256Hex(`search:${joined}:${pattern}:${projectSlug}`);
     }
     case "find": {
-      // OMP 14.6.0: find params changed from `pattern: string` → `paths: string[]`.
-      // The old `pattern` field is gone entirely; do not synthesize one.
-      // TODO(omp-14.7): drop the legacy `input.pattern` branch below.
       const paths = Array.isArray(input?.paths)
         ? (input.paths as unknown[]).filter((p): p is string => typeof p === "string")
-        : typeof input?.pattern === "string" && input.pattern.length > 0
-          ? [input.pattern]
-          : [];
+        : [];
       if (paths.length === 0) {
-        // Defensive: 14.6.0+ requires `paths`, so this should not happen.
+        // Defensive: 14.7.x requires `paths`, so this should not happen.
         return sha256Hex(`find::${projectSlug}`);
       }
       const joined = paths.map((p) => canonicalizeSourcePath(p, cwd)).join("\u0001");

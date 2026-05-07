@@ -47,10 +47,22 @@ export function isBashSearchCommand(command: unknown): boolean {
   return BASH_SEARCH_PATTERNS.some((p) => p.test(command));
 }
 
-/** Check if a Read call is a full-file read (no limit/offset/sel = likely analysis, not edit prep) */
+/** Check if a Read call is a full-file read (no limit/offset/path selector = likely analysis, not edit prep) */
 export function isFullFileRead(input: Record<string, unknown> | undefined): boolean {
   if (!input) return true;
-  return input.limit == null && input.offset == null && input.sel == null;
+  return input.limit == null && input.offset == null && !hasEmbeddedReadSelector(input);
+}
+
+const READ_PATH_SELECTOR_RE = /:(?:raw|\d+(?:[-+]\d+)?|L\d+(?:-L?\d+|\+L?\d+)?)$/i;
+
+function getReadPath(input: Record<string, unknown>): string | null {
+  const path = input.path ?? input.file_path;
+  return typeof path === "string" && path.length > 0 ? path : null;
+}
+
+function hasEmbeddedReadSelector(input: Record<string, unknown>): boolean {
+  const path = getReadPath(input);
+  return path != null && READ_PATH_SELECTOR_RE.test(path);
 }
 
 /** Block result returned by routing functions */
@@ -146,14 +158,35 @@ function getBashHttpReplacement(status: ContextModeStatus): "ctx_fetch_and_index
   return null;
 }
 
+/**
+ * Native host tools that are fully shadowed by an active ctx_* replacement.
+ *
+ * When `enforceRouting` is on, these tools should be hidden from the model's
+ * active tool catalog (via `setActiveTools`) so the LLM never tries to call
+ * them only to receive a routing-block error. The `routeToolCall` runtime
+ * block remains as a safety net for hosts that cannot filter the tool list.
+ *
+ * Bash is intentionally NOT included: it is needed for non-search shell work,
+ * and `routeToolCall` already blocks only the search/HTTP subset.
+ */
+export function getShadowedNativeTools(status: ContextModeStatus): string[] {
+  const shadowed: string[] = [];
+  if (getSearchReplacement(status)) shadowed.push("search");
+  if (getShellSearchReplacement(status)) shadowed.push("find");
+  if (status.tools.ctxFetchAndIndex) {
+    shadowed.push("fetch", "web_fetch");
+  }
+  return shadowed;
+}
+
 function formatSearchReplacementReason(replacement: "ctx_search" | "ctx_batch_execute" | "ctx_execute"): string {
   if (replacement === "ctx_search") {
-    return 'Use ctx_search(queries: ["<pattern>"]) or ctx_batch_execute instead of Search. Results are indexed and compressed to save context window.';
+    return 'Use active ctx_search(queries: ["<pattern>"]) instead of Search. Results are indexed and compressed to save context window.';
   }
   if (replacement === "ctx_batch_execute") {
-    return "Use ctx_batch_execute instead of Search. Results are indexed and compressed to save context window.";
+    return "Use active ctx_batch_execute instead of Search. Results are indexed and compressed to save context window.";
   }
-  return 'Use ctx_execute(language: "shell", code: "grep ...") instead of Search. Results stay in sandbox to save context window.';
+  return 'Use active ctx_execute(language: "shell", code: "grep ...") instead of Search. Results stay in sandbox to save context window.';
 }
 
 function formatBashHttpReplacementReason(replacement: "ctx_fetch_and_index" | "ctx_execute"): string {
