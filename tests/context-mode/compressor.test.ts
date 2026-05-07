@@ -20,7 +20,7 @@ function bashResult(
 
 function readResult(
   text: string,
-  input?: { offset?: number; limit?: number; sel?: string },
+  input?: { offset?: number; limit?: number; path?: string },
   isError = false,
 ) {
   return {
@@ -36,7 +36,7 @@ function readResult(
 
 function openResult(
   text: string,
-  input?: { offset?: number; limit?: number; sel?: string },
+  input?: { offset?: number; limit?: number; path?: string },
   isError = false,
 ) {
   return {
@@ -159,9 +159,9 @@ describe("compressToolResult", () => {
       expect(result).toBeUndefined();
     });
 
-    test("passes through scoped reads with sel", () => {
+    test("passes through scoped reads with path-embedded selectors", () => {
       const lines = Array.from({ length: 200 }, (_, i) => `${i+1}#XX:line ${i}`).join("\n");
-      const result = compressToolResult(readResult(lines, { sel: "L50-L120" }), THRESHOLD);
+      const result = compressToolResult(readResult(lines, { path: "/test/file.ts:50-120" }), THRESHOLD);
       expect(result).toBeUndefined();
     });
 
@@ -182,8 +182,8 @@ describe("compressToolResult", () => {
       // Tail preserved
       expect(text.text).toContain("111#XX:line 110");
       expect(text.text).toContain("82#XX:line 81");
-      // Compression marker with sel hint
-      expect(text.text).toContain('sel="L81-L81"');
+      // Compression marker with path selector hint
+      expect(text.text).toContain('path="/test/file.ts:81-81"');
     });
 
     test("preserves hashline prefixes on all surviving lines", () => {
@@ -199,14 +199,14 @@ describe("compressToolResult", () => {
       }
     });
 
-    test("compression marker includes correct sel range", () => {
+    test("compression marker includes correct path selector range", () => {
       const lines = Array.from({ length: 200 }, (_, i) => `${i+1}#ZZ:line ${i}`).join("\n");
       const result = compressToolResult(readResult(lines), THRESHOLD);
       expect(result).toBeDefined();
       const text = result!.content![0] as { type: string; text: string };
       // 200 lines: head=80, tail=30, omitted=81..170 (90 lines)
       expect(text.text).toContain('90 lines omitted');
-      expect(text.text).toContain('sel="L81-L170"');
+      expect(text.text).toContain('path="/test/file.ts:81-170"');
     });
   });
 
@@ -219,13 +219,13 @@ describe("compressToolResult", () => {
       expect(text.text).toContain("1#XX:line 0");
       expect(text.text).toContain("80#XX:line 79");
       expect(text.text).toContain("111#XX:line 110");
-      expect(text.text).toContain('sel="L81-L81"');
+      expect(text.text).toContain('path="/test/file.ts:81-81"');
     });
 
-    test("passes through scoped open with offset/limit/sel (same rule as read)", () => {
+    test("passes through scoped open with offset/limit/path selector (same rule as read)", () => {
       const lines = Array.from({ length: 200 }, (_, i) => `${i+1}#XX:line ${i}`).join("\n");
       expect(compressToolResult(openResult(lines, { offset: 10, limit: 20 }), THRESHOLD)).toBeUndefined();
-      expect(compressToolResult(openResult(lines, { sel: "L50-L120" }), THRESHOLD)).toBeUndefined();
+      expect(compressToolResult(openResult(lines, { path: "/test/file.ts:50-120" }), THRESHOLD)).toBeUndefined();
     });
   });
 
@@ -661,7 +661,7 @@ describe("compressToolResult boundary edges", () => {
     expect(result).toBeDefined();
     const text = result!.content![0] as { type: string; text: string };
     expect(text.text).toContain("1#XX:line 0");
-    expect(text.text).toContain('sel="L81-L81"');
+    expect(text.text).toContain('path="/test/file.ts:81-81"');
   });
 
   test("search: exactly 10 matches (SEARCH_MAX_MATCHES boundary) returns undefined", () => {

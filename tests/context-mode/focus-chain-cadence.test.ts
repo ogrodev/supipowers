@@ -82,9 +82,9 @@ function seedTaskEvent(sessionId: string): void {
 function callBeforeAgentStart(platform: any): string {
   const handler = platform._handlers.get("before_agent_start");
   expect(typeof handler).toBe("function");
-  const result = handler({ prompt: "", systemPrompt: "existing-prompt" }, { cwd: tmpDir });
-  if (!result || typeof result.systemPrompt !== "string") return "";
-  return result.systemPrompt as string;
+  const result = handler({ prompt: "", systemPrompt: ["existing-prompt"] }, { cwd: tmpDir });
+  const prompt = result?.systemPrompt;
+  return Array.isArray(prompt) ? prompt.join("\n\n") : (prompt ?? "");
 }
 
 function registerHooksTracked(platform: any, config: SupipowersConfig): void {

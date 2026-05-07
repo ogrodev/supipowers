@@ -241,17 +241,6 @@ describe("uniqueSourceHash — find / search / unknown", () => {
     expect(todo).not.toBe(fixme);
   });
 
-  test("search legacy `path: string` is still accepted (pre-14.6.0 fallback)", () => {
-    // TODO(omp-14.7): drop this test together with the legacy fallback.
-    const h = uniqueSourceHash({
-      tool: "search",
-      input: { path: "src/", pattern: "TODO" },
-      cwd: "/repo",
-      projectSlug: "demo",
-    });
-    expect(h).not.toBeNull();
-  });
-
   test("find hashes paths array, distinct across project slugs", () => {
     const p1 = uniqueSourceHash({
       tool: "find",
@@ -267,17 +256,6 @@ describe("uniqueSourceHash — find / search / unknown", () => {
     });
     expect(p1).not.toBe(p2);
     expect(p1).not.toBeNull();
-  });
-
-  test("find legacy `pattern: string` is still accepted (pre-14.6.0 fallback)", () => {
-    // TODO(omp-14.7): drop this test together with the legacy fallback.
-    const h = uniqueSourceHash({
-      tool: "find",
-      input: { pattern: "*.ts" },
-      cwd: "/repo",
-      projectSlug: "demo",
-    });
-    expect(h).not.toBeNull();
   });
 
   test("unknown tool returns null", () => {

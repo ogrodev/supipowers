@@ -13,7 +13,12 @@ import {
 import { CacheStore } from "../../src/context-mode/cache-store.js";
 import { __setCacheStoreForTest, _resetCache as _resetHooksCache } from "../../src/context-mode/hooks.js";
 import { KnowledgeStore } from "../../src/context-mode/knowledge/store.js";
-import { registerContextModeTools, _stats, INTENT_THRESHOLD } from "../../src/context-mode/tools.js";
+import {
+  registerContextModeTools,
+  _stats,
+  INTENT_THRESHOLD,
+  _resetAutoIndexAttempts,
+} from "../../src/context-mode/tools.js";
 import { rmDirWithRetry } from "../helpers/fs.js";
 
 let tmpDir: string;
@@ -46,6 +51,7 @@ beforeEach(() => {
   // Reset stats
   for (const key of Object.keys(_stats.calls)) delete _stats.calls[key];
   _stats.bytesReturned = 0;
+  _resetAutoIndexAttempts();
 });
 
 afterEach(() => {
@@ -413,6 +419,120 @@ describe("ctx_search", () => {
     const text = result.content[0].text;
     expect(text).toContain("source-a");
     expect(text).not.toContain("source-b");
+  });
+
+  test("auto-bootstraps from cwd when store is empty", async () => {
+    registerAll();
+    // Set up a tiny tmp project with a known file
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "notes.md"),
+        "# Wormhole\n\nLearn about wormhole physics and quantum entanglement.",
+      );
+      fs.writeFileSync(
+        path.join(projectDir, "unrelated.md"),
+        "# Coffee\n\nAll about coffee beans.",
+      );
+
+      const tool = registeredTools.get("ctx_search");
+      const result = await tool.execute(
+        "id",
+        { queries: ["wormhole physics"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      const text = result.content[0].text as string;
+      expect(text).toContain("auto-indexed");
+      expect(text).toContain("Wormhole");
+      expect(text).not.toContain("Coffee");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not re-bootstrap on subsequent searches in the same session", async () => {
+    registerAll();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "notes.md"),
+        "# Asteroid\n\nNotes on asteroid mining.",
+      );
+
+      const tool = registeredTools.get("ctx_search");
+      const first = await tool.execute(
+        "id-1",
+        { queries: ["asteroid"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      expect(first.content[0].text as string).toContain("auto-indexed");
+
+      // Purge to empty the store, then search again — bootstrap must not run
+      await callTool("ctx_purge", {});
+      const second = await tool.execute(
+        "id-2",
+        { queries: ["asteroid"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      const text = second.content[0].text as string;
+      expect(text).not.toContain("auto-indexed");
+      expect(text).toContain("No matches");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not bootstrap when source filter is provided", async () => {
+    registerAll();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "notes.md"),
+        "# Pulsar\n\nObservations of pulsar radiation.",
+      );
+      const tool = registeredTools.get("ctx_search");
+      const result = await tool.execute(
+        "id",
+        { queries: ["pulsar"], source: "specific-source" },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      const text = result.content[0].text as string;
+      expect(text).not.toContain("auto-indexed");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports a useful note when no files match query terms", async () => {
+    registerAll();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "notes.md"),
+        "# Gardening\n\nTips on growing tomatoes.",
+      );
+      const tool = registeredTools.get("ctx_search");
+      const result = await tool.execute(
+        "id",
+        { queries: ["xyzzqq-nothing-matches-this"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      const text = result.content[0].text as string;
+      expect(text).toContain("scanned");
+      expect(text).toContain("none matched");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 });
 

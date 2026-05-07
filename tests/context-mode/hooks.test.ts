@@ -62,6 +62,11 @@ function largeBashEvent(command = "ls") {
 }
 
 
+function promptText(result: any): string {
+  const value = result?.systemPrompt;
+  return Array.isArray(value) ? value.join("\n\n") : (value ?? "");
+}
+
 const isolatedDirsToCleanup: string[] = [];
 
 function cleanupIsolatedTestDirs(): void {
@@ -276,14 +281,17 @@ describe("registerContextModeHooks", () => {
     const handler = platform._handlers.get("before_agent_start");
     expect(handler).toBeDefined();
 
-    const event = { prompt: "fix the bug", systemPrompt: "You are an assistant." };
+    const event = { prompt: "fix the bug", systemPrompt: ["You are an assistant."] };
     const result = handler(event, {});
     expect(result).toBeDefined();
-    expect(result.systemPrompt).toContain("You are an assistant.");
-    expect(result.systemPrompt).toContain("context-mode");
-    expect(result.systemPrompt).toContain("Active context-mode rescue tools: ctx_execute, ctx_search");
-    expect(result.systemPrompt).not.toContain("ctx_purge");
-    const injected = result.systemPrompt.replace("You are an assistant.\n\n", "");
+    const prompt = promptText(result);
+    expect(prompt).toContain("You are an assistant.");
+    expect(prompt).toContain("context-mode");
+    expect(prompt).toContain("Active context-mode rescue tools: ctx_execute, ctx_search");
+    expect(prompt).toContain("prefer active `ctx_search` over Search/Find outputs");
+    expect(prompt).not.toContain("`ctx_search` or `ctx_batch_execute`");
+    expect(prompt).not.toContain("ctx_purge");
+    const injected = prompt.replace("You are an assistant.\n\n", "");
     expect(new TextEncoder().encode(injected).byteLength).toBeLessThanOrEqual(2048);
   });
 
@@ -293,13 +301,14 @@ describe("registerContextModeHooks", () => {
     registerTrackedContextModeHooks(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
-    const event = { prompt: "fix the bug", systemPrompt: "stale prompt" };
-    const result = handler(event, { getSystemPrompt: mock(() => "rebuilt prompt") });
+    const event = { prompt: "fix the bug", systemPrompt: ["stale prompt"] };
+    const result = handler(event, { getSystemPrompt: mock(() => ["rebuilt prompt"]) });
 
     expect(result).toBeDefined();
-    expect(result.systemPrompt).toContain("rebuilt prompt");
-    expect(result.systemPrompt).not.toContain("stale prompt");
-    expect(result.systemPrompt).toContain("context-mode");
+    const prompt = promptText(result);
+    expect(prompt).toContain("rebuilt prompt");
+    expect(prompt).not.toContain("stale prompt");
+    expect(prompt).toContain("context-mode");
   });
 
   test("before_agent_start handler is no-op when routing disabled", () => {
@@ -312,7 +321,7 @@ describe("registerContextModeHooks", () => {
     registerTrackedContextModeHooks(platform, config);
 
     const handler = platform._handlers.get("before_agent_start");
-    const event = { prompt: "fix the bug", systemPrompt: "You are an assistant." };
+    const event = { prompt: "fix the bug", systemPrompt: ["You are an assistant."] };
     const result = handler(event, {});
     expect(result).toBeUndefined();
   });
@@ -867,10 +876,10 @@ describe("exported helpers", () => {
 
     platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
     const handler = platform._handlers.get("before_agent_start");
-    const result = handler({ prompt: "", systemPrompt: "existing prompt" }, { cwd: tmpDir });
+    const result = handler({ prompt: "", systemPrompt: ["existing prompt"] }, { cwd: tmpDir });
 
     expect(result).toBeDefined();
-    const prompt = result.systemPrompt as string;
+    const prompt = promptText(result);
     expect(prompt).toContain("existing prompt");
     expect(prompt).toContain("# Cross-session memory");
     expect(prompt).toContain("prefer dedup over masking");
@@ -894,9 +903,9 @@ describe("exported helpers", () => {
 
     platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
     const handler = platform._handlers.get("before_agent_start");
-    const result = handler({ prompt: "", systemPrompt: "existing" }, { cwd: tmpDir });
+    const result = handler({ prompt: "", systemPrompt: ["existing"] }, { cwd: tmpDir });
 
-    const prompt = result.systemPrompt as string;
+    const prompt = promptText(result);
     expect(prompt).toContain("fresh project memory");
     expect(prompt).not.toContain("old project memory");
     expect(prompt).not.toContain("old session memory");
@@ -928,8 +937,8 @@ describe("exported helpers", () => {
 
     platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
     const handler = platform._handlers.get("before_agent_start");
-    const result = handler({ prompt: "", systemPrompt: "existing" }, { cwd: tmpDir });
-    const prompt = result.systemPrompt as string;
+    const result = handler({ prompt: "", systemPrompt: ["existing"] }, { cwd: tmpDir });
+    const prompt = promptText(result);
     expect(prompt).toContain("# Focus chain");
     expect(prompt).toContain("start: audit ctx_repomap");
     expect(prompt).toContain("done: L4 Repo Map");
@@ -954,9 +963,9 @@ describe("exported helpers", () => {
     });
 
     platform.getActiveTools.mockReturnValue(["ctx_execute", "ctx_search"]);
-    const result = platform._handlers.get("before_agent_start")({ prompt: "", systemPrompt: "existing" }, { cwd: tmpDir });
+    const result = platform._handlers.get("before_agent_start")({ prompt: "", systemPrompt: ["existing"] }, { cwd: tmpDir });
 
-    const prompt = result.systemPrompt as string;
+    const prompt = promptText(result);
     expect(prompt).not.toContain("# Cross-session memory");
     expect(prompt).not.toContain("legacy memory should not inject");
     expect(prompt).toContain("# Focus chain");
@@ -1104,14 +1113,15 @@ describe("error handling", () => {
     getEventStore()?.close();
 
     const handler = platform._handlers.get("before_agent_start");
-    const event = { prompt: "fix the bug", systemPrompt: "You are an assistant." };
+    const event = { prompt: "fix the bug", systemPrompt: ["You are an assistant."] };
 
     let result: any;
     expect(() => { result = handler(event, {}); }).not.toThrow();
     // Routing instructions still injected despite extraction failure
     expect(result).toBeDefined();
-    expect(result.systemPrompt).toContain("You are an assistant.");
-    expect(result.systemPrompt).toContain("context-mode");
+    const prompt = promptText(result);
+    expect(prompt).toContain("You are an assistant.");
+    expect(prompt).toContain("context-mode");
 
     const warnCalls = (platform.logger.warn as any).mock.calls;
     expect(warnCalls.some((c: any[]) => String(c[0]).includes("prompt event extraction failed"))).toBe(true);

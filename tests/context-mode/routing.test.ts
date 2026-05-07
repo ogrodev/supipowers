@@ -1,5 +1,11 @@
 // tests/context-mode/routing.test.ts
-import { isHttpCommand, isBashSearchCommand, isFullFileRead, routeToolCall } from "../../src/context-mode/routing.js";
+import {
+  isHttpCommand,
+  isBashSearchCommand,
+  isFullFileRead,
+  routeToolCall,
+  getShadowedNativeTools,
+} from "../../src/context-mode/routing.js";
 import { detectContextMode, type ContextModeStatus } from "../../src/context-mode/detector.js";
 
 describe("isBashSearchCommand", () => {
@@ -81,7 +87,7 @@ describe("isBashSearchCommand", () => {
 });
 
 describe("isFullFileRead", () => {
-  test("returns true when no limit or offset", () => {
+  test("returns true when no limit, offset, or path selector", () => {
     expect(isFullFileRead({})).toBe(true);
     expect(isFullFileRead({ file_path: "/foo/bar.ts" })).toBe(true);
   });
@@ -104,13 +110,14 @@ describe("isFullFileRead", () => {
     expect(isFullFileRead({ limit: 50, offset: 10 })).toBe(false);
   });
 
-  test("returns false when sel is set", () => {
-    expect(isFullFileRead({ sel: "L50-L120" })).toBe(false);
-    expect(isFullFileRead({ sel: "raw" })).toBe(false);
+  test("returns false when path-embedded selector is set", () => {
+    expect(isFullFileRead({ path: "/foo/bar.ts:50-120" })).toBe(false);
+    expect(isFullFileRead({ path: "/foo/bar.ts:raw" })).toBe(false);
+    expect(isFullFileRead({ path: "https://example.com/doc:L50-L120" })).toBe(false);
   });
 
-  test("returns false when sel and limit are both set", () => {
-    expect(isFullFileRead({ sel: "L50", limit: 50 })).toBe(false);
+  test("returns false when path selector and limit are both set", () => {
+    expect(isFullFileRead({ path: "/foo/bar.ts:50", limit: 50 })).toBe(false);
   });
 });
 
@@ -215,6 +222,7 @@ describe("routeToolCall", () => {
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.reason).toContain("ctx_search");
+    expect(result!.reason).not.toContain("ctx_batch_execute");
   });
 
   test("allows Search when enforceRouting disabled", () => {
@@ -230,7 +238,7 @@ describe("routeToolCall", () => {
   test("allows Read with scoped params", () => {
     const result = routeToolCall("read", { file_path: "/foo.ts", offset: 10 }, STATUS, ENFORCE);
     expect(result).toBeUndefined();
-    const result2 = routeToolCall("read", { file_path: "/foo.ts", sel: "L50-L120" }, STATUS, ENFORCE);
+    const result2 = routeToolCall("read", { path: "/foo.ts:50-120" }, STATUS, ENFORCE);
     expect(result2).toBeUndefined();
   });
 
@@ -302,6 +310,7 @@ describe("routeToolCall", () => {
     );
     expect(result).toBeDefined();
     expect(result!.reason).toContain("ctx_batch_execute");
+    expect(result!.reason).not.toContain("ctx_search");
   });
 
   test("blocks Search with ctx_execute when indexed search replacements are inactive", () => {
@@ -340,5 +349,41 @@ describe("routeToolCall", () => {
       routeToolCall("bash", { command: "curl https://example.com" }, INACTIVE_STATUS, ENFORCE),
     ).toBeUndefined();
     expect(routeToolCall("fetch", { url: "https://example.com" }, INACTIVE_STATUS, ENFORCE)).toBeUndefined();
+  });
+});
+
+describe("getShadowedNativeTools", () => {
+  test("returns no shadows when no ctx replacements are active", () => {
+    expect(getShadowedNativeTools(INACTIVE_STATUS)).toEqual([]);
+  });
+
+  test("shadows search when ctx_search is active", () => {
+    const status = detectContextMode(["ctx_search"]);
+    expect(getShadowedNativeTools(status)).toEqual(["search"]);
+  });
+
+  test("shadows search and find when ctx_execute is active", () => {
+    const status = detectContextMode(["ctx_execute"]);
+    expect(getShadowedNativeTools(status)).toEqual(["search", "find"]);
+  });
+
+  test("shadows search, find, fetch, web_fetch when ctx_search and ctx_fetch_and_index are active", () => {
+    const status = detectContextMode(["ctx_search", "ctx_execute", "ctx_fetch_and_index"]);
+    expect(getShadowedNativeTools(status)).toEqual([
+      "search",
+      "find",
+      "fetch",
+      "web_fetch",
+    ]);
+  });
+
+  test("does not shadow bash", () => {
+    const status = detectContextMode([
+      "ctx_search",
+      "ctx_execute",
+      "ctx_batch_execute",
+      "ctx_fetch_and_index",
+    ]);
+    expect(getShadowedNativeTools(status)).not.toContain("bash");
   });
 });
