@@ -1,333 +1,339 @@
-# OMP Changelog Audit — 14.5.13 → 14.6.3
+# OMP Changelog Audit — 14.6.3 → 14.7.2
 
 | Field | Value |
 |---|---|
-| OMP versions analyzed | 14.5.13, 14.5.14, 14.6.0, 14.6.1, 14.6.2, 14.6.3 |
+| OMP versions analyzed | 14.6.4, 14.6.6, 14.7.0, 14.7.1, 14.7.2 |
 | supipowers version | 1.5.3 |
-| Audit date | 2026-05-03 |
-| Prior audit baseline | 14.5.12 (`.omp/omp-audit-config.json`) |
+| Audit date | 2026-05-06 |
+| Prior audit baseline | 14.6.3 (`.omp/omp-audit-config.json`) |
 
 ## Executive summary
 
-**Three breaking impacts**, all rooted in the OMP 14.6.0 rename of `search` / `find` / `ast_grep` / `ast_edit` from a single comma-or-whitespace-delimited `path: string` (and `pattern: string` for `find`) to `paths: string[]`. Two of them silently degrade dedup/cache hashing and one hard-blocks legitimate agent activity inside `/supi:ui-design`.
+**Zero breaking impacts.** The headline change in this range — OMP 14.7.0's switch from `systemPrompt: string` (+ separate `projectPrompt`) to `systemPrompt: string[]` across `before_agent_start`/`getSystemPrompt`/`createAgentSession` — was already absorbed by supipowers ahead of the release: a dedicated `src/platform/system-prompt.ts` adapter (`normalizeSystemPromptBlocks`, `systemPromptText`, `appendSystemPromptBlock`, `prependSystemPromptBlock`) is consumed by every hook and the `createAgentSession` wrapper. The other two breaking entries (`BUILTIN_TOOL_METADATA` removal, `read` `sel` parameter removal) reference symbols supipowers never imports or emits.
+
+Three sets of opportunities are worth picking up:
+
+1. **C1 — Drop legacy 14.6.0 fallbacks.** Six `TODO(omp-14.7)` markers (3 source, 4 test) gate compatibility shims for the 14.6.0 `path`/`pattern` → `paths` rename. OMP 14.7.x is now baseline; the shims and their tests can be removed in lockstep.
+2. **O1 — `Working…` spinner fix lands automatically (#927).** Multiple supipowers commands (`/supi:status`, `/supi:doctor`, `/supi:clear`, `/supi:context`, `/supi:memory`, `/supi:config`, `/supi:model`, `/supi:agents`, etc.) return without starting a model turn. Under OMP ≥14.7.2 they no longer leave the spinner stuck. No code change needed; a one-line note in CHANGELOG.md / README is appropriate.
+3. **O2 — `pr_create` GitHub op for `/supi:release` and `/supi:fix-pr`.** Both currently shell out to `gh` via `platform.exec`. The new `pr_create` ExtensionAPI op gives a typed return (PR URL + summary) without subprocess parsing. Medium effort, medium win.
+
+Smaller opportunities (`summary` field on registered tools, `buildDirectoryTree`/`buildWorkspaceTree` exports, `tools.elideFileMutationInputs`, `read.summarize.prose`) are recorded below at P3 but are not actionable now.
 
 | ID | Severity | File:Line | What breaks |
 |---|---|---|---|
-| **B1** | **Critical** | `src/ui-design/session.ts:768-793` | UI-design tool guard reads `input.path` for `ast_edit`; field is now `input.paths: string[]`. Every `ast_edit` call inside an active ui-design session is rejected with "cannot verify ast_edit without a path". |
-| **B2** | **High** | `src/context-mode/source-hash.ts:126-138` | `uniqueSourceHash` for `search` reads `input?.path`; for `find` reads `input?.pattern`. Both fields are gone in 14.6.0+. `find` silently collapses to a single hash bucket per project → distinct calls returning identical content get rewritten to `[…dedup: same as turn N]` placeholders. |
-| **B3** | **Medium** | `skills/context-mode/SKILL.md:40` | Skill example `search(pattern: "TODO", path: "src/")` teaches agents the obsolete shape. Agents reading the skill emit invalid tool calls under 14.6.0+. |
+| (none) | — | — | No impact found. |
 
-Tests `tests/ui-design/session.test.ts:303-373` and `tests/context-mode/source-hash.test.ts:158-204` assert the obsolete shape and **must** be migrated in lockstep with the source fixes.
-
-**No** confirmed impacts from python-tool removal (14.5.13), hindsight memory subsystem (14.6.3), `PI_HASHLINE_SEP` rename (14.6.3), or autoresearch overhaul (14.6.0). Verified by exhaustive grep across `src/`, `tests/`, `skills/`.
+| ID | Priority | Effort | Benefit |
+|---|---|---|---|
+| C1 | P2 | XS | Removes ~60 lines of dead compatibility code + 4 obsolete tests. |
+| O1 | P3 | XS | Documentation / changelog note that command UX improved at 14.7.2. |
+| O2 | P2 | M | Replaces shell-out PR creation with typed ExtensionAPI calls. |
+| O3 | P3 | S | Add `summary` field to extension tool registrations for BM25 discovery. |
+| O4 | P3 | S | Adopt `tools.elideFileMutationInputs` setting for token savings inside `/supi:ultraplan` execution loops. |
+| O5 | P3 | S | Adopt `buildDirectoryTree` / `buildWorkspaceTree` for ui-design context scans. |
 
 ---
 
 ## Breaking Changes
 
-### B1 — UI-design tool guard rejects every `ast_edit` call (Critical)
+### B0 — `systemPrompt` API: `string` → `string[]` (no impact, already migrated)
 
-**Source.** `src/ui-design/session.ts:768-793` (function `getUiDesignWritePaths`):
+**Changelog (14.7.0 Breaking).**
+
+> Changed session system-prompt APIs to use ordered string block arrays by requiring `buildSystemPrompt`, `CreateAgentSessionOptions.systemPrompt`, `Session.rebuildSystemPrompt`, and extension `before_agent_start`/`getSystemPrompt` hooks to accept and return `systemPrompt: string[]` instead of a plain system-prompt string or separate `projectPrompt` field.
+
+**Status.** Already migrated. supipowers introduced a centralized adapter in `src/platform/system-prompt.ts` that accepts both legacy and new shapes and emits `string[]` outward:
 
 ```ts
-case "ast_edit": {
-  const raw = typeof input.path === "string" ? input.path : "";
-  if (raw.length === 0) return [""];
-  // OMP ast_edit accepts comma-separated path lists. Preserve whitespace inside literal paths.
-  const segments = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-  return segments.length > 0 ? segments : [raw];
+// src/platform/system-prompt.ts
+export function normalizeSystemPromptBlocks(value: unknown): SystemPromptBlocks {
+  if (Array.isArray(value)) return value.filter(...);
+  if (typeof value === "string") return value.length > 0 ? [value] : [];
+  ...
+}
+export function systemPromptText(value: unknown): string {
+  return normalizeSystemPromptBlocks(value).join("\n\n");
 }
 ```
 
-**OMP change.** 14.6.0:
+**Coverage** (every site that touches `systemPrompt` has been migrated):
 
-> Changed `search`, `find`, `ast_grep`, and `ast_edit` to accept `paths: string[]` instead of comma- or whitespace-delimited path strings.
+| Site | File:Line | Shape returned |
+|---|---|---|
+| Agent-session opts | `src/platform/types.ts:51` | `systemPrompt?: string[]` |
+| `createAgentSession` adapter | `src/platform/omp.ts:112-114` | `normalizeSystemPromptBlocks(...)` before passing through |
+| `/supi:plan` system-prompt hook | `src/planning/system-prompt.ts:271-294` | `return { systemPrompt: [systemPrompt] }` |
+| `/supi:ui-design` system-prompt hook | `src/ui-design/system-prompt.ts:290-311` | `return { systemPrompt: [buildUiDesignSystemPrompt(...)] }` |
+| MemPalace wake-up hook | `src/mempalace/hooks.ts:34-52, 107` | `appendPrompt(...) → { systemPrompt: string[] }` |
+| Harness layer-context inject | `src/harness/hooks/layer-context-inject.ts:123-145` | `prependSystemPromptBlock(...)` returns `string[]` |
+| Context-mode hook | `src/context-mode/hooks.ts:851-898` | `return { systemPrompt: [...blocks, injection] }` |
+| Active-tool controller | `src/tool-catalog/active-tool-controller.ts:38-99` | `normalizeSystemPromptBlocks(...)` |
+| UltraPlan hook bridge | `src/ultraplan/runtime/hook-bridge.ts:467` | `systemPromptText(asRecord(rawEvent)?.systemPrompt)` for read-side |
 
-**Confirmation.** Active OMP tool catalog shows `ast_edit` with `paths` (array, required). The 14.5.12 schema snapshot at `omp_source/packages/coding-agent/src/tools/ast-edit.ts:46-49` still has `path: Type.String(...)`; that's the pre-rename version we already pinned at the prior audit.
+**Verification.**
+- `grep -rn 'projectPrompt' src/ tests/` → **no matches**. supipowers never depended on the now-removed top-level `projectPrompt` field.
+- `grep -rn 'buildSystemPrompt|buildDirectoryTree|buildWorkspaceTree|DirectoryTree|WorkspaceTree' src/ tests/` → **no matches**. supipowers does not import OMP's prompt-building helpers.
+- Every `before_agent_start` handler in `src/` either returns `undefined` or a record of shape `{ systemPrompt: string[] }`.
 
-**Impact.** When the agent runs `ast_edit` inside an active ui-design session, OMP delivers `event.input = { paths: [...], ops: [...] }`. `getUiDesignWritePaths` reads `input.path`, gets `undefined`, returns `[""]`, and the surrounding loop at `src/ui-design/session.ts:820-826` blocks the call with:
+**Impact.** None. No follow-up required.
 
-```
-UI-design mode: cannot verify ast_edit without a path under `<sessionDir>`.
-```
+### B1 — `BUILTIN_TOOL_METADATA` and `BuiltinEntry` exports removed (no impact)
 
-Every legitimate `ast_edit` is hard-blocked. The agent has no recourse other than abandoning ast_edit (degrading to text-only `edit`) or aborting the ui-design session.
+**Changelog (14.7.2 Breaking).**
 
-**Test surface affected.** `tests/ui-design/session.test.ts` lines 308, 318, 328, 340, 354, 358, 369 — six tests pass `{ path: ... }` to the guard and assert the legacy comma-split semantics. They will pass under the obsolete code but lock supipowers into the old shape.
+> Removed the exported `BUILTIN_TOOL_METADATA` API, including `BuiltinEntry`-style metadata exports and discoverable-built-in helper exports, which will break consumers relying on those symbols.
 
-**Recommendation.**
+**Verification.** `grep -rn -E 'BUILTIN_TOOL_METADATA|BuiltinEntry' src/ tests/` → **no matches**. supipowers does not import or reference these symbols.
 
-1. Update `getUiDesignWritePaths` `ast_edit` branch to:
-   - Read `input.paths` (array). Fall back to `input.path` (legacy string) for one release with a deprecation TODO so users on a stale OMP install don't hit a guard regression.
-   - Remove the comma-split branch — `paths` is already an array.
-2. Update the six tests to pass `paths: [...]` arrays. Keep one test for the legacy `path` fallback if you elect a transitional dual-read; otherwise delete the comma-split tests outright (clean cutover).
+**Impact.** None.
 
-Sketch:
+### B2 — Top-level `sel` parameter removed from `read` tool schema (no impact)
 
-```ts
-case "ast_edit": {
-  const arr = Array.isArray(input.paths)
-    ? input.paths.filter((p): p is string => typeof p === "string")
-    : typeof input.path === "string" ? [input.path] : [];   // legacy 14.5.x fallback — drop next release
-  return arr.length === 0 ? [""] : arr;
-}
-```
+**Changelog (14.7.0 Breaking).**
 
-The `edit` and `notebook` branches already use the correct field names (`edits[].path` and `notebook_path`); they are untouched by 14.6.0.
+> Removed the top-level `sel` parameter from the `read` tool schema, requiring callers to migrate to `path`-embedded selectors (for example `path:50-100`, `path:raw`, or `https://...:L1-L40`).
 
----
+**Verification.**
+- `grep -rn -E 'sel:|"sel"\s*:' src/ tests/` → **no matches** for `read` tool callsites. (False positives for `select`, `session`, `self` were filtered out manually.)
+- supipowers does not invoke the `read` tool programmatically; its commands use Node `fs` (`fs.readFileSync`, `fs.readdirSync`) for file IO. The `read` tool is a thing the **agent** calls; supipowers does not synthesize `read` payloads anywhere.
+- `skills/context-mode/SKILL.md` (the agent-facing teaching) was already migrated to `path:`-embedded selectors during the 14.5.13 → 14.6.3 audit (B3 in the prior report); no `sel:` examples remain.
 
-### B2 — `uniqueSourceHash` collapses multiple find/search calls into a single dedup bucket (High)
+**Impact.** None.
 
-**Source.** `src/context-mode/source-hash.ts:126-138`:
+### B3 — `buildSystemPrompt` / `rebuildSystemPrompt` return shape changed (no impact)
 
-```ts
-case "search": {
-  const p = typeof input?.path === "string" ? input.path : "";
-  if (!p) {
-    const pattern = typeof input?.pattern === "string" ? input.pattern : "";
-    return sha256Hex(`search:${pattern}:${projectSlug}`);
-  }
-  const absolute = canonicalizePath(p, cwd);
-  return sha256Hex(`search:${absolute}:${projectSlug}`);
-}
-case "find": {
-  const pattern = typeof input?.pattern === "string" ? input.pattern : "";
-  return sha256Hex(`find:${pattern}:${projectSlug}`);
-}
-```
+**Changelog (14.7.0 Breaking).**
 
-**OMP change.** 14.6.0 renamed `search`/`ast_grep`/`ast_edit` `path: string` → `paths: string[]`, and replaced `find`'s `pattern: string` (which previously bundled the glob and search root) with `paths: string[]`.
+> Changed `buildSystemPrompt` and session `rebuildSystemPrompt` APIs to return `{ systemPrompt, projectPrompt }`, requiring callers expecting a plain system prompt string to update to the new shape.
 
-**Impact paths.**
+**Verification.** `grep -rn 'buildSystemPrompt\|rebuildSystemPrompt' src/ tests/` → **no matches**. supipowers does not call these top-level OMP factories. The `tool-catalog/active-tool-controller.ts` invokes `ctx.getSystemPrompt()` (the per-session ctx method, not the factory) and feeds the result through `normalizeSystemPromptBlocks` (`src/tool-catalog/active-tool-controller.ts:88, 99`), which already accepts both legacy and new shapes.
 
-- **`search`:** `input.path` is always undefined under 14.6.0+. Hash falls through to the pattern-only branch — still distinct per `pattern`, but loses path-scope distinction. Two searches for `TODO` in different directories now collide on a single hash.
-- **`find`:** `input.pattern` is always undefined under 14.6.0+ (the field is gone — `find` no longer has a `pattern` argument; it takes `paths: string[]`). Every `find` call hashes to `find::<projectSlug>` (constant for the project). All `find` calls in a session share a single dedup record.
-
-**Why this is more than cosmetic.** `sourceHash` feeds `maybeSubstitute` in `src/context-mode/dedup.ts:56-97`. That function compares the new content hash against the record stored under the same `sourceHash` key:
-
-- Two distinct `find` calls returning **different** content → record is updated, second result gets a `[… supersedes turn N…]` banner. Annoying but not corrupting.
-- Two distinct `find` calls returning **the same** content (e.g. both happen to return the same handful of files) → second result is **replaced** by `[…dedup: same as turn N (…); processor=passthrough]`. Agent sees a placeholder pointing at an unrelated earlier call. **Real regression:** the agent never sees the actual second-call output, just a stub referencing turn N.
-
-The same hash also feeds `cacheStore.putText` (`src/context-mode/hooks.ts:582`, used at line 541) and the `unique_source_hash` column in `metrics-store` (`src/context-mode/metrics-recorder.ts:131-153`). Both of those are tag-only consumers — the cache key is content-based and the metric is for analytics — so the impact is contained to the dedup substitution path.
-
-**Test surface affected.** `tests/context-mode/source-hash.test.ts:158-204` asserts the legacy `pattern`/`path` shapes (lines 161, 167, 178). They lock the old behavior in place.
-
-**Recommendation.**
-
-1. Update both branches to read `input.paths: string[]`:
-
-   ```ts
-   case "search": {
-     const paths = Array.isArray(input?.paths)
-       ? (input.paths as unknown[]).filter((p): p is string => typeof p === "string")
-       : [];
-     const pattern = typeof input?.pattern === "string" ? input.pattern : "";
-     if (paths.length === 0) {
-       return sha256Hex(`search:${pattern}:${projectSlug}`);
-     }
-     // Canonicalize and join so [a, b] and [b, a] hash differently — order matters
-     // because OMP runs each path separately under root-level resolution (14.6.0).
-     const absolute = paths.map((p) => canonicalizePath(p, cwd)).join("\u0001");
-     return sha256Hex(`search:${absolute}:${pattern}:${projectSlug}`);
-   }
-   case "find": {
-     const paths = Array.isArray(input?.paths)
-       ? (input.paths as unknown[]).filter((p): p is string => typeof p === "string")
-       : [];
-     if (paths.length === 0) {
-       // Should not happen under 14.6.0+ (paths is required), but be defensive.
-       return sha256Hex(`find::${projectSlug}`);
-     }
-     const absolute = paths.map((p) => canonicalizePath(p, cwd)).join("\u0001");
-     return sha256Hex(`find:${absolute}:${projectSlug}`);
-   }
-   ```
-
-2. Rewrite the three tests at `tests/context-mode/source-hash.test.ts:158-204` to assert the new shape. Keep the "missing input keys returns null" test at line 195 — it uses `{ tool: "read", input: {} }` and is unrelated.
-
-3. **Storage hygiene:** the existing v1→v2 migration in `src/context-mode/metrics-store.ts:261-284` (the `grep`→`search` rename precedent) is the template. Rows persisted under the old `find:<pattern>:<slug>` and `search:<path>:<slug>` hashes can never collide with the new `find:<paths>:<slug>` and `search:<paths>:<pattern>:<slug>` hashes (different prefixes, different inputs, same project salt), so a soft migration that nulls `unique_source_hash` on rows where `tool IN ('search','find')` AND `unique_source_hash` predates the bump is safest. Add a `user_version = 3` migration mirroring the v1→v2 block.
-
----
-
-### B3 — Skill example teaches the obsolete `path:` shape (Medium)
-
-**Source.** `skills/context-mode/SKILL.md:40`:
-
-```
-// WRONG — blocked, returns error
-search(pattern: "TODO", path: "src/")
-
-// CORRECT — runs in sandbox, only printed summary enters context
-ctx_execute(language: "shell", code: "grep -rn TODO src/")
-```
-
-**OMP change.** Same as B1/B2.
-
-**Impact.** The "WRONG" example is shown for routing-redirection pedagogy, but the call shape itself is also wrong post-14.6.0. Agents reading this skill mid-task may copy the shape into their actual tool calls (the OMP runtime will reject them, but the agent thinks `path` is the field name, not `paths`). The example is doubly misleading.
-
-**Recommendation.** Update line 40 to:
-
-```
-// WRONG — blocked, returns error
-search(pattern: "TODO", paths: ["src/"])
-```
-
-That keeps the routing pedagogy intact while teaching the correct field shape. No test impact.
-
----
-
-## Compaction-recall hook (Monitor)
-
-**OMP change (14.6.3).**
-
-> Changed compaction context assembly to include backend-provided recall context when available.
-
-**Source.** `src/context-mode/hooks.ts:759-788` registers a `session_compact` hook (which the adapter at `src/platform/omp.ts:93-95` maps to OMP's `session.compacting` pre-compaction event). The hook returns:
-
-```ts
-return {
-  context: snapshot.split("\n"),
-  preserveData: { resumeSnapshot: snapshot, eventCounts: ... },
-};
-```
-
-**Contract.** `SessionCompactingResult.context` is documented at `omp_source/packages/coding-agent/src/extensibility/hooks/types.ts:633-634` as **"Additional context lines to include in summary"**. The wording is *additional*, not *replace*, so the new backend-recall context and our snapshot should co-exist. No regression expected.
-
-**Recommendation.** **MONITOR only.** No action required today. If future OMP releases change the merge semantics (e.g. backend-recall and extension `context` start fighting for the same buffer), revisit. P3 / E0.
-
----
-
-## Confirmed non-impacts
-
-The following changelog entries were verified to **not** affect supipowers:
-
-| Changelog | Verification |
-|---|---|
-| 14.6.3 — `PI_HASHLINE_SEP` → `PI_HL_SEP`, default sep `\\` → `>` | No reference in `src/`, `tests/`, `skills/`, `bin/`, `package.json`. supipowers does not read this env var or generate hashline payloads. |
-| 14.6.3 — Inline hashline edit syntax (`< ANCHOR${sep}TEXT` / `+ ANCHOR${sep}TEXT`) | Edit-tool syntax for spawned agents. supipowers does not generate atom/hashline payloads. |
-| 14.6.3 — `memory.backend` setting + Hindsight memory subsystem | No references in source. supipowers maintains its own context-mode `MemoryStore` (`src/context-mode/memory-store.ts`) and clears it via `src/commands/clear.ts:377` — both unrelated to OMP's hindsight surface. |
-| 14.6.3 — `retain` / `recall` / `reflect` tools | Spawned-agent capabilities. Extension does not register or consume them. |
-| 14.6.3 — `hindsight.scoping`, `hindsight.dynamicBankId` removal, `HINDSIGHT_*` env vars | No references in source. The only `agentName` usages in supipowers (`src/types.ts:713,745,832`, `src/ultraplan/contracts.ts:303,324,364`, `src/ultraplan/execution/session-runner.ts:194,213`) are our internal review/ultraplan agent identity, namespaced separately. |
-| 14.6.3 — `/memory view`, `/memory clear`, `/memory enqueue` route through backend | Extension does not invoke these slash commands. |
-| 14.6.3 — `github` tool `search_code` / `search_commits` / `search_repos` | Extension shells out to `gh` CLI deterministically (`src/release/channels/github.ts:10,23`, `src/fix-pr/fetch-comments.ts:111,127`, `src/commands/{doctor,fix-pr,release}.ts`). These ops are LLM-callable; the extension's gh shell-outs are not search-typed (auth check, release create, PR detection, comment fetch). No migration appropriate. |
-| 14.6.3 — `search_repos` runs as global search | Same as above. |
-| 14.6.3 — Multi-path `search`/`find`/`ast_*` skip missing base paths and report skipped paths | Extension does not author prompts that advise agents on multi-path resilience. No skill mentions this. Behavior change is transparent. |
-| 14.6.3 — Hindsight queue/batching, queue flush on agent_end/clear/enqueue, `Memory queued.` return | Hindsight only; not used. |
-| 14.6.3 — Multi-path search/find/ast_edit/ast_grep return matches when some paths missing | Internal tool resilience. No prompts in supipowers tell agents about path-not-found semantics. |
-| 14.6.2 — `statusLine.sessionAccent`, WSL OSC 11 disable, SSH ControlMaster `%C` | User-facing config and environment fixes. No extension impact. |
-| 14.6.1 — GitHub call header titles, terminal-width truncation, fallback rendering | UI for OMP github tool calls. Extension uses `gh` CLI directly, not the OMP tool. |
-| 14.6.0 — Autoresearch storage rework + protocol split (`init_experiment` schema, `run_experiment`, `log_experiment`, branch scoping, dirty-worktree refusal, two-phase Phase 1/Phase 2) | No `autoresearch` references in `src/`, `tests/`, `skills/` (verified). |
-| 14.6.0 — `update_notes` tool | Autoresearch-only. |
-| 14.6.0 — Removed `PI_STRICT_EDIT_MODE` | Not set or read by extension. |
-| 14.6.0 — Atom edit auto-rebase warning dedup, hash placeholder fix, run-collapse fix, brace-indent foot-gun, AUTO-FIX message reformat | Edit-tool fixes. supipowers does not author atom payloads. |
-| 14.6.0 — Multi-target search/ast_grep/ast_edit run-each-target-separately, pagination/match-count fix | Internal tool fix. Skills/prompts unaffected. |
-| 14.6.0 — `log_experiment keep` dirty-path filter fix | Autoresearch-only. |
-| 14.5.14 — Defer Turndown/fflate/browser-agent loading; flush `lastChangelogVersion` immediately | Performance / OMP-internal bug fixes. No surface used by extension. |
-| 14.5.13 — Removed `python` tool, `python.toolMode` setting, `./ipy/*` exports | **Verified clean.** Sub-agent confirmed zero references to OMP `python` tool name, allowlist entries, or `python.toolMode`. References in `src/context-mode/sandbox/runners.ts` and `src/context-mode/tools.ts` are our own `ctx_execute` sandbox runner that takes `language: "python"` — independent feature. |
-| 14.5.13 — `eval` wire format change to single `input` string with fenced blocks | Extension does not call `eval` directly. The OMP `eval` tool is LLM-callable; extensions never construct its payload. |
-| 14.5.13 — `eval.py` / `eval.js` settings | User-level config. |
-| 14.5.13 — `exec` maps to `eval` when any eval backend enabled | Extension never emits `exec` calls. Routing layer (`src/context-mode/routing.ts`) intercepts `bash`, `search`, `find`, `fetch`, `web_fetch` only. |
-| 14.5.13 — Eval Python preflight skip; eval JS fallback when Python unavailable | Internal OMP startup fix. |
-| 14.5.13 — Stable MCP tool ordering; skip redundant system-prompt rebuilds | Internal performance / cache fix. |
-| 14.5.13 — AGENTS.md discovery respects `.gitignore` | OMP-internal. supipowers' own AGENTS.md scan in `src/context/startup-optimizer.ts:185` and `src/git/conventions.ts:33` is independent and already filesystem-direct. |
-| 14.5.13 — Parallelized plugin root preloading and `createAgentSession` bootstrap | Internal performance. |
-| 14.5.13 — Eval startup messaging | User-facing. |
+**Impact.** None.
 
 ---
 
 ## Opportunities
 
-### O1 — LSP `capabilities` action (P2 · S · ADOPT)
+### C1 — Drop the OMP 14.6.0 compatibility shims now that 14.7.x is baseline (P2, XS)
 
-**Trigger.** OMP 14.5.13 added a `capabilities` action that returns standard + experimental + executeCommand lists for one server (via `file`) or all servers (via `file: "*"`).
+**Background.** The previous audit (14.5.13 → 14.6.3) flagged the OMP 14.6.0 rename of `path: string` (comma-delimited) → `paths: string[]` on `search`, `find`, `ast_grep`, and `ast_edit`. Supipowers landed dual-shape readers in two places to keep workflows alive across the upgrade window, each annotated with a `TODO(omp-14.7)` marker:
 
-**Current state.** `src/lsp/detector.ts:26-28` only checks whether the literal string `"lsp"` is in `getActiveTools()`. That tells us a server is registered — not whether it actually supports the methods we drive (`textDocument/diagnostic`, `textDocument/references`).
+| Site | File:Line | Shim |
+|---|---|---|
+| ui-design write guard for `ast_edit` | `src/ui-design/session.ts:772-783` | Reads `input.paths` (new) first, falls back to comma-split `input.path` (legacy). |
+| Context-mode dedup hash for `search` | `src/context-mode/source-hash.ts:126-144` | Reads `input.paths` (new), falls back to single-element `[input.path]` (legacy). |
+| Context-mode dedup hash for `find` | `src/context-mode/source-hash.ts:145-160` | Reads `input.paths` (new), falls back to single-element `[input.pattern]` (legacy). |
 
-**Where it would land.**
-- `src/lsp/detector.ts:isLspAvailable` could be extended (or paired with a new `isLspMethodAvailable(method, file?)` helper) that probes capabilities once per session.
-- `src/lsp/bridge.ts:24-87` (`buildLspDiagnosticsPrompt` / `collectLspDiagnostics`) and `src/lsp/bridge.ts:92-98` (`buildLspReferencesPrompt`) can guard their prompts on the actual method support, so a quality gate against a server that doesn't implement diagnostics fails fast instead of silently returning empty.
+**Status.** Six markers remain (`grep -rn 'TODO(omp-14.7)' src/ tests/`):
+- `src/ui-design/session.ts:776`
+- `src/context-mode/source-hash.ts:128`
+- `src/context-mode/source-hash.ts:148`
+- `tests/ui-design/session.test.ts:375`
+- `tests/ui-design/session.test.ts:385`
+- `tests/context-mode/source-hash.test.ts:245`
+- `tests/context-mode/source-hash.test.ts:273`
 
-**Effort.** Small. One new helper, one capability probe per quality-gate run, two callsite gates. No new dependencies.
+**Recommendation.** OMP 14.7.x is the new floor; drop the legacy branches and matching tests. Concretely:
 
-**Recommendation.** **ADOPT.** Quality gates currently silent-fail when an LSP server is registered but lacks the requested method (e.g. some Python LSPs lack workspace diagnostic). This is the most concrete-payoff item in the entire 14.5.13 → 14.6.3 window for supipowers.
+1. `src/ui-design/session.ts:772-783` — collapse to read only `input.paths`:
+   ```ts
+   case "ast_edit": {
+     const arr = Array.isArray(input.paths)
+       ? (input.paths as unknown[]).filter((p): p is string => typeof p === "string")
+       : [];
+     return arr.length === 0 ? [""] : arr;
+   }
+   ```
+2. `src/context-mode/source-hash.ts:126-160` — drop the `input.path` / `input.pattern` legacy branches in both `search` and `find` cases. The empty-paths fallback can stay defensive but should no longer try to synthesize a list from old field names.
+3. `tests/ui-design/session.test.ts:375-394` — delete the two `TODO(omp-14.7)`-tagged tests that pin legacy comma-string behavior.
+4. `tests/context-mode/source-hash.test.ts:245-285` — delete the two `TODO(omp-14.7)`-tagged tests that pin the legacy fallback.
+
+**Effort.** XS. Mechanical, scoped to four files. Run `bun test tests/ui-design/session.test.ts tests/context-mode/source-hash.test.ts` afterwards.
+
+**Risk.** Bumps the minimum supported OMP version (de facto already 14.7+). Document in `CHANGELOG.md` and the install README.
+
+### O1 — Document the spinner fix; verify in-tree commands no longer hang the TUI (P3, XS)
+
+**Changelog (14.7.2 Fixed).**
+
+> Fixed extension commands that return without starting a model turn leaving the interactive `Working…` spinner active indefinitely. (#927)
+
+**Why this matters for supipowers.** Many supipowers commands intentionally short-circuit without sending a user message or steering the agent. Each was previously triggering the bug:
+
+| Command | File | Pattern that hits the bug |
+|---|---|---|
+| `/supi:status` | `src/commands/status.ts` | Renders summary via `ctx.ui.notify`; never calls `sendUserMessage`/`sendMessage`. |
+| `/supi:doctor` | `src/commands/doctor.ts` | Reports check results to TUI; no model turn. |
+| `/supi:clear` | `src/commands/clear.ts` | Destructive cleanup with confirm prompt; returns without a turn on cancel **and** on success. |
+| `/supi:context` | `src/commands/context.ts` | Computes context-window breakdown and prints; no model turn. |
+| `/supi:memory` | `src/commands/memory.ts` | `setup` / `status` subcommands return after running `mempalace` actions. |
+| `/supi:config`, `/supi:model`, `/supi:update` | resp. files | Configuration helpers; no model turn. |
+| `/supi:agents` (list / show subcommands) | `src/commands/agents.ts` | Read-only paths return without `sendMessage`. |
+
+(Only commands that always trigger a turn — `/supi:plan`, `/supi:qa`, `/supi:fix-pr`, `/supi:ui-design`, `/supi:commit`, `/supi:release`, `/supi:generate` — never hit the bug.)
+
+**Recommendation.** No code change. Record the user-visible improvement in `CHANGELOG.md` for the next supipowers release ("Requires OMP ≥14.7.2 to avoid stuck `Working…` spinner after read-only commands"). Optionally bump the README's recommended OMP version line.
+
+**Effort.** XS — one CHANGELOG line and one README line.
+
+### O2 — Adopt the new GitHub `pr_create` op in `/supi:release` and `/supi:fix-pr` (P2, M)
+
+**Changelog (14.7.1 Added).**
+
+> Added `pr_create` operation to the GitHub tool to create pull requests with title/body (or `fill`), base/head branch, draft, reviewer, assignee, and label options and return a summarized result including the new PR URL.
+
+**Current state.** supipowers shells out to `gh` via `platform.exec` for all GitHub interactions:
+- `src/git/commit.ts` — uses `platform.exec` to run `git`/`gh` (PR-related metadata via subprocess).
+- `src/release/` — `platform.exec` for tag pushes and gist/PR creation.
+- `src/fix-pr/fetch-comments.ts` — `platform.exec` for `gh pr view`.
+- `src/commands/release.ts`, `src/commands/fix-pr.ts` — orchestrate the above.
+
+There is no use of OMP's `github` ExtensionAPI tool family in production code (`grep -rn 'pr_create|gh_pr|pr_view|pr_diff' src/` → **no matches**). Today's `gh` shell-out path works but:
+- Couples supipowers to the user's `gh` CLI installation and auth.
+- Requires bespoke stdout parsing (`gh pr view --json …`) that drifts when `gh` updates its JSON shape.
+- Doesn't surface a typed PR URL to the caller; we re-grep the URL out of `gh pr create`'s stdout.
+
+**Recommendation (P2).** Wrap the `pr_create` op behind an internal `createPullRequest({ title, body?, base?, head?, draft?, reviewers?, assignees?, labels? })` helper in `src/git/` (alongside `commit.ts`), then refactor:
+
+1. `/supi:release` — when the release flow finishes a tag push and the user opted in to "open a PR", call the helper instead of building a `gh pr create` argv. The helper returns `{ url, summary }`.
+2. `/supi:fix-pr` — currently the consumer of an existing PR; if the workflow ever needs to *create* a follow-up PR (e.g. "draft a docs PR with these changes"), use the helper.
+
+Wire the helper to a feature gate so users on OMP <14.7.1 keep the `gh` shell-out fallback for one release window.
+
+**Effort.** Medium. ~150–250 lines: helper + adapter call + integration tests + feature gate. Touches `src/git/`, `src/release/`, `src/commands/release.ts`, plus tests under `tests/release/` and `tests/git/`.
+
+**Acceptance.** Helper returns the PR URL; release command stops parsing `gh` stdout; existing tests for the shell-out path are migrated to the helper. Document the OMP version requirement in the helper.
+
+### O3 — Add a `summary` field to extension tool registrations (P3, S)
+
+**Changelog (14.7.2 Changed).**
+
+> Updated discoverable tool search (`search_tool_bm25` and related discovery metadata) to read each tool's own `summary` field when present, improving discoverability descriptions for built-in tools.
+
+**Current state.** supipowers registers ten tools (per `bootstrap.ts` and the tool source files). None set a `summary` field; they expose `description` (long form) and, for some, `promptSnippet` (one-liner used in prompt sections):
+
+| Tool | File | Has `description` | Has `promptSnippet` | Has `summary` |
+|---|---|---|---|---|
+| `planning_ask` | `src/planning/planning-ask-tool.ts:21-24` | ✓ | ✓ | ✗ |
+| `mempalace` | `src/mempalace/tool.ts` | ✓ | — | ✗ |
+| `harness_*` (7 tools) | `src/harness/tools.ts` | ✓ | — | ✗ |
+| `ultraplan_*` (authoring + execution) | `src/ultraplan/authoring/authoring-tools.ts`, `src/ultraplan/execution/runtime-tools.ts`, `src/ultraplan/authoring-tool.ts` | ✓ | — | ✗ |
+| context-mode tools (`ctx_*`) | `src/context-mode/tools.ts` | ✓ | — | ✗ |
+
+**Why this is small.** Most of these tools are gated to specific lifecycle moments (e.g., `harness_*` only matters during a `/supi:harness` session) and the agent already sees them in the active tool list with their full descriptions. The `summary` field primarily helps when a tool is **inactive** and the agent searches for it via BM25 — a path most supipowers tools don't take because they're enabled context-by-context.
+
+**Recommendation (P3).** Pass-by-pass, when touching each tool definition for an unrelated reason, append a one-line `summary` (≤80 chars) crafted to match the BM25 query patterns the agent would use. Example for `planning_ask`:
+
+```ts
+summary: "ask user during /supi:plan with no timeout (vs. built-in ask)",
+```
+
+No urgency. Track as a chore.
+
+**Effort.** Small per tool. Total ~10 lines across the catalog.
+
+### O4 — Opt into `tools.elideFileMutationInputs` for ultraplan execution token savings (P3, S)
+
+**Changelog (14.7.0 Added).**
+
+> Added `tools.elideFileMutationInputs` setting to optionally elide large `write`, `edit`, and `apply_patch` payloads in history after successful mutations.
+> Added hashline-style return data for elided `write` calls so tools can include the resulting file content without leaking full input text.
+
+**Why supipowers cares.** `/supi:ultraplan execute` runs long agent loops that frequently rewrite files (`write`/`edit`). On long sessions the mutation inputs accumulate in history and dominate the context window. This setting is opt-in at the OMP `settings.json` level, but supipowers can encourage it.
+
+**Current state.** No reference to this setting in `src/`. supipowers does not replay tool inputs from history (verified earlier: `event-extractor.ts` and `compressor.ts` consume `tool_call` events at emit time, not retroactively from JSONL), so enabling the setting would not break anything in supipowers' own pipelines.
+
+**Recommendation (P3).** In the `/supi:doctor` summary, when running on OMP ≥14.7.0, surface a one-line tip ("Consider `tools.elideFileMutationInputs: true` for long ultraplan runs"). Optional follow-up: in the `quick-setup` skill or installer, prompt the user once. **Do not** flip the setting silently.
+
+**Effort.** Small. One block in `src/commands/doctor.ts` near the existing settings-related checks.
+
+### O5 — Replace ad-hoc directory snapshots with `buildDirectoryTree` / `buildWorkspaceTree` (P3, S)
+
+**Changelog (14.7.0 Added).**
+
+> Added `buildDirectoryTree` and `DirectoryTree` exports to generate configurable directory trees with options for depth, entry limits, hidden-file handling, and truncation caps.
+> Added `buildWorkspaceTree` and `WorkspaceTree` exports so callers can precompute and pass a workspace context to prompt generation.
+
+**Current state.** supipowers has multiple ad-hoc directory enumerators:
+- `src/ui-design/tokens-scanner.ts` — manually walks tailwind config locations.
+- ui-design context scans build a curated tree of relevant files.
+- `/supi:doctor` and `/supi:status` enumerate `.omp/supipowers/` subdirs.
+
+None import OMP's new helpers (`grep` confirmed: no matches).
+
+**Recommendation (P3).** When next refactoring ui-design context scans (currently ~kicks off via `src/ui-design/backend-adapter.ts` and friends), evaluate `buildDirectoryTree` / `buildWorkspaceTree` as a drop-in for the bespoke enumerator. The OMP versions handle truncation, hidden files, and entry caps consistently.
+
+**Effort.** Small per use-site. Primarily a code-quality / consistency win.
 
 ---
 
-### O2 — LSP `rename_file` with `apply: false` preview (P3 · S · CONSIDER)
+## Other changelog entries reviewed and dismissed
 
-**Trigger.** OMP 14.5.13 added `rename_file` with the `workspace/willRenameFiles` + `workspace/didRenameFiles` flow, plus `apply: false` preview mode.
-
-**Current state.** `src/lsp/bridge.ts:92-98` (`buildLspReferencesPrompt`) only instructs the spawned agent to `lsp action: "references"` before editing. There is no extension-side flow that moves files and follows up with import-path rewrites — the closest is the `/supi:fix-pr` flow which only edits in place.
-
-**Recommendation.** **CONSIDER** only when supipowers grows a refactor/move command. For 1.5.3 there is no callsite to upgrade; logging this for a future "rename module / move file" feature.
-
----
-
-### O3 — LSP `request` action (raw method invocation) (P3 · XS · SKIP)
-
-**Trigger.** OMP 14.5.13 added a generic `request` action with auto-built `textDocument`/`position` parameters.
-
-**Current state.** All LSP usage in supipowers is prompt-driven: `src/lsp/bridge.ts` embeds natural-language instructions for spawned agents. No extension-side code calls `lsp` directly.
-
-**Recommendation.** **SKIP.** Adding raw protocol method names into prompt strings increases brittleness without solving any current problem. Revisit only if a structured call from extension code becomes necessary.
-
----
-
-### O4 — Eval JS backend (P2 · XS · SKIP)
-
-**Trigger.** OMP 14.5.13 added a JavaScript backend to `eval` with an in-process VM and helper bridge (`read`, `write`, `glob`).
-
-**Current state.** `src/context-mode/sandbox/runners.ts` runs JS/TS via `bun run` subprocess, with stdout-only isolation. That subprocess sandboxing is the **feature**, not a limitation — context-mode's design is to keep raw data in the sandbox and surface only printed summaries.
-
-**Recommendation.** **SKIP.** The two execution surfaces have different contracts. Eval's in-process VM is a quick-compute primitive; ctx_execute is a high-output sandbox. They do not compete.
+| Entry | Status | Why no impact |
+|---|---|---|
+| 14.7.2 — SearXNG Basic Auth validation (Fixed) | No impact | supipowers does not configure SearXNG auth. |
+| 14.7.2 — `authHeader: true` Authorization fix #929 | No impact | supipowers does not register custom providers with `authHeader`. |
+| 14.7.1 — `read.summarize.prose` setting (Added) | No impact | Affects how the agent's `read` output looks; supipowers reads files via `fs`, not via the agent tool. |
+| 14.7.1 — `PI_GREP_WORKERS` doc (Changed) | No impact | Env var documentation; supipowers does not set or read `PI_GREP_WORKERS`. |
+| 14.7.1 — Hashline auto-absorb broadening (Changed) | No impact | Affects the `edit` tool's anchor-handling for the agent; supipowers does not generate hashline payloads. |
+| 14.7.0 — `read.summarize.enabled`/`minBodyLines`/`minCommentLines` (Added) | No impact | Same rationale as `read.summarize.prose` — agent-tool behavior. |
+| 14.7.0 — `edit.hashlineAutoDropPureInsertDuplicates` (Added) | No impact | Edit-tool behavior. |
+| 14.7.0 — Project prompt as leading `developer` message (Changed) | No impact | supipowers reads `event.systemPrompt` (or `ctx.getSystemPrompt()`) — neither field is the developer message. We do not introspect the developer-message channel. |
+| 14.7.0 — `read` directory two-level recency-sorted tree (Changed) | No impact | Agent-tool rendering only. |
+| 14.7.0 — Working-directory tree block in system prompt (Changed) | No impact | The block is appended by OMP; supipowers preserves existing system-prompt content via the array-block API. |
+| 14.7.0 — `read` summary `..` boundary merging (Changed) | No impact | Agent-tool rendering. |
+| 14.7.0 — Default `read` returns structural summary (Changed) | No impact | supipowers reads files with `fs`, not the agent `read` tool. |
+| 14.7.0 — Truncation/pagination hints colon syntax (Changed) | No impact | UI-only change. |
+| 14.7.0 — Selector parsing fix for colon-containing paths (Fixed) | No impact | Bug fix benefits the agent; no supipowers callsite passes such paths. |
+| 14.7.0 — Hashline pure-insert duplicate auto-drop opt-in (Changed) | No impact | Edit tool behavior. |
+| 14.6.6 — Ctrl+D draft persistence (Added) | No impact | TUI-only feature. |
+| 14.6.4 — Hindsight `mental_models` system, `/memory mm` commands (Added/Changed/Fixed) | No impact | supipowers does not depend on Hindsight memory; MemPalace is the memory backend (`src/mempalace/`). The two systems are independent. |
+| 14.6.4 — Hashline replacement boundary auto-absorb warnings (Added) | No impact | Edit-tool behavior. |
+| 14.6.4 — Subagent `/task` parent-bank persistence fix | No impact | Hindsight-specific. |
 
 ---
 
-### O5 — `exec` → `eval` remap (P1 · XS · SKIP)
+## Verification commands
 
-**Trigger.** OMP 14.5.13: "Changed execution/tool discovery flow so `exec` maps to `eval` when any `eval` backend is enabled."
+The following commands can be used to re-verify the audit conclusions:
 
-**Current state.** `src/context-mode/routing.ts:75-128` intercepts `bash`, `search`, `find`, `fetch`, `web_fetch` only. supipowers never emits an `exec` call.
+```bash
+# B0 — every before_agent_start handler returns array shape (or undefined)
+grep -rn 'before_agent_start' src/
 
-**Recommendation.** **SKIP.** The remap is transparent to our routing layer.
+# B0 — no projectPrompt usage
+grep -rn 'projectPrompt' src/ tests/
 
----
+# B1 — no BUILTIN_TOOL_METADATA imports
+grep -rn -E 'BUILTIN_TOOL_METADATA|BuiltinEntry' src/ tests/
 
-### O6 — `github` tool search ops (P3 · XS · SKIP)
+# B2 — no `sel:` parameter in read tool calls
+grep -rn -E '"sel"\s*:' src/ tests/
 
-**Trigger.** OMP 14.6.3 added `search_code`, `search_commits`, `search_repos` to the `github` tool.
+# B3 — no buildSystemPrompt / rebuildSystemPrompt callsites
+grep -rn -E 'buildSystemPrompt|rebuildSystemPrompt' src/ tests/
 
-**Current state.** Extension shells out to `gh` CLI from deterministic command code (six callsites in `src/release/channels/github.ts`, `src/fix-pr/`, `src/commands/{doctor,fix-pr,release}.ts`). None are search-typed.
+# C1 — remaining 14.7 cleanup TODOs
+grep -rn 'TODO(omp-14.7)' src/ tests/
 
-**Recommendation.** **SKIP.** OMP's `github` tool is LLM-callable — it lives in the agent's tool catalog. Migrating extension shell-outs to it would invert control flow with no payoff. The only legitimate adoption path is mentioning these new ops in a future skill that instructs the agent to discover repos / search code on GitHub. No such skill exists in 1.5.3.
+# O2 — current GitHub tool usage in production
+grep -rn -E 'pr_create|gh_pr|pr_view|pr_diff' src/
 
----
-
-### O7 — Multi-path tool resilience (P3 · — · SKIP)
-
-**Trigger.** OMP 14.6.3: multi-path `search`/`find`/`ast_edit`/`ast_grep` now skip missing base paths and report which paths were skipped. OMP 14.6.0 fixed multi-target path handling to run each resolved target separately.
-
-**Current state.** No skill, agent prompt, or system-prompt template in supipowers advises agents on `paths` array semantics. `skills/`, `src/review/default-agents/`, `src/ultraplan/default-agents/` have zero references to ast_grep / ast_edit. There is no doc to extend.
-
-**Recommendation.** **SKIP.** The runtime improvement is transparent; existing multi-path calls silently become more resilient.
+# O3 — tools registered without summary field
+grep -rn -E 'registerTool\(|name:' src/context-mode/tools.ts src/planning/planning-ask-tool.ts src/mempalace/tool.ts src/harness/tools.ts src/ultraplan/authoring/authoring-tools.ts src/ultraplan/execution/runtime-tools.ts src/ultraplan/authoring-tool.ts
+```
 
 ---
 
 ## Summary table
 
-| Type | ID | Severity / Priority | Effort | File / Pointer | Action |
-|---|---|---|---|---|---|
-| Breaking | B1 | Critical | S | `src/ui-design/session.ts:768-793` + 6 tests at `tests/ui-design/session.test.ts:303-373` | Read `input.paths: string[]` (with `input.path` legacy fallback for one release). |
-| Breaking | B2 | High | S | `src/context-mode/source-hash.ts:126-138` + 3 tests at `tests/context-mode/source-hash.test.ts:158-204` + new `metrics-store` v3 migration | Switch search/find branches to `paths: string[]`; null obsolete hashes on schema bump. |
-| Breaking | B3 | Medium | XS | `skills/context-mode/SKILL.md:40` | Replace `path: "src/"` with `paths: ["src/"]`. |
-| Monitor | M1 | P3 | — | `src/context-mode/hooks.ts:759-788` (compaction hook) | Watch OMP for change in `SessionCompactingResult.context` merge semantics. No action today. |
-| Opportunity | O1 | P2 | S | `src/lsp/detector.ts:26-28`, `src/lsp/bridge.ts:24-98` | Adopt `lsp action: "capabilities"` to gate diagnostics/references prompts on actual server support. |
-| Opportunity | O2 | P3 | S | none | Consider for a future refactor/move command; no current callsite. |
-| Opportunity | O3 | P3 | XS | none | Skip — no extension-side LSP callsites. |
-| Opportunity | O4 | P2 | XS | `src/context-mode/sandbox/runners.ts` | Skip — different sandboxing contract. |
-| Opportunity | O5 | P1 | XS | `src/context-mode/routing.ts` | Skip — remap is transparent. |
-| Opportunity | O6 | P3 | XS | none | Skip — extension uses `gh` CLI deterministically. |
-| Opportunity | O7 | P3 | — | none | Skip — no doc to extend. |
+| Category | Count |
+|---|---|
+| Breaking changes affecting supipowers | **0** |
+| Breaking changes verified non-impacting | 4 (B0, B1, B2, B3) |
+| Cleanup opportunities (P2) | 2 (C1, O2) |
+| Polish opportunities (P3) | 4 (O1, O3, O4, O5) |
+| Changelog entries reviewed and dismissed | 18 |
 
-**Migration order.** B1 → B2 → B3 in lockstep with their tests; ship as a single PR titled `chore(omp-14.6.0): migrate search/find/ast_edit path → paths`. Then independently consider O1 in a separate PR.
+**Required follow-ups before next OMP upgrade:** none.
+**Recommended follow-ups during normal maintenance:** C1 (drop legacy 14.6 shims) and O2 (`pr_create` adoption).

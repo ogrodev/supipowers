@@ -7,6 +7,12 @@ All notable changes to supipowers are documented in this file.
 ### Maintenance
 
 - Migrate context-mode `metrics.db` rows persisted under the OMP 14.5.11 "grep" tool name to the canonical "search" key. Runs automatically on the first session after upgrade (no user action). Rewrites `tool='grep'` and `processor='grep'` to `'search'`, and NULLs the `unique_source_hash` of the affected rows so legacy hashes never collide with new `search:`-prefixed dedup state. Historical byte/saved totals are preserved; the `unique_source_hash` for those rows is cleared because the privacy contract forbids reconstructing the original path or pattern to re-hash. Schema version bumped to 2.
+- Drop OMP 14.6.0 compatibility shims for the `path:string` → `paths:string[]` rename on `search`/`find`/`ast_edit`. The `getUiDesignWritePaths` helper (`src/ui-design/session.ts`) and `uniqueSourceHash` (`src/context-mode/source-hash.ts`) now read only the new `paths`/`pattern` shape; legacy fallbacks and their tests are removed. **OMP ≥14.7.0 is now the floor for these paths.**
+
+### Improvements
+
+- `/supi:doctor` now appends a "Recommendations" section listing OMP settings that materially improve supipowers UX. The first two tips highlight `tools.elideFileMutationInputs: true` (OMP ≥14.7.0; cuts context on long `/supi:ultraplan execute` and `/supi:harness implement` runs) and the OMP 14.7.2 fix for the stuck `Working…` spinner after read-only commands (oh-my-pi#927).
+- `buildBranchFinishPrompt` (`src/git/branch-finish.ts`) now recommends the structured `github` tool with `op: "pr_create"` (OMP ≥14.7.1) for "push and create PR" flows, with the existing `gh pr create` shell command preserved as a fallback for older OMP runtimes. The agent gets a typed PR URL back instead of having to parse `gh` stdout.
 
 ## [1.3.0] — 2026-04-10
 
