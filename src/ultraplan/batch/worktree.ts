@@ -32,6 +32,22 @@ function buildDeps(overrides: ResolveUltraPlanBatchWorktreeRootDirInput["deps"])
   };
 }
 
+function pathApiFor(basePath: string): typeof path.posix | typeof path {
+  if (basePath.startsWith("/") && !basePath.startsWith("//") && !basePath.includes("\\")) {
+    return path.posix;
+  }
+  return path;
+}
+
+function joinLike(basePath: string, ...segments: string[]): string {
+  return pathApiFor(basePath).join(basePath, ...segments);
+}
+
+function basenameLike(basePath: string): string {
+  return pathApiFor(basePath).basename(basePath);
+}
+
+
 export function buildUltraPlanBatchBranchName(runId: string, sessionId: string): string {
   const branchName = `ultraplan/${runId}/${sessionId}`;
   assertSafeRef(branchName, "branchName");
@@ -40,22 +56,22 @@ export function buildUltraPlanBatchBranchName(runId: string, sessionId: string):
 
 export function resolveUltraPlanBatchWorktreeRootDir(input: ResolveUltraPlanBatchWorktreeRootDirInput): string {
   const deps = buildDeps(input.deps);
-  const dotWorktrees = path.join(input.repoRoot, ".worktrees");
+  const dotWorktrees = joinLike(input.repoRoot, ".worktrees");
   if (deps.exists(dotWorktrees)) {
     return dotWorktrees;
   }
 
-  const worktrees = path.join(input.repoRoot, "worktrees");
+  const worktrees = joinLike(input.repoRoot, "worktrees");
   if (deps.exists(worktrees)) {
     return worktrees;
   }
 
-  return path.join(input.globalWorktreesRoot, path.basename(input.repoRoot));
+  return joinLike(input.globalWorktreesRoot, basenameLike(input.repoRoot));
 }
 
 export function resolveUltraPlanBatchWorktreePath(input: ResolveUltraPlanBatchWorktreePathInput): string {
   const rootDir = resolveUltraPlanBatchWorktreeRootDir(input);
-  return path.join(rootDir, `${input.runId}-${input.sessionId}`);
+  return joinLike(rootDir, `${input.runId}-${input.sessionId}`);
 }
 
 export function prepareUltraPlanBatchWorktree(input: ResolveUltraPlanBatchWorktreePathInput): UltraPlanBatchWorktreePreparation {

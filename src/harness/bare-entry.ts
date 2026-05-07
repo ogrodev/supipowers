@@ -16,6 +16,7 @@
 import type { HarnessReRunMode } from "../types.js";
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 
 import type { Platform, PlatformPaths } from "../platform/types.js";
 import { getHarnessMarkerPath } from "./project-paths.js";
@@ -80,7 +81,7 @@ export function writeMarker(
 ): { ok: true; path: string } | { ok: false; message: string } {
   const markerPath = getHarnessMarkerPath(paths, cwd);
   try {
-    const dir = markerPath.substring(0, markerPath.lastIndexOf("/"));
+    const dir = path.dirname(markerPath);
     if (dir) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(markerPath, JSON.stringify(data, null, 2) + "\n");
     return { ok: true, path: markerPath };

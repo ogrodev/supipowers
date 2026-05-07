@@ -5,6 +5,8 @@ import type { DependencyStatus } from "../../src/deps/registry.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { resolveManagedVenvPaths } from "../../src/mempalace/runtime.js";
+import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
 function makeDep(overrides: Partial<DependencyStatus> = {}): DependencyStatus {
   return {
     name: "test-tool",
@@ -297,8 +299,11 @@ describe("handleUpdate — MemPalace prompt", () => {
     // Pre-stage a managed uv binary so ensureUv hits the cached path.
     const binDir = path.join(tmpDir, "global", ".omp", "supipowers", "bin");
     fs.mkdirSync(binDir, { recursive: true });
-    fs.writeFileSync(path.join(binDir, "uv"), "");
-    fs.chmodSync(path.join(binDir, "uv"), 0o755);
+    const uvPlatform = detectUvPlatform();
+    if (!uvPlatform) throw new Error("unsupported test platform");
+    const uvPath = path.join(binDir, uvTargetFor(uvPlatform).binary);
+    fs.writeFileSync(uvPath, "");
+    if (process.platform !== "win32") fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
     // Pin the managed venv to a tmp path via project config so we never touch ~/.omp.
     const venvRoot = path.join(tmpDir, "mempalace-venv");
@@ -308,6 +313,7 @@ describe("handleUpdate — MemPalace prompt", () => {
       path.join(projectConfigDir, "config.json"),
       JSON.stringify({ mempalace: { managedVenvPath: venvRoot } }),
     );
+    const venv = resolveManagedVenvPaths(venvRoot);
 
     const execCalls: Array<{ cmd: string; args: string[] }> = [];
     const platform = platformWithExec(async (cmd, args) => {
@@ -320,12 +326,12 @@ describe("handleUpdate — MemPalace prompt", () => {
         fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ version: "2.0.0" }));
         return { stdout: "", stderr: "", code: 0 };
       }
-      if (cmd === path.join(binDir, "uv") && args[0] === "venv") {
-        fs.mkdirSync(path.join(venvRoot, "bin"), { recursive: true });
-        fs.writeFileSync(path.join(venvRoot, "bin", "python"), "");
+      if (cmd === uvPath && args[0] === "venv") {
+        fs.mkdirSync(path.dirname(venv.python), { recursive: true });
+        fs.writeFileSync(venv.python, "");
         return { stdout: "", stderr: "", code: 0 };
       }
-      if (cmd === path.join(binDir, "uv")) return { stdout: "", stderr: "", code: 0 };
+      if (cmd === uvPath) return { stdout: "", stderr: "", code: 0 };
       // Bridge subprocess invocations
       return { stdout: JSON.stringify({ ok: true, result: {} }), stderr: "", code: 0 };
     });
@@ -347,10 +353,10 @@ describe("handleUpdate — MemPalace prompt", () => {
       handleUpdate(platform, ctx);
       await new Promise((r) => setTimeout(r, 400));
 
-      const venvCall = execCalls.find((c) => c.cmd === path.join(binDir, "uv") && c.args[0] === "venv");
+      const venvCall = execCalls.find((c) => c.cmd === uvPath && c.args[0] === "venv");
       expect(venvCall).toBeDefined();
       const pipCall = execCalls.find(
-        (c) => c.cmd === path.join(binDir, "uv") && c.args[0] === "pip" && c.args.some((a) => a.startsWith("mempalace==")),
+        (c) => c.cmd === uvPath && c.args[0] === "pip" && c.args.some((a) => a.startsWith("mempalace==")),
       );
       expect(pipCall).toBeDefined();
       const messages = (notify.mock.calls as any[]).map((call) => call[0] as string);

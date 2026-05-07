@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { handleMemory, registerMemoryCommand } from "../../src/commands/memory.js";
 import { createMockContext, createMockPlatform } from "../../src/platform/test-utils.js";
 import { createPaths, type PlatformPaths } from "../../src/platform/types.js";
+import { resolveManagedVenvPaths } from "../../src/mempalace/runtime.js";
+import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
 
 function isolatedPaths(rootDir: string): PlatformPaths {
   return {
@@ -98,18 +100,22 @@ describe("/supi:memory command", () => {
     // Pre-stage a managed uv binary so ensureUv hits the cached path and skips download.
     const platform = createMockPlatform({ paths: isolatedPaths(tmpDir) });
     const binDir = platform.paths.global("bin");
+    const uvPlatform = detectUvPlatform();
+    if (!uvPlatform) throw new Error("unsupported test platform");
+    const uvPath = path.join(binDir, uvTargetFor(uvPlatform).binary);
+    const venv = resolveManagedVenvPaths(venvRoot);
     fs.mkdirSync(binDir, { recursive: true });
-    fs.writeFileSync(path.join(binDir, "uv"), "");
-    fs.chmodSync(path.join(binDir, "uv"), 0o755);
+    fs.writeFileSync(uvPath, "");
+    if (process.platform !== "win32") fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
 
     const exec = mock(async (command: string, args: string[]) => {
-      if (command === path.join(binDir, "uv") && args[0] === "venv") {
-        fs.mkdirSync(path.join(venvRoot, "bin"), { recursive: true });
-        fs.writeFileSync(path.join(venvRoot, "bin", "python"), "");
+      if (command === uvPath && args[0] === "venv") {
+        fs.mkdirSync(path.dirname(venv.python), { recursive: true });
+        fs.writeFileSync(venv.python, "");
         return { code: 0, stdout: "", stderr: "" };
       }
-      if (command === path.join(binDir, "uv")) return { code: 0, stdout: "", stderr: "" };
+      if (command === uvPath) return { code: 0, stdout: "", stderr: "" };
       // Bridge subprocess invocations: command is the venv python.
       return { code: 0, stdout: JSON.stringify({ ok: true, result: {} }), stderr: "" };
     });
@@ -136,8 +142,7 @@ describe("/supi:memory command", () => {
     expect((platform.sendMessage as any).mock.calls.length).toBeGreaterThanOrEqual(1);
     expect((platform.sendMessage as any).mock.calls[0][0].customType).toBe("supi-mempalace-init");
     expect(exec).toHaveBeenCalled();
-  });
-
+  }, process.platform === "win32" ? 15_000 : undefined);
   test("setup surfaces install failures with remediation", async () => {
     const venvRoot = path.join(tmpDir, "venv");
     const projectConfigDir = path.join(cwd, ".omp", "supipowers");
@@ -149,15 +154,19 @@ describe("/supi:memory command", () => {
 
     const platform = createMockPlatform({ paths: isolatedPaths(tmpDir) });
     const binDir = platform.paths.global("bin");
+    const uvPlatform = detectUvPlatform();
+    if (!uvPlatform) throw new Error("unsupported test platform");
+    const uvPath = path.join(binDir, uvTargetFor(uvPlatform).binary);
+    const venv = resolveManagedVenvPaths(venvRoot);
     fs.mkdirSync(binDir, { recursive: true });
-    fs.writeFileSync(path.join(binDir, "uv"), "");
-    fs.chmodSync(path.join(binDir, "uv"), 0o755);
+    fs.writeFileSync(uvPath, "");
+    if (process.platform !== "win32") fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
 
-    (platform as any).exec = mock(async (_command: string, args: string[]) => {
-      if (args[0] === "venv") {
-        fs.mkdirSync(path.join(venvRoot, "bin"), { recursive: true });
-        fs.writeFileSync(path.join(venvRoot, "bin", "python"), "");
+    (platform as any).exec = mock(async (command: string, args: string[]) => {
+      if (command === uvPath && args[0] === "venv") {
+        fs.mkdirSync(path.dirname(venv.python), { recursive: true });
+        fs.writeFileSync(venv.python, "");
         return { code: 0, stdout: "", stderr: "" };
       }
       if (args.some((entry) => entry.startsWith("mempalace=="))) {

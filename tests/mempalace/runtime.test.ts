@@ -14,6 +14,7 @@ import {
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { resolveMempalaceConfig } from "../../src/mempalace/config.js";
 import { createPaths } from "../../src/platform/types.js";
+import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
 
 describe("mempalace runtime bridge path", () => {
   let tmpDir: string;
@@ -211,9 +212,11 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "supi-mempalace-setup-"));
     const binDir = path.join(cwd, "bin");
     fs.mkdirSync(binDir, { recursive: true });
-    const uvPath = path.join(binDir, "uv");
+    const uvPlatform = detectUvPlatform();
+    if (!uvPlatform) throw new Error("unsupported test platform");
+    const uvPath = path.join(binDir, uvTargetFor(uvPlatform).binary);
     fs.writeFileSync(uvPath, "#!/usr/bin/env true\n");
-    fs.chmodSync(uvPath, 0o755);
+    if (process.platform !== "win32") fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
 
     const baseConfig = {
@@ -229,6 +232,7 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
       },
     };
     const config = resolveMempalaceConfig(baseConfig, cwd, createPaths(".omp"));
+    const venv = resolveManagedVenvPaths(config.managedVenvPath);
     const calls: Array<{ command: string; args: string[]; input?: string }> = [];
     const progress: string[] = [];
 
@@ -256,9 +260,9 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
       expect(calls.map((call) => [call.command, call.args])).toEqual([
         [uvPath, ["python", "install", "3.12"]],
         [uvPath, ["venv", config.managedVenvPath, "--python", "3.12"]],
-        [uvPath, ["pip", "install", "--python", path.join(config.managedVenvPath, "bin", "python"), "mempalace==3.3.4"]],
-        [path.join(config.managedVenvPath, "bin", "python"), ["/bridge.py"]],
-        [path.join(config.managedVenvPath, "bin", "python"), ["/bridge.py"]],
+        [uvPath, ["pip", "install", "--python", venv.python, "mempalace==3.3.4"]],
+        [venv.python, ["/bridge.py"]],
+        [venv.python, ["/bridge.py"]],
       ]);
       expect(progress).toEqual([
         "Provisioning managed Python 3.12 via uv",
@@ -280,9 +284,11 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "supi-mempalace-setup-"));
     const binDir = path.join(cwd, "bin");
     fs.mkdirSync(binDir, { recursive: true });
-    const uvPath = path.join(binDir, "uv");
+    const uvPlatform = detectUvPlatform();
+    if (!uvPlatform) throw new Error("unsupported test platform");
+    const uvPath = path.join(binDir, uvTargetFor(uvPlatform).binary);
     fs.writeFileSync(uvPath, "");
-    fs.chmodSync(uvPath, 0o755);
+    if (process.platform !== "win32") fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
 
     const baseConfig = {

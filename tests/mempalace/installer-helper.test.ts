@@ -11,6 +11,8 @@ import {
 } from "../../src/mempalace/installer-helper.js";
 import type { PlatformPaths } from "../../src/platform/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
+import { resolveManagedVenvPaths } from "../../src/mempalace/runtime.js";
+import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
 
 function isolatedPaths(rootDir: string): PlatformPaths {
   return {
@@ -58,8 +60,9 @@ describe("snapshotMempalaceInstall", () => {
   test("reports a fully provisioned managed install as ready", () => {
     const paths = isolatedPaths(tmpDir);
     const venvRoot = path.join(tmpDir, "venv");
-    fs.mkdirSync(path.join(venvRoot, "bin"), { recursive: true });
-    fs.writeFileSync(path.join(venvRoot, "bin", "python"), "");
+    const venv = resolveManagedVenvPaths(venvRoot);
+    fs.mkdirSync(path.dirname(venv.python), { recursive: true });
+    fs.writeFileSync(venv.python, "");
     const binDir = paths.global("bin");
     fs.mkdirSync(binDir, { recursive: true });
     const uvBinary = process.platform === "win32" ? "uv.exe" : "uv";
@@ -98,8 +101,11 @@ describe("runMempalaceSetup", () => {
     const venvRoot = path.join(tmpDir, "venv");
     const binDir = paths.global("bin");
     fs.mkdirSync(binDir, { recursive: true });
-    fs.writeFileSync(path.join(binDir, "uv"), "");
-    fs.chmodSync(path.join(binDir, "uv"), 0o755);
+    const uvPlatform = detectUvPlatform();
+    if (!uvPlatform) throw new Error("unsupported test platform");
+    const uvPath = path.join(binDir, uvTargetFor(uvPlatform).binary);
+    fs.writeFileSync(uvPath, "");
+    if (process.platform !== "win32") fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
 
     const config = {
@@ -110,12 +116,13 @@ describe("runMempalaceSetup", () => {
     const calls: Array<{ command: string; args: string[] }> = [];
     const runner = mock(async (command: string, args: string[]) => {
       calls.push({ command, args });
-      if (command === path.join(binDir, "uv") && args[0] === "venv") {
-        fs.mkdirSync(path.join(venvRoot, "bin"), { recursive: true });
-        fs.writeFileSync(path.join(venvRoot, "bin", "python"), "");
+      if (command === uvPath && args[0] === "venv") {
+        const venv = resolveManagedVenvPaths(venvRoot);
+        fs.mkdirSync(path.dirname(venv.python), { recursive: true });
+        fs.writeFileSync(venv.python, "");
         return { code: 0, stdout: "", stderr: "" };
       }
-      if (command === path.join(binDir, "uv")) return { code: 0, stdout: "", stderr: "" };
+      if (command === uvPath) return { code: 0, stdout: "", stderr: "" };
       return { code: 0, stdout: JSON.stringify({ ok: true, result: {} }), stderr: "" };
     });
 
@@ -130,7 +137,7 @@ describe("runMempalaceSetup", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error.message);
-    expect(result.details.uvPath).toBe(path.join(binDir, "uv"));
+    expect(result.details.uvPath).toBe(uvPath);
     expect(result.details.venvPath).toBe(venvRoot);
     expect(result.details.packageVersion).toBe("3.3.4");
     expect(progress.some((m) => m.includes("Provisioning managed Python"))).toBe(true);

@@ -116,7 +116,9 @@ describe("MetricsStore.init", () => {
     corrupted.close();
 
     // Restore a clean store for afterEach.
-    fs.unlinkSync(dbPath);
+    rmDirWithRetry(tmpDir);
+    fs.mkdirSync(tmpDir, { recursive: true });
+    dbPath = path.join(tmpDir, "metrics.db");
     store = new MetricsStore({ dbPath, projectSlug: "demo" });
     store.init();
   });

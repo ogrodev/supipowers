@@ -5,7 +5,7 @@
 // filtering (auto-indexing large output into knowledge store).
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, isAbsolute, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import type { Platform } from "../platform/types.js";
 import { executeCode } from "./sandbox/executor.js";
@@ -57,6 +57,16 @@ function trackCall(toolName: string, outputBytes: number): void {
 function byteLength(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
+
+function stripCurrentDirPrefixBeforeWindowsAbsolute(p: string): string {
+  return p.replace(/^\.[\\/]+(?=[A-Za-z]:[\\/])/, "");
+}
+
+function resolveNativeFilePath(filePath: string, cwd = process.cwd()): string {
+  const normalized = stripCurrentDirPrefixBeforeWindowsAbsolute(filePath);
+  return isAbsolute(normalized) ? normalized : resolve(cwd, normalized);
+}
+
 
 function currentKnowledgeOwner() {
   return { ownerScope: "session" as const, ownerId: getSessionId() };
@@ -494,8 +504,9 @@ export function registerContextModeTools(
     },
     async execute(_toolCallId: string, params: any) {
       const { path: filePath, language, code, intent, timeout, cache, cacheTtlMs } = params;
-      const canonicalFilePath = canonicalizeSourcePath(String(filePath), process.cwd());
-      const fileContent = readFileSync(canonicalFilePath, "utf-8");
+      const nativeFilePath = resolveNativeFilePath(String(filePath));
+      const canonicalFilePath = canonicalizeSourcePath(nativeFilePath, process.cwd());
+      const fileContent = readFileSync(nativeFilePath, "utf-8");
       const fileHash = sha256Text(fileContent);
       const cacheStore = cache === true ? getCacheStore() : null;
       const requestCacheArgs = {

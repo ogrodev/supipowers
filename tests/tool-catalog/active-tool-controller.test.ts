@@ -10,6 +10,7 @@ import type { McpRegistry } from "../../src/mcp/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
 import type { SupipowersConfig } from "../../src/types.js";
 import { registerActiveToolController } from "../../src/tool-catalog/active-tool-controller.js";
+import { rmDirWithRetry } from "../helpers/fs.js";
 
 function createPlatformWithHandlers(overrides: Record<string, unknown> = {}) {
   const handlers = new Map<string, Function>();
@@ -410,7 +411,7 @@ describe("registerActiveToolController metrics", () => {
     } finally {
       store.close();
       __setMetricsStoreForTest(null);
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      rmDirWithRetry(tmpDir);
     }
   });
 });

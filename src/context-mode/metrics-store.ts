@@ -194,16 +194,21 @@ export class MetricsStore {
   }
 
   init(): void {
-    this.#ensureDeleteJournalMode();
-    // CREATE TABLE IF NOT EXISTS guards every statement in SCHEMA, so it is
-    // safe to run before #migrate(). Running the schema first means v1\u2192vN
-    // data fixups can assume their target tables exist on every code path.
-    this.#db.exec(SCHEMA);
-    this.#migrate();
-    this.#prepareStatements();
+    try {
+      this.#ensureDeleteJournalMode();
+      // CREATE TABLE IF NOT EXISTS guards every statement in SCHEMA, so it is
+      // safe to run before #migrate(). Running the schema first means v1→vN
+      // data fixups can assume their target tables exist on every code path.
+      this.#db.exec(SCHEMA);
+      this.#migrate();
+      this.#prepareStatements();
 
-    if (isDebugEnabled()) {
-      this.#tracePath = path.join(path.dirname(this.#dbPath), "metrics-trace.jsonl");
+      if (isDebugEnabled()) {
+        this.#tracePath = path.join(path.dirname(this.#dbPath), "metrics-trace.jsonl");
+      }
+    } catch (error) {
+      this.close();
+      throw error;
     }
   }
 

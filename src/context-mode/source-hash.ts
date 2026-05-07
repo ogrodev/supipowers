@@ -47,10 +47,16 @@ function toPosix(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
+function stripCurrentDirPrefixBeforeWindowsAbsolute(p: string): string {
+  return p.replace(/^\.[\\/]+(?=[A-Za-z]:[\\/])/, "");
+}
+
+
 /** Resolve `pathInput` to a canonical absolute POSIX form. */
 export function canonicalizeSourcePath(pathInput: string, cwd: string): string {
-  const posix = toPosix(pathInput);
-  if (isAbsolutePath(pathInput)) {
+  const normalizedInput = stripCurrentDirPrefixBeforeWindowsAbsolute(pathInput);
+  const posix = toPosix(normalizedInput);
+  if (isAbsolutePath(normalizedInput)) {
     return collapsePosix(posix);
   }
   const cwdPosix = toPosix(cwd);

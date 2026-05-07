@@ -131,7 +131,7 @@ describe("/supi:context savings panel — Task 33", () => {
     // returns `<tmpDir>/global/...`; the real createPaths interleaves the
     // "supipowers" segment but here we only assert the absolute prefix.
     expect(lines[footerIdx]).toContain(`Metrics DB: ${path.join(tmpDir, "global")}`);
-    expect(lines[footerIdx]).toContain("sessions/metrics.db");
+    expect(lines[footerIdx]).toContain(path.join("sessions", "metrics.db"));
   });
 
   test("Task 52 — footer shows absolute path on every invocation", async () => {
