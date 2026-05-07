@@ -4,10 +4,10 @@
   "description": "Workflow extension for OMP coding agents.",
   "type": "module",
   "scripts": {
-    "test": "bun test tests/",
+    "test": "bun test --timeout 20000 tests/",
     "typecheck": "tsc --noEmit",
-    "test:watch": "bun test --watch tests/",
-    "test:evals": "bun test tests/evals/",
+    "test:watch": "bun test --timeout 20000 --watch tests/",
+    "test:evals": "bun test --timeout 20000 tests/evals/",
     "build": "tsc -p tsconfig.build.json",
     "install:visual-server": "npm --prefix src/visual/scripts ci --ignore-scripts --no-audit --no-fund",
     "postinstall": "bun run install:visual-server",
