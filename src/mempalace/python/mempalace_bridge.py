@@ -27,12 +27,18 @@ import sys
 import traceback
 from typing import Any, Callable, Dict
 
-# Capture the real stdout/stderr file descriptors before any import. MemPalace
-# (and several of its dependencies — e.g. ChromaDB's banner, telemetry warnings)
-# print to stdout during import, which would corrupt our JSON protocol. We
-# rebind sys.stdout to sys.stderr immediately so any print() goes to stderr,
-# and only restore the real stdout when emitting the final JSON response.
-_REAL_STDOUT = sys.stdout
+# Capture the real stdout file descriptor before any import. MemPalace
+# (specifically `mempalace.mcp_server`) calls `os.dup2(2, 1)` during its
+# search/HNSW path, which silently redirects fd 1 to the stderr pipe.
+# A plain `_REAL_STDOUT = sys.stdout` reference keeps fd 1 internally but
+# its writes still travel through the redirected fd, corrupting our JSON
+# protocol. Duplicating fd 1 to a fresh fd preserves a path to the
+# original stdout that survives mempalace's fd redirection. We then
+# rebind sys.stdout to sys.stderr so any print() during import goes to
+# stderr, and reserve the duped fd exclusively for the final JSON
+# response.
+_REAL_STDOUT_FD = os.dup(1)
+_REAL_STDOUT = os.fdopen(_REAL_STDOUT_FD, "w", encoding="utf-8")
 sys.stdout = sys.stderr
 
 # Force UTF-8 across the bridge so JSON-encoded text round-trips identically on
@@ -317,7 +323,14 @@ def _make_cli_args_split(params: Dict[str, Any]) -> "list[str]":
 
 
 def _make_cli_args_repair(params: Dict[str, Any]) -> "list[str]":
-    args = ["repair", str(params.get("dir") or ".")]
+    # `mempalace repair` is a global palace operation — it does NOT accept a
+    # positional directory argument (unlike init/mine/split). Passing one
+    # makes argparse exit with code 2 ("unrecognized arguments").
+    args = ["repair"]
+    if params.get("yes"):
+        args.append("--yes")
+    if params.get("mode"):
+        args.extend(["--mode", str(params["mode"])])
     if params.get("dry_run"):
         args.append("--dry-run")
     return args

@@ -163,10 +163,10 @@ export const mempalaceToolParameters = {
     action: {
       type: "string",
       enum: MEMPALACE_ACTIONS,
-      description: "MemPalace action to execute. Search before answering questions about prior decisions, people, projects, or past events.",
+      description: "Action to dispatch.",
     },
-    palace: { type: "string", description: "Optional palace path override for this call." },
-    wing: { type: "string", description: "MemPalace wing, normally the current project." },
+    palace: { type: "string" },
+    wing: { type: "string" },
     room: { type: "string" },
     query: { type: "string" },
     limit: { type: "integer", minimum: 1 },
@@ -201,7 +201,7 @@ export const mempalaceToolParameters = {
     include_ignored: { type: "boolean" },
     no_gitignore: { type: "boolean" },
     yes: { type: "boolean" },
-    timeout: { type: "integer", minimum: 1, description: "Call-level timeout in milliseconds, capped by config." },
+    timeout: { type: "integer", minimum: 1 },
   },
   required: ["action"],
 } as const;

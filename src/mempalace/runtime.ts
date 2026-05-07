@@ -114,6 +114,15 @@ export interface SetupMempalaceRuntimeOptions {
   fetcher?: import("./uv.js").UvFetcher;
   uvVersion?: string;
   onProgress?: (message: string) => void;
+  /**
+   * Filesystem side effects used to (re)create the managed venv. Tests stub
+   * these to keep the real `~/.omp/supipowers/mempalace-venv` untouched even
+   * when the runner is mocked. Defaults call `node:fs` directly.
+   */
+  fs?: {
+    existsSync?: (path: string) => boolean;
+    rmSync?: (path: string, options?: { recursive?: boolean; force?: boolean }) => void;
+  };
 }
 
 
@@ -444,8 +453,12 @@ export async function setupMempalaceRuntime(
   }
 
   // 3. Create (or recreate) the managed virtual environment.
-  if (fs.existsSync(options.config.managedVenvPath)) {
-    fs.rmSync(options.config.managedVenvPath, { recursive: true, force: true });
+  const fsImpl = {
+    existsSync: options.fs?.existsSync ?? fs.existsSync,
+    rmSync: options.fs?.rmSync ?? fs.rmSync,
+  };
+  if (fsImpl.existsSync(options.config.managedVenvPath)) {
+    fsImpl.rmSync(options.config.managedVenvPath, { recursive: true, force: true });
   }
   progress("Creating managed MemPalace virtual environment");
   const createVenv = await runSetupCommand(

@@ -11,11 +11,20 @@ import {
   type SetupMempalaceRuntimeOptions,
   type SetupMempalaceRuntimeResult,
 } from "./runtime.js";
+import {
+  snapshotMempalaceInstall,
+  type MempalaceInstallSnapshot,
+} from "./installer-helper.js";
 
 export interface MempalaceToolDeps {
   createBridge?: (config: ResolvedMempalaceConfig, cwd: string) => MempalaceBridgeFacade;
   resolveBridgeScriptPath?: () => BridgePathResult;
   setupRuntime?: (options: SetupMempalaceRuntimeOptions) => Promise<SetupMempalaceRuntimeResult>;
+  /**
+   * Installation readiness probe. Default reads the filesystem; tests can inject
+   * a stub. The tool is registered only when this returns `ready: true`.
+   */
+  snapshotInstall?: (config: SupipowersConfig, cwd: string) => MempalaceInstallSnapshot;
 }
 
 function toolResult(text: string, details: Record<string, unknown>): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
@@ -96,11 +105,28 @@ export function registerMempalaceTool(
   if (!config.mempalace.enabled) return;
   if (typeof platform.registerTool !== "function") return;
 
+  // Gate exposure on installation readiness. Without uv + the managed venv +
+  // the Python bridge script all present, every action fails — surfacing a
+  // dead tool in the agent's catalog only invites broken tool calls. Setup is
+  // driven explicitly by `/supi:memory setup`, so this gate is recoverable.
+  const snapshotFn = deps.snapshotInstall ?? ((cfg, cwd) => snapshotMempalaceInstall(platform.paths, cwd, cfg));
+  let snapshot: MempalaceInstallSnapshot;
+  try {
+    snapshot = snapshotFn(config, process.cwd());
+  } catch (error) {
+    (platform as { logger?: { warn?: (message: string, error?: unknown) => void } }).logger?.warn?.(
+      "supi-mempalace: install snapshot failed; tool will not be registered",
+      error,
+    );
+    return;
+  }
+  if (!snapshot.ready) return;
+
   platform.registerTool({
     name: "mempalace",
     label: "MemPalace",
     description:
-      "Run one native MemPalace action through the supipowers managed Python bridge. Use status/wake_up when memory state is unknown; search before answering past-fact questions; write only when explicitly asked to remember/save or during lifecycle checkpointing.",
+      "MemPalace memory dispatcher. **MUST** call `search` before answering past-fact questions; write only on explicit user request.",
     parameters: mempalaceToolParameters,
     async execute(_toolCallId: string, rawParams: unknown, _signal: AbortSignal, onUpdate: unknown, toolCtx: unknown) {
       try {
