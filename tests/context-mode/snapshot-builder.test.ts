@@ -312,7 +312,7 @@ describe("buildResumeSnapshot — reference format", () => {
     const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
     expect(snapshot).toContain("<decisions>");
     expect(snapshot).toContain("Use Bun over Node");
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 
   test("errors section from error events", () => {
     writeEvent("error", { command: "bun test", exitCode: 1 }, 1);

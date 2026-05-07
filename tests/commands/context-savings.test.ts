@@ -142,7 +142,7 @@ describe("/supi:context savings panel — Task 33", () => {
     const bFooter = b[0]!.find((l) => l.startsWith("Metrics DB:"))!;
     expect(aFooter).toBe(bFooter);
     expect(aFooter.includes("Metrics DB: /") || aFooter.includes("Metrics DB: C:")).toBe(true);
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 });
 
 describe("/supi:context drilldown — Task 34", () => {

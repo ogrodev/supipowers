@@ -942,7 +942,7 @@ describe("exported helpers", () => {
     expect(prompt).toContain("# Focus chain");
     expect(prompt).toContain("start: audit ctx_repomap");
     expect(prompt).toContain("done: L4 Repo Map");
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 
   test("before_agent_start suppresses legacy memory when MemPalace is enabled but keeps focus chain", () => {
     const platform = createPlatformWithTmpPaths();

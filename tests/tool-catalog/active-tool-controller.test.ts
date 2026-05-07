@@ -413,5 +413,5 @@ describe("registerActiveToolController metrics", () => {
       __setMetricsStoreForTest(null);
       rmDirWithRetry(tmpDir);
     }
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 });

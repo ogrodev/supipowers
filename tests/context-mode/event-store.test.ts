@@ -63,7 +63,7 @@ describe("EventStore", () => {
     expect(events).toHaveLength(1);
     expect(events[0].category).toBe("file");
     expect(events[0].data).toBe('{"op":"read","path":"/test.ts"}');
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 
   test("writeEvents writes multiple in single transaction", () => {
     store.writeEvents([

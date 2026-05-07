@@ -142,9 +142,14 @@ export class EventStore {
   }
 
   init(): void {
-    this.#ensureDeleteJournalMode();
-    this.#migrate();
-    this.#db.exec(SCHEMA);
+    try {
+      this.#ensureDeleteJournalMode();
+      this.#migrate();
+      this.#db.exec(SCHEMA);
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
 
   #ensureDeleteJournalMode(): void {

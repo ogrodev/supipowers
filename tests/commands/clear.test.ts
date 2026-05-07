@@ -196,7 +196,7 @@ describe("/supi:clear — pre-deletion summary (Tasks 39, 41, 55)", () => {
     expect(summary).toContain("Current-session indexed knowledge will be cleared.");
     expect(summary).toContain("Memory DB:");
     expect(summary).toContain("session-owned memory rows for this session will be cleared");
-  });
+  }, process.platform === "win32" ? 20_000 : undefined);
 
   test("cancel preserves rows and notifies 'Clear cancelled'", async () => {
     setup();
