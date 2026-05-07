@@ -407,35 +407,6 @@ export function buildSettings(
 }
 
 
-function repositoryChoiceLabel(selection: ConfigScopeSelection): string {
-  return `${selection.isMonorepo ? "Monorepo repository" : "Repository"} — ${configPathForSelection({ ...selection, scope: "root" })}`;
-}
-
-async function selectConfigScope(
-  ctx: PlatformContext,
-  selection: ConfigScopeSelection,
-): Promise<ConfigScopeSelection | null> {
-  const repositoryChoice = repositoryChoiceLabel(selection);
-  const scopeChoices = [
-    `Global — ${configPathForSelection({ ...selection, scope: "global" })}`,
-    repositoryChoice,
-    "Cancel",
-  ];
-
-  const choice = await ctx.ui.select("Config scope", scopeChoices, {
-    helpText: selection.isMonorepo
-      ? "Choose whether to edit global defaults or the shared repository config for this monorepo."
-      : "Choose whether to edit global defaults or this repository's config.",
-  });
-  if (!choice || choice === "Cancel") {
-    return null;
-  }
-
-  return {
-    ...selection,
-    scope: choice.startsWith("Global") ? "global" : "root",
-  };
-}
 
 export async function runConfigMenu(
   platform: Platform,
@@ -459,8 +430,7 @@ export async function runConfigMenu(
   while (true) {
     const view = buildConfigScopeView(platform, ctx.cwd, selection);
     const settings = buildSettings(platform, ctx, view, deps);
-    const scopeChoice = `Config scope: ${selectionSummary(selection)}`;
-    const options = [scopeChoice, ...settings.map((setting) => `${setting.label}: ${setting.get()}`), "Done"];
+    const options = [...settings.map((setting) => `${setting.label}: ${setting.get()}`), "Done"];
 
     const choice = await ctx.ui.select(
       "Supipowers Settings",
@@ -476,15 +446,7 @@ export async function runConfigMenu(
       break;
     }
 
-    if (choice === scopeChoice) {
-      const nextSelection = await selectConfigScope(ctx, selection);
-      if (nextSelection) {
-        selection = nextSelection;
-      }
-      continue;
-    }
-
-    const index = options.indexOf(choice) - 1;
+    const index = options.indexOf(choice);
     const setting = settings[index];
     if (!setting) {
       break;

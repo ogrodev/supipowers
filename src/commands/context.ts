@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Platform, PlatformContext } from "../platform/types.js";
+import { systemPromptText } from "../platform/system-prompt.js";
 import {
   parseSystemPrompt,
   buildBreakdownItems,
@@ -41,7 +42,7 @@ export function handleContext(platform: Platform, ctx: PlatformContext): void {
 
     let systemPrompt = "";
     try {
-      systemPrompt = (ctx as any).getSystemPrompt?.() ?? "";
+      systemPrompt = systemPromptText((ctx as any).getSystemPrompt?.());
     } catch {
       // getSystemPrompt not available — continue without
     }

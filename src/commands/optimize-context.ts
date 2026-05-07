@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Platform, PlatformContext } from "../platform/types.js";
+import { systemPromptText } from "../platform/system-prompt.js";
 import {
   parseSystemPrompt,
   parseIndividualSkills,
@@ -114,7 +115,8 @@ export function registerOptimizeContextCommand(platform: Platform): void {
 function readSystemPrompt(ctx: PlatformContext): string | null {
   try {
     const value = (ctx as any).getSystemPrompt?.();
-    return typeof value === "string" && value.length > 0 ? value : null;
+    const text = systemPromptText(value);
+    return text.length > 0 ? text : null;
   } catch {
     return null;
   }

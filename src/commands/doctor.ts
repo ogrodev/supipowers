@@ -489,6 +489,31 @@ export async function runDoctorChecks(platform: Platform, cwd: string): Promise<
   ];
 }
 
+/**
+ * Recommended OMP settings that materially improve supipowers UX.
+ *
+ * These are *suggestions*, not health checks — supipowers cannot read OMP's
+ * `settings.json` directly, so we cannot detect whether the user has the
+ * setting on. We surface them at the bottom of `/supi:doctor` as a
+ * non-failing tip block.
+ */
+export function getDoctorRecommendations(): string[] {
+  return [
+    "Set `tools.elideFileMutationInputs: true` (OMP ≥14.7.0) — elides `write`/`edit`/`apply_patch` payloads from history after success. Saves significant context on long sessions like `/supi:ultraplan execute` and `/supi:harness implement`.",
+    "Update to OMP ≥14.7.2 — fixes the `Working…` spinner staying active after read-only commands such as `/supi:status`, `/supi:doctor`, `/supi:context`, and `/supi:clear`. (oh-my-pi#927)",
+  ];
+}
+
+function formatRecommendationsSection(recommendations: string[]): string[] {
+  if (recommendations.length === 0) return [];
+  const lines: string[] = ["Recommendations"];
+  for (const tip of recommendations) {
+    lines.push(`  → ${tip}`);
+  }
+  lines.push("");
+  return lines;
+}
+
 function formatReport(sections: SectionResult[]): string {
   const lines: string[] = ["/supi:doctor", ""];
   for (const section of sections) {
@@ -498,6 +523,7 @@ function formatReport(sections: SectionResult[]): string {
     }
     lines.push("");
   }
+  lines.push(...formatRecommendationsSection(getDoctorRecommendations()));
   lines.push(formatSummary(sections));
   return lines.join("\n");
 }
