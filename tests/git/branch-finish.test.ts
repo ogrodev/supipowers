@@ -89,11 +89,15 @@ describe("buildBranchFinishPrompt", () => {
     expect(prompt).not.toContain("git worktree remove");
   });
 
-  test("includes PR creation with gh command", () => {
+  test("includes PR creation with both github tool (preferred) and gh CLI (fallback)", () => {
     const prompt = buildBranchFinishPrompt({
       branchName: "feature/auth",
       baseBranch: "main",
     });
+    // Preferred: structured github tool (OMP ≥14.7.1)
+    expect(prompt).toContain("github");
+    expect(prompt).toContain('op: "pr_create"');
+    // Fallback: gh CLI for older OMP
     expect(prompt).toContain("gh pr create");
   });
 
