@@ -24,6 +24,7 @@ import type {
   HarnessAntiSlopBackend,
   HarnessLayerRule,
   HarnessSlopQueueEntry,
+  HarnessValidateCheck,
   HarnessValidateFinding,
   HarnessValidateReport,
 } from "../../types.js";
@@ -41,6 +42,7 @@ import {
 import {
   appendScoreHistory,
   appendSlopQueueEntry,
+  loadHarnessDesignSpecJson,
   loadHarnessDiscover,
   saveHarnessRepoScore,
   saveHarnessValidateReport,
@@ -74,6 +76,64 @@ interface CheckResult {
   summary: string;
   findings: HarnessValidateFinding[];
   durationMs?: number;
+}
+
+type CheckContract = Pick<HarnessValidateCheck, "invariant" | "proves" | "doesNotProve" | "artifact" | "failSafe">;
+
+const CHECK_CONTRACTS: Readonly<Record<string, CheckContract>> = {
+  "cross-link-check": {
+    invariant: "Agent-facing harness docs must exist and point maintainers to the architecture and golden-principles contracts.",
+    proves: "AGENTS.md, docs/architecture.md, and docs/golden-principles.md exist, and AGENTS.md references the core docs.",
+    doesNotProve: "The docs are semantically complete, current, or sufficient for every agent client.",
+    artifact: "validate-report.json findings plus filesystem state",
+    failSafe: "Missing or unreadable docs produce error findings and block validation.",
+  },
+  "schema-check": {
+    invariant: "Persisted pipeline artifacts must remain readable before later stages claim continuity.",
+    proves: "discover.json can be loaded for the active harness session.",
+    doesNotProve: "The discovered facts are fresh or semantically exhaustive.",
+    artifact: "validate-report.json schema-check entry",
+    failSafe: "Missing or invalid JSON produces an error finding and blocks validation.",
+  },
+  "discover-drift": {
+    invariant: "The saved discovery artifact should not silently diverge from the current repository profile.",
+    proves: "A fresh discovery pass did not reveal language-level drift that invalidates the saved artifact.",
+    doesNotProve: "Every framework, script, dependency, or architecture convention is unchanged.",
+    artifact: "validate-report.json discover-drift entry",
+    failSafe: "Missing discovery data blocks; detected drift is recorded as warning/info with remediation.",
+  },
+  "anti-slop-scan": {
+    invariant: "New duplicate, dead-code, and layer-drift findings must be visible in the persistent slop queue.",
+    proves: "The selected backend either ran and returned findings, or an explicitly soft-failed optional backend state was recorded.",
+    doesNotProve: "The selected backend can detect semantic bugs, product regressions, or unsupported language patterns.",
+    artifact: "validate-report.json, queue.jsonl, score.json",
+    failSafe: "Missing optional backend configuration warns; backend runtime errors become blocking findings.",
+  },
+  "synthetic-edit-test": {
+    invariant: "Installed anti-slop hooks must fire against a controlled representative edit before the harness claims runtime guardrails work.",
+    proves: "The enabled in-process hook handlers respond to the synthetic edit fixture without reported failures.",
+    doesNotProve: "Hook latency, all real editor events, or every repository-specific layer edge case.",
+    artifact: "validate-report.json synthetic-edit-test entry",
+    failSafe: "Hook failures are emitted as error findings and block validation.",
+  },
+  "ci-local-wiring": {
+    invariant: "Every harness validation gate must have one local command and CI must invoke that command instead of relying on human memory.",
+    proves: "The configured local command exists and the configured CI workflow calls it on the selected PR trigger.",
+    doesNotProve: "The command's inner toolchain is installed, every gate is semantically sufficient, or CI provider secrets/runners are available.",
+    artifact: "validate-report.json plus package.json and CI workflow contents",
+    failSafe: "Missing package scripts or workflow files emit error findings and block validation.",
+  },
+};
+
+function attachCheckContract(check: CheckResult): HarnessValidateCheck {
+  const contract = CHECK_CONTRACTS[check.name] ?? {
+    invariant: `The ${check.name} gate must state the rule it protects.`,
+    proves: check.summary,
+    doesNotProve: "No explicit blind spot was registered for this check.",
+    artifact: "validate-report.json",
+    failSafe: "Unknown checks should be given an explicit contract before release.",
+  };
+  return { ...check, ...contract };
 }
 
 async function checkCrossLinks(cwd: string): Promise<CheckResult> {
@@ -169,6 +229,141 @@ async function checkSchema(
     name: "schema-check",
     passed: findings.length === 0,
     summary: findings.length === 0 ? "All schemas valid." : "Schema validation failed.",
+    findings,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+function scriptNameFromLocalCommand(command: string): string | null {
+  const trimmed = command.trim();
+  const runMatch = /^(?:bun|npm|pnpm|yarn)\s+run\s+([^\s]+)$/.exec(trimmed);
+  if (runMatch) return runMatch[1];
+  const pnpmOrYarnMatch = /^(?:pnpm|yarn)\s+([^\s]+)$/.exec(trimmed);
+  if (pnpmOrYarnMatch) return pnpmOrYarnMatch[1];
+  return null;
+}
+
+async function checkCiLocalWiring(
+  paths: HarnessStageRunnerContext["paths"],
+  cwd: string,
+  sessionId: string,
+): Promise<CheckResult> {
+  const startedAt = Date.now();
+  const findings: HarnessValidateFinding[] = [];
+  const spec = loadHarnessDesignSpecJson(paths, cwd, sessionId);
+  if (!spec.ok) {
+    return {
+      name: "ci-local-wiring",
+      passed: true,
+      summary: "Skipped: no design-spec.json available for CI wiring validation.",
+      findings,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  if (!spec.value.ci) {
+    return {
+      name: "ci-local-wiring",
+      passed: false,
+      summary: "design-spec.json does not contain CI/local wiring configuration.",
+      findings: [{
+        severity: "error",
+        file: "design-spec.json",
+        message: "Design spec is missing ci configuration.",
+        remediation: "Re-run /supi:harness design so CI trigger and local quality command are recorded.",
+        source: "ci-local-wiring",
+      }],
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+
+  const scriptName = scriptNameFromLocalCommand(spec.value.ci.localCommand);
+  const packageJsonPath = path.join(cwd, "package.json");
+  if (scriptName) {
+    if (!fs.existsSync(packageJsonPath)) {
+      findings.push({
+        severity: "error",
+        file: "package.json",
+        message: `Local quality command ${spec.value.ci.localCommand} requires package.json, but package.json is missing.`,
+        remediation: `Create package.json with a scripts.${scriptName} entry or choose a non-package local command.`,
+        source: "ci-local-wiring",
+      });
+    } else {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as { scripts?: Record<string, unknown> };
+        if (typeof parsed.scripts?.[scriptName] !== "string") {
+          findings.push({
+            severity: "error",
+            file: "package.json",
+            message: `package.json does not define scripts.${scriptName} for ${spec.value.ci.localCommand}.`,
+            remediation: `Add scripts.${scriptName} and make it run the validation gates from design-spec.json.`,
+            source: "ci-local-wiring",
+          });
+        }
+      } catch (error) {
+        findings.push({
+          severity: "error",
+          file: "package.json",
+          message: `package.json is unreadable or invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+          remediation: "Fix package.json before validating CI/local quality wiring.",
+          source: "ci-local-wiring",
+        });
+      }
+    }
+  }
+
+  const workflowPath = path.join(cwd, spec.value.ci.workflowPath);
+  if (!fs.existsSync(workflowPath)) {
+    findings.push({
+      severity: "error",
+      file: spec.value.ci.workflowPath,
+      message: `CI workflow ${spec.value.ci.workflowPath} is missing.`,
+      remediation: `Create the workflow and have it run ${spec.value.ci.localCommand}.`,
+      source: "ci-local-wiring",
+    });
+  } else {
+    try {
+      const workflow = fs.readFileSync(workflowPath, "utf8");
+      if (!workflow.includes(spec.value.ci.localCommand)) {
+        findings.push({
+          severity: "error",
+          file: spec.value.ci.workflowPath,
+          message: `CI workflow does not invoke ${spec.value.ci.localCommand}.`,
+          remediation: "Call the local harness quality command from CI instead of duplicating gate commands inline.",
+          source: "ci-local-wiring",
+        });
+      }
+      if (spec.value.ci.trigger.mode === "branches") {
+        for (const branch of spec.value.ci.trigger.branches) {
+          if (!workflow.includes(branch)) {
+            findings.push({
+              severity: "error",
+              file: spec.value.ci.workflowPath,
+              message: `CI workflow does not mention configured PR target branch ${branch}.`,
+              remediation: `Add ${branch} to the pull_request.branches trigger or update the design spec.`,
+              source: "ci-local-wiring",
+            });
+          }
+        }
+      }
+    } catch (error) {
+      findings.push({
+        severity: "error",
+        file: spec.value.ci.workflowPath,
+        message: `CI workflow is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+        remediation: "Fix workflow file permissions or contents.",
+        source: "ci-local-wiring",
+      });
+    }
+  }
+
+  return {
+    name: "ci-local-wiring",
+    passed: !findings.some((finding) => finding.severity === "error"),
+    summary: findings.length === 0
+      ? "CI workflow invokes the local harness quality command."
+      : `${findings.length} CI/local wiring issue(s) detected.`,
     findings,
     durationMs: Date.now() - startedAt,
   };
@@ -363,6 +558,7 @@ export async function runValidate(
   checks.push(await checkCrossLinks(ctx.cwd));
   checks.push(await checkSchema(ctx.paths, ctx.cwd, ctx.sessionId));
   checks.push(await checkDiscoverDrift(ctx.paths, ctx.cwd, ctx.sessionId, recordedAt));
+  checks.push(await checkCiLocalWiring(ctx.paths, ctx.cwd, ctx.sessionId));
 
   const scanResult = await checkAntiSlopScan(ctx.platform, ctx.cwd, input);
   checks.push(scanResult.result);
@@ -410,7 +606,7 @@ export async function runValidate(
     sessionId: ctx.sessionId,
     recordedAt,
     passed,
-    checks,
+    checks: checks.map(attachCheckContract),
     slopScan: {
       backend: input.backend,
       duplicates: slopCounts.duplicates,

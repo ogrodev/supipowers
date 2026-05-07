@@ -13,17 +13,16 @@
  * The function returns a structured `BareEntryDecision` so the command handler routes
  * accordingly without baking the UI into the stage code.
  */
+import type { HarnessReRunMode } from "../types.js";
 
 import * as fs from "node:fs";
 
 import type { Platform, PlatformPaths } from "../platform/types.js";
-import type { HarnessReRunMode } from "../types.js";
 import { getHarnessMarkerPath } from "./project-paths.js";
 
 export type BareEntryDecision =
   | { kind: "fresh-install" }
   | { kind: "rerun"; mode: HarnessReRunMode };
-
 export interface MarkerData {
   installedAt: string;
   backend: string;
@@ -68,6 +67,7 @@ export async function resolveBareEntry(input: {
   });
   return { kind: "rerun", mode: choice ?? "cancel" };
 }
+
 
 /**
  * Write the marker after a successful install. The marker is committable subset; commit

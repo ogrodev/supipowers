@@ -104,6 +104,26 @@ export function buildHarnessPlanTasks(spec: HarnessDesignSpec): HarnessPlanTask[
     });
   }
 
+  tasks.push({
+    id: id++,
+    name: "Wire local harness quality command",
+    description: `Add a local quality command that runs every validation gate from the design spec. The canonical command must be \`${spec.ci.localCommand}\`.`,
+    files: ["package.json"],
+    criteria: `Running \`${spec.ci.localCommand}\` executes the configured validation gates and exits non-zero on the first failed required gate.`,
+    complexity: "small",
+  });
+
+  tasks.push({
+    id: id++,
+    name: "Wire CI harness quality workflow",
+    description: `Create ${spec.ci.workflowPath} for ${spec.ci.provider}. It must invoke \`${spec.ci.localCommand}\` instead of duplicating gate logic inline.`,
+    files: [spec.ci.workflowPath],
+    criteria: `Workflow exists, runs on ${
+      spec.ci.trigger.mode === "all-prs" ? "all pull requests" : `pull requests targeting ${spec.ci.trigger.branches.join(", ")}`
+    }, and calls \`${spec.ci.localCommand}\`.`,
+    complexity: "small",
+  });
+
   // Anti-slop conditional tasks
   if (spec.antiSlop.backend === "fallow" || spec.antiSlop.backend === "hybrid") {
     tasks.push({

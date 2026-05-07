@@ -20,6 +20,7 @@
 import * as fs from "node:fs";
 
 import type { Platform } from "../../platform/types.js";
+import { prependSystemPromptBlock } from "../../platform/system-prompt.js";
 import type { HarnessHookConfig, HarnessLayerRule } from "../../types.js";
 import {
   buildLayerAddendum,
@@ -119,7 +120,7 @@ export function registerLayerContextInjectHook(
   }
 
   let unregistered = false;
-  const handler = (event: unknown, ctx: unknown): { systemPrompt: string } | undefined => {
+  const handler = (event: unknown, ctx: unknown): { systemPrompt: string[] } | undefined => {
     if (unregistered) return undefined;
     const cwd = (ctx as { cwd?: string } | undefined)?.cwd ?? process.cwd();
     if (!fs.existsSync(getHarnessMarkerPath(platform.paths, cwd))) return undefined;
@@ -133,8 +134,12 @@ export function registerLayerContextInjectHook(
     });
     if (result.addendum.length === 0) return undefined;
 
-    const basePrompt = (event as { systemPrompt?: string } | undefined)?.systemPrompt ?? "";
-    return { systemPrompt: `${result.addendum}\n\n${basePrompt}` };
+    return {
+      systemPrompt: prependSystemPromptBlock(
+        (event as { systemPrompt?: unknown } | undefined)?.systemPrompt,
+        result.addendum,
+      ),
+    };
   };
 
   platform.on("before_agent_start", handler);

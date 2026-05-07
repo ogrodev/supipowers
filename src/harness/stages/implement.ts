@@ -101,7 +101,7 @@ export class HarnessImplementStage implements HarnessStageRunner {
     const errors = preflightImplement({
       cwd: ctx.cwd,
       planPath: this.input.planPath,
-      allowDirtyTree: ctx.gateMode === "auto",
+      allowDirtyTree: ctx.gateMode !== "manual",
     });
     if (errors.length > 0) {
       return {

@@ -25,10 +25,106 @@ import {
   saveHarnessDesignSpecJson,
 } from "../storage.js";
 import type {
+  HarnessCiConfig,
   HarnessDesignSpec,
   HarnessDiscoverArtifact,
+  HarnessQualityGate,
 } from "../../types.js";
 import { DEFAULT_HARNESS_HOOK_CONFIG } from "../hooks/register.js";
+
+function mdCell(value: string | null): string {
+  return (value ?? "—").replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function hasText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function packageCommand(discover: HarnessDiscoverArtifact, script: string): string {
+  if (discover.packageManagers.includes("bun")) return `bun run ${script}`;
+  if (discover.packageManagers.includes("pnpm")) return `pnpm ${script}`;
+  if (discover.packageManagers.includes("yarn")) return `yarn ${script}`;
+  return `npm run ${script}`;
+}
+
+export function defaultCiConfigFromDiscover(discover: HarnessDiscoverArtifact): HarnessCiConfig {
+  const manager = discover.packageManagers[0];
+  const localCommand = manager === "pnpm"
+    ? "pnpm harness:quality"
+    : manager === "yarn"
+      ? "yarn harness:quality"
+      : manager === "npm"
+        ? "npm run harness:quality"
+        : "bun run harness:quality";
+  return {
+    provider: "github-actions",
+    trigger: { mode: "branches", branches: ["dev", "main"] },
+    localCommand,
+    workflowPath: ".github/workflows/harness-quality.yml",
+  };
+}
+
+
+export function defaultValidationGatesFromDiscover(discover: HarnessDiscoverArtifact): HarnessQualityGate[] {
+  const gates: HarnessQualityGate[] = [];
+  const lintTool = discover.lintTools[0];
+  if (lintTool) {
+    gates.push({
+      name: "lint",
+      invariant: "Source code should satisfy the repository's configured mechanical style and static lint rules before review.",
+      command: packageCommand(discover, "lint"),
+      proves: `${lintTool} accepts the files covered by the configured lint target.`,
+      doesNotProve: "Runtime behavior, type soundness, accessibility, and architecture boundaries are outside this proof.",
+      runsAt: "local command and CI when wired",
+      blocksOn: "non-zero exit code from the configured lint command",
+      artifact: "terminal output or CI log",
+      failSafe: "If no lint script exists, the design must either add one or remove this gate explicitly.",
+    });
+  }
+
+  if (discover.languages.some((lang) => lang === "typescript" || lang === "tsx" || lang === "javascript")) {
+    gates.push({
+      name: "typecheck",
+      invariant: "Compile-time contracts must stay coherent before generated harness artifacts claim the repo is safe to edit.",
+      command: packageCommand(discover, "typecheck"),
+      proves: "The configured type checker accepts the current source and declaration graph.",
+      doesNotProve: "Runtime data shapes, third-party responses, and user workflows are not executed.",
+      runsAt: "local command and CI when wired",
+      blocksOn: "non-zero exit code from the typecheck command",
+      artifact: "terminal output or CI log",
+      failSafe: "If the command is unavailable, the gate fails until the design names the repository's actual type proof.",
+    });
+  }
+
+  const testTool = discover.testTools[0];
+  if (testTool) {
+    gates.push({
+      name: "test",
+      invariant: "Implemented behavior should keep the repository's focused unit and integration checks passing.",
+      command: packageCommand(discover, "test"),
+      proves: `${testTool} passes for the tests selected by the repository's test script.`,
+      doesNotProve: "Untested workflows, production integrations, and visual/accessibility regressions remain possible.",
+      runsAt: "local command and CI when wired",
+      blocksOn: "non-zero exit code from the test command",
+      artifact: "terminal output or CI log",
+      failSafe: "If deterministic test dependencies are missing, add fixtures or documented test-safe fallbacks before accepting the gate.",
+    });
+  }
+
+  gates.push({
+    name: "anti-slop-scan",
+    invariant: "New harness work must not introduce unresolved duplicate, dead-code, or architecture-drift findings without queue visibility.",
+    command: null,
+    proves: `${discover.recommendedBackend} scan results were merged into the harness slop queue and scorecard.`,
+    doesNotProve: "Semantic correctness, product behavior, and findings hidden from the selected backend are outside this proof.",
+    runsAt: "/supi:harness validate and optional /supi:checks wiring",
+    blocksOn: "adapter error, strict score floor failure, or release-blocking score-floor policy when enabled",
+    artifact: "validate-report.json, queue.jsonl, score.json",
+    failSafe: "Missing optional external backends soft-fail with a warning; configured adapter errors block validation.",
+  });
+
+  return gates;
+}
 
 /**
  * Render a HarnessDesignSpec into the markdown that lands at `<session>/design-spec.md`.
@@ -85,15 +181,33 @@ export function renderDesignSpec(spec: HarnessDesignSpec): string {
   lines.push("");
   lines.push("## 6. Validation gates");
   lines.push("");
-  for (const gate of spec.validationGates) lines.push(`- ${gate}`);
-  if (spec.validationGates.length === 0) lines.push("_None recorded._");
+  if (spec.validationGates.length === 0) {
+    lines.push("_None recorded._");
+  } else {
+    lines.push("| Gate | Invariant | Command | Proves | Does not prove | Runs at | Blocks on | Artifact | Fail-safe |");
+    lines.push("|---|---|---|---|---|---|---|---|---|");
+    for (const gate of spec.validationGates) {
+      lines.push(
+        `| ${mdCell(gate.name)} | ${mdCell(gate.invariant)} | ${mdCell(gate.command)} | ${mdCell(gate.proves)} | ${mdCell(gate.doesNotProve)} | ${mdCell(gate.runsAt)} | ${mdCell(gate.blocksOn)} | ${mdCell(gate.artifact)} | ${mdCell(gate.failSafe)} |`,
+      );
+    }
+  }
   lines.push("");
-  lines.push("## 7. Supipowers wiring");
+  lines.push("## 7. CI and local quality command");
+  lines.push("");
+  lines.push(`- Provider: ${spec.ci.provider}`);
+  lines.push(`- PR trigger: ${
+    spec.ci.trigger.mode === "all-prs" ? "all PRs" : `PRs targeting ${spec.ci.trigger.branches.join(", ")}`
+  }`);
+  lines.push(`- Local command: \`${spec.ci.localCommand}\``);
+  lines.push(`- Workflow path: \`${spec.ci.workflowPath}\``);
+  lines.push("");
+  lines.push("## 8. Supipowers wiring");
   lines.push("");
   lines.push(`- Add review agent (\`harness-architecture\`): ${spec.supipowersWiring.addReviewAgent ? "yes" : "no"}`);
   lines.push(`- Wire into \`/supi:checks\` as a gate: ${spec.supipowersWiring.wireChecksGate ? "yes" : "no"}`);
   lines.push("");
-  lines.push("## 8. Anti-slop guardrails");
+  lines.push("## 9. Anti-slop guardrails");
   lines.push("");
   lines.push(`- Backend: \`${spec.antiSlop.backend}\``);
   lines.push(`- Pre-edit dupe probe: ${spec.antiSlop.hooks.pre_edit_dupe_probe.enabled ? "enabled" : "disabled"}`);
@@ -132,6 +246,27 @@ export function validateDesignSpec(spec: HarnessDesignSpec): string[] {
   if (spec.antiSlop.hooks.layer_context_inject.addendum_max_chars < 0) {
     errors.push("layer_context_inject.addendum_max_chars must be ≥0");
   }
+  for (const [index, gate] of spec.validationGates.entries()) {
+    const prefix = `validationGates[${index}]`;
+    for (const field of ["name", "invariant", "proves", "doesNotProve", "runsAt", "blocksOn", "artifact", "failSafe"] as const) {
+      if (!hasText(gate[field])) errors.push(`${prefix}.${field} must be non-empty`);
+    }
+    if (gate.command !== null && !hasText(gate.command)) {
+      errors.push(`${prefix}.command must be non-empty or null`);
+    }
+  }
+  if (spec.ci.provider !== "github-actions") {
+    errors.push("ci.provider must be github-actions");
+  }
+  if (!hasText(spec.ci.localCommand)) {
+    errors.push("ci.localCommand must be non-empty");
+  }
+  if (!hasText(spec.ci.workflowPath)) {
+    errors.push("ci.workflowPath must be non-empty");
+  }
+  if (spec.ci.trigger.mode === "branches" && spec.ci.trigger.branches.filter((b) => b.trim().length > 0).length === 0) {
+    errors.push("ci.trigger.branches must contain at least one branch when mode is branches");
+  }
   return errors;
 }
 
@@ -163,7 +298,8 @@ export function defaultDesignSpecFromDiscover(
     },
     goldenPrinciples: [],
     docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
-    validationGates: ["typecheck", "test"],
+    validationGates: defaultValidationGatesFromDiscover(discover),
+    ci: defaultCiConfigFromDiscover(discover),
     supipowersWiring: { addReviewAgent: true, wireChecksGate: false },
     antiSlop: {
       backend: discover.recommendedBackend,
