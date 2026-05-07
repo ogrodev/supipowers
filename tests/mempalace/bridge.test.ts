@@ -444,7 +444,7 @@ print(f"mempalace shim ran: {' '.join(sys.argv[1:])}")
         ["init", { dir: ".", yes: true }, ["init", ".", "--yes"]],
         ["mine", { dir: "src", limit: 5, include_ignored: true }, ["mine", "src", "--limit", "5", "--include-ignored"]],
         ["split", { source_file: "transcript.md", mode: "conversation" }, ["split", "transcript.md", "--mode", "conversation"]],
-        ["repair", { dir: ".", dry_run: true }, ["repair", ".", "--dry-run"]],
+        ["repair", { yes: true, dry_run: true }, ["repair", "--yes", "--dry-run"]],
       ] as const;
       for (const [action, params, expectedArgv] of requests) {
         const result = await runBridgeRequest({

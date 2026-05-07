@@ -1,10 +1,31 @@
 import { describe, expect, mock, test } from "bun:test";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
-import { registerMempalaceTool } from "../../src/mempalace/tool.js";
+import { registerMempalaceTool, type MempalaceToolDeps } from "../../src/mempalace/tool.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
+import type { MempalaceInstallSnapshot } from "../../src/mempalace/installer-helper.js";
 
 function createPlatformWithTool() {
   return createMockPlatform({ registerTool: mock() as any });
+}
+
+function readyInstallSnapshot(): MempalaceInstallSnapshot {
+  return {
+    enabled: true,
+    packageVersion: "test",
+    managedBinDir: "/tmp/bin",
+    uvPath: "/tmp/bin/uv",
+    uvInstalled: true,
+    venvPath: "/tmp/venv",
+    venvPython: "/tmp/venv/bin/python",
+    venvInstalled: true,
+    bridgeOk: true,
+    bridgePath: "/tmp/bridge.py",
+    ready: true,
+  };
+}
+
+function withReadyInstall(deps: Omit<MempalaceToolDeps, "snapshotInstall"> = {}): MempalaceToolDeps {
+  return { ...deps, snapshotInstall: () => readyInstallSnapshot() };
 }
 
 
@@ -12,21 +33,22 @@ describe("registerMempalaceTool", () => {
   test("registers exactly one native mempalace tool with schema and description", () => {
     const platform = createPlatformWithTool();
 
-    registerMempalaceTool(platform, DEFAULT_CONFIG);
+    registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall());
 
     expect(platform.registerTool).toHaveBeenCalledTimes(1);
     const definition = (platform.registerTool as any).mock.calls[0][0];
     expect(definition.name).toBe("mempalace");
     expect(definition.parameters.properties.action.enum).toContain("search");
-    expect(definition.description).toContain("one native MemPalace action");
+    expect(definition.description).toContain("MemPalace memory dispatcher");
+    expect(definition.description).toContain("**MUST** call `search`");
   });
 
   test("validates params before dispatch", async () => {
     const platform = createPlatformWithTool();
     const executeBridge = mock(async () => ({ ok: true, action: "search", result: {}, diagnostics: {} }));
-    registerMempalaceTool(platform, DEFAULT_CONFIG, {
+    registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall({
       createBridge: () => ({ execute: executeBridge as any }),
-    });
+    }));
     const definition = (platform.registerTool as any).mock.calls[0][0];
 
     const result = await definition.execute("tool-call", { action: "search" }, new AbortController().signal, undefined, { cwd: process.cwd() });
@@ -44,9 +66,9 @@ describe("registerMempalaceTool", () => {
       result: { ready: true, palacePath: "/tmp/palace", wings: ["supipowers"] },
       diagnostics: { durationMs: 5 },
     }));
-    registerMempalaceTool(platform, DEFAULT_CONFIG, {
+    registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall({
       createBridge: () => ({ execute: executeBridge as any }),
-    });
+    }));
     const definition = (platform.registerTool as any).mock.calls[0][0];
 
     const result = await definition.execute("tool-call", { action: "status" }, new AbortController().signal, undefined, { cwd: process.cwd() });
@@ -58,7 +80,7 @@ describe("registerMempalaceTool", () => {
 
   test("formats bridge errors with structured details", async () => {
     const platform = createPlatformWithTool();
-    registerMempalaceTool(platform, DEFAULT_CONFIG, {
+    registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall({
       createBridge: () => ({
         execute: async () => ({
           ok: false,
@@ -67,7 +89,7 @@ describe("registerMempalaceTool", () => {
           diagnostics: { durationMs: 3 },
         }),
       }),
-    });
+    }));
     const definition = (platform.registerTool as any).mock.calls[0][0];
 
     const result = await definition.execute("tool-call", { action: "search", query: "x" }, new AbortController().signal, undefined, { cwd: process.cwd() });
@@ -80,13 +102,13 @@ describe("registerMempalaceTool", () => {
   test("runs setup with progress updates and structured details", async () => {
     const platform = createPlatformWithTool();
     const updates: unknown[] = [];
-    registerMempalaceTool(platform, DEFAULT_CONFIG, {
+    registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall({
       resolveBridgeScriptPath: () => ({ ok: true, path: "/bridge.py" }),
       setupRuntime: async (_options) => {
         _options.onProgress?.("Installing mempalace==3.3.4 from PyPI");
         return { ok: true, details: { packageVersion: "3.3.4", venvPath: "/venv" } } as any;
       },
-    });
+    }));
     const definition = (platform.registerTool as any).mock.calls[0][0];
 
     const result = await definition.execute("tool-call", { action: "setup" }, new AbortController().signal, (update: unknown) => updates.push(update), { cwd: process.cwd() });
@@ -100,13 +122,13 @@ describe("registerMempalaceTool", () => {
 
   test("returns a valid tool result when the bridge throws unexpectedly", async () => {
     const platform = createPlatformWithTool();
-    registerMempalaceTool(platform, DEFAULT_CONFIG, {
+    registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall({
       createBridge: () => ({
         execute: async () => {
           throw new Error("synthetic bridge crash");
         },
       }),
-    });
+    }));
     const definition = (platform.registerTool as any).mock.calls[0][0];
 
     const result = await definition.execute("tool-call", { action: "status" }, new AbortController().signal, undefined, { cwd: process.cwd() });
@@ -120,7 +142,7 @@ describe("registerMempalaceTool", () => {
 
   test("surfaces bridge stderr/stdout in error text so users can debug bridge_protocol_error", async () => {
     const platform = createPlatformWithTool();
-    registerMempalaceTool(platform, DEFAULT_CONFIG, {
+    registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall({
       createBridge: () => ({
         execute: async () => ({
           ok: false,
@@ -132,7 +154,7 @@ describe("registerMempalaceTool", () => {
           },
         }),
       }),
-    });
+    }));
     const definition = (platform.registerTool as any).mock.calls[0][0];
 
     const result = await definition.execute("tool-call", { action: "status" }, new AbortController().signal, undefined, { cwd: process.cwd() });
@@ -142,5 +164,51 @@ describe("registerMempalaceTool", () => {
     expect(result.content[0].text).toContain("ImportError: numpy.core.multiarray failed to import");
     expect(result.content[0].text).toContain("Bridge stdout (preview):");
     expect(result.content[0].text).toContain("chromadb telemetry banner");
+  });
+
+  test("does not register when mempalace.enabled is false (no install probe)", () => {
+    const platform = createPlatformWithTool();
+    const probe = mock(() => readyInstallSnapshot());
+    const config = { ...DEFAULT_CONFIG, mempalace: { ...DEFAULT_CONFIG.mempalace, enabled: false } };
+
+    registerMempalaceTool(platform, config, { snapshotInstall: probe });
+
+    expect(platform.registerTool).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  test("does not register when install snapshot reports not ready", () => {
+    const platform = createPlatformWithTool();
+    const notReady: MempalaceInstallSnapshot = {
+      ...readyInstallSnapshot(),
+      uvInstalled: false,
+      ready: false,
+    };
+
+    registerMempalaceTool(platform, DEFAULT_CONFIG, { snapshotInstall: () => notReady });
+
+    expect(platform.registerTool).not.toHaveBeenCalled();
+  });
+
+  test("does not register when the install probe throws", () => {
+    const platform = createPlatformWithTool();
+    (platform as any).logger = { warn: mock(), error: mock(), debug: mock() };
+
+    registerMempalaceTool(platform, DEFAULT_CONFIG, {
+      snapshotInstall: () => { throw new Error("fs unavailable"); },
+    });
+
+    expect(platform.registerTool).not.toHaveBeenCalled();
+    expect((platform as any).logger.warn).toHaveBeenCalled();
+  });
+
+  test("registers when install snapshot reports ready", () => {
+    const platform = createPlatformWithTool();
+    const probe = mock(() => readyInstallSnapshot());
+
+    registerMempalaceTool(platform, DEFAULT_CONFIG, { snapshotInstall: probe });
+
+    expect(platform.registerTool).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 });

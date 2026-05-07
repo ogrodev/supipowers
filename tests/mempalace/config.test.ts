@@ -26,6 +26,7 @@ describe("mempalace config defaults", () => {
       hooks: {
         wakeUp: true,
         searchGuidance: true,
+        autoSearchOnPrompt: true,
         compactionCheckpoint: true,
         shutdownDiary: true,
       },
@@ -34,6 +35,8 @@ describe("mempalace config defaults", () => {
         searchResultChars: 12000,
         listResultChars: 12000,
         diaryChars: 8000,
+        autoSearchTokens: 150,
+        wakeUpInjectionEvery: 10,
       },
       timeouts: {
         setupMs: 120000,

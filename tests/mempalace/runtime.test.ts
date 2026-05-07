@@ -216,7 +216,19 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
     fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
 
-    const config = resolveMempalaceConfig(DEFAULT_CONFIG, cwd, createPaths(".omp"));
+    const baseConfig = {
+      ...DEFAULT_CONFIG,
+      mempalace: {
+        ...DEFAULT_CONFIG.mempalace,
+        // Override defaults so this test never touches the developer's real
+        // ~/.omp/supipowers/mempalace-venv. setupMempalaceRuntime() rmSync's
+        // managedVenvPath directly (bypasses the mocked runner) and would
+        // wipe the live venv on every test run.
+        managedVenvPath: path.join(cwd, "venv"),
+        palacePath: path.join(cwd, "palace"),
+      },
+    };
+    const config = resolveMempalaceConfig(baseConfig, cwd, createPaths(".omp"));
     const calls: Array<{ command: string; args: string[]; input?: string }> = [];
     const progress: string[] = [];
 
@@ -273,7 +285,15 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
     fs.chmodSync(uvPath, 0o755);
     fs.writeFileSync(path.join(binDir, "uv.version"), "0.5.30\n");
 
-    const config = resolveMempalaceConfig(DEFAULT_CONFIG, cwd, createPaths(".omp"));
+    const baseConfig = {
+      ...DEFAULT_CONFIG,
+      mempalace: {
+        ...DEFAULT_CONFIG.mempalace,
+        managedVenvPath: path.join(cwd, "venv"),
+        palacePath: path.join(cwd, "palace"),
+      },
+    };
+    const config = resolveMempalaceConfig(baseConfig, cwd, createPaths(".omp"));
 
     try {
       const result = await setupMempalaceRuntime({
