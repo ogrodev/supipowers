@@ -144,6 +144,7 @@ export const ConfigSchema = Type.Object(
           {
             wakeUp: Type.Boolean(),
             searchGuidance: Type.Boolean(),
+            autoSearchOnPrompt: Type.Boolean(),
             compactionCheckpoint: Type.Boolean(),
             shutdownDiary: Type.Boolean(),
           },
@@ -155,6 +156,8 @@ export const ConfigSchema = Type.Object(
             searchResultChars: Type.Integer({ minimum: 1 }),
             listResultChars: Type.Integer({ minimum: 1 }),
             diaryChars: Type.Integer({ minimum: 1 }),
+            autoSearchTokens: Type.Integer({ minimum: 1 }),
+            wakeUpInjectionEvery: Type.Integer({ minimum: 1 }),
           },
           { additionalProperties: false },
         ),

@@ -76,6 +76,7 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     hooks: {
       wakeUp: true,
       searchGuidance: true,
+      autoSearchOnPrompt: true,
       compactionCheckpoint: true,
       shutdownDiary: true,
     },
@@ -84,6 +85,8 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
       searchResultChars: 12000,
       listResultChars: 12000,
       diaryChars: 8000,
+      autoSearchTokens: 150,
+      wakeUpInjectionEvery: 10,
     },
     timeouts: {
       setupMs: 120000,
