@@ -35,7 +35,13 @@ function makeSpec(overrides: Partial<HarnessDesignSpec> = {}): HarnessDesignSpec
     tooling: { lint: "eslint", structuralTest: null, eval: null },
     goldenPrinciples: ["No emojis"],
     docsTree: ["docs/architecture.md"],
-    validationGates: ["typecheck"],
+    validationGates: [],
+    ci: {
+      provider: "github-actions",
+      trigger: { mode: "branches", branches: ["dev", "main"] },
+      localCommand: "bun run harness:quality",
+      workflowPath: ".github/workflows/harness-quality.yml",
+    },
     supipowersWiring: { addReviewAgent: true, wireChecksGate: true },
     antiSlop: {
       backend: "fallow",
@@ -62,6 +68,21 @@ describe("buildHarnessPlanTasks", () => {
     expect(names).toContain("Register anti-slop hooks");
     expect(names).toContain("Add architecture-aware review agent");
     expect(names).toContain("Wire `/supi:checks` gate");
+  });
+
+  test("emits local and CI wiring tasks from CI config", () => {
+    const tasks = buildHarnessPlanTasks(makeSpec({
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev", "main"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+      },
+    } as Partial<HarnessDesignSpec>));
+    const names = tasks.map((t) => t.name);
+    expect(names).toContain("Wire local harness quality command");
+    expect(names).toContain("Wire CI harness quality workflow");
+    expect(tasks.find((t) => t.name === "Wire CI harness quality workflow")?.criteria).toContain("dev, main");
   });
 
   test("hybrid backend emits both fallow and desloppify tasks", () => {

@@ -11,7 +11,6 @@ import {
   writeMarker,
 } from "../../src/harness/bare-entry.js";
 import { createTestPaths, createTestRepo } from "../ultraplan/fixtures.js";
-
 let tmpDir: string;
 let cwd: string;
 let paths: ReturnType<typeof createTestPaths>;
@@ -92,3 +91,4 @@ describe("resolveBareEntry", () => {
     if (decision.kind === "rerun") expect(decision.mode).toBe("rebuild");
   });
 });
+

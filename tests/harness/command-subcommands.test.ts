@@ -97,7 +97,13 @@ function makeSpec(sessionId: string): HarnessDesignSpec {
     tooling: { lint: null, structuralTest: null, eval: null },
     goldenPrinciples: [],
     docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
-    validationGates: ["typecheck", "test"],
+    validationGates: [],
+    ci: {
+      provider: "github-actions",
+      trigger: { mode: "branches", branches: ["dev", "main"] },
+      localCommand: "bun run harness:quality",
+      workflowPath: ".github/workflows/harness-quality.yml",
+    },
     supipowersWiring: { addReviewAgent: true, wireChecksGate: false },
     antiSlop: {
       backend: "fallow",
@@ -210,8 +216,7 @@ describe("handleStageCommand — discover", () => {
     expect(driver).toHaveBeenCalledTimes(1);
     const call = (driver.mock.calls[0] as unknown as [Parameters<typeof runHarnessPipelineUntilGate>[0]])[0];
     expect(call.startStage).toBe("discover");
-    expect(call.gates).toBe("manual");
-    expect(call.stageInputs).toEqual({});
+    expect(call.gates).toBe("auto");
     expect(call.sessionId).toMatch(/^harness-/);
   });
 });

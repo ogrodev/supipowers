@@ -170,6 +170,72 @@ describe("runValidate", () => {
     expect(report.score.lenient).toBe(100);
     expect(report.score.strict).toBe(100);
   });
+
+  test("every validate check records its guarantee and blind spot", async () => {
+    writeArtifacts();
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    expect(report.checks.length).toBeGreaterThan(0);
+    for (const check of report.checks) {
+      expect(check.invariant).toBeTruthy();
+      expect(check.proves).toBeTruthy();
+      expect(check.doesNotProve).toBeTruthy();
+      expect(check.artifact).toBeTruthy();
+      expect(check.failSafe).toBeTruthy();
+    }
+  });
+
+  test("blocks when configured CI and local quality command are missing", async () => {
+    writeArtifacts();
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    const check = report.checks.find((c) => c.name === "ci-local-wiring");
+    expect(check?.passed).toBe(false);
+    expect(check?.findings.map((f) => f.file)).toContain("package.json");
+    expect(check?.findings.map((f) => f.file)).toContain(".github/workflows/harness-quality.yml");
+  });
 });
 
 describe("HarnessValidateStage", () => {

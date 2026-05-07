@@ -83,7 +83,7 @@ describe("defaultDesignSpecFromDiscover", () => {
     expect(spec.tooling.structuralTest).toBeNull();
   });
 
-  test("emits the canonical docs tree and validation gates", () => {
+  test("emits the canonical docs tree and validation gate guarantees", () => {
     const spec = defaultDesignSpecFromDiscover(
       makeDiscover(),
       "sess-5",
@@ -93,6 +93,8 @@ describe("defaultDesignSpecFromDiscover", () => {
       "docs/architecture.md",
       "docs/golden-principles.md",
     ]);
-    expect(spec.validationGates).toEqual(["typecheck", "test"]);
+    expect(spec.validationGates.map((gate) => gate.name)).toEqual(["lint", "typecheck", "test", "anti-slop-scan"]);
+    expect(spec.validationGates.every((gate) => gate.invariant && gate.proves && gate.doesNotProve)).toBe(true);
+    expect(spec.validationGates.find((gate) => gate.name === "typecheck")?.blocksOn).toContain("non-zero");
   });
 });

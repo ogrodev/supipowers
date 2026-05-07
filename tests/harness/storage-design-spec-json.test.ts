@@ -43,7 +43,13 @@ function makeSpec(): HarnessDesignSpec {
     tooling: { lint: "eslint", structuralTest: "fallow", eval: null },
     goldenPrinciples: ["No emojis"],
     docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
-    validationGates: ["typecheck", "test"],
+    validationGates: [],
+    ci: {
+      provider: "github-actions",
+      trigger: { mode: "branches", branches: ["dev", "main"] },
+      localCommand: "bun run harness:quality",
+      workflowPath: ".github/workflows/harness-quality.yml",
+    },
     supipowersWiring: { addReviewAgent: true, wireChecksGate: false },
     antiSlop: {
       backend: "fallow",

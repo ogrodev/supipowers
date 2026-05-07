@@ -65,6 +65,21 @@ function makeDiscover(): HarnessDiscoverArtifact {
   };
 }
 
+function makeGate(overrides: Partial<HarnessDesignSpec["validationGates"][number]> = {}): HarnessDesignSpec["validationGates"][number] {
+  return {
+    name: "typecheck",
+    invariant: "TypeScript contracts must compile before the harness claims the repo is safe to edit.",
+    command: "bun run typecheck",
+    proves: "The configured TypeScript program accepts the current source and declarations.",
+    doesNotProve: "Runtime data shapes, user workflows, and dependency behavior are not exercised.",
+    runsAt: "local command and CI",
+    blocksOn: "non-zero exit code",
+    artifact: "terminal output",
+    failSafe: "If the command is missing, the gate fails and the design must name a replacement proof.",
+    ...overrides,
+  };
+}
+
 function makeSpec(overrides: Partial<HarnessDesignSpec> = {}): HarnessDesignSpec {
   return {
     sessionId: SESSION_ID,
@@ -74,7 +89,13 @@ function makeSpec(overrides: Partial<HarnessDesignSpec> = {}): HarnessDesignSpec
     tooling: { lint: "eslint", structuralTest: null, eval: null },
     goldenPrinciples: ["No emojis in output", "Tests over docs"],
     docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
-    validationGates: ["typecheck", "test"],
+    validationGates: [makeGate()],
+    ci: {
+      provider: "github-actions",
+      trigger: { mode: "branches", branches: ["dev", "main"] },
+      localCommand: "bun run harness:quality",
+      workflowPath: ".github/workflows/harness-quality.yml",
+    },
     supipowersWiring: { addReviewAgent: true, wireChecksGate: false },
     antiSlop: {
       backend: "fallow",
@@ -103,7 +124,7 @@ function ctx(): HarnessStageRunnerContext {
 }
 
 describe("renderDesignSpec", () => {
-  test("emits all 8 sections", () => {
+  test("emits all 9 sections", () => {
     const md = renderDesignSpec(makeSpec());
     expect(md).toContain("## 1. Layered architecture");
     expect(md).toContain("## 2. Taste invariants");
@@ -111,15 +132,29 @@ describe("renderDesignSpec", () => {
     expect(md).toContain("## 4. Golden principles");
     expect(md).toContain("## 5. Documentation tree");
     expect(md).toContain("## 6. Validation gates");
-    expect(md).toContain("## 7. Supipowers wiring");
-    expect(md).toContain("## 8. Anti-slop guardrails");
+    expect(md).toContain("## 7. CI and local quality command");
+    expect(md).toContain("## 8. Supipowers wiring");
+    expect(md).toContain("## 9. Anti-slop guardrails");
   });
 
-  test("renders backend and hook config in section 8", () => {
+  test("renders backend and hook config in section 9", () => {
     const md = renderDesignSpec(makeSpec());
     expect(md).toContain("Backend: `fallow`");
     expect(md).toContain("Pre-edit dupe probe: enabled");
     expect(md).toContain("strict ≥75");
+  });
+
+  test("renders validation gates as named guarantees with blind spots", () => {
+    const md = renderDesignSpec(makeSpec());
+    expect(md).toContain("| Gate | Invariant | Command | Proves | Does not prove | Runs at | Blocks on | Artifact | Fail-safe |");
+    expect(md).toContain("TypeScript contracts must compile");
+    expect(md).toContain("Runtime data shapes");
+  });
+
+  test("renders CI and local quality command wiring", () => {
+    const md = renderDesignSpec(makeSpec());
+    expect(md).toContain("PRs targeting dev, main");
+    expect(md).toContain("`bun run harness:quality`");
   });
 });
 
@@ -138,6 +173,12 @@ describe("validateDesignSpec", () => {
     spec.antiSlop.hooks.pre_edit_dupe_probe.threshold = 1.5;
     const errors = validateDesignSpec(spec);
     expect(errors.find((e) => e.includes("threshold"))).toBeDefined();
+  });
+
+  test("rejects gates that do not name their blind spot", () => {
+    const badGate = makeGate({ doesNotProve: "" });
+    const errors = validateDesignSpec(makeSpec({ validationGates: [badGate] }));
+    expect(errors.find((e) => e.includes("doesNotProve"))).toBeDefined();
   });
 });
 
