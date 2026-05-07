@@ -48,6 +48,7 @@ export interface AgentSessionOptions {
   parentTaskPrefix?: string;
   model?: string;
   thinkingLevel?: string | null;
+  systemPrompt?: string[];
   agentId?: string;
   agentDisplayName?: string;
   [key: string]: unknown;

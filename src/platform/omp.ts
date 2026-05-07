@@ -6,6 +6,7 @@ import type {
   ExecResult,
 } from "./types.js";
 import { createPaths } from "./types.js";
+import { normalizeSystemPromptBlocks } from "./system-prompt.js";
 
 async function execWithEnv(cmd: string, args: string[], opts: ExecOptions): Promise<ExecResult> {
   const subprocess = Bun.spawn([cmd, ...args], {
@@ -107,14 +108,18 @@ export function createOmpAdapter(api: any): Platform {
       // Fix: extract `model` from opts and pass it as `modelPattern` (string field
       // that OMP resolves after extension models are registered).
       const { model, ...restOpts } = opts;
+      const sessionOpts = { ...restOpts };
+      if ("systemPrompt" in sessionOpts) {
+        sessionOpts.systemPrompt = normalizeSystemPromptBlocks(sessionOpts.systemPrompt);
+      }
       const { session } = await createAgentSession({
-        cwd: restOpts.cwd ?? process.cwd(),
+        cwd: sessionOpts.cwd ?? process.cwd(),
         hasUI: false,
         disableExtensionDiscovery: true,
         skills: [],
         promptTemplates: [],
         slashCommands: [],
-        ...restOpts,
+        ...sessionOpts,
         // Only pass modelPattern when we have an explicit model override.
         // When undefined, OMP uses its own default (user's configured model).
         ...(model ? { modelPattern: model } : {}),
