@@ -3,9 +3,12 @@ import { basename } from "node:path";
 import { getMetricsStore, getSessionId } from "../context-mode/hooks.js";
 import { getProjectStateDir } from "../workspace/state-paths.js";
 import type { Platform } from "../platform/types.js";
+import { normalizeSystemPromptBlocks, systemPromptText } from "../platform/system-prompt.js";
 import type { McpRegistry } from "../mcp/types.js";
 import type { SupipowersConfig } from "../types.js";
 import { planActiveTools } from "./active-tool-planner.js";
+import { detectContextMode } from "../context-mode/detector.js";
+import { getShadowedNativeTools } from "../context-mode/routing.js";
 
 export interface ActiveToolControllerDeps {
   loadMcpRegistryForCwd(cwd: string): McpRegistry;
@@ -14,12 +17,12 @@ export interface ActiveToolControllerDeps {
 
 type BeforeAgentStartEventLike = {
   prompt?: string;
-  systemPrompt?: string;
+  systemPrompt?: string | string[];
 };
 
 type BeforeAgentStartContextLike = {
   cwd?: string;
-  getSystemPrompt?: () => string;
+  getSystemPrompt?: () => unknown;
   getContextUsage?: () => {
     tokens?: number | null;
     contextWindow?: number | null;
@@ -70,7 +73,19 @@ export function registerActiveToolController(
       });
     } catch (error) {
       (platform as any).logger?.warn?.("supi-lazy-tools: active-tool planning failed", error);
-      return { systemPrompt: event.systemPrompt ?? "" };
+      return { systemPrompt: normalizeSystemPromptBlocks(event.systemPrompt) };
+    }
+
+    // Hide native tools fully shadowed by an active ctx_* replacement.
+    // Without this, the LLM sees Search/Find/Fetch in the tool catalog and
+    // routinely tries them, only to receive routing-block errors. Filtering
+    // here removes them from the system prompt that OMP rebuilds below.
+    if (config.contextMode.enforceRouting) {
+      const status = detectContextMode(plan.activeTools);
+      const shadowed = new Set(getShadowedNativeTools(status));
+      if (shadowed.size > 0) {
+        plan.activeTools = plan.activeTools.filter((tool) => !shadowed.has(tool));
+      }
     }
 
     if (plan.activeTools.length === 0 || arraysEqual(plan.activeTools, platform.getActiveTools())) {
@@ -81,20 +96,21 @@ export function registerActiveToolController(
       await platform.setActiveTools(plan.activeTools);
     } catch (error) {
       (platform as any).logger?.warn?.("supi-lazy-tools: setActiveTools failed", error);
-      return { systemPrompt: event.systemPrompt ?? "" };
+      return { systemPrompt: normalizeSystemPromptBlocks(event.systemPrompt) };
     }
 
     const rebuiltPrompt = ctx.getSystemPrompt();
+    const rebuiltPromptBlocks = normalizeSystemPromptBlocks(rebuiltPrompt);
     recordLazyToolsMetric({
       platform,
       cwd,
-      beforePrompt: event.systemPrompt ?? "",
-      afterPrompt: rebuiltPrompt,
+      beforePrompt: systemPromptText(event.systemPrompt),
+      afterPrompt: systemPromptText(rebuiltPrompt),
       activeTools: plan.activeTools,
       contextUsage: ctx.getContextUsage?.() ?? null,
     });
 
-    return { systemPrompt: rebuiltPrompt };
+    return { systemPrompt: rebuiltPromptBlocks };
   });
 }
 
