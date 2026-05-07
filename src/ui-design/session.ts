@@ -770,15 +770,9 @@ function getUiDesignWritePaths(toolName: string, input: Record<string, unknown>)
     case "write":
       return [typeof input.path === "string" ? input.path : ""];
     case "ast_edit": {
-      // OMP 14.6.0 renamed `path: string` (comma-delimited) → `paths: string[]`.
-      // Read the new shape first; fall back to the legacy field for one release
-      // so users mid-upgrade are not locked out of the ui-design guard.
-      // TODO(omp-14.7): drop legacy `input.path` fallback below.
       const arr = Array.isArray(input.paths)
         ? (input.paths as unknown[]).filter((p): p is string => typeof p === "string")
-        : typeof input.path === "string"
-          ? input.path.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
-          : [];
+        : [];
       return arr.length === 0 ? [""] : arr;
     }
     case "edit": {

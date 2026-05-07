@@ -1,4 +1,5 @@
 import type { Platform } from "../platform/types.js";
+import { systemPromptText } from "../platform/system-prompt.js";
 import type { UiDesignBackendId, UiDesignScope } from "./types.js";
 import { getActiveUiDesignSession, isUiDesignActive } from "./session.js";
 
@@ -289,7 +290,7 @@ export function setUiDesignPromptOptions(options: UiDesignSystemPromptOptions | 
 export function registerUiDesignSystemPromptHook(platform: Platform): void {
   platform.on("before_agent_start", (event: any, _ctx: any) => {
     if (!isUiDesignActive()) return;
-    const basePrompt = event?.systemPrompt as string | undefined;
+    const basePrompt = systemPromptText(event?.systemPrompt);
     if (!basePrompt || !activePromptOptions) {
       // No session prompt options captured — fall back to active session state
       const session = getActiveUiDesignSession();
@@ -304,8 +305,8 @@ export function registerUiDesignSystemPromptHook(platform: Platform): void {
         scope: session.scope,
         ...(session.penFilePath ? { penFilePath: session.penFilePath } : {}),
       };
-      return { systemPrompt: buildUiDesignSystemPrompt(basePrompt, fallback) };
+      return { systemPrompt: [buildUiDesignSystemPrompt(basePrompt, fallback)] };
     }
-    return { systemPrompt: buildUiDesignSystemPrompt(basePrompt, activePromptOptions) };
+    return { systemPrompt: [buildUiDesignSystemPrompt(basePrompt, activePromptOptions)] };
   });
 }
