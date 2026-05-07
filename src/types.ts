@@ -575,6 +575,7 @@ export interface MempalaceConfig {
   hooks: {
     wakeUp: boolean;
     searchGuidance: boolean;
+    autoSearchOnPrompt: boolean;
     compactionCheckpoint: boolean;
     shutdownDiary: boolean;
   };
@@ -583,6 +584,12 @@ export interface MempalaceConfig {
     searchResultChars: number;
     listResultChars: number;
     diaryChars: number;
+    autoSearchTokens: number;
+    /**
+     * Re-inject the full wake-up block every Nth turn. Other turns get a
+     * one-line refresher instead. `1` = always inject (legacy behavior).
+     */
+    wakeUpInjectionEvery: number;
   };
   timeouts: {
     setupMs: number;
@@ -1733,6 +1740,41 @@ export interface HarnessResearchFrontmatter {
   hasRecommendation: boolean;
 }
 
+/** Executable proof contract for a harness quality gate. */
+export interface HarnessQualityGate {
+  /** Stable gate name, e.g. "typecheck" or "anti-slop-scan". */
+  name: string;
+  /** Product or engineering rule protected by the gate. */
+  invariant: string;
+  /** Command or deterministic check to run; null when owned by the harness runtime. */
+  command: string | null;
+  /** Exact claim a passing gate allows. */
+  proves: string;
+  /** Known blind spot that remains after a pass. */
+  doesNotProve: string;
+  /** Where this proof runs: local command, CI, install, PR, schedule, etc. */
+  runsAt: string;
+  /** Blocking condition: exit code, severity threshold, diff attribution, etc. */
+  blocksOn: string;
+  /** Durable proof left behind: logs, JSON, SARIF, screenshots, traces, report, etc. */
+  artifact: string;
+  /** Missing config, network failure, retry, or fallback behavior. */
+  failSafe: string;
+}
+
+/** CI and local counterpart wiring chosen during harness design. */
+export interface HarnessCiConfig {
+  provider: "github-actions";
+  trigger:
+    | { mode: "all-prs" }
+    | { mode: "branches"; branches: string[] };
+  /** Local command CI must invoke, e.g. `bun run harness:quality`. */
+  localCommand: string;
+  /** CI workflow path relative to repo root. */
+  workflowPath: string;
+}
+
+
 /** Design spec artifact metadata (`<session>/design-spec.md` + decisions.jsonl). */
 export interface HarnessDesignSpec {
   sessionId: string;
@@ -1751,8 +1793,10 @@ export interface HarnessDesignSpec {
   goldenPrinciples: string[];
   /** Documentation tree shape (paths under docs/). */
   docsTree: string[];
-  /** Validation gates the harness should install. */
-  validationGates: string[];
+  /** Validation gates the harness should install, each with an explicit proof contract. */
+  validationGates: HarnessQualityGate[];
+  /** CI workflow plus local command that runs the validation gates. */
+  ci: HarnessCiConfig;
   /** supipowers wiring opted-in by the user. */
   supipowersWiring: {
     addReviewAgent: boolean;
@@ -1777,18 +1821,25 @@ export interface HarnessDecisionRecord {
 }
 
 /** Validate report (`<session>/validate-report.json`). */
+export interface HarnessValidateCheck {
+  name: string;
+  passed: boolean;
+  summary: string;
+  findings: HarnessValidateFinding[];
+  durationMs?: number;
+  invariant: string;
+  proves: string;
+  doesNotProve: string;
+  artifact: string;
+  failSafe: string;
+}
+
 export interface HarnessValidateReport {
   sessionId: string;
   recordedAt: string;
   passed: boolean;
   /** Sub-check results, one per sub-check name. */
-  checks: {
-    name: string;
-    passed: boolean;
-    summary: string;
-    findings: HarnessValidateFinding[];
-    durationMs?: number;
-  }[];
+  checks: HarnessValidateCheck[];
   /** Slop scan results merged from the selected backend. */
   slopScan: {
     backend: HarnessAntiSlopBackend;
