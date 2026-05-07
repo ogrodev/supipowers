@@ -1,4 +1,5 @@
 import type { Platform } from "../../platform/types.js";
+import { systemPromptText } from "../../platform/system-prompt.js";
 import type {
   UltraPlanCursor,
   UltraPlanHookEventName,
@@ -463,8 +464,8 @@ function extractMetadata(rawEvent: unknown, ctx: unknown): Record<string, unknow
 function extractPrompt(rawEvent: unknown, ctx: unknown): string | null {
   const rawPrompt = asRecord(rawEvent)?.prompt;
   if (typeof rawPrompt === "string") return rawPrompt;
-  const rawSystemPrompt = asRecord(rawEvent)?.systemPrompt;
-  if (typeof rawSystemPrompt === "string") return rawSystemPrompt;
+  const rawSystemPrompt = systemPromptText(asRecord(rawEvent)?.systemPrompt);
+  if (rawSystemPrompt.length > 0) return rawSystemPrompt;
   const ctxPrompt = asRecord(ctx)?.prompt;
   if (typeof ctxPrompt === "string") return ctxPrompt;
   return null;
