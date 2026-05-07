@@ -328,7 +328,7 @@ describe("config command settings", () => {
     expect(globalLsp.get()).toBe("off — overridden in global");
   });
 
-  test("runConfigMenu defaults to repository scope and hides workspace-specific choices in monorepos", async () => {
+  test("runConfigMenu edits repository config without a scope selector in monorepos", async () => {
     const workspaceDir = path.join(tmpDir, "packages", "pkg-a");
     writeJsonFile(path.join(tmpDir, "package.json"), {
       name: "repo-root",
@@ -357,18 +357,15 @@ describe("config command settings", () => {
 
     let settingsVisits = 0;
     let topLevelOptions: string[] = [];
-    let scopeOptions: string[] = [];
     const selectTitles: string[] = [];
     ctx.ui.select = mock(async (title: string, options: string[]) => {
       selectTitles.push(title);
       if (title === "Supipowers Settings") {
         settingsVisits += 1;
         topLevelOptions = [...options];
-        return settingsVisits === 1 ? options[0]! : "Done";
-      }
-      if (title === "Config scope") {
-        scopeOptions = [...options];
-        return options[1]!;
+        return settingsVisits === 1
+          ? options.find((option) => option.startsWith("LSP setup guide:"))!
+          : "Done";
       }
       return null;
     });
@@ -379,13 +376,11 @@ describe("config command settings", () => {
       setupGates: mock(),
     });
 
-    expect(topLevelOptions[0]).toContain("Config scope: monorepo repository");
-    expect(scopeOptions).toEqual([
-      "Global — ~/.omp/supipowers/config.json",
-      "Monorepo repository — .omp/supipowers/config.json",
-      "Cancel",
-    ]);
-    expect(selectTitles).not.toContain("Workspace config target");
+    expect(topLevelOptions.some((option) => option.startsWith("Config scope:"))).toBe(false);
+    expect(topLevelOptions.some((option) => option.includes("Global —"))).toBe(false);
+    expect(selectTitles).not.toContain("Config scope");
+    expect(readProjectConfig(localPaths, tmpDir)).toEqual({ lsp: { setupGuide: false } });
+    expect(fs.existsSync(localPaths.global("config.json"))).toBe(false);
     expect(fs.existsSync(workspaceConfigPath(localPaths, tmpDir, "packages/pkg-a"))).toBe(false);
   });
 

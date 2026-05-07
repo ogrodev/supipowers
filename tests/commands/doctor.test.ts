@@ -3,7 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createPaths, type Platform } from "../../src/platform/types.js";
-import { checkCapabilities, checkConfig, checkLazyTools, formatReliabilityReportLines } from "../../src/commands/doctor.js";
+import {
+  checkCapabilities,
+  checkConfig,
+  checkLazyTools,
+  formatReliabilityReportLines,
+  getDoctorRecommendations,
+} from "../../src/commands/doctor.js";
 import { appendReliabilityRecord } from "../../src/storage/reliability-metrics.js";
 
 function createTestPaths(rootDir: string): ReturnType<typeof createPaths> {
@@ -318,5 +324,32 @@ describe("checkMetrics \u2014 L1 doctor section", () => {
     expect(reachable!.presence.detail).toContain("Disabled");
     expect(reachable!.presence.detail).toContain("contextMode.enabled");
     expect(reachable!.presence.detail).not.toContain("/supi:context");
+  });
+});
+
+describe("getDoctorRecommendations", () => {
+  test("returns at least one tip", () => {
+    const tips = getDoctorRecommendations();
+    expect(tips.length).toBeGreaterThan(0);
+    for (const tip of tips) {
+      expect(typeof tip).toBe("string");
+      expect(tip.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("recommends tools.elideFileMutationInputs with the OMP version floor", () => {
+    const tips = getDoctorRecommendations();
+    const elide = tips.find((t) => t.includes("tools.elideFileMutationInputs"));
+    expect(elide).toBeDefined();
+    expect(elide!).toContain("14.7.0");
+    expect(elide!).toContain("true");
+  });
+
+  test("recommends OMP ≥14.7.2 for the spinner fix and references issue 927", () => {
+    const tips = getDoctorRecommendations();
+    const spinner = tips.find((t) => t.includes("Working"));
+    expect(spinner).toBeDefined();
+    expect(spinner!).toContain("14.7.2");
+    expect(spinner!).toContain("927");
   });
 });
