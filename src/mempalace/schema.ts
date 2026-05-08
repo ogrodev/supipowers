@@ -201,7 +201,11 @@ export const mempalaceToolParameters = {
     include_ignored: { type: "boolean" },
     no_gitignore: { type: "boolean" },
     yes: { type: "boolean" },
-    timeout: { type: "integer", minimum: 1 },
+    timeout: {
+      type: "integer",
+      minimum: 1,
+      description: "Optional bridge timeout in seconds; capped by the configured MemPalace bridge timeout.",
+    },
   },
   required: ["action"],
 } as const;

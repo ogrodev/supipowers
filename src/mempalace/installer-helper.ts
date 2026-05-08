@@ -176,8 +176,8 @@ export function steerMempalaceInitialization(
     "",
     "Please initialize and seed memory for this project by running these tool calls in order:",
     "",
-    `1. \`mempalace(action="init", dir=".", yes=true)\` — register this project's wing in the palace.`,
-    `2. \`mempalace(action="mine", dir=".", limit=20)\` — seed initial drawers from project files.`,
+    `1. \`mempalace(action="init", dir=".", yes=true, timeout=30)\` — register this project's wing in the palace.`,
+    `2. \`mempalace(action="mine", dir=".", limit=20, timeout=30)\` — seed initial drawers from project files.`,
     "",
     "Step 2 is recommended but optional; skip it if the user prefers an empty wing or is mid-task. After running, summarize what was indexed.",
   ].join("\n");

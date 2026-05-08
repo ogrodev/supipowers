@@ -54,6 +54,14 @@ function mergeDiagnostics(...parts: Array<Record<string, unknown> | undefined>):
   return Object.assign({}, ...parts.filter(Boolean));
 }
 
+function resolveToolTimeoutMs(params: MempalaceParams, bridgeTimeoutMs: number): number {
+  if (typeof params.timeout !== "number") return bridgeTimeoutMs;
+
+  // Public tool schemas express timeouts in seconds, matching the rest of the
+  // OMP tool surface. The bridge runner uses milliseconds internally.
+  return Math.min(params.timeout * 1000, bridgeTimeoutMs);
+}
+
 export function createMempalaceBridge(options: CreateMempalaceBridgeOptions): MempalaceBridgeFacade {
   const resolveBridge = options.runtime?.resolveBridgeScriptPath ?? (() => resolveBridgeScriptPath());
   const runBridge = options.runtime?.runBridgeRequest ?? runBridgeRequest;
@@ -71,9 +79,7 @@ export function createMempalaceBridge(options: CreateMempalaceBridgeOptions): Me
       }
 
       const venv = resolveManagedVenvPaths(options.config.managedVenvPath);
-      const timeoutMs = typeof params.timeout === "number"
-        ? Math.min(params.timeout, options.config.timeouts.bridgeMs)
-        : options.config.timeouts.bridgeMs;
+      const timeoutMs = resolveToolTimeoutMs(params, options.config.timeouts.bridgeMs);
       const palacePath = params.palace ?? options.config.palacePath;
       const runResult = await runBridge({
         pythonPath: venv.python,
