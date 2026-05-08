@@ -51,6 +51,10 @@ describe("mempalace action schema", () => {
     expect(mempalaceToolParameters.required).toEqual(["action"]);
   });
 
+  test("documents timeout values as seconds", () => {
+    expect(mempalaceToolParameters.properties.timeout.description).toContain("seconds");
+  });
+
   test("rejects unknown and missing actions", () => {
     expect(validateMempalaceParams({}).valid).toBe(false);
     const result = validateMempalaceParams({ action: "remember_everything" });

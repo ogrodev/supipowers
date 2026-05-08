@@ -532,6 +532,54 @@ describe("mempalace TypeScript bridge facade", () => {
     expect(result.diagnostics).toMatchObject({ mempalaceVersion: "3.3.4", stderr: "warning\n", durationMs: 42 });
   });
 
+  test("treats tool timeout values as seconds", async () => {
+    const calls: Array<{ timeoutMs: number }> = [];
+    const bridge = createMempalaceBridge({
+      cwd: process.cwd(),
+      config,
+      runtime: {
+        resolveBridgeScriptPath: () => ({ ok: true, path: "/bridge.py" }),
+        runBridgeRequest: async (options) => {
+          calls.push({ timeoutMs: options.timeoutMs });
+          return {
+            ok: true,
+            response: { ok: true, result: { ready: true } },
+            stderr: "",
+            durationMs: 1,
+          };
+        },
+      },
+    });
+
+    await bridge.execute({ action: "status", timeout: 10 });
+
+    expect(calls).toEqual([{ timeoutMs: 10_000 }]);
+  });
+
+  test("caps tool timeout at the configured bridge timeout", async () => {
+    const calls: Array<{ timeoutMs: number }> = [];
+    const bridge = createMempalaceBridge({
+      cwd: process.cwd(),
+      config,
+      runtime: {
+        resolveBridgeScriptPath: () => ({ ok: true, path: "/bridge.py" }),
+        runBridgeRequest: async (options) => {
+          calls.push({ timeoutMs: options.timeoutMs });
+          return {
+            ok: true,
+            response: { ok: true, result: { ready: true } },
+            stderr: "",
+            durationMs: 1,
+          };
+        },
+      },
+    });
+
+    await bridge.execute({ action: "status", timeout: 30000 });
+
+    expect(calls).toEqual([{ timeoutMs: config.timeouts.bridgeMs }]);
+  });
+
   test("normalizes MemPalace domain errors without throwing", async () => {
     const bridge = createMempalaceBridge({
       cwd: process.cwd(),

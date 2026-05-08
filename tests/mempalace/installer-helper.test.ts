@@ -241,6 +241,7 @@ describe("checkMempalaceProjectInitialized + steerMempalaceInitialization", () =
     expect(payload.content[0].text).toContain("supipowers");
     expect(payload.content[0].text).toContain("mempalace(action=\"init\"");
     expect(payload.content[0].text).toContain("mempalace(action=\"mine\"");
+    expect(payload.content[0].text).toContain("timeout=30");
     expect(opts.deliverAs).toBe("steer");
     expect(opts.triggerTurn).toBe(true);
   });
