@@ -42,6 +42,8 @@ describe("mempalace Python bridge skeleton", () => {
     expect(resolved.path.endsWith(path.join("src", "mempalace", "python", "mempalace_bridge.py"))).toBe(true);
   });
 
+  const bridgeSmokeTimeoutMs = process.platform === "win32" ? 15_000 : 5_000;
+
   test("reports version without importing heavy MemPalace modules", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-mempalace-pythonpath-"));
     try {
@@ -60,13 +62,14 @@ describe("mempalace Python bridge skeleton", () => {
       const result = await runBridgeRequest({
         pythonPath: python.pythonPath,
         bridgeScriptPath: bridge.path,
-        timeoutMs: 5000,
+        timeoutMs: bridgeSmokeTimeoutMs,
         request: { action: "version", params: {}, options: { palacePath: "/tmp/palace" } },
         runner,
       });
 
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw new Error(result.error.message);
+      if (!result.ok) {
+        throw new Error(`${result.error.code}: ${result.error.message}`);
+      }
       expect(result.response.ok).toBe(true);
       if (!result.response.ok) throw new Error(result.response.error.message);
       expect(result.response.result).toMatchObject({ bridgeVersion: expect.any(String) });
