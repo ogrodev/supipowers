@@ -1,269 +1,401 @@
-# OMP Changelog Audit — 14.6.3 → 14.7.2
+# OMP Changelog Audit — 14.7.2 → 14.9.3
 
 | Field | Value |
 |---|---|
-| OMP versions analyzed | 14.6.4, 14.6.6, 14.7.0, 14.7.1, 14.7.2 |
-| supipowers version | 1.5.3 |
-| Audit date | 2026-05-06 |
-| Prior audit baseline | 14.6.3 (`.omp/omp-audit-config.json`) |
+| OMP version range claimed | 14.7.2 → 14.9.3 |
+| OMP versions with changelog entries | 14.7.4, 14.7.5, 14.7.6, 14.7.8, 14.8.0, 14.9.0, 14.9.2, 14.9.3 |
+| supipowers version | 2.0.1 |
+| Audit date | 2026-05-10 |
+| Prior audit baseline | 14.7.2 (`.omp/omp-audit-config.json`) |
+| Changelog source | `https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/CHANGELOG.md` |
 
 ## Executive summary
 
-**Zero breaking impacts.** The headline change in this range — OMP 14.7.0's switch from `systemPrompt: string` (+ separate `projectPrompt`) to `systemPrompt: string[]` across `before_agent_start`/`getSystemPrompt`/`createAgentSession` — was already absorbed by supipowers ahead of the release: a dedicated `src/platform/system-prompt.ts` adapter (`normalizeSystemPromptBlocks`, `systemPromptText`, `appendSystemPromptBlock`, `prependSystemPromptBlock`) is consumed by every hook and the `createAgentSession` wrapper. The other two breaking entries (`BUILTIN_TOOL_METADATA` removal, `read` `sel` parameter removal) reference symbols supipowers never imports or emits.
+**Zero hard runtime breakages**, but the 14.9.3 system-prompt restructure (commit `f849407c` "added prompt markers to system prompt assembly") quietly degrades two diagnostic commands. The audit produced one priority-elevated cluster (**C2/C3**) and one cleanup (**C1**).
 
-Three sets of opportunities are worth picking up:
+| Area | Finding |
+|---|---|
+| **C1 (P3, XS)** | 14.7.4 removed the `notebook` tool. `src/ui-design/session.ts:787-788` carries a `case "notebook":` arm in the ui-design write-scope guard that is now unreachable — drop it. |
+| **C2 (P2, S)** | 14.9.3 wraps project context in `<\|START_PROJECT\|>...<\|END_PROJECT\|>` (and adds `<\|START_ENV\|>` / `<\|START_CONTRACT\|>` envelopes around environment and contract blocks). `parseSystemPrompt` (`src/context/analyzer.ts:222,233`) still matches only legacy `<project>` / `<instructions>` XML and now silently drops the project context label. Verified empirically: a 14.9.3-style prompt produces `[AGENTS.md, Memory, MCP instructions, Base system prompt]` instead of `[..., Project context]`. `/supi:context` and `/supi:optimize-context` show a less informative breakdown. |
+| **C3 (P2, S)** | `parseIndividualSkills` (`src/context/analyzer.ts:59-103`) is broken end-to-end against current OMP prompts: it scans for `## skill-name` headings under `# Skills`, but OMP renders skills as a bulleted list (`- skill-name: description`). Worse, on the same input it accidentally captures any later `## …` heading (e.g. `## MCP Server Instructions`) and reports it as a "skill" — verified empirically. This pre-dates 14.9.3 (the bullet format has been the OMP shape since at least 14.7.x), but the new wrappers make the breakage easier to notice. Fix as part of the same change as C2. |
 
-1. **C1 — Drop legacy 14.6.0 fallbacks.** Six `TODO(omp-14.7)` markers (3 source, 4 test) gate compatibility shims for the 14.6.0 `path`/`pattern` → `paths` rename. OMP 14.7.x is now baseline; the shims and their tests can be removed in lockstep.
-2. **O1 — `Working…` spinner fix lands automatically (#927).** Multiple supipowers commands (`/supi:status`, `/supi:doctor`, `/supi:clear`, `/supi:context`, `/supi:memory`, `/supi:config`, `/supi:model`, `/supi:agents`, etc.) return without starting a model turn. Under OMP ≥14.7.2 they no longer leave the spinner stuck. No code change needed; a one-line note in CHANGELOG.md / README is appropriate.
-3. **O2 — `pr_create` GitHub op for `/supi:release` and `/supi:fix-pr`.** Both currently shell out to `gh` via `platform.exec`. The new `pr_create` ExtensionAPI op gives a typed return (PR URL + summary) without subprocess parsing. Medium effort, medium win.
+Three transparent reliability wins land automatically for every `createAgentSession` call supipowers makes (35 callsites across nine subsystems):
 
-Smaller opportunities (`summary` field on registered tools, `buildDirectoryTree`/`buildWorkspaceTree` exports, `tools.elideFileMutationInputs`, `read.summarize.prose`) are recorded below at P3 but are not actionable now.
+1. **14.7.6 per-step system-prompt preparation timeout fallback** — a slow `buildAgentsMdSearch` / `buildWorkspaceTree` / `loadProjectContextFiles` step no longer collapses preparation to minimal defaults; only the failing step falls back.
+2. **14.7.8 startup hang fix (#975)** — `createAgentSession`'s blocking `Promise.all` previously bypassed the 5s preparation deadline. Now bounded; git worktrees additionally short-circuit through `git ls-files --cached --others --exclude-standard`.
+3. **14.9.2 single `listWorkspace` walk** — startup workspace discovery now performs one native walk for both the rendered tree and AGENTS.md discovery, replacing the prior layered `git ls-files` orchestration plus a secondary AGENTS.md glob. AGENTS.md files that are explicitly gitignored are now included while still excluding files under ignored directories.
+
+Verified non-impacting breaking changes:
+
+- **14.9.0** moved hashline APIs to `@oh-my-pi/pi-coding-agent/hashline` and removed `edit/modes/hashline` / `edit/line-hash` source subpaths — supipowers imports none of these (`grep -rn 'edit/modes/hashline\|edit/line-hash\|hashline\|line-hash' src/ tests/` → no matches).
+- **14.9.0** removed hashline auto-rebase — agent-tool behavior only.
+- **14.9.3** removed the `===== ` eval-cell input format — supipowers does not synthesize eval inputs (`grep -rn '\*\*\* Begin\|===== ' src/` → only unrelated HTML/CSS section comments inside `src/visual/scripts/frame-template.html`).
+- **14.9.3** removed `sectionSeparator` re-export from `@oh-my-pi/pi-coding-agent/config/prompt-templates` — supipowers does not import this (`grep -rn 'sectionSeparator\|prompt-templates' src/ tests/ package.json` → no matches).
+- **14.9.3** removed `head` and `tail` parameters from the `bash` tool schema (plus the `normalizeBashCommand` / `applyHeadTail` module) — supipowers does not synthesize bash inputs with those parameters.
 
 | ID | Severity | File:Line | What breaks |
 |---|---|---|---|
-| (none) | — | — | No impact found. |
+| B1 | None (dead code) | `src/ui-design/session.ts:787-788` | The `case "notebook":` arm is unreachable but harmless. |
+| B2 | Diagnostics degraded | `src/context/analyzer.ts:222,233` | "Project context" section no longer detected; project content lumps into "Base system prompt". |
+| B3 | Diagnostics broken (pre-existing) | `src/context/analyzer.ts:59-103` | `parseIndividualSkills` returns 0 real skills and 1+ spurious matches against current OMP prompts. |
+| B4..B8 | None | — | No code reference. |
 
 | ID | Priority | Effort | Benefit |
 |---|---|---|---|
-| C1 | P2 | XS | Removes ~60 lines of dead compatibility code + 4 obsolete tests. |
-| O1 | P3 | XS | Documentation / changelog note that command UX improved at 14.7.2. |
-| O2 | P2 | M | Replaces shell-out PR creation with typed ExtensionAPI calls. |
-| O3 | P3 | S | Add `summary` field to extension tool registrations for BM25 discovery. |
-| O4 | P3 | S | Adopt `tools.elideFileMutationInputs` setting for token savings inside `/supi:ultraplan` execution loops. |
-| O5 | P3 | S | Adopt `buildDirectoryTree` / `buildWorkspaceTree` for ui-design context scans. |
+| C1 | P3 | XS | Delete two lines of dead code (`case "notebook":`) in `getUiDesignWritePaths`. |
+| C2 | P2 | S | Restore "Project context" section labelling for `/supi:context` and `/supi:optimize-context` against OMP ≥14.9.3. |
+| C3 | P2 | S | Fix `parseIndividualSkills` to read OMP's bullet-list `# Skills` block (and stop grabbing later h2 sections). Bundle with C2. |
+| O1 | P3 | XS | Document OMP ≥14.7.8 in README/CHANGELOG to immunize users from the large-repo startup hang and the 14.9.2 workspace-discovery improvement. |
 
 ---
 
 ## Breaking Changes
 
-### B0 — `systemPrompt` API: `string` → `string[]` (no impact, already migrated)
+### B1 — 14.7.4: dedicated `notebook` tool removed; `.ipynb` now flows through `read`/`edit` (dead-code branch in ui-design guard)
 
-**Changelog (14.7.0 Breaking).**
+**Changelog (14.7.4 Breaking Changes).**
 
-> Changed session system-prompt APIs to use ordered string block arrays by requiring `buildSystemPrompt`, `CreateAgentSessionOptions.systemPrompt`, `Session.rebuildSystemPrompt`, and extension `before_agent_start`/`getSystemPrompt` hooks to accept and return `systemPrompt: string[]` instead of a plain system-prompt string or separate `projectPrompt` field.
+> Removed the dedicated `notebook` tool; `.ipynb` reads and edits now go through `read` and `edit`.
 
-**Status.** Already migrated. supipowers introduced a centralized adapter in `src/platform/system-prompt.ts` that accepts both legacy and new shapes and emits `string[]` outward:
+**Status.** No runtime breakage. supipowers does not invoke the `notebook` tool, register one, or feed it through the platform tool registration API. The only `notebook` reference is `src/ui-design/session.ts:787-788`, a `case "notebook":` arm inside `getUiDesignWritePaths(toolName, input)`:
 
 ```ts
-// src/platform/system-prompt.ts
-export function normalizeSystemPromptBlocks(value: unknown): SystemPromptBlocks {
-  if (Array.isArray(value)) return value.filter(...);
-  if (typeof value === "string") return value.length > 0 ? [value] : [];
-  ...
-}
-export function systemPromptText(value: unknown): string {
-  return normalizeSystemPromptBlocks(value).join("\n\n");
+// src/ui-design/session.ts:768-792
+function getUiDesignWritePaths(toolName: string, input: Record<string, unknown>): string[] | undefined {
+  switch (toolName) {
+    case "write": ...
+    case "ast_edit": { ... }
+    case "edit": { ... }            // ← handles .ipynb via input.edits[].path under new routing
+    case "notebook":                 // ← unreachable: OMP no longer dispatches `notebook` tool calls
+      return [typeof input.notebook_path === "string" ? input.notebook_path : ""];
+    default: return undefined;
+  }
 }
 ```
 
-**Coverage** (every site that touches `systemPrompt` has been migrated):
+The `case "edit":` arm immediately above reads `input.edits[].path` (every edit operation carries its target path). Since `.ipynb` edits are now serialized through `edit`, the ui-design write-scope guard correctly captures the notebook file path through the existing `edit` arm. No behavioral gap. See **C1** for the recommended removal.
 
-| Site | File:Line | Shape returned |
-|---|---|---|
-| Agent-session opts | `src/platform/types.ts:51` | `systemPrompt?: string[]` |
-| `createAgentSession` adapter | `src/platform/omp.ts:112-114` | `normalizeSystemPromptBlocks(...)` before passing through |
-| `/supi:plan` system-prompt hook | `src/planning/system-prompt.ts:271-294` | `return { systemPrompt: [systemPrompt] }` |
-| `/supi:ui-design` system-prompt hook | `src/ui-design/system-prompt.ts:290-311` | `return { systemPrompt: [buildUiDesignSystemPrompt(...)] }` |
-| MemPalace wake-up hook | `src/mempalace/hooks.ts:34-52, 107` | `appendPrompt(...) → { systemPrompt: string[] }` |
-| Harness layer-context inject | `src/harness/hooks/layer-context-inject.ts:123-145` | `prependSystemPromptBlock(...)` returns `string[]` |
-| Context-mode hook | `src/context-mode/hooks.ts:851-898` | `return { systemPrompt: [...blocks, injection] }` |
-| Active-tool controller | `src/tool-catalog/active-tool-controller.ts:38-99` | `normalizeSystemPromptBlocks(...)` |
-| UltraPlan hook bridge | `src/ultraplan/runtime/hook-bridge.ts:467` | `systemPromptText(asRecord(rawEvent)?.systemPrompt)` for read-side |
+### B2 — 14.9.3: new `<|START_PROJECT|>...<|END_PROJECT|>` system-prompt wrapper (diagnostics degraded)
 
-**Verification.**
-- `grep -rn 'projectPrompt' src/ tests/` → **no matches**. supipowers never depended on the now-removed top-level `projectPrompt` field.
-- `grep -rn 'buildSystemPrompt|buildDirectoryTree|buildWorkspaceTree|DirectoryTree|WorkspaceTree' src/ tests/` → **no matches**. supipowers does not import OMP's prompt-building helpers.
-- Every `before_agent_start` handler in `src/` either returns `undefined` or a record of shape `{ systemPrompt: string[] }`.
+**Changelog (14.9.3 Added/Changed).**
 
-**Impact.** None. No follow-up required.
+> Added a new `[project]` prompt block wrapper around workstation and workspace context and ensured it is emitted as a separate system prompt segment.
+> Changed system prompt rendering to use block markers such as `[env]`, `[contract]`, `[role]`, `[coop]`, and `[closure]` for more explicit structural instructions.
 
-### B1 — `BUILTIN_TOOL_METADATA` and `BuiltinEntry` exports removed (no impact)
+**Status.** The `[project]` etc. names are the **internal template-engine block IDs**. The actual marker syntax emitted in the rendered system prompt text is the pipe-delimited `<|START_PROJECT|>...<|END_PROJECT|>` family (confirmed by reading the upstream template at `packages/coding-agent/src/prompts/system/project-prompt.md` on `main`, and by reading the system prompt currently rendered into this agent session, which contains `<|START_ENV|>`, `<|START_CONTRACT|>`, `<|START_PROJECT|>`).
 
-**Changelog (14.7.2 Breaking).**
+Commit `f849407c` ("added prompt markers to system prompt assembly", 2026-05-10) introduced these wrappers for the first time:
 
-> Removed the exported `BUILTIN_TOOL_METADATA` API, including `BuiltinEntry`-style metadata exports and discoverable-built-in helper exports, which will break consumers relying on those symbols.
+```diff
+# packages/coding-agent/src/prompts/system/project-prompt.md
++ <|START_PROJECT|>
+  <workstation>
+  ...
++ <|END_PROJECT|>
+```
 
-**Verification.** `grep -rn -E 'BUILTIN_TOOL_METADATA|BuiltinEntry' src/ tests/` → **no matches**. supipowers does not import or reference these symbols.
+**supipowers parser is now stale.** `src/context/analyzer.ts` still pattern-matches the legacy XML shapes:
 
-**Impact.** None.
+```ts
+// src/context/analyzer.ts:221-241
+// Project section FIRST (so nested <file> tags inside <project> are consumed)
+const projMatch = text.match(/<project>([\s\S]*?)<\/project>/);
+...
+// Instructions section
+const instrMatch = text.match(/<instructions>([\s\S]*?)<\/instructions>/);
+```
 
-### B2 — Top-level `sel` parameter removed from `read` tool schema (no impact)
+Neither pattern fires against an OMP 14.9.3 prompt: the wrappers are `<|START_PROJECT|>`/`<|END_PROJECT|>` and there is no top-level `<instructions>` wrapper in the new template.
 
-**Changelog (14.7.0 Breaking).**
+**Empirical verification.** I composed a representative OMP 14.9.3 prompt shape and ran it through `parseSystemPrompt` / `parseIndividualSkills` directly:
 
-> Removed the top-level `sel` parameter from the `read` tool schema, requiring callers to migrate to `path`-embedded selectors (for example `path:50-100`, `path:raw`, or `https://...:L1-L40`).
+```
+LABELS: [ "AGENTS.md", "Memory", "MCP instructions", "Base system prompt" ]
+SECTION_COUNT: 4
+PROJECT_CONTEXT_DETECTED: false
+BASE_INCLUDES_PROJECT_MARKER: true   ← project content swept into "Base system prompt"
+BASE_INCLUDES_ENV_MARKER: true       ← env block also unlabelled
+```
 
-**Verification.**
-- `grep -rn -E 'sel:|"sel"\s*:' src/ tests/` → **no matches** for `read` tool callsites. (False positives for `select`, `session`, `self` were filtered out manually.)
-- supipowers does not invoke the `read` tool programmatically; its commands use Node `fs` (`fs.readFileSync`, `fs.readdirSync`) for file IO. The `read` tool is a thing the **agent** calls; supipowers does not synthesize `read` payloads anywhere.
-- `skills/context-mode/SKILL.md` (the agent-facing teaching) was already migrated to `path:`-embedded selectors during the 14.5.13 → 14.6.3 audit (B3 in the prior report); no `sel:` examples remain.
+What still works:
 
-**Impact.** None.
+- `<file path="...">` matches against the inner file tags inside `<context>` (OMP still renders these per-file) → AGENTS.md and other file sections are still detected.
+- `# Memory Guidance`, `# context-mode — MANDATORY routing rules`, `## MCP Server Instructions` heading patterns still match (these are not affected by the project-prompt restructure).
 
-### B3 — `buildSystemPrompt` / `rebuildSystemPrompt` return shape changed (no impact)
+What breaks:
 
-**Changelog (14.7.0 Breaking).**
+- "Project context" section is no longer detected; workstation, dir-context, workspace-tree, and append-prompt content all fall into "Base system prompt" undifferentiated.
+- Extension instructions wrapper detection (`<instructions>`) was also lost — this pattern hasn't fired in modern OMP for some time; it is dead code regardless.
 
-> Changed `buildSystemPrompt` and session `rebuildSystemPrompt` APIs to return `{ systemPrompt, projectPrompt }`, requiring callers expecting a plain system prompt string to update to the new shape.
+**Impact.** `/supi:context` (commands/context.ts:70) and `/supi:optimize-context` (commands/optimize-context.ts:78) consume `parseSystemPrompt`. Their TUI breakdowns are now less informative — users see a single "Base system prompt" bucket where they used to see "Project context" plus "Base".
 
-**Verification.** `grep -rn 'buildSystemPrompt\|rebuildSystemPrompt' src/ tests/` → **no matches**. supipowers does not call these top-level OMP factories. The `tool-catalog/active-tool-controller.ts` invokes `ctx.getSystemPrompt()` (the per-session ctx method, not the factory) and feeds the result through `normalizeSystemPromptBlocks` (`src/tool-catalog/active-tool-controller.ts:88, 99`), which already accepts both legacy and new shapes.
+`/supi:context` does not crash; the parser returns sections, and the breakdown renders without errors. This is a soft regression.
 
-**Impact.** None.
+**Recommendation.** See **C2**.
+
+### B3 — Pre-existing: `parseIndividualSkills` misreads OMP's bullet-list `# Skills` block
+
+**Status.** This is not a 14.9.3-specific change, but the 14.9.3 audit surfaced it. OMP renders skills as a bullet list under a `# Skills` h1 heading:
+
+```
+# Skills
+- accessibility-compliance: Implement WCAG 2.2 …
+- adapt: Adapt designs to work across different screen sizes …
+- animate: …
+```
+
+(Verified by reading `packages/coding-agent/src/prompts/system/system-prompt.md` on `main`, where the template is:
+
+```
+{{#if skills.length}}
+# Skills
+{{#each skills}}
+- {{name}}: {{description}}
+{{/each}}
+{{/if}}
+```
+
+and by reading the actual system prompt rendered to this agent session.)
+
+**supipowers parser assumption.** `src/context/analyzer.ts:59-103` looks for `## skill-name` h2 headings under `# Skills`:
+
+```ts
+// src/context/analyzer.ts:66-68
+const skillsSectionMatch = systemPrompt.match(
+  /^# Skills\n[\s\S]*?\n(?=##\s)/m,
+);
+if (!skillsSectionMatch) return [];
+```
+
+When the body uses bullets, this regex matches the region from `# Skills` up to the **next h2 heading anywhere in the prompt**, then attempts to extract sub-`## ` headings. Two consequences:
+
+1. Real skills (rendered as bullets) are never extracted — `headings` array is empty, so the function returns `[]` for the genuine skill list.
+2. The function captures whatever h2 happens to appear next. In practice, this is `## MCP Server Instructions` (which is appended to the prompt). The empirical test returned `SKILLS: [ "MCP Server Instructions" ]` — a single, incorrect entry.
+
+**Impact.** `/supi:optimize-context` (commands/optimize-context.ts:79) feeds `parseIndividualSkills` output into the optimization plan and the per-skill token accounting in `buildContextReport`. With the broken parse, the per-skill breakdown is silently empty or wrong; the optimizer's skill-trimming recommendations are meaningless on real OMP prompts.
+
+**Tests.** `tests/context/analyzer.test.ts:147-153` pins synthetic XML-tag inputs (`<skill name="a">content a</skill>`), so the tests pass while the production behavior is broken against current OMP output. This is the canonical "happy-path-only test" anti-pattern.
+
+**Recommendation.** See **C3**.
+
+### B4 — 14.7.4: `notebook.enabled` config option removed (no impact)
+
+`grep -rn 'notebook\.enabled\|notebook_enabled' src/ tests/` → no matches.
+
+### B5 — 14.7.4: `.ipynb` reads/edits route through notebook serialization helpers (no impact)
+
+`grep -rn '\.ipynb' src/ tests/ skills/` → no matches. supipowers does not synthesize agent `read`/`edit` payloads for `.ipynb` files.
+
+### B6 — 14.9.0: hashline APIs moved to `@oh-my-pi/pi-coding-agent/hashline` (no impact)
+
+`grep -rn 'edit/modes/hashline\|edit/line-hash\|hashline\|line-hash' src/ tests/ package.json` → no matches. supipowers does not import OMP's hashline module from any subpath.
+
+### B7 — 14.9.3: `===== ... =====` eval-cell input format removed (no impact)
+
+`grep -rn '\*\*\* Begin\|===== ' src/ tests/` only matches unrelated HTML/CSS section comments in `src/visual/scripts/frame-template.html` (e.g. `/* ===== THEME VARIABLES ===== */`) and a test fixture string `"======= 1 failed, 2 passed ======="`. supipowers does not generate eval inputs.
+
+### B8 — 14.9.3: `sectionSeparator` re-export removed from `config/prompt-templates` (no impact)
+
+`grep -rn 'sectionSeparator\|prompt-templates' src/ tests/ package.json` → no matches. supipowers does not import `sectionSeparator` from any path.
+
+### B9 — 14.9.3: `head` / `tail` parameters removed from `bash` tool schema (no impact)
+
+`grep -rn 'head:\|tail:\|normalizeBashCommand\|applyHeadTail' src/ tests/` returns only unrelated occurrences of the word `detail` (substring match). supipowers does not synthesize bash tool inputs with `head`/`tail` parameters.
 
 ---
 
 ## Opportunities
 
-### C1 — Drop the OMP 14.6.0 compatibility shims now that 14.7.x is baseline (P2, XS)
+### C1 — Drop the unreachable `case "notebook":` in the ui-design write-scope guard (P3, XS)
 
-**Background.** The previous audit (14.5.13 → 14.6.3) flagged the OMP 14.6.0 rename of `path: string` (comma-delimited) → `paths: string[]` on `search`, `find`, `ast_grep`, and `ast_edit`. Supipowers landed dual-shape readers in two places to keep workflows alive across the upgrade window, each annotated with a `TODO(omp-14.7)` marker:
+**Why.** Captured under B1. The 14.7.4 OMP release removed the `notebook` tool. The branch at `src/ui-design/session.ts:787-788` cannot be reached on any supported OMP version.
 
-| Site | File:Line | Shim |
-|---|---|---|
-| ui-design write guard for `ast_edit` | `src/ui-design/session.ts:772-783` | Reads `input.paths` (new) first, falls back to comma-split `input.path` (legacy). |
-| Context-mode dedup hash for `search` | `src/context-mode/source-hash.ts:126-144` | Reads `input.paths` (new), falls back to single-element `[input.path]` (legacy). |
-| Context-mode dedup hash for `find` | `src/context-mode/source-hash.ts:145-160` | Reads `input.paths` (new), falls back to single-element `[input.pattern]` (legacy). |
+**Concrete change.**
 
-**Status.** Six markers remain (`grep -rn 'TODO(omp-14.7)' src/ tests/`):
-- `src/ui-design/session.ts:776`
-- `src/context-mode/source-hash.ts:128`
-- `src/context-mode/source-hash.ts:148`
-- `tests/ui-design/session.test.ts:375`
-- `tests/ui-design/session.test.ts:385`
-- `tests/context-mode/source-hash.test.ts:245`
-- `tests/context-mode/source-hash.test.ts:273`
-
-**Recommendation.** OMP 14.7.x is the new floor; drop the legacy branches and matching tests. Concretely:
-
-1. `src/ui-design/session.ts:772-783` — collapse to read only `input.paths`:
-   ```ts
-   case "ast_edit": {
-     const arr = Array.isArray(input.paths)
-       ? (input.paths as unknown[]).filter((p): p is string => typeof p === "string")
-       : [];
-     return arr.length === 0 ? [""] : arr;
+```diff
+--- a/src/ui-design/session.ts
++++ b/src/ui-design/session.ts
+@@
+     case "edit": {
+       ...
+     }
+-    case "notebook":
+-      return [typeof input.notebook_path === "string" ? input.notebook_path : ""];
+     default:
+       return undefined;
    }
-   ```
-2. `src/context-mode/source-hash.ts:126-160` — drop the `input.path` / `input.pattern` legacy branches in both `search` and `find` cases. The empty-paths fallback can stay defensive but should no longer try to synthesize a list from old field names.
-3. `tests/ui-design/session.test.ts:375-394` — delete the two `TODO(omp-14.7)`-tagged tests that pin legacy comma-string behavior.
-4. `tests/context-mode/source-hash.test.ts:245-285` — delete the two `TODO(omp-14.7)`-tagged tests that pin the legacy fallback.
-
-**Effort.** XS. Mechanical, scoped to four files. Run `bun test tests/ui-design/session.test.ts tests/context-mode/source-hash.test.ts` afterwards.
-
-**Risk.** Bumps the minimum supported OMP version (de facto already 14.7+). Document in `CHANGELOG.md` and the install README.
-
-### O1 — Document the spinner fix; verify in-tree commands no longer hang the TUI (P3, XS)
-
-**Changelog (14.7.2 Fixed).**
-
-> Fixed extension commands that return without starting a model turn leaving the interactive `Working…` spinner active indefinitely. (#927)
-
-**Why this matters for supipowers.** Many supipowers commands intentionally short-circuit without sending a user message or steering the agent. Each was previously triggering the bug:
-
-| Command | File | Pattern that hits the bug |
-|---|---|---|
-| `/supi:status` | `src/commands/status.ts` | Renders summary via `ctx.ui.notify`; never calls `sendUserMessage`/`sendMessage`. |
-| `/supi:doctor` | `src/commands/doctor.ts` | Reports check results to TUI; no model turn. |
-| `/supi:clear` | `src/commands/clear.ts` | Destructive cleanup with confirm prompt; returns without a turn on cancel **and** on success. |
-| `/supi:context` | `src/commands/context.ts` | Computes context-window breakdown and prints; no model turn. |
-| `/supi:memory` | `src/commands/memory.ts` | `setup` / `status` subcommands return after running `mempalace` actions. |
-| `/supi:config`, `/supi:model`, `/supi:update` | resp. files | Configuration helpers; no model turn. |
-| `/supi:agents` (list / show subcommands) | `src/commands/agents.ts` | Read-only paths return without `sendMessage`. |
-
-(Only commands that always trigger a turn — `/supi:plan`, `/supi:qa`, `/supi:fix-pr`, `/supi:ui-design`, `/supi:commit`, `/supi:release`, `/supi:generate` — never hit the bug.)
-
-**Recommendation.** No code change. Record the user-visible improvement in `CHANGELOG.md` for the next supipowers release ("Requires OMP ≥14.7.2 to avoid stuck `Working…` spinner after read-only commands"). Optionally bump the README's recommended OMP version line.
-
-**Effort.** XS — one CHANGELOG line and one README line.
-
-### O2 — Adopt the new GitHub `pr_create` op in `/supi:release` and `/supi:fix-pr` (P2, M)
-
-**Changelog (14.7.1 Added).**
-
-> Added `pr_create` operation to the GitHub tool to create pull requests with title/body (or `fill`), base/head branch, draft, reviewer, assignee, and label options and return a summarized result including the new PR URL.
-
-**Current state.** supipowers shells out to `gh` via `platform.exec` for all GitHub interactions:
-- `src/git/commit.ts` — uses `platform.exec` to run `git`/`gh` (PR-related metadata via subprocess).
-- `src/release/` — `platform.exec` for tag pushes and gist/PR creation.
-- `src/fix-pr/fetch-comments.ts` — `platform.exec` for `gh pr view`.
-- `src/commands/release.ts`, `src/commands/fix-pr.ts` — orchestrate the above.
-
-There is no use of OMP's `github` ExtensionAPI tool family in production code (`grep -rn 'pr_create|gh_pr|pr_view|pr_diff' src/` → **no matches**). Today's `gh` shell-out path works but:
-- Couples supipowers to the user's `gh` CLI installation and auth.
-- Requires bespoke stdout parsing (`gh pr view --json …`) that drifts when `gh` updates its JSON shape.
-- Doesn't surface a typed PR URL to the caller; we re-grep the URL out of `gh pr create`'s stdout.
-
-**Recommendation (P2).** Wrap the `pr_create` op behind an internal `createPullRequest({ title, body?, base?, head?, draft?, reviewers?, assignees?, labels? })` helper in `src/git/` (alongside `commit.ts`), then refactor:
-
-1. `/supi:release` — when the release flow finishes a tag push and the user opted in to "open a PR", call the helper instead of building a `gh pr create` argv. The helper returns `{ url, summary }`.
-2. `/supi:fix-pr` — currently the consumer of an existing PR; if the workflow ever needs to *create* a follow-up PR (e.g. "draft a docs PR with these changes"), use the helper.
-
-Wire the helper to a feature gate so users on OMP <14.7.1 keep the `gh` shell-out fallback for one release window.
-
-**Effort.** Medium. ~150–250 lines: helper + adapter call + integration tests + feature gate. Touches `src/git/`, `src/release/`, `src/commands/release.ts`, plus tests under `tests/release/` and `tests/git/`.
-
-**Acceptance.** Helper returns the PR URL; release command stops parsing `gh` stdout; existing tests for the shell-out path are migrated to the helper. Document the OMP version requirement in the helper.
-
-### O3 — Add a `summary` field to extension tool registrations (P3, S)
-
-**Changelog (14.7.2 Changed).**
-
-> Updated discoverable tool search (`search_tool_bm25` and related discovery metadata) to read each tool's own `summary` field when present, improving discoverability descriptions for built-in tools.
-
-**Current state.** supipowers registers ten tools (per `bootstrap.ts` and the tool source files). None set a `summary` field; they expose `description` (long form) and, for some, `promptSnippet` (one-liner used in prompt sections):
-
-| Tool | File | Has `description` | Has `promptSnippet` | Has `summary` |
-|---|---|---|---|---|
-| `planning_ask` | `src/planning/planning-ask-tool.ts:21-24` | ✓ | ✓ | ✗ |
-| `mempalace` | `src/mempalace/tool.ts` | ✓ | — | ✗ |
-| `harness_*` (7 tools) | `src/harness/tools.ts` | ✓ | — | ✗ |
-| `ultraplan_*` (authoring + execution) | `src/ultraplan/authoring/authoring-tools.ts`, `src/ultraplan/execution/runtime-tools.ts`, `src/ultraplan/authoring-tool.ts` | ✓ | — | ✗ |
-| context-mode tools (`ctx_*`) | `src/context-mode/tools.ts` | ✓ | — | ✗ |
-
-**Why this is small.** Most of these tools are gated to specific lifecycle moments (e.g., `harness_*` only matters during a `/supi:harness` session) and the agent already sees them in the active tool list with their full descriptions. The `summary` field primarily helps when a tool is **inactive** and the agent searches for it via BM25 — a path most supipowers tools don't take because they're enabled context-by-context.
-
-**Recommendation (P3).** Pass-by-pass, when touching each tool definition for an unrelated reason, append a one-line `summary` (≤80 chars) crafted to match the BM25 query patterns the agent would use. Example for `planning_ask`:
-
-```ts
-summary: "ask user during /supi:plan with no timeout (vs. built-in ask)",
 ```
 
-No urgency. Track as a chore.
+**Tests.** None to update — `grep -rn 'notebook' tests/ui-design/` returns no matches. After deletion, run `bun test tests/ui-design/`.
 
-**Effort.** Small per tool. Total ~10 lines across the catalog.
+**Risk.** Effectively zero.
 
-### O4 — Opt into `tools.elideFileMutationInputs` for ultraplan execution token savings (P3, S)
+**Effort.** XS — two-line removal, one file, no tests to delete.
 
-**Changelog (14.7.0 Added).**
+### C2 — Teach `parseSystemPrompt` about `<|START_PROJECT|>...<|END_PROJECT|>` (P2, S)
 
-> Added `tools.elideFileMutationInputs` setting to optionally elide large `write`, `edit`, and `apply_patch` payloads in history after successful mutations.
-> Added hashline-style return data for elided `write` calls so tools can include the resulting file content without leaking full input text.
+**Why.** Captured under B2. Project context is no longer labelled in `/supi:context` and `/supi:optimize-context` breakdowns under OMP ≥14.9.3.
 
-**Why supipowers cares.** `/supi:ultraplan execute` runs long agent loops that frequently rewrite files (`write`/`edit`). On long sessions the mutation inputs accumulate in history and dominate the context window. This setting is opt-in at the OMP `settings.json` level, but supipowers can encourage it.
+**Concrete change.** In `src/context/analyzer.ts` (`extractXmlSections`), add a wrapper-aware matcher that recognizes both the legacy `<project>` shape and the new pipe-delimited form. Suggested implementation:
 
-**Current state.** No reference to this setting in `src/`. supipowers does not replay tool inputs from history (verified earlier: `event-extractor.ts` and `compressor.ts` consume `tool_call` events at emit time, not retroactively from JSONL), so enabling the setting would not break anything in supipowers' own pipelines.
+```ts
+// src/context/analyzer.ts (replace lines 221-230)
+const projectWrapperPatterns: RegExp[] = [
+  /<\|START_PROJECT\|>([\s\S]*?)<\|END_PROJECT\|>/,
+  /<project>([\s\S]*?)<\/project>/, // keep for legacy / synthetic inputs
+];
+for (const pattern of projectWrapperPatterns) {
+  const projMatch = text.match(pattern);
+  if (projMatch && !consumed.has(projMatch.index!)) {
+    sections.push({
+      label: "Project context",
+      bytes: byteLength(projMatch[0]),
+      content: projMatch[0],
+    });
+    markConsumed(consumed, projMatch.index!, projMatch.index! + projMatch[0].length);
+    break;
+  }
+}
+```
 
-**Recommendation (P3).** In the `/supi:doctor` summary, when running on OMP ≥14.7.0, surface a one-line tip ("Consider `tools.elideFileMutationInputs: true` for long ultraplan runs"). Optional follow-up: in the `quick-setup` skill or installer, prompt the user once. **Do not** flip the setting silently.
+Optionally extend the same pattern to capture the new `<|START_ENV|>...<|END_ENV|>` and `<|START_CONTRACT|>...<|END_CONTRACT|>` envelopes as their own labelled sections ("Environment" and "Contract"). This is purely additive — it gives users a more granular breakdown without breaking any existing matcher.
 
-**Effort.** Small. One block in `src/commands/doctor.ts` near the existing settings-related checks.
+Drop the legacy `<instructions>` matcher (line 233 of analyzer.ts) since OMP no longer emits that wrapper at any version supipowers supports; keep it only if there's evidence some other consumer still emits it.
 
-### O5 — Replace ad-hoc directory snapshots with `buildDirectoryTree` / `buildWorkspaceTree` (P3, S)
+**Tests.** Update `tests/context/analyzer.test.ts`:
 
-**Changelog (14.7.0 Added).**
+1. Lines 82-86 ("extracts project section") — add a parallel test for the new wrapper:
+   ```ts
+   test("extracts project section (new pipe-wrapper form)", () => {
+     const prompt = "<|START_PROJECT|>\n<workstation>\nOS: darwin\n</workstation>\n<|END_PROJECT|>";
+     const sections = parseSystemPrompt(prompt);
+     expect(sections.find((s) => s.label === "Project context")).toBeDefined();
+   });
+   ```
+2. Lines 155-160 ("does not double-count <file> nested inside <project>") — add the parallel new-wrapper assertion.
 
-> Added `buildDirectoryTree` and `DirectoryTree` exports to generate configurable directory trees with options for depth, entry limits, hidden-file handling, and truncation caps.
-> Added `buildWorkspaceTree` and `WorkspaceTree` exports so callers can precompute and pass a workspace context to prompt generation.
+**Verification.** After the change, the synthetic 14.9.3 prompt from this audit should produce `[Project context, AGENTS.md, Memory, MCP instructions, Base system prompt]` (5 labels) instead of the current 4. AGENTS.md detection inside the project wrapper continues to work because `<file path="...">` matching runs after the project match consumes the outer wrapper but does not consume the inner content (per the existing `consumed` set logic).
 
-**Current state.** supipowers has multiple ad-hoc directory enumerators:
-- `src/ui-design/tokens-scanner.ts` — manually walks tailwind config locations.
-- ui-design context scans build a curated tree of relevant files.
-- `/supi:doctor` and `/supi:status` enumerate `.omp/supipowers/` subdirs.
+**Effort.** Small. ~30-40 lines including tests.
 
-None import OMP's new helpers (`grep` confirmed: no matches).
+**Risk.** Low — purely additive. The legacy regex remains in place for older OMP versions and synthetic test inputs.
 
-**Recommendation (P3).** When next refactoring ui-design context scans (currently ~kicks off via `src/ui-design/backend-adapter.ts` and friends), evaluate `buildDirectoryTree` / `buildWorkspaceTree` as a drop-in for the bespoke enumerator. The OMP versions handle truncation, hidden files, and entry caps consistently.
+### C3 — Fix `parseIndividualSkills` to read OMP's bullet-list `# Skills` block (P2, S)
 
-**Effort.** Small per use-site. Primarily a code-quality / consistency win.
+**Why.** Captured under B3. The function currently returns 0 real skills and 1+ spurious matches against real OMP system prompts.
+
+**Concrete change.** Rewrite `parseIndividualSkills` (`src/context/analyzer.ts:59-103`) to match the OMP bullet-list shape, with the legacy `## name` heading form preserved as a fallback for synthetic inputs and any extensions that still render that way:
+
+```ts
+export function parseIndividualSkills(systemPrompt: string): ParsedSkill[] {
+  if (!systemPrompt) return [];
+
+  // Extract the # Skills block (bounded by the next h1 heading or end of text).
+  const skillsBlock = systemPrompt.match(/^# Skills\n([\s\S]*?)(?=^# [^#]|\Z)/m);
+  if (!skillsBlock) return [];
+
+  const body = skillsBlock[1];
+  const skills: ParsedSkill[] = [];
+
+  // Modern OMP shape: "- skill-name: description" bullet list.
+  const bulletRegex = /^- ([a-zA-Z0-9_-]+):\s*(.*?)(?=^- [a-zA-Z0-9_-]+:|\Z)/gms;
+  let match: RegExpExecArray | null;
+  while ((match = bulletRegex.exec(body)) !== null) {
+    const content = match[0];
+    skills.push({
+      name: match[1],
+      bytes: byteLength(content),
+      tokens: estimateTokens(content),
+      content,
+    });
+  }
+  if (skills.length > 0) return skills;
+
+  // Legacy fallback: "## skill-name" h2 sub-headings (synthetic test inputs, older OMP).
+  const headingRegex = /^## (.+)$/gm;
+  const headings: { name: string; index: number }[] = [];
+  while ((match = headingRegex.exec(body)) !== null) {
+    headings.push({ name: match[1].trim(), index: match.index });
+  }
+  for (let i = 0; i < headings.length; i++) {
+    const start = headings[i].index;
+    const end = i + 1 < headings.length ? headings[i + 1].index : body.length;
+    const content = body.slice(start, end).trimEnd();
+    skills.push({
+      name: headings[i].name,
+      bytes: byteLength(content),
+      tokens: estimateTokens(content),
+      content,
+    });
+  }
+  return skills;
+}
+```
+
+The critical change is the addition of `(?=^# [^#]|\Z)` to bound the Skills block at the next top-level heading or end-of-text. The previous regex (`/^# Skills\n[\s\S]*?\n(?=##\s)/m`) had no upper bound and would slurp content well past the Skills block.
+
+**Tests.** Update `tests/context/analyzer.test.ts` — currently `parseIndividualSkills` is not directly tested (only `parseSystemPrompt`'s `<skills>` XML handling is). Add a new describe block:
+
+```ts
+describe("parseIndividualSkills", () => {
+  test("parses bullet-list skills from OMP system prompt", () => {
+    const prompt = "# Skills\n- planning: Plan your work\n- code-review: Review code\n\n## MCP Server Instructions\nUnrelated";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills.map(s => s.name)).toEqual(["planning", "code-review"]);
+  });
+
+  test("does not capture later h2 sections as skills", () => {
+    const prompt = "# Skills\n- a: x\n\n## MCP Server Instructions\nstuff";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills.find(s => s.name.includes("MCP"))).toBeUndefined();
+  });
+
+  test("falls back to ## headings when no bullets present (legacy / synthetic)", () => {
+    const prompt = "# Skills\n## planning\nPlan content";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills.map(s => s.name)).toEqual(["planning"]);
+  });
+});
+```
+
+**Verification.** Run `bun test tests/context/analyzer.test.ts`.
+
+**Effort.** Small. ~50 lines including new test block.
+
+**Risk.** Low — the bullet matcher is well-bounded and the heading fallback preserves legacy behavior for any synthetic inputs.
+
+### O1 — Document OMP ≥14.7.8 (and the 14.9.2 workspace-discovery improvement) in CHANGELOG / README (P3, XS)
+
+**Why.** Three changelog entries collectively make `createAgentSession` significantly more robust in large monorepos:
+
+- 14.7.6 — per-step system-prompt preparation timeout fallback;
+- 14.7.8 — startup hang fix (#975) with bounded scans + git-aware listing;
+- 14.9.2 — single `listWorkspace` walk for both rendered tree and AGENTS.md discovery, plus correctly including gitignored top-level AGENTS.md files.
+
+supipowers issues `createAgentSession` from 35 sites across nine subsystems (`grep -rn 'createAgentSession(' src/`):
+
+| Subsystem | Representative callsite |
+|---|---|
+| ai (final-message / structured-output) | `src/ai/final-message.ts:93` |
+| context-mode hooks | `src/context-mode/hooks.ts:265` |
+| harness pipeline | `src/harness/command.ts:375`, `src/harness/stage-runner.ts` |
+| ultraplan authoring stages | `src/ultraplan/authoring/stages/{intake,scout,discover,research,synthesize,review}.ts` |
+| ultraplan execution | `src/ultraplan/execution/session-runner.ts:157` |
+| review pipeline | `src/review/{runner,multi-agent-runner,fixer,validator}.ts` |
+| fix-pr | `src/fix-pr/assessment.ts` |
+| docs drift | `src/docs/drift.ts` |
+| quality gates | `src/quality/{runner,ai-setup,gates/ai-review}.ts` |
+| ui-design system prompt | `src/ui-design/system-prompt.ts` |
+
+Every one of these inherits the improvements transparently.
+
+**Recommendation.** No code change. Add a line to `CHANGELOG.md` ("Compatibility") in the next supipowers release:
+
+> Recommend OMP ≥14.7.8 to avoid startup hang on large monorepos (oh-my-pi#975); OMP ≥14.9.2 additionally consolidates workspace discovery into a single walk and correctly includes top-level gitignored AGENTS.md files.
+
+`peerDependencies` in `package.json:70-75` currently pins `@oh-my-pi/pi-coding-agent: "*"` (verified). Promoting a hard floor would be expressed there. Defer that decision until the next OMP cycle.
+
+**Effort.** XS — two lines of prose.
 
 ---
 
@@ -271,57 +403,77 @@ None import OMP's new helpers (`grep` confirmed: no matches).
 
 | Entry | Status | Why no impact |
 |---|---|---|
-| 14.7.2 — SearXNG Basic Auth validation (Fixed) | No impact | supipowers does not configure SearXNG auth. |
-| 14.7.2 — `authHeader: true` Authorization fix #929 | No impact | supipowers does not register custom providers with `authHeader`. |
-| 14.7.1 — `read.summarize.prose` setting (Added) | No impact | Affects how the agent's `read` output looks; supipowers reads files via `fs`, not via the agent tool. |
-| 14.7.1 — `PI_GREP_WORKERS` doc (Changed) | No impact | Env var documentation; supipowers does not set or read `PI_GREP_WORKERS`. |
-| 14.7.1 — Hashline auto-absorb broadening (Changed) | No impact | Affects the `edit` tool's anchor-handling for the agent; supipowers does not generate hashline payloads. |
-| 14.7.0 — `read.summarize.enabled`/`minBodyLines`/`minCommentLines` (Added) | No impact | Same rationale as `read.summarize.prose` — agent-tool behavior. |
-| 14.7.0 — `edit.hashlineAutoDropPureInsertDuplicates` (Added) | No impact | Edit-tool behavior. |
-| 14.7.0 — Project prompt as leading `developer` message (Changed) | No impact | supipowers reads `event.systemPrompt` (or `ctx.getSystemPrompt()`) — neither field is the developer message. We do not introspect the developer-message channel. |
-| 14.7.0 — `read` directory two-level recency-sorted tree (Changed) | No impact | Agent-tool rendering only. |
-| 14.7.0 — Working-directory tree block in system prompt (Changed) | No impact | The block is appended by OMP; supipowers preserves existing system-prompt content via the array-block API. |
-| 14.7.0 — `read` summary `..` boundary merging (Changed) | No impact | Agent-tool rendering. |
-| 14.7.0 — Default `read` returns structural summary (Changed) | No impact | supipowers reads files with `fs`, not the agent `read` tool. |
-| 14.7.0 — Truncation/pagination hints colon syntax (Changed) | No impact | UI-only change. |
-| 14.7.0 — Selector parsing fix for colon-containing paths (Fixed) | No impact | Bug fix benefits the agent; no supipowers callsite passes such paths. |
-| 14.7.0 — Hashline pure-insert duplicate auto-drop opt-in (Changed) | No impact | Edit tool behavior. |
-| 14.6.6 — Ctrl+D draft persistence (Added) | No impact | TUI-only feature. |
-| 14.6.4 — Hindsight `mental_models` system, `/memory mm` commands (Added/Changed/Fixed) | No impact | supipowers does not depend on Hindsight memory; MemPalace is the memory backend (`src/mempalace/`). The two systems are independent. |
-| 14.6.4 — Hashline replacement boundary auto-absorb warnings (Added) | No impact | Edit-tool behavior. |
-| 14.6.4 — Subagent `/task` parent-bank persistence fix | No impact | Hindsight-specific. |
+| 14.7.5 — `/loop` count/duration limits | No impact | OMP slash command; supipowers does not register, gate, or react to `/loop`. The `loop: {delaySeconds, maxIterations}` in `src/fix-pr/config.ts:15` is the fix-pr command's own retry policy. |
+| 14.7.5 — `/loop` status message + malformed-arg errors | No impact | TUI behavior inside OMP. |
+| 14.7.5 — Inherited `MallocStackLogging` env vars no longer leak to Bun subprocesses on macOS | Transparent benefit | `grep -rn 'MallocStackLogging\|malloc.*stack' src/ tests/ bin/` → no matches. supipowers' `platform.exec` callers (release, docs/drift, fix-pr, git/commit, etc.) get cleaner stdout for free on macOS. |
+| 14.7.6 — "Hide Thinking Blocks" provider propagation | No impact | TUI/provider knob orthogonal to supipowers' typed `thinkingLevel` option. `grep -rn 'hideThinking\|thinking\.display\|reasoning\.summary' src/ tests/` → no matches. |
+| 14.7.6 — System-prompt preparation keeps successful context data on partial failure | Transparent benefit | Applied to every supipowers `createAgentSession`. Captured in O1. |
+| 14.7.6 — Per-step system-prompt preparation timeout | Transparent benefit | Captured in O1. |
+| 14.7.6 — Parents forward `AGENTS.md` search and workspace tree to subagents through `createAgentSession` | No impact | OMP-internal forwarding for `task`-tool subagent spawns. supipowers' `createAgentSession` callsites are all parent/headless sessions — no parent to inherit from. The bounded-scan changes (14.7.8/14.9.2) are what protect supipowers' callers. |
+| 14.7.8 — `createAgentSession` startup hang fix #975 | Transparent benefit | Captured in O1. |
+| 14.8.0 — Hashline stale-anchor recovery via session snapshot | No impact | Agent-tool behavior; supipowers does not produce hashline edits programmatically. |
+| 14.8.0 — Legacy pi-extension bare-specifier import fix | No impact | Applies to `omp-legacy-pi-file:` namespace plugins. supipowers is an OMP extension declared via `package.json` `omp.extensions`, not a legacy pi plugin. |
+| 14.8.0 — Hashline success output warning on stale-anchor recovery | No impact | TUI output for the agent's edit tool. |
+| 14.9.0 — Compaction fallback when current model has no credentials (#986) | Transparent benefit | Applies to OMP's compaction system. supipowers does not invoke compaction directly. |
+| 14.9.0 — JS eval top-level static-import rewriting + `import ... with` attribute fixes | No impact | Agent eval tool. |
+| 14.9.0 — `modelRoles` fully-qualified provider/id error on missing pair (#980) | Transparent benefit | supipowers default models in `src/commands/fix-pr.ts:330` and elsewhere use unqualified IDs (e.g. `"claude-sonnet-4-6"`), so the new error path does not fire. If a user ever sets a provider-prefixed model in their `model.json`, they now get a clear error instead of silent provider drift. |
+| 14.9.0 — Anthropic `metadata.user_id` stability/correctness fixes | No impact | Provider-side; supipowers does not synthesize Anthropic metadata. |
+| 14.9.0 — Plan-mode review resubmits append refined plan to scrollback | No impact | TUI/plan-mode. |
+| 14.9.0 — Multi-file legacy Pi extensions failing to load (#983) | No impact | Legacy pi plugins. |
+| 14.9.0 — Sub-agent dispatch falls back to parent's model when subagent model has no auth (#985) | No impact | Applies to OMP's `task` tool spawn dispatch. supipowers resolves models itself in `resolveModelForAction` and passes them explicitly to `createAgentSession`; the OMP fallback does not apply. Worth awareness: if a future supipowers feature delegates to OMP `task` tool, this fallback would kick in. |
+| 14.9.0 — Debug-panel raw SSE stream viewer | No impact | TUI feature. |
+| 14.9.0 — Legacy Pi plugin Windows drive-letter fix (#990) | No impact | Legacy pi plugins. |
+| 14.9.0 — `get_login_providers` / `login` RPC commands | No impact | RPC surface for headless clients; supipowers is not an RPC client. |
+| 14.9.2 — `agentsMdFiles` added to `WorkspaceTree` | No impact | supipowers does not import `WorkspaceTree` (`grep -rn 'WorkspaceTree\|buildWorkspaceTree\|agentsMdFiles' src/ tests/` → no matches). |
+| 14.9.2 — Single `listWorkspace` walk for tree + AGENTS.md discovery | Transparent benefit | Captured in O1. |
+| 14.9.2 — Gitignored top-level AGENTS.md files now included in directory-context | Transparent benefit | Applies during system-prompt preparation for every supipowers `createAgentSession`. |
+| 14.9.2 — `task` tool renderer no longer warns while streaming (#985) | No impact | TUI rendering. |
+| 14.9.2 — MCP HTTP streamable transport leak fix | Transparent benefit | supipowers configures MCP servers via `src/mcp/` (transport types include `"http"` / `"sse"`) but does not implement the transport itself. OMP's transport bug fix benefits users whose `.mcp.json` declares an HTTP-streamable MCP server. |
+| 14.9.3 — Eval `*** Abort` recovery marker; `*** Begin Patch`/`*** End Patch` hashline envelopes; HTML rendering for eval cells, `search`, `recipe`, `irc`; `Available Tools` collapsible | No impact | All agent-tool / TUI features. |
+| 14.9.3 — Dedicated `[now]` prompt block (current date/cwd/end-of-turn guidance) | Transparent benefit | Appended by OMP after extension-supplied blocks; supipowers does not need to emit a now-block of its own. |
+| 14.9.3 — Bash guidance forbids `sed`/`awk` line-range reads, stderr redirects, `\| head\|tail` pagination | Transparent benefit | Matches supipowers' existing `AGENTS.md` and skill instructions; nothing to update. |
+| 14.9.3 — Subagent prompt assembly with `[now]` block placement and shared task context in `[context]` block | No impact | OMP-internal `task` subagent assembly. |
+| 14.9.3 — GitHub (`gh`) tool cards include op/PR/branch/title details | Transparent benefit | TUI rendering for the GitHub tool that `/supi:release` and `/supi:fix-pr` could call. |
+| 14.9.3 — Tool-call output hides internal `_i` intent | Transparent benefit | TUI rendering. |
+| 14.9.3 — `ast_edit`/`find`/`search` rendering shows resolved path values + flags | Transparent benefit | TUI rendering. |
+| 14.9.3 — macOS power assertion settings (`power.preventIdleSleep`, etc.) | No impact | User-side OMP config; supipowers does not set or read these. |
+| 14.9.3 — Power-assertion behavior changes (lifecycle, state recovery) | No impact | OMP runtime concern. |
+| 14.9.3 — IRC background exchange poll loop leak fix on session disposal | No impact | OMP runtime concern; supipowers does not use the `irc` tool. |
 
 ---
 
 ## Verification commands
 
-The following commands can be used to re-verify the audit conclusions:
-
 ```bash
-# B0 — every before_agent_start handler returns array shape (or undefined)
-grep -rn 'before_agent_start' src/
+# B1 — dead-code branch
+grep -rn 'case "notebook"\|notebook_path' src/ tests/
 
-# B0 — no projectPrompt usage
-grep -rn 'projectPrompt' src/ tests/
+# B2 — current parser does not detect <|START_PROJECT|>
+grep -rn '<project>\|<\\|START_PROJECT\\|>' src/ tests/
 
-# B1 — no BUILTIN_TOOL_METADATA imports
-grep -rn -E 'BUILTIN_TOOL_METADATA|BuiltinEntry' src/ tests/
+# B3 — parseIndividualSkills against bullet-list block
+grep -rn 'parseIndividualSkills\|^# Skills' src/
 
-# B2 — no `sel:` parameter in read tool calls
-grep -rn -E '"sel"\s*:' src/ tests/
+# B6 — no hashline subpath imports
+grep -rn 'edit/modes/hashline\|edit/line-hash\|hashline\|line-hash' src/ tests/ package.json
 
-# B3 — no buildSystemPrompt / rebuildSystemPrompt callsites
-grep -rn -E 'buildSystemPrompt|rebuildSystemPrompt' src/ tests/
+# B7 — no eval-cell input synthesis
+grep -rn '\*\*\* Begin\|===== ' src/ tests/
 
-# C1 — remaining 14.7 cleanup TODOs
-grep -rn 'TODO(omp-14.7)' src/ tests/
+# B8 — no sectionSeparator import
+grep -rn 'sectionSeparator\|prompt-templates' src/ tests/ package.json
 
-# O2 — current GitHub tool usage in production
-grep -rn -E 'pr_create|gh_pr|pr_view|pr_diff' src/
+# B9 — no bash head/tail params
+grep -rn 'head:\|tail:\|normalizeBashCommand\|applyHeadTail' src/ tests/
 
-# O3 — tools registered without summary field
-grep -rn -E 'registerTool\(|name:' src/context-mode/tools.ts src/planning/planning-ask-tool.ts src/mempalace/tool.ts src/harness/tools.ts src/ultraplan/authoring/authoring-tools.ts src/ultraplan/execution/runtime-tools.ts src/ultraplan/authoring-tool.ts
+# B5 — no .ipynb references
+grep -rn '\.ipynb' src/ tests/ skills/
+
+# O1 — every createAgentSession callsite that benefits transparently
+grep -rn 'createAgentSession(' src/
 ```
+
+To reproduce the B2/B3 empirical findings, run a parser sanity check against a representative OMP 14.9.3 prompt (the script is small enough to inline; the audit ran exactly this script and observed `[AGENTS.md, Memory, MCP instructions, Base system prompt]` for `parseSystemPrompt` and `[ "MCP Server Instructions" ]` for `parseIndividualSkills`).
 
 ---
 
@@ -329,11 +481,15 @@ grep -rn -E 'registerTool\(|name:' src/context-mode/tools.ts src/planning/planni
 
 | Category | Count |
 |---|---|
-| Breaking changes affecting supipowers | **0** |
-| Breaking changes verified non-impacting | 4 (B0, B1, B2, B3) |
-| Cleanup opportunities (P2) | 2 (C1, O2) |
-| Polish opportunities (P3) | 4 (O1, O3, O4, O5) |
-| Changelog entries reviewed and dismissed | 18 |
+| Breaking changes affecting supipowers at runtime | **0** |
+| Breaking changes with diagnostic-degradation follow-up | 2 (B2 → C2, B3 → C3) |
+| Breaking changes with dead-code follow-up | 1 (B1 → C1) |
+| Breaking changes verified non-impacting | 6 (B4 = 14.7.4 `notebook.enabled` removal placeholder; B5 = 14.7.4 ipynb routing; B6 = 14.9.0 hashline; B7 = 14.9.3 eval format; B8 = 14.9.3 `sectionSeparator`; B9 = 14.9.3 bash `head`/`tail`) |
+| Cleanup opportunities (P2) | 2 (C2, C3) |
+| Cleanup opportunities (P3) | 1 (C1) |
+| Documentation opportunities (P3) | 1 (O1) |
+| Changelog entries reviewed and dismissed | 30+ |
+| Changelog version gaps in audit input | None — 14.7.4, 14.7.5, 14.7.6, 14.7.8, 14.8.0, 14.9.0, 14.9.2, 14.9.3 all covered; 14.7.3 / 14.7.7 / 14.8.1 / 14.9.1 had no entries in the upstream changelog |
 
 **Required follow-ups before next OMP upgrade:** none.
-**Recommended follow-ups during normal maintenance:** C1 (drop legacy 14.6 shims) and O2 (`pr_create` adoption).
+**Recommended follow-ups during normal maintenance:** **C2 + C3** as one change (restore `/supi:context` and `/supi:optimize-context` diagnostic fidelity against OMP ≥14.9.3), **C1** (delete the unreachable `notebook` branch when next touching `src/ui-design/session.ts`), **O1** (document OMP ≥14.7.8 / ≥14.9.2 in CHANGELOG / README).

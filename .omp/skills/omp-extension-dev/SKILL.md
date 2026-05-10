@@ -1,6 +1,6 @@
 ---
 name: omp-extension-dev
-description: Build OMP (Oh My Pi) extensions — slash commands, custom LLM-callable tools, event hooks, TUI primitives, and token-efficient patterns. Use this skill whenever the user wants to create, modify, debug, or scaffold an OMP extension, including writing TypeScript code that uses ExtensionAPI, pi.registerCommand, pi.registerTool, pi.on, pi.sendMessage, pi.sendUserMessage, pi.exec, ctx.ui.select, ctx.ui.notify, TypeBox schemas, or any OMP extension API. Also trigger when the user mentions ".omp/extensions", ".omp/commands", ".omp/tools", "omp extension", "pi extension", "CustomToolFactory", "SlashCommandFactory", "HookAPI", package.json with "omp.extensions" field, or asks about OMP event lifecycle (session_start, tool_call, before_agent_start, etc.). Trigger even for casual phrasing like "add a /command to my omp agent", "I want a new tool in omp", or "hook into tool calls in my extension". Do NOT trigger for: OMP user configuration (config.yml, models.yml, theme setup), Claude Code hooks (settings.json, PreToolUse), MCP server setup, SKILL.md writing, VS Code/Chrome extensions, or plain bash scripts — those are different systems.
+description: Use when creating, modifying, debugging, or scaffolding OMP extensions, slash commands, custom tools, event hooks, TUI primitives, ExtensionAPI integrations, .omp/extensions, .omp/commands, .omp/tools, package.json omp.extensions, or OMP lifecycle handlers.
 ---
 
 # OMP Extension Development
