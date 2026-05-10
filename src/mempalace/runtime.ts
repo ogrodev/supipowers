@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ResolvedMempalaceConfig } from "./config.js";
 import type { MempalaceAction, MempalaceParams } from "./schema.js";
+import { ensureUv, type UvFetcher } from "./uv.js";
 
 export interface MempalaceRuntimeError {
   code: string;
@@ -111,7 +112,7 @@ export interface SetupMempalaceRuntimeOptions {
   managedBinDir: string;
   managedPythonVersion?: string;
   runner?: ProcessRunner;
-  fetcher?: import("./uv.js").UvFetcher;
+  fetcher?: UvFetcher;
   uvVersion?: string;
   onProgress?: (message: string) => void;
   /**
@@ -427,7 +428,6 @@ export async function setupMempalaceRuntime(
   const runner = options.runner ?? defaultProcessRunner;
 
   // 1. Ensure uv is available (download + verify if needed).
-  const { ensureUv } = await import("./uv.js");
   const uv = await ensureUv({
     managedBinDir: options.managedBinDir,
     runner,

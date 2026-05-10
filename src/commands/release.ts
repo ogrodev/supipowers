@@ -51,6 +51,9 @@ import {
 import {
   checkDocDrift,
   buildFixPrompt,
+  loadState as loadDriftState,
+  saveState as saveDriftState,
+  getHeadCommit,
 } from "../docs/drift.js";
 import { runQualityGates } from "../quality/runner.js";
 import { REVIEW_GATE_REGISTRY } from "../quality/review-gates.js";
@@ -492,7 +495,6 @@ export async function handleRelease(platform: Platform, ctx: any, args?: string)
           progress.activate("doc-drift", "Fixing documentation");
           notifyInfo(ctx, "Updating documentation", driftResult.summary);
           const fixPrompt = buildFixPrompt(driftResult.findings);
-          const { loadState: loadDriftState, saveState: saveDriftState, getHeadCommit } = await import("../docs/drift.js");
           const driftHead = await getHeadCommit(platform, repoRoot);
           const driftState = loadDriftState(platform.paths, repoRoot);
           saveDriftState(platform.paths, repoRoot, { ...driftState, lastCommit: driftHead, lastRunAt: new Date().toISOString() });
