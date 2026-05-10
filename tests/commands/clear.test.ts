@@ -102,16 +102,7 @@ afterEach(() => {
 });
 
 async function run(args?: string): Promise<void> {
-  handleClear(platform, ctx, args);
-  // Wait for the IIFE to finish.
-  for (let i = 0; i < 80; i += 1) {
-    await new Promise((r) => setTimeout(r, 5));
-    if ((notifyMock as any).mock.calls.length > 0) break;
-  }
-  // Give it a few more ticks so any post-confirm notify runs.
-  for (let i = 0; i < 20; i += 1) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await handleClear(platform, ctx, args);
 }
 
 function recordRow(sessionId?: string): void {
@@ -468,8 +459,7 @@ describe("/supi:clear with !ctx.hasUI (Task 45)", () => {
     await store.flushPendingForTest();
 
     ctx = { ...ctx, hasUI: false };
-    handleClear(platform, ctx);
-    await new Promise((r) => setTimeout(r, 30));
+    await handleClear(platform, ctx);
 
     expect((notifyMock as any).mock.calls.length).toBe(0);
     expect((selectMock as any).mock.calls.length).toBe(0);

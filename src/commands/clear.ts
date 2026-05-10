@@ -269,14 +269,14 @@ function parseArgs(args: string | undefined): ParsedArgs {
   return { scope, dryRun };
 }
 
-export function handleClear(
+export async function handleClear(
   platform: Platform,
   ctx: PlatformContext,
   args?: string,
-): void {
+): Promise<void> {
   if (!ctx.hasUI) return;
 
-  void (async () => {
+  try {
     const { scope, dryRun } = parseArgs(args);
     const store = getMetricsStore();
     const sessionId = getSessionId();
@@ -419,16 +419,16 @@ export function handleClear(
         "error",
       );
     }
-  })().catch((err) => {
+  } catch (err) {
     ctx.ui.notify(`Clear error: ${(err as Error).message}`, "error");
-  });
+  }
 }
 
 export function registerClearCommand(platform: Platform): void {
   platform.registerCommand("supi:clear", {
     description: "Clear metrics, cache, current-session knowledge, and memory for the active session (or `all` for the project)",
     async handler(args: string | undefined, ctx: any) {
-      handleClear(platform, ctx, args);
+      await handleClear(platform, ctx, args);
     },
   });
 }
