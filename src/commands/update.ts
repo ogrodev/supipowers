@@ -106,7 +106,7 @@ async function updateSupipowers(
       cpSync(binSource, join(extDir, "bin"), { recursive: true });
     }
     // skills/ must live inside the extension dir — src/commands/agents.ts
-    // uses a static `import from "../../skills/..."` resolved relative to src/.
+    // uses a static skills markdown import resolved relative to src/.
     const skillsDirSource = join(downloadedRoot, "skills");
     if (existsSync(skillsDirSource)) {
       cpSync(skillsDirSource, join(extDir, "skills"), { recursive: true });
