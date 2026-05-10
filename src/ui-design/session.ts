@@ -784,8 +784,6 @@ function getUiDesignWritePaths(toolName: string, input: Record<string, unknown>)
           : "",
       );
     }
-    case "notebook":
-      return [typeof input.notebook_path === "string" ? input.notebook_path : ""];
     default:
       return undefined;
   }
