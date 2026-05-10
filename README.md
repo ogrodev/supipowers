@@ -77,8 +77,12 @@ The installer scans for these and offers to install missing tooling where it can
 | `/supi:generate`        | Documentation drift detection                                |
 | `/supi:update`           | Update supipowers to the latest version                       |
 | `/supi:agents`           | Manage review agents                                          |
+| `/supi:ultraplan`        | Multi-stage authoring pipeline (intake → scout → discover → research → synthesize → review → approve) |
+| `/supi:harness`          | Harness engineering pipeline and anti-slop guardrails         |
+| `/supi:memory`           | Manage native MemPalace memory integration (`status`, `setup`) |
+| `/supi:clear`            | Clear metrics, cache, session knowledge, and memory           |
 
-Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:review`, `/supi:update`, `/supi:doctor`, `/supi:mcp`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`, `/supi:release`, `/supi:checks`, `/supi:agents`.
+Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:review`, `/supi:update`, `/supi:doctor`, `/supi:mcp`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`, `/supi:release`, `/supi:checks`, `/supi:agents`, `/supi:ultraplan`, `/supi:harness`, `/supi:memory`, `/supi:clear`.
 
 ## How it works
 
@@ -213,6 +217,7 @@ Supipowers ships runtime-loaded prompt skills that are also available to the age
 | `release`               | `/supi:release`         |
 | `context-mode`          | Context window guidance |
 | `creating-supi-agents`  | Agent creation guidance  |
+| `harness`               | `/supi:harness`         |
 
 ## Development
 
