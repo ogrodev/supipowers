@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import * as fs from "node:fs";
 import {
   buildReleaseTargetOptionLabel,
   buildSelectableReleaseChannelOptions,
@@ -66,6 +67,14 @@ describe("release workflow ordering", () => {
       "doc-drift",
       "working-tree",
     ]);
+  });
+});
+
+describe("release module resolution", () => {
+  test("does not use relative dynamic imports in the command body", () => {
+    const source = fs.readFileSync(new URL("../../src/commands/release.ts", import.meta.url), "utf-8");
+
+    expect(source).not.toContain('import("../docs/drift.js")');
   });
 });
 
