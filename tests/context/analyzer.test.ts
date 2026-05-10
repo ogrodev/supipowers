@@ -73,16 +73,47 @@ describe("parseSystemPrompt", () => {
     expect(skills!.bytes).toBeGreaterThan(0);
   });
 
-  test("extracts instructions section", () => {
-    const prompt = `<instructions>\nDo this and that\n</instructions>`;
-    const sections = parseSystemPrompt(prompt);
-    expect(sections.find((s) => s.label === "Extension instructions")).toBeDefined();
-  });
-
-  test("extracts project section", () => {
+  test("extracts project section (legacy XML wrapper)", () => {
     const prompt = `<project>\n## Context\nProject info\n</project>`;
     const sections = parseSystemPrompt(prompt);
     expect(sections.find((s) => s.label === "Project context")).toBeDefined();
+  });
+
+  test("extracts project section (OMP 14.9.3 pipe wrapper)", () => {
+    const prompt = "<|START_PROJECT|>\n<workstation>\nOS: darwin\n</workstation>\n<|END_PROJECT|>";
+    const sections = parseSystemPrompt(prompt);
+    const project = sections.find((s) => s.label === "Project context");
+    expect(project).toBeDefined();
+    expect(project!.content).toContain("<workstation>");
+  });
+
+  test("extracts Environment envelope", () => {
+    const prompt = "<|START_ENV|>\nWorkstation and tool catalog.\n<|END_ENV|>";
+    const sections = parseSystemPrompt(prompt);
+    const env = sections.find((s) => s.label === "Environment");
+    expect(env).toBeDefined();
+    expect(env!.content).toContain("Workstation and tool catalog");
+  });
+
+  test("extracts Contract envelope", () => {
+    const prompt = "<|START_CONTRACT|>\nInviolable rules.\n<|END_CONTRACT|>";
+    const sections = parseSystemPrompt(prompt);
+    const contract = sections.find((s) => s.label === "Contract");
+    expect(contract).toBeDefined();
+    expect(contract!.content).toContain("Inviolable rules");
+  });
+
+  test("aggregates bullet-list skills as Skills (N)", () => {
+    const prompt = "# Skills\n- planning: Plan your work\n- review: Review code\n\n## MCP Server Instructions\nOther";
+    const sections = parseSystemPrompt(prompt);
+    expect(sections.find((s) => s.label === "Skills (2)")).toBeDefined();
+  });
+
+  test("does not double-count <file> nested inside <|START_PROJECT|>", () => {
+    const prompt = `<|START_PROJECT|>\n<file path="/src/types.ts">\ntype Foo = string;\n</file>\n<|END_PROJECT|>`;
+    const sections = parseSystemPrompt(prompt);
+    expect(sections.find((s) => s.label === "Project context")).toBeDefined();
+    expect(sections.find((s) => s.label === "File: types.ts")).toBeUndefined();
   });
 
   test("collects unmatched text as Base system prompt", () => {
@@ -441,4 +472,32 @@ describe("parseIndividualSkills", () => {
     expect(skills[0].name).toBe("alpha");
     expect(skills[1].name).toBe("beta");
   });
+
+  test("parses bullet-list skills under # Skills (OMP ≥14.7)", () => {
+    const prompt = "# Skills\n- planning: Plan your work\n- code-review: Review code";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills.map((s) => s.name)).toEqual(["planning", "code-review"]);
+  });
+
+  test("bullet-list skills: content includes bullet line", () => {
+    const prompt = "# Skills\n- planning: Plan your work\n- code-review: Review code";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills[0].content).toContain("- planning: Plan your work");
+    expect(skills[1].content).toContain("- code-review: Review code");
+  });
+
+  test("does not capture later h2 sections as bullet-list skills", () => {
+    const prompt = "# Skills\n- a: x\n\n## MCP Server Instructions\nSomething";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills).toHaveLength(1);
+    expect(skills[0].name).toBe("a");
+    expect(skills.find((s) => s.name.toLowerCase().includes("mcp"))).toBeUndefined();
+  });
+
+  test("does not capture later h1 sections as bullet-list skills", () => {
+    const prompt = "# Skills\n- a: x\n- b: y\n\n# Tools\n- c: z";
+    const skills = parseIndividualSkills(prompt);
+    expect(skills.map((s) => s.name)).toEqual(["a", "b"]);
+  });
+
 });

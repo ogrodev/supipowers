@@ -59,41 +59,71 @@ export interface ParsedSkill {
 export function parseIndividualSkills(systemPrompt: string): ParsedSkill[] {
   if (!systemPrompt) return [];
 
-  // OMP renders skills as markdown headings under "# Skills":
-  //   ## skill-name
-  //   Description text...
-  // Find the Skills section bounded by the next h1 heading or end of text.
-  const skillsSectionMatch = systemPrompt.match(
-    /^# Skills\n[\s\S]*?\n(?=##\s)/m,
-  );
-  if (!skillsSectionMatch) return [];
+  // Locate `# Skills` and bound the section by the next h1 heading or end of
+  // text. The legacy bound used `^##\s`, which let the section bleed past
+  // sibling h2 headings (e.g. `## MCP Server Instructions`) into unrelated
+  // content and misidentify them as skills.
+  const headerMatch = systemPrompt.match(/^# Skills\b[^\n]*\n/m);
+  if (!headerMatch) return [];
+  const bodyStart = headerMatch.index! + headerMatch[0].length;
+  const after = systemPrompt.slice(bodyStart);
+  const nextH1 = after.search(/^# [^#]/m);
+  const skillsBody = nextH1 === -1 ? after : after.slice(0, nextH1);
 
-  // Extract the region from first ## to the next # (h1) or end of text
-  const sectionStart = skillsSectionMatch.index! + skillsSectionMatch[0].length;
-  const afterSection = systemPrompt.slice(sectionStart);
-  const nextH1 = afterSection.search(/^# [^#]/m);
-  const skillsBody =
-    skillsSectionMatch[0].slice(skillsSectionMatch[0].indexOf("\n## ") + 1) +
-    (nextH1 === -1 ? afterSection : afterSection.slice(0, nextH1));
-
-  // Split on ## headings
-  const skills: ParsedSkill[] = [];
-  const headingRegex = /^## (.+)$/gm;
-  const headings: { name: string; index: number }[] = [];
-  let match;
-
-  while ((match = headingRegex.exec(skillsBody)) !== null) {
-    headings.push({ name: match[1].trim(), index: match.index });
+  // Modern OMP (≥14.7) renders skills as a bullet list: "- name: description"
+  // with descriptions that may wrap across multiple lines.
+  const bulletRegex = /^- ([a-zA-Z0-9._-]+):/gm;
+  const bullets: { name: string; index: number }[] = [];
+  let bm: RegExpExecArray | null;
+  while ((bm = bulletRegex.exec(skillsBody)) !== null) {
+    bullets.push({ name: bm[1], index: bm.index });
   }
 
+  if (bullets.length > 0) {
+    // Defensive upper bound for the last bullet: stop at any inline markdown
+    // heading inside the body. Real OMP prompts already terminate at an h1
+    // boundary, but synthetic / older prompts may not.
+    let bodyEnd = skillsBody.length;
+    const headingScan = /^#{1,6}\s/gm;
+    let hsm: RegExpExecArray | null;
+    while ((hsm = headingScan.exec(skillsBody)) !== null) {
+      if (hsm.index > bullets[bullets.length - 1].index) {
+        bodyEnd = hsm.index;
+        break;
+      }
+    }
+
+    const bulletSkills: ParsedSkill[] = [];
+    for (let i = 0; i < bullets.length; i++) {
+      const start = bullets[i].index;
+      const end = i + 1 < bullets.length ? bullets[i + 1].index : bodyEnd;
+      const content = skillsBody.slice(start, end).trimEnd();
+      bulletSkills.push({
+        name: bullets[i].name,
+        bytes: byteLength(content),
+        tokens: estimateTokens(content),
+        content,
+      });
+    }
+    return bulletSkills;
+  }
+
+  // Legacy / synthetic shape: "## name" h2 sub-headings under `# Skills`.
+  const headingRegex = /^## (.+)$/gm;
+  const headings: { name: string; index: number }[] = [];
+  let hm: RegExpExecArray | null;
+  while ((hm = headingRegex.exec(skillsBody)) !== null) {
+    headings.push({ name: hm[1].trim(), index: hm.index });
+  }
+
+  const skills: ParsedSkill[] = [];
   for (let i = 0; i < headings.length; i++) {
     const start = headings[i].index;
     const end = i + 1 < headings.length ? headings[i + 1].index : skillsBody.length;
     const content = skillsBody.slice(start, end).trimEnd();
-    const bytes = byteLength(content);
     skills.push({
       name: headings[i].name,
-      bytes,
+      bytes: byteLength(content),
       tokens: estimateTokens(content),
       content,
     });
@@ -218,26 +248,45 @@ function extractXmlSections(
   sections: PromptSection[],
   consumed: Set<number>,
 ): void {
-  // Project section FIRST (so nested <file> tags inside <project> are consumed)
-  const projMatch = text.match(/<project>([\s\S]*?)<\/project>/);
-  if (projMatch) {
+  // Project section FIRST (so nested <file> tags inside the wrapper are consumed).
+  // Modern OMP uses `<|START_PROJECT|>...<|END_PROJECT|>` pipe markers; older OMP
+  // and synthetic test inputs use the legacy `<project>...</project>` XML form.
+  const projectPatterns: RegExp[] = [
+    /<\|START_PROJECT\|>[\s\S]*?<\|END_PROJECT\|>/,
+    /<project>[\s\S]*?<\/project>/,
+  ];
+  for (const pattern of projectPatterns) {
+    const projMatch = text.match(pattern);
+    if (!projMatch) continue;
     sections.push({
       label: "Project context",
       bytes: byteLength(projMatch[0]),
       content: projMatch[0],
     });
     markConsumed(consumed, projMatch.index!, projMatch.index! + projMatch[0].length);
+    break;
   }
 
-  // Instructions section
-  const instrMatch = text.match(/<instructions>([\s\S]*?)<\/instructions>/);
-  if (instrMatch) {
+  // Environment envelope (OMP ≥14.9.3) — workstation, tool catalog, LSP guidance.
+  const envMatch = text.match(/<\|START_ENV\|>[\s\S]*?<\|END_ENV\|>/);
+  if (envMatch) {
     sections.push({
-      label: "Extension instructions",
-      bytes: byteLength(instrMatch[0]),
-      content: instrMatch[0],
+      label: "Environment",
+      bytes: byteLength(envMatch[0]),
+      content: envMatch[0],
     });
-    markConsumed(consumed, instrMatch.index!, instrMatch.index! + instrMatch[0].length);
+    markConsumed(consumed, envMatch.index!, envMatch.index! + envMatch[0].length);
+  }
+
+  // Contract envelope (OMP ≥14.9.3) — inviolable rules, yielding criteria.
+  const contractMatch = text.match(/<\|START_CONTRACT\|>[\s\S]*?<\|END_CONTRACT\|>/);
+  if (contractMatch) {
+    sections.push({
+      label: "Contract",
+      bytes: byteLength(contractMatch[0]),
+      content: contractMatch[0],
+    });
+    markConsumed(consumed, contractMatch.index!, contractMatch.index! + contractMatch[0].length);
   }
 
   // File sections — skip if already consumed (e.g., nested inside <project>)
@@ -315,6 +364,26 @@ function extractHeadingSections(
     }
     if (merged.length > 0) {
       sections.push({ label, bytes: byteLength(merged), content: merged });
+    }
+  }
+
+  // Skills aggregate (OMP ≥14.7): markdown bullet list under `# Skills`.
+  // The legacy `<skills>` XML form is handled in extractXmlSections; this picks
+  // up the modern markdown shape rendered by OMP runtime. Bounded by the next
+  // h1/h2 heading so we don't swallow MCP instructions / Tools blocks.
+  const skillsHeading = text.match(/^# Skills\b[^\n]*\n/m);
+  if (skillsHeading && !consumed.has(skillsHeading.index!)) {
+    const start = skillsHeading.index!;
+    const afterHeading = text.slice(start + skillsHeading[0].length);
+    const nextHeading = afterHeading.search(/^#{1,2}\s/m);
+    const end = nextHeading === -1
+      ? text.length
+      : start + skillsHeading[0].length + nextHeading;
+    const content = text.slice(start, end);
+    const bulletCount = (content.match(/^- [a-zA-Z0-9._-]+:/gm) || []).length;
+    if (bulletCount > 0) {
+      sections.push({ label: `Skills (${bulletCount})`, bytes: byteLength(content), content });
+      markConsumed(consumed, start, end);
     }
   }
 
