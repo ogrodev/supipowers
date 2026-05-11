@@ -11,7 +11,7 @@
 - `/supi:release` — release automation
 - `/supi:fix-pr` — PR review comment assessment and fixing
 - `/supi:ultraplan` — multi-stage authoring pipeline (intake → scout → discover → research → synthesize → review → approve) and execution runtime
-- `/supi:harness` — harness engineering pipeline and anti-slop guardrails (discover → research → design → plan → implement → validate)
+- `/supi:harness` — harness engineering pipeline and anti-slop guardrails (discover → research → design → plan → implement → validate), plus `pr-comment` for a sticky GitHub PR comment of the latest validate report
 - `/supi:commit` — AI-powered commit with conventional messages
 - `/supi:generate` — documentation drift detection
 - `/supi:agents` — manage review agents

@@ -78,6 +78,7 @@ Scorecard has lenient + strict scores (0–100). Strict counts `wontfix` items a
 - `/supi:harness resolve <id>` — mark an entry resolved.
 - `/supi:harness backlog` — list every open entry.
 - `/supi:harness score` — recompute and display the score.
+- `/supi:harness pr-comment [--dry-run] [--pr=N] [--repo=owner/repo] [--session=<id>] [--mode=every-push|on-status-change]` — render (or post) the sticky PR comment for the latest validate report. See `docs/supipowers/harness/pr-comment.md`.
 
 ## Conventions you MUST follow
 
