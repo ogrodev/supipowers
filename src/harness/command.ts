@@ -26,6 +26,8 @@ import { notifyError, notifyInfo } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { getProjectStatePath } from "../workspace/state-paths.js";
+import { parsePlan } from "../storage/plans.js";
+import { buildExecutionPrompt } from "../planning/approval-flow.js";
 import { loadMarker, describeMarker, resolveBareEntry } from "./bare-entry.js";
 import {
   backlog as readBacklog,
@@ -68,6 +70,7 @@ modelRegistry.register({
 export interface HarnessCommandContext {
   cwd: string;
   hasUI?: boolean;
+  newSession?: (options?: any) => Promise<{ cancelled: boolean }>;
   ui: {
     notify(message: string, type?: "info" | "warning" | "error"): void;
     select?: (title: string, options: unknown[]) => Promise<string | null>;
@@ -313,6 +316,69 @@ async function presentGateForStage(
     default:
       return "continue";
   }
+}
+
+function getHarnessPlanPath(paths: PlatformPaths, cwd: string, sessionId: string): string {
+  return path.join(getProjectStatePath(paths, cwd, "plans"), `harness-${sessionId}.md`);
+}
+
+async function handoffHarnessImplementation(
+  platform: Platform,
+  ctx: HarnessCommandContext,
+  sessionId: string,
+): Promise<boolean> {
+  const planPath = getHarnessPlanPath(platform.paths, ctx.cwd, sessionId);
+  let planContent: string;
+  try {
+    planContent = fs.readFileSync(planPath, "utf8");
+  } catch (error) {
+    notifyError(
+      ctx,
+      "/supi:harness implement",
+      `Unable to read harness plan at ${planPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
+
+  let parsedPlan: ReturnType<typeof parsePlan> | undefined;
+  try {
+    parsedPlan = parsePlan(planContent, planPath);
+  } catch {
+    parsedPlan = undefined;
+  }
+
+  const prompt = [
+    buildExecutionPrompt(planContent, planPath, parsedPlan),
+    "",
+    "<instruction>",
+    `After completing the harness plan, tell the user to run \`/supi:harness validate --session ${sessionId}\`.`,
+    "</instruction>",
+  ].join("\n");
+
+  if (ctx.newSession) {
+    const result = await ctx.newSession();
+    if (result?.cancelled) {
+      notifyInfo(ctx, "Harness implementation paused", `Plan saved at ${planPath}.`);
+      return false;
+    }
+    platform.sendUserMessage(prompt);
+  } else {
+    platform.sendMessage(
+      {
+        customType: "supi-harness-implement",
+        content: [{ type: "text", text: prompt }],
+        display: "none",
+      },
+      { deliverAs: "steer", triggerTurn: true },
+    );
+  }
+
+  notifyInfo(
+    ctx,
+    "Harness implementation started",
+    `Executing ${path.basename(planPath)}. Validate with /supi:harness validate --session ${sessionId} after the agent finishes.`,
+  );
+  return true;
 }
 
 interface DesignAnalysisOutput {
@@ -693,6 +759,11 @@ async function runRebuildWithGates(
       return; // runPipelineWithProgress already notified the error
     }
 
+    if (outcome.stage === "implement" && outcome.status === "awaiting-user") {
+      await handoffHarnessImplementation(platform, ctx, sessionId);
+      return;
+    }
+
     // ── Discover gate: present findings, then run design Q&A ──
     if (outcome.stage === "discover") {
       const choice = await presentGateForStage(outcome.stage, platform, ctx, sessionId);
@@ -808,8 +879,11 @@ async function handleBareEntry(platform: Platform, ctx: HarnessCommandContext): 
   notifyInfo(ctx, `Harness ${decision.mode}`, `${modeLabel} (session ${sessionId}) — pipeline running...`);
 
   if (decision.mode === "harden") {
-    // Harden: gap-fill, no user gates.
-    await runPipelineWithProgress(platform, ctx, sessionId, "auto", {});
+    // Harden: gap-fill, no user gates until the implementation handoff.
+    const outcome = await runPipelineWithProgress(platform, ctx, sessionId, "auto", {});
+    if (outcome.stage === "implement" && outcome.status === "awaiting-user") {
+      await handoffHarnessImplementation(platform, ctx, sessionId);
+    }
   } else {
     // Rebuild: full regeneration with user gates at each stage.
     await runRebuildWithGates(platform, ctx, sessionId);
@@ -982,7 +1056,10 @@ export async function handleStageCommand(
     notifyInfo(ctx, "Using default design spec", "Edit <session>/design-spec.json to customize.");
   }
 
-  await runPipelineWithProgress(platform, ctx, res.sessionId, "auto", built.input, stage);
+  const outcome = await runPipelineWithProgress(platform, ctx, res.sessionId, "auto", built.input, stage);
+  if (stage === "implement" && outcome.stage === "implement" && outcome.status === "awaiting-user") {
+    await handoffHarnessImplementation(platform, ctx, res.sessionId);
+  }
 }
 
 async function handleResume(platform: Platform, ctx: HarnessCommandContext, args: string[]): Promise<void> {
