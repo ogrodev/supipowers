@@ -1762,6 +1762,18 @@ export interface HarnessQualityGate {
   failSafe: string;
 }
 
+/** Configuration for the PR sticky comment posted by `/supi:harness pr-comment`. */
+export interface HarnessPrCommentConfig {
+  /** When false, the workflow step is a no-op (still safe to call). */
+  enabled: boolean;
+  /**
+   * Post cadence:
+   *  - "every-push": update the sticky comment on every CI run.
+   *  - "on-status-change": only re-post when status (passed/warned/failed) flips.
+   */
+  mode: "every-push" | "on-status-change";
+}
+
 /** CI and local counterpart wiring chosen during harness design. */
 export interface HarnessCiConfig {
   provider: "github-actions";
@@ -1772,6 +1784,14 @@ export interface HarnessCiConfig {
   localCommand: string;
   /** CI workflow path relative to repo root. */
   workflowPath: string;
+  /**
+   * Optional PR comment behaviour. When absent the subcommand falls back to built-in
+   * defaults (mode `every-push`); the explicit invocation of `/supi:harness pr-comment`
+   * is treated as the user opt-in. Set `enabled: false` to suppress posting outside
+   * `--dry-run`. The CI workflow permission warning in `ci-local-wiring` is gated on
+   * an explicit truthy `enabled`, so legacy specs do not trip it.
+   */
+  prComment?: HarnessPrCommentConfig;
 }
 
 
