@@ -186,7 +186,7 @@ export function buildTodoWriteOpsForPlan(plan: Plan): { ops: TodoWriteOp[] } {
  * When `plan` is provided and has tasks, the prompt also embeds the
  * exact `todo_write` payload the agent must call before doing any work.
  */
-function buildExecutionPrompt(
+export function buildExecutionPrompt(
   planContent: string,
   planPath: string,
   plan?: Plan,
