@@ -236,6 +236,254 @@ describe("runValidate", () => {
     expect(check?.findings.map((f) => f.file)).toContain("package.json");
     expect(check?.findings.map((f) => f.file)).toContain(".github/workflows/harness-quality.yml");
   });
+
+  test("warns (does not block) when prComment is enabled but workflow lacks pull-requests:write", async () => {
+    writeArtifacts();
+    // Stub the workflow file as present + invoking the right command but WITHOUT a
+    // pull-requests:write permission grant. The check should still pass (no errors), but
+    // surface a warning-severity finding pointing at the workflow.
+    const workflowDir = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowDir, "harness-quality.yml"),
+      [
+        "name: harness",
+        "on: { pull_request: { branches: [dev] } }",
+        "jobs:",
+        "  quality:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: bun run harness:quality",
+      ].join("\n"),
+    );
+    // package.json with the script so the package-script branch passes.
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", scripts: { "harness:quality": "echo ok" } }),
+    );
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+        prComment: { enabled: true, mode: "every-push" },
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    const check = report.checks.find((c) => c.name === "ci-local-wiring");
+    expect(check?.passed).toBe(true);
+    const permissionWarning = check?.findings.find(
+      (f) => f.severity === "warning" && f.message.includes("pull-requests: write"),
+    );
+    expect(permissionWarning).toBeDefined();
+  });
+
+  test("does NOT warn when workflow grants pull-requests:write", async () => {
+    writeArtifacts();
+    const workflowDir = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowDir, "harness-quality.yml"),
+      [
+        "name: harness",
+        "on: { pull_request: { branches: [dev] } }",
+        "permissions:",
+        "  contents: read",
+        "  pull-requests: write",
+        "jobs:",
+        "  quality:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: bun run harness:quality",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", scripts: { "harness:quality": "echo ok" } }),
+    );
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+        prComment: { enabled: true, mode: "every-push" },
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    const check = report.checks.find((c) => c.name === "ci-local-wiring");
+    expect(check?.passed).toBe(true);
+    const permissionWarning = check?.findings.find(
+      (f) => f.message.includes("pull-requests: write"),
+    );
+    expect(permissionWarning).toBeUndefined();
+  });
+
+  /**
+   * Helper for the regex-coverage / gate tests below. Writes the workflow file with
+   * `workflowYaml`, a minimal package.json with the `harness:quality` script, and a
+   * design-spec.json whose `prComment` block is `prComment`. Returns the matching
+   * `ci-local-wiring` check from a `runValidate` run.
+   */
+  async function runWithWorkflowAndPrComment(
+    workflowYaml: string,
+    prComment: { enabled: boolean; mode: "every-push" | "on-status-change" } | undefined,
+  ) {
+    writeArtifacts();
+    const workflowDir = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowDir, "harness-quality.yml"), workflowYaml);
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", scripts: { "harness:quality": "echo ok" } }),
+    );
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+        ...(prComment ? { prComment } : {}),
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    return report.checks.find((c) => c.name === "ci-local-wiring");
+  }
+
+  test("inline-mapping `permissions: { pull-requests: write }` is recognised as a grant", async () => {
+    const yaml = [
+      "name: harness",
+      "on: { pull_request: { branches: [dev] } }",
+      "permissions: { contents: read, pull-requests: write }",
+      "jobs:",
+      "  quality:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: bun run harness:quality",
+    ].join("\n");
+    const check = await runWithWorkflowAndPrComment(yaml, { enabled: true, mode: "every-push" });
+    expect(check?.passed).toBe(true);
+    const permissionWarning = check?.findings.find((f) => f.message.includes("pull-requests: write"));
+    expect(permissionWarning).toBeUndefined();
+  });
+
+  test("broad `permissions: write-all` is recognised as a grant", async () => {
+    const yaml = [
+      "name: harness",
+      "on: { pull_request: { branches: [dev] } }",
+      "permissions: write-all",
+      "jobs:",
+      "  quality:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: bun run harness:quality",
+    ].join("\n");
+    const check = await runWithWorkflowAndPrComment(yaml, { enabled: true, mode: "every-push" });
+    expect(check?.passed).toBe(true);
+    const permissionWarning = check?.findings.find((f) => f.message.includes("pull-requests: write"));
+    expect(permissionWarning).toBeUndefined();
+  });
+
+  test("does NOT warn when prComment is disabled, even if the workflow lacks pull-requests:write", async () => {
+    const yaml = [
+      "name: harness",
+      "on: { pull_request: { branches: [dev] } }",
+      "jobs:",
+      "  quality:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: bun run harness:quality",
+    ].join("\n");
+    const check = await runWithWorkflowAndPrComment(yaml, { enabled: false, mode: "every-push" });
+    expect(check?.passed).toBe(true);
+    const permissionWarning = check?.findings.find((f) => f.message.includes("pull-requests: write"));
+    expect(permissionWarning).toBeUndefined();
+  });
 });
 
 describe("HarnessValidateStage", () => {

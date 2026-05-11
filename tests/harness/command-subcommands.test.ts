@@ -144,6 +144,12 @@ describe("parseHarnessArgs", () => {
       "foo",
     ]);
   });
+
+  test("recognizes pr-comment with flag tokens", () => {
+    const parsed = parseHarnessArgs("pr-comment --dry-run --pr=42 --repo=octo/cat");
+    expect(parsed.subcommand).toBe("pr-comment");
+    expect(parsed.args).toEqual(["--dry-run", "--pr=42", "--repo=octo/cat"]);
+  });
 });
 
 describe("resolveHarnessSessionId", () => {
