@@ -279,12 +279,14 @@ export async function runHarnessPipelineUntilGate(
 
     const result = await runner.run(ctx);
 
-    // In auto mode, awaiting-user is equivalent to completed — normalize
-    // both the trace entry and any outcome derived from it so the UI never
-    // shows a confusing mix of checkmarks and "awaiting user".
+    // In auto mode, most awaiting-user results are equivalent to completed.
+    // Implement is different: it is an execution handoff, not a completed
+    // artifact write. If we normalize it, Validate runs against unapplied plan
+    // artifacts and reports false failures.
     const isGate = gateStages.has(stage);
+    const isImplementHandoff = stage === "implement" && result.status === "awaiting-user";
     const normalizedStatus: HarnessStageRunResult["status"] =
-      result.status === "awaiting-user" && !isGate
+      result.status === "awaiting-user" && !isGate && !isImplementHandoff
         ? "completed"
         : result.status;
     trace.push({ stage, status: normalizedStatus });
@@ -307,15 +309,15 @@ export async function runHarnessPipelineUntilGate(
       };
     }
 
-    // In auto mode, awaiting-user is equivalent to completed — the pipeline
-    // continues without stopping. Only surface the distinction when gated.
-    if (normalizedStatus === "awaiting-user" && isGate) {
+    // In auto mode, awaiting-user normally continues without stopping. Preserve
+    // implement handoff because the active agent still has to execute the plan.
+    if (normalizedStatus === "awaiting-user" && (isGate || isImplementHandoff)) {
       input.onProgress?.({ type: "awaiting-user", stage, detail: awaitUserDetail(result) });
     } else {
       input.onProgress?.({ type: "stage-completed", stage, detail });
     }
 
-    if (isGate && normalizedStatus !== "skipped") {
+    if ((isGate || isImplementHandoff) && normalizedStatus !== "skipped") {
       return {
         stage,
         status: "awaiting-user",
