@@ -55,7 +55,11 @@ afterEach(() => {
 });
 
 function makePlatform(): Platform {
-  return { paths } as unknown as Platform;
+  return {
+    paths,
+    sendMessage() {},
+    sendUserMessage() {},
+  } as unknown as Platform;
 }
 
 interface CapturedNotification {
@@ -113,10 +117,10 @@ describe("/supi:harness per-stage flow", () => {
     const planPath = path.join(plansDir, `harness-${sid}.md`);
     expect(fs.existsSync(planPath)).toBe(true);
 
-    // With gates:auto, the pipeline runs through to validate. Validate may report
-    // failures in a bare test repo — that's expected. The key artifacts must exist.
+    // Auto mode now stops at the implement handoff so the saved plan can be
+    // executed by the active agent before validation inspects generated files.
   });
-  test("implement subcommand reports preflight requirement under default gates", async () => {
+  test("implement subcommand hands the saved plan to the active agent", async () => {
     const platform = makePlatform();
     const ctx = makeCtx();
 
@@ -130,8 +134,8 @@ describe("/supi:harness per-stage flow", () => {
     const before = ctx.notifications.length;
     await handleStageCommand(platform, ctx, "implement", []);
     const newNotes = ctx.notifications.slice(before);
-    // Implement runs through the pipeline; v1 surfaces its routing decision but blocks
-    // on preflight without --auto. We assert at least one notification was emitted.
+    // Implement runs through the pipeline and hands the saved plan to the active
+    // agent. We assert at least one notification was emitted.
     expect(newNotes.length).toBeGreaterThan(0);
     expect(sid).toMatch(/^harness-/);
   });

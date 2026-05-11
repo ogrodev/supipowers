@@ -342,6 +342,51 @@ describe("handleStageCommand — plan/implement/validate", () => {
     expect(call.stageInputs.implementInput?.threshold).toBeGreaterThan(0);
   });
 
+  test("implement stage hands the saved plan to the active agent instead of stopping silently", async () => {
+    const sid = newHarnessSessionId();
+    saveHarnessSession(paths, cwd, makeSession(sid));
+    savePlan(
+      paths,
+      cwd,
+      `harness-${sid}.md`,
+      [
+        "---",
+        `name: harness-${sid}`,
+        "created: 2026-05-03T12:00:00.000Z",
+        "---",
+        "",
+        "## Tasks",
+        "",
+        "### Task 1: Generate AGENTS.md",
+        "**criteria**: AGENTS.md updated",
+        "**complexity**: small",
+      ].join("\n"),
+    );
+
+    const sentMessages: Array<{ content: any; opts: any }> = [];
+    const platform = {
+      paths,
+      sendMessage(content: any, opts: any) {
+        sentMessages.push({ content, opts });
+      },
+    } as unknown as Platform;
+    const driver = mock(async (): Promise<PipelineRunOutcome> => ({
+      stage: "implement",
+      status: "awaiting-user",
+      promoted: false,
+      trace: [{ stage: "implement", status: "awaiting-user" }],
+    }));
+    setHarnessPipelineDriver(driver as never);
+
+    await handleStageCommand(platform, makeCtx(), "implement", []);
+
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0].opts).toEqual({ deliverAs: "steer", triggerTurn: true });
+    expect(sentMessages[0].content.customType).toBe("supi-harness-implement");
+    expect(sentMessages[0].content.content[0].text).toContain("Plan approved. You **MUST** execute it now.");
+    expect(sentMessages[0].content.content[0].text).toContain("### Task 1: Generate AGENTS.md");
+  });
+
   test("validate stage builds adapter from the design spec", async () => {
     const sid = newHarnessSessionId();
     saveHarnessSession(paths, cwd, makeSession(sid));

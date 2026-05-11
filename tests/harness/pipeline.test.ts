@@ -15,6 +15,7 @@ import {
   saveHarnessDiscover,
   saveHarnessSession,
 } from "../../src/harness/storage.js";
+import { savePlan } from "../../src/storage/plans.js";
 import { createTestPaths, createTestRepo } from "../ultraplan/fixtures.js";
 import type { Platform } from "../../src/platform/types.js";
 import type { HarnessSession, ModelConfig } from "../../src/types.js";
@@ -129,11 +130,10 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
     });
   }
 
-  // Regression: in auto mode, stages that return "awaiting-user" must be
-  // normalized to "completed" in both the trace and the final outcome.
-  // Without this, the progress UI shows checkmarks while the system reports
-  // "awaiting user", which is confusing during rebuild.
-  test("normalizes awaiting-user to completed in trace and validate outcome", async () => {
+  // Regression: in auto mode, gated authoring stages that return
+  // "awaiting-user" must be normalized to "completed" when they are not
+  // actually waiting on external execution. Implement remains a real handoff.
+  test("normalizes design awaiting-user to completed in auto-mode trace", async () => {
     const sid = newHarnessSessionId();
     saveHarnessSession(paths, cwd, freshSession(sid));
     seedDiscover(sid);
@@ -150,7 +150,7 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
       onProgress: (event) => progressEvents.push(event),
     };
 
-    // The pipeline runs discover → research → design → plan → implement → validate.
+    // The pipeline runs discover → research → design → plan → implement.
     // Design returns "awaiting-user". In auto mode this must be normalized.
     const outcome = await runHarnessPipelineUntilGate(input);
 
@@ -159,23 +159,63 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
     expect(designTrace).toBeDefined();
     expect(designTrace!.status).toBe("completed");
 
-    // Outcome: must not report "awaiting-user" from any stage.
-    // (Validate may fail in a bare test repo — that's orthogonal to the normalization.)
-    expect(outcome.status).not.toBe("awaiting-user");
+    // Outcome now stops at Implement because that awaiting-user means the
+    // saved plan still has to be executed by the active agent.
+    expect(outcome.stage).toBe("implement");
+    expect(outcome.status).toBe("awaiting-user");
 
-    // Pipeline must have run at least through design (normalization target).
-    const validateTrace = outcome.trace.find((t) => t.stage === "validate");
-    expect(validateTrace).toBeDefined();
-
-    // Progress events: no "awaiting-user" events in auto mode.
-    const awaitingEvents = progressEvents.filter((e) => e.type === "awaiting-user");
-    expect(awaitingEvents).toHaveLength(0);
+    // Progress events: design must not surface as awaiting-user in auto mode.
+    const designAwaitingEvents = progressEvents.filter(
+      (e) => e.type === "awaiting-user" && e.stage === "design",
+    );
+    expect(designAwaitingEvents).toHaveLength(0);
 
     // Design completion event must fire as "stage-completed".
     const designCompleted = progressEvents.filter(
       (e) => e.type === "stage-completed" && e.stage === "design",
     );
     expect(designCompleted.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("stops at implement handoff in auto mode instead of validating unapplied artifacts", async () => {
+    const sid = newHarnessSessionId();
+    saveHarnessSession(paths, cwd, freshSession(sid));
+    const planMarkdown = [
+      "---",
+      `name: harness-${sid}`,
+      "created: 2026-05-03T12:00:00.000Z",
+      "---",
+      "",
+      "## Tasks",
+      "",
+      "### Task 1: Generate AGENTS.md",
+      "**criteria**: AGENTS.md updated",
+      "**complexity**: small",
+    ].join("\n");
+    savePlan(paths, cwd, `harness-${sid}.md`, planMarkdown);
+
+    const progressEvents: HarnessPipelineProgressEvent[] = [];
+    const outcome = await runHarnessPipelineUntilGate({
+      platform: makePlatform(),
+      paths,
+      cwd,
+      sessionId: sid,
+      modelConfig: makeModelConfig(),
+      gates: "auto",
+      stageInputs: {},
+      startStage: "implement",
+      onProgress: (event) => progressEvents.push(event),
+    });
+
+    expect(outcome.stage).toBe("implement");
+    expect(outcome.status).toBe("awaiting-user");
+    expect(outcome.trace).toEqual([{ stage: "implement", status: "awaiting-user" }]);
+    expect(outcome.trace.some((entry) => entry.stage === "validate")).toBe(false);
+    expect(progressEvents).toContainEqual({
+      type: "awaiting-user",
+      stage: "implement",
+      detail: "awaiting-user",
+    });
   });
 
   // Default gates preserve "awaiting-user" as a gate signal.
