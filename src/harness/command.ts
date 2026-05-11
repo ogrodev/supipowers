@@ -55,6 +55,7 @@ import { newHarnessSessionId } from "./stage-runner.js";
 import { buildBackendAdapter } from "./anti_slop/backend-factory.js";
 import { getWorkingTreeStatus } from "../git/status.js";
 import { DEFAULT_HARNESS_CONFIG } from "./hooks/register.js";
+import { handlePrComment } from "./pr-comment/handler.js";
 import type { HarnessDesignSpec, HarnessGateMode, HarnessSession, HarnessStage } from "../types.js";
 
 modelRegistry.register({
@@ -88,6 +89,7 @@ export const HARNESS_SUBCOMMANDS = [
   { name: "resolve", description: "Mark a queue entry resolved" },
   { name: "backlog", description: "List every open queue entry" },
   { name: "score", description: "Recompute and display the score" },
+  { name: "pr-comment", description: "Render or post the harness PR sticky comment" },
 ] as const;
 
 type HarnessSubcommand = (typeof HARNESS_SUBCOMMANDS)[number]["name"];
@@ -199,6 +201,7 @@ export async function handleHarness(
       case "implement": await handleStageCommand(platform, ctx, "implement", request.args); return;
       case "validate": await handleStageCommand(platform, ctx, "validate", request.args); return;
       case "resume": await handleResume(platform, ctx, request.args); return;
+      case "pr-comment": await handlePrComment(platform, ctx, request.args); return;
       default:
         notifyError(ctx, "Unknown harness subcommand", `\`${request.subcommand}\` is not recognized.`);
         return;

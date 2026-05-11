@@ -243,6 +243,29 @@ function scriptNameFromLocalCommand(command: string): string | null {
   return null;
 }
 
+/**
+ * Conservative check that a GitHub Actions workflow grants the write scope needed for
+ * the harness PR comment. Only inspects the `permissions:` block — if a user has wired
+ * a deploy token or `secrets.GITHUB_TOKEN` with a custom scope, this returns false and
+ * the warning is a no-op false positive. That's deliberate: a false-positive warning is
+ * cheaper than a silent 403 the first time CI tries to post.
+ *
+ * Caveats this regex deliberately does not handle:
+ *  - Job-scoped `permissions:` blocks that grant `pull-requests: write` to a job other
+ *    than the one running `/supi:harness pr-comment`. Detecting that requires real YAML
+ *    parsing; a false-positive warning is again cheaper than guessing wrong.
+ */
+function workflowGrantsPrCommentPermission(workflow: string): boolean {
+  // Strip whole-line YAML comments before matching so a commented-out
+  // `# pull-requests: write` does not falsely register as a grant.
+  const stripped = workflow.replace(/^[ \t]*#.*$/gm, "");
+  // Match either inline mapping `permissions: { pull-requests: write }`, the block form
+  // with `pull-requests: write` on its own line, or the broad `permissions: write-all`.
+  if (/permissions:\s*write-all\b/.test(stripped)) return true;
+  if (/\bpull-requests:\s*write\b/.test(stripped)) return true;
+  return false;
+}
+
 async function checkCiLocalWiring(
   paths: HarnessStageRunnerContext["paths"],
   cwd: string,
@@ -346,6 +369,18 @@ async function checkCiLocalWiring(
             });
           }
         }
+      }
+      // Informational: when prComment is enabled but the workflow lacks
+      // `pull-requests: write`, the `gh api` upsert will fail with 403. Surface a warning
+      // so the user notices before the first failed PR run.
+      if (spec.value.ci.prComment?.enabled && !workflowGrantsPrCommentPermission(workflow)) {
+        findings.push({
+          severity: "warning",
+          file: spec.value.ci.workflowPath,
+          message: "CI workflow does not grant `pull-requests: write` but prComment.enabled is true.",
+          remediation: "Add `permissions: { pull-requests: write }` to the workflow so /supi:harness pr-comment can post.",
+          source: "ci-local-wiring",
+        });
       }
     } catch (error) {
       findings.push({

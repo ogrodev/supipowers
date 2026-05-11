@@ -61,6 +61,7 @@ export function defaultCiConfigFromDiscover(discover: HarnessDiscoverArtifact): 
     trigger: { mode: "branches", branches: ["dev", "main"] },
     localCommand,
     workflowPath: ".github/workflows/harness-quality.yml",
+    prComment: { enabled: true, mode: "every-push" },
   };
 }
 
