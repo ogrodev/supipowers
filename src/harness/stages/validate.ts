@@ -54,6 +54,12 @@ import {
   getHarnessArchitectureDocPath,
   getHarnessGoldenPrinciplesPath,
 } from "../project-paths.js";
+import { resolveDocsConfig } from "../docs/config.js";
+import { matchesLayerGlob } from "../docs/glob-match.js";
+import { selectRepresentativeFiles } from "../docs/representative-files.js";
+import { computeLayerSourceHash, sha256 as sha256Hash } from "../docs/source-hash.js";
+import { validateLayerDocMarkdown } from "../docs/validator.js";
+import { computeLayerAddendum } from "../hooks/layer-context-inject.js";
 
 export interface ValidateStageInput {
   /** Selected backend (from the design spec). */
@@ -115,6 +121,13 @@ const CHECK_CONTRACTS: Readonly<Record<string, CheckContract>> = {
     doesNotProve: "Hook latency, all real editor events, or every repository-specific layer edge case.",
     artifact: "validate-report.json synthetic-edit-test entry",
     failSafe: "Hook failures are emitted as error findings and block validation.",
+  },
+  "docs-validation": {
+    invariant: "Per-layer docs must remain valid, complete, indexed, and integrated with the layer-context-inject hook.",
+    proves: "Every docs/layers/*.md passes the validator, docs/README.md ↔ filesystem are consistent, the hook prefers the per-layer doc, and drift between layer inputs and recorded sourceHash is surfaced.",
+    doesNotProve: "The doc content is high quality, or that the layer rules themselves match the current codebase.",
+    artifact: "validate-report.json docs-validation entry plus docs/layers/*.md + docs/README.md",
+    failSafe: "Missing docs/layers/ short-circuits the check as a no-op; structural failures emit warnings and surface in the queue.",
   },
   "ci-local-wiring": {
     invariant: "Every harness validation gate must have one local command and CI must invoke that command instead of relying on human memory.",
@@ -575,6 +588,327 @@ function loadLayerRules(cwd: string): HarnessLayerRule[] {
 }
 
 /**
+ * Validate the per-layer docs tree: doc validator on each file, index ↔ filesystem
+ * consistency, hook integration smoke test, and sourceHash drift. Soft-failure: missing
+ * `docs/layers/` short-circuits to a no-op pass — the docs stage is opt-in.
+ */
+async function checkDocsValidation(
+  ctx: HarnessStageRunnerContext,
+  layerRules: readonly HarnessLayerRule[],
+): Promise<CheckResult> {
+  const startedAt = Date.now();
+  const findings: HarnessValidateFinding[] = [];
+
+  const layersDir = path.join(ctx.cwd, "docs", "layers");
+  if (!fs.existsSync(layersDir)) {
+    return {
+      name: "docs-validation",
+      passed: true,
+      summary: "Per-layer docs disabled (no docs/layers/).",
+      findings,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+  const config = resolveDocsConfig(ctx.paths, ctx.cwd);
+
+  // ── Re-validate every layer doc ──────────────────────────────────────
+  let docFiles: string[] = [];
+  try {
+    docFiles = fs.readdirSync(layersDir).filter((f) => f.endsWith(".md")).sort();
+  } catch (error) {
+    findings.push({
+      severity: "warning",
+      file: "docs/layers/",
+      message: `unable to enumerate docs/layers/: ${error instanceof Error ? error.message : String(error)}`,
+      remediation: "Inspect the docs/layers/ directory permissions and re-run validate.",
+      source: "docs-validation",
+    });
+  }
+
+  for (const fileName of docFiles) {
+    const layerId = fileName.replace(/\.md$/, "");
+    const layerPath = `docs/layers/${fileName}`;
+    const docPath = path.join(layersDir, fileName);
+    let contents: string;
+    try {
+      contents = fs.readFileSync(docPath, "utf8");
+    } catch (error) {
+      findings.push({
+        severity: "warning",
+        file: layerPath,
+        message: `unable to read doc: ${error instanceof Error ? error.message : String(error)}`,
+        remediation: "Re-run `/supi:harness docs` after fixing filesystem permissions.",
+        source: "docs-validation",
+      });
+      continue;
+    }
+    const recordedHash = readFrontmatterSourceHashForValidate(contents);
+    const validation = validateLayerDocMarkdown(contents, {
+      expectedLayerId: layerId,
+      expectedSourceHash: recordedHash ?? "",
+      maxDocLoc: config.max_per_doc_loc,
+      maxAgentContextLoc: config.agent_context_loc,
+    });
+    if (!validation.ok) {
+      for (const err of validation.errors) {
+        findings.push({
+          severity: "warning",
+          file: layerPath,
+          message: err,
+          remediation: "Re-run `/supi:harness docs` to regenerate the per-layer doc.",
+          source: "docs-validation",
+        });
+      }
+    }
+  }
+
+  // ── Index ↔ filesystem consistency ────────────────────────────────────
+  const indexPath = path.join(ctx.cwd, "docs", "README.md");
+  if (!fs.existsSync(indexPath)) {
+    findings.push({
+      severity: "warning",
+      file: "docs/README.md",
+      message: "docs/layers/ exists but docs/README.md is missing.",
+      remediation: "Re-run `/supi:harness docs` to regenerate the index.",
+      source: "docs-validation",
+    });
+  } else {
+    let indexContents: string;
+    try {
+      indexContents = fs.readFileSync(indexPath, "utf8");
+    } catch (error) {
+      findings.push({
+        severity: "warning",
+        file: "docs/README.md",
+        message: `unable to read docs/README.md: ${error instanceof Error ? error.message : String(error)}`,
+        remediation: "Inspect the file permissions and re-run validate.",
+        source: "docs-validation",
+      });
+      indexContents = "";
+    }
+    const referenced = new Set<string>();
+    for (const match of indexContents.matchAll(/docs\/layers\/([A-Za-z0-9._-]+)\.md/g)) {
+      referenced.add(match[1]);
+    }
+    const onDisk = new Set(docFiles.map((f) => f.replace(/\.md$/, "")));
+    for (const layerId of referenced) {
+      if (!onDisk.has(layerId)) {
+        findings.push({
+          severity: "warning",
+          file: "docs/README.md",
+          message: `index references docs/layers/${layerId}.md but the file is missing.`,
+          remediation: "Run `/supi:harness docs` or delete the stale row from docs/README.md.",
+          source: "docs-validation",
+        });
+      }
+    }
+    for (const layerId of onDisk) {
+      if (!referenced.has(layerId)) {
+        findings.push({
+          severity: "warning",
+          file: "docs/README.md",
+          message: `docs/layers/${layerId}.md exists but is not listed in the index.`,
+          remediation: "Run `/supi:harness docs` to refresh the index.",
+          source: "docs-validation",
+        });
+      }
+    }
+  }
+
+  // ── Hook integration smoke test ──────────────────────────────────────
+  for (const rule of layerRules) {
+    const probeFile = pickSampleFileForLayer(ctx.cwd, rule);
+    if (!probeFile) continue;
+    const result = computeLayerAddendum({
+      cwd: ctx.cwd,
+      candidateFile: probeFile,
+      config: { enabled: true, addendum_max_chars: 800 },
+    });
+    const docExists = fs.existsSync(path.join(ctx.cwd, "docs", "layers", `${rule.layer}.md`));
+    if (docExists && result.reason !== "matched (per-layer doc)") {
+      findings.push({
+        severity: "warning",
+        file: `docs/layers/${rule.layer}.md`,
+        message: `layer-context-inject hook returned "${result.reason}" despite the per-layer doc existing.`,
+        remediation: "Verify the per-layer doc has a non-empty ## Agent context section.",
+        source: "docs-validation",
+      });
+    }
+  }
+
+  // ── Source-hash drift ────────────────────────────────────────────────
+  if (config.drift_warning.enabled) {
+    const promptVersion = readDocsPromptVersion();
+    const allFiles = collectAllRepoFilesForValidate(ctx.cwd);
+    const goldenPrinciples = readGoldenPrinciplesForValidate(ctx.cwd);
+    for (const rule of layerRules) {
+      const docPath = path.join(layersDir, `${rule.layer}.md`);
+      if (!fs.existsSync(docPath)) continue;
+      let contents: string;
+      try {
+        contents = fs.readFileSync(docPath, "utf8");
+      } catch (error) {
+        findings.push({
+          severity: "warning",
+          file: `docs/layers/${rule.layer}.md`,
+          message: `unable to read doc for drift check: ${error instanceof Error ? error.message : String(error)}`,
+          remediation: "Inspect the file permissions and re-run validate.",
+          source: "docs-validation",
+        });
+        continue;
+      }
+      const recordedHash = readFrontmatterSourceHashForValidate(contents);
+      if (!recordedHash) continue;
+
+      const globPaths = allFiles
+        .filter((file) => rule.globs.some((g) => matchesLayerGlob(file, g)))
+        .sort();
+      const repSelection = selectRepresentativeFiles({ cwd: ctx.cwd, files: globPaths });
+      const peerLayers = layerRules
+        .filter((peer) => peer.layer !== rule.layer)
+        .map((peer) => ({ id: peer.layer, description: peer.description ?? "" }));
+      const currentHash = computeLayerSourceHash({
+        layerRule: rule,
+        globPaths,
+        representativeFiles: repSelection.entries.map((e) => ({
+          path: e.path,
+          contentHash: e.contentHash,
+        })),
+        goldenPrinciples,
+        peerLayers,
+        promptVersion,
+      });
+      if (currentHash !== recordedHash) {
+        findings.push({
+          severity: "warning",
+          file: `docs/layers/${rule.layer}.md`,
+          message: `sourceHash drift: layer inputs changed since the doc was generated.`,
+          remediation: "Run `/supi:harness docs` to regenerate the affected layer doc.",
+          source: "docs-validation",
+        });
+      }
+    }
+  }
+
+  return {
+    name: "docs-validation",
+    // Findings are advisory only — they never block the stage; the report records them.
+    passed: true,
+    summary: findings.length === 0
+      ? "Per-layer docs validated."
+      : `${findings.length} per-layer docs finding(s).`,
+    findings,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+function readFrontmatterSourceHashForValidate(markdown: string): string | null {
+  let body = markdown;
+  if (body.startsWith("<!--")) {
+    const newline = body.indexOf("\n");
+    if (newline > 0) body = body.slice(newline + 1);
+  }
+  if (!body.startsWith("---")) return null;
+  const firstNewline = body.indexOf("\n");
+  if (firstNewline < 0) return null;
+  const closeIdx = body.indexOf("\n---", firstNewline);
+  if (closeIdx < 0) return null;
+  const inner = body.slice(firstNewline + 1, closeIdx);
+  for (const line of inner.split("\n")) {
+    const match = line.match(/^sourceHash\s*:\s*(.+)\s*$/);
+    if (match) return match[1].trim();
+  }
+  return null;
+}
+
+function pickSampleFileForLayer(cwd: string, rule: HarnessLayerRule): string | null {
+  // Walk the tree until we find one file matching any layer glob; this is enough to
+  // exercise the hook integration check without enumerating every file twice.
+  const allFiles = collectAllRepoFilesForValidate(cwd);
+  // dynamic import keeps the top-level imports list small
+  const skipDirs = ["node_modules", ".git", "dist", "build", ".omp", ".cache", ".next"];
+  for (const file of allFiles) {
+    if (skipDirs.some((d) => file.startsWith(`${d}/`))) continue;
+    for (const glob of rule.globs) {
+      if (matchesLayerGlobForValidate(file, glob)) return file;
+    }
+  }
+  return null;
+}
+
+function matchesLayerGlobForValidate(filePath: string, glob: string): boolean {
+  const normalizedFile = filePath.replace(/\\/g, "/");
+  const normalizedGlob = glob.replace(/\\/g, "/");
+  const regexSrc = normalizedGlob
+    .split(/(\*\*|\*)/g)
+    .map((segment) => {
+      if (segment === "**") return ".*";
+      if (segment === "*") return "[^/]*";
+      return segment.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("");
+  return new RegExp(`^${regexSrc}$`).test(normalizedFile);
+}
+
+function collectAllRepoFilesForValidate(cwd: string): string[] {
+  const out: string[] = [];
+  const skip = new Set<string>([
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    ".omp",
+    "coverage",
+    ".cache",
+    ".next",
+  ]);
+  function walk(absolute: string, relative: string): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(absolute, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (skip.has(entry.name)) continue;
+        walk(path.join(absolute, entry.name), path.posix.join(relative, entry.name));
+      } else if (entry.isFile()) {
+        out.push(relative === "" ? entry.name : path.posix.join(relative, entry.name));
+      }
+    }
+  }
+  walk(cwd, "");
+  return out;
+}
+
+function readGoldenPrinciplesForValidate(cwd: string): string[] {
+  const principlesPath = path.join(cwd, "docs", "golden-principles.md");
+  if (!fs.existsSync(principlesPath)) return [];
+  try {
+    const md = fs.readFileSync(principlesPath, "utf8");
+    return md
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^\d+\.\s+/.test(line))
+      .map((line) => line.replace(/^\d+\.\s+/, ""));
+  } catch {
+    return [];
+  }
+}
+
+function readDocsPromptVersion(): string {
+  try {
+    const docsPromptUrl = new URL("../default-agents/docs.md", import.meta.url);
+    const filePath = path.normalize(decodeURI(docsPromptUrl.pathname));
+    const contents = fs.readFileSync(filePath, "utf8");
+    return sha256Hash(contents);
+  } catch {
+    return sha256Hash("harness-docs-prompt-fallback");
+  }
+}
+
+/**
  * Run every sub-check and assemble the validate report. Pure-ish: side effects are limited
  * to the optional anti-slop scan (which itself is fenced behind the adapter's
  * `isAvailable`).
@@ -602,6 +936,7 @@ export async function runValidate(
 
   const synthetic = checkSyntheticEdit(input, layerRules);
   checks.push(synthetic);
+  checks.push(await checkDocsValidation(ctx, layerRules));
 
   // Persist scan findings to the queue so future runs see them.
   for (const finding of slopFindings) {
