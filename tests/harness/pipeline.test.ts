@@ -28,6 +28,7 @@ describe("harness pipeline", () => {
       "design",
       "plan",
       "implement",
+      "docs",
       "validate",
     ]);
   });
@@ -130,10 +131,10 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
     });
   }
 
-  // Regression: in auto mode, gated authoring stages that return
-  // "awaiting-user" must be normalized to "completed" when they are not
-  // actually waiting on external execution. Implement remains a real handoff.
-  test("normalizes design awaiting-user to completed in auto-mode trace", async () => {
+  // Regression: in auto mode, gated authoring stages that return `awaiting-user`
+  // (design, plan) must normalize to `completed`. Implement is no longer a handoff —
+  // it applies programmatically — so the pipeline continues straight through.
+  test("normalizes design + plan awaiting-user to completed in auto-mode trace", async () => {
     const sid = newHarnessSessionId();
     saveHarnessSession(paths, cwd, freshSession(sid));
     seedDiscover(sid);
@@ -150,34 +151,27 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
       onProgress: (event) => progressEvents.push(event),
     };
 
-    // The pipeline runs discover → research → design → plan → implement.
-    // Design returns "awaiting-user". In auto mode this must be normalized.
     const outcome = await runHarnessPipelineUntilGate(input);
 
-    // Trace: design must show "completed", not "awaiting-user".
     const designTrace = outcome.trace.find((t) => t.stage === "design");
-    expect(designTrace).toBeDefined();
-    expect(designTrace!.status).toBe("completed");
+    expect(designTrace?.status).toBe("completed");
+    const planTrace = outcome.trace.find((t) => t.stage === "plan");
+    expect(planTrace?.status).toBe("completed");
 
-    // Outcome now stops at Implement because that awaiting-user means the
-    // saved plan still has to be executed by the active agent.
-    expect(outcome.stage).toBe("implement");
-    expect(outcome.status).toBe("awaiting-user");
+    // Implement now runs the programmatic apply and reports "completed", so it is
+    // visible in the trace as a completed stage rather than blocking the pipeline.
+    const implementTrace = outcome.trace.find((t) => t.stage === "implement");
+    expect(implementTrace).toBeDefined();
+    expect(implementTrace!.status === "completed" || implementTrace!.status === "skipped").toBe(true);
 
-    // Progress events: design must not surface as awaiting-user in auto mode.
-    const designAwaitingEvents = progressEvents.filter(
-      (e) => e.type === "awaiting-user" && e.stage === "design",
+    // No design/plan awaiting-user progress events should fire in auto mode.
+    const awaitingEvents = progressEvents.filter(
+      (e) => e.type === "awaiting-user" && (e.stage === "design" || e.stage === "plan"),
     );
-    expect(designAwaitingEvents).toHaveLength(0);
-
-    // Design completion event must fire as "stage-completed".
-    const designCompleted = progressEvents.filter(
-      (e) => e.type === "stage-completed" && e.stage === "design",
-    );
-    expect(designCompleted.length).toBeGreaterThanOrEqual(1);
+    expect(awaitingEvents).toHaveLength(0);
   });
 
-  test("stops at implement handoff in auto mode instead of validating unapplied artifacts", async () => {
+  test("implement applies programmatically and the pipeline continues to validate in auto mode", async () => {
     const sid = newHarnessSessionId();
     saveHarnessSession(paths, cwd, freshSession(sid));
     const planMarkdown = [
@@ -193,8 +187,8 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
       "**complexity**: small",
     ].join("\n");
     savePlan(paths, cwd, `harness-${sid}.md`, planMarkdown);
+    seedDiscover(sid);
 
-    const progressEvents: HarnessPipelineProgressEvent[] = [];
     const outcome = await runHarnessPipelineUntilGate({
       platform: makePlatform(),
       paths,
@@ -203,19 +197,16 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
       modelConfig: makeModelConfig(),
       gates: "auto",
       stageInputs: {},
-      startStage: "implement",
-      onProgress: (event) => progressEvents.push(event),
+      startStage: "design",
+      onProgress: () => {},
     });
 
-    expect(outcome.stage).toBe("implement");
-    expect(outcome.status).toBe("awaiting-user");
-    expect(outcome.trace).toEqual([{ stage: "implement", status: "awaiting-user" }]);
-    expect(outcome.trace.some((entry) => entry.stage === "validate")).toBe(false);
-    expect(progressEvents).toContainEqual({
-      type: "awaiting-user",
-      stage: "implement",
-      detail: "awaiting-user",
-    });
+    // The pipeline runs design → plan → implement → docs → validate without a handoff.
+    // Implement records `completed` (not `awaiting-user`).
+    const implementTrace = outcome.trace.find((t) => t.stage === "implement");
+    expect(implementTrace).toBeDefined();
+    expect(implementTrace!.status).not.toBe("awaiting-user");
+    expect(outcome.trace.some((entry) => entry.stage === "validate")).toBe(true);
   });
 
   // Default gates preserve "awaiting-user" as a gate signal.

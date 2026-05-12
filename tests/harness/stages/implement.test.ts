@@ -8,9 +8,10 @@ import {
   HarnessImplementStage,
   preflightImplement,
 } from "../../../src/harness/stages/implement.js";
+import { saveHarnessDesignSpecJson } from "../../../src/harness/storage.js";
 import { createTestPaths, createTestRepo } from "../../ultraplan/fixtures.js";
 import type { HarnessStageRunnerContext } from "../../../src/harness/stage-runner.js";
-import type { Plan, PlanTask } from "../../../src/types.js";
+import type { HarnessDesignSpec, Plan, PlanTask } from "../../../src/types.js";
 
 let tmpDir: string;
 let cwd: string;
@@ -100,33 +101,67 @@ describe("preflightImplement", () => {
   });
 });
 
+function makeSpec(sessionId: string): HarnessDesignSpec {
+  return {
+    sessionId,
+    recordedAt: "2026-05-03T12:00:00.000Z",
+    layerRules: [],
+    tasteInvariants: [],
+    tooling: { lint: null, structuralTest: null, eval: null },
+    goldenPrinciples: ["No emojis"],
+    docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+    validationGates: [],
+    ci: {
+      provider: "github-actions",
+      trigger: { mode: "branches", branches: ["main"] },
+      localCommand: "bun run harness:quality",
+      workflowPath: ".github/workflows/harness-quality.yml",
+    },
+    supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+    antiSlop: {
+      backend: "supi-native",
+      hooks: {
+        pre_edit_dupe_probe: { enabled: true, threshold: 0.85, min_token_count: 30 },
+        post_session_sweep: { enabled: true, block_on_new_dead_code: false },
+        layer_context_inject: { enabled: true, addendum_max_chars: 800 },
+        score_floor: { strict: 75, lenient: 90, release_blocking: false },
+      },
+      skillTargets: [],
+    },
+  };
+}
+
 describe("HarnessImplementStage", () => {
   test("blocks on missing plan", async () => {
     const stage = new HarnessImplementStage({ planPath: "/nonexistent" });
     const result = await stage.run(ctx());
     expect(result.status).toBe("blocked");
+    expect((result.blocker as { code: string }).code).toBe("implement-preflight-failed");
   });
 
-  test("returns awaiting-user with routing details", async () => {
+  test("blocks when the design spec is missing", async () => {
     const planPath = path.join(cwd, "plan.md");
-    fs.writeFileSync(
-      planPath,
-      [
-        "---",
-        "name: test",
-        "created: 2026-05-03T12:00:00.000Z",
-        "---",
-        "",
-        "## Tasks",
-        "",
-        "### Task 1: Foo",
-        "**criteria**: done",
-        "**complexity**: small",
-      ].join("\n"),
-    );
-    const stage = new HarnessImplementStage({ planPath, threshold: 1 });
+    fs.writeFileSync(planPath, "# plan");
+    const stage = new HarnessImplementStage({ planPath });
     const result = await stage.run(ctx());
-    expect(result.status).toBe("awaiting-user");
-    expect((result.details as { routing: string }).routing).toBe("in-session");
+    expect(result.status).toBe("blocked");
+    expect((result.blocker as { code: string }).code).toBe("design-spec-missing");
+  });
+
+  test("applies the design spec programmatically and reports completed", async () => {
+    const planPath = path.join(cwd, "plan.md");
+    fs.writeFileSync(planPath, "# plan");
+    const spec = makeSpec("harness-imp-1");
+    const save = saveHarnessDesignSpecJson(paths, cwd, spec.sessionId, spec);
+    expect(save.ok).toBe(true);
+
+    const stage = new HarnessImplementStage({ planPath });
+    const result = await stage.run(ctx());
+
+    expect(result.status).toBe("completed");
+    expect(fs.existsSync(path.join(cwd, "AGENTS.md"))).toBe(true);
+    expect(fs.existsSync(path.join(cwd, "docs", "architecture.md"))).toBe(true);
+    expect(fs.existsSync(path.join(cwd, "docs", "golden-principles.md"))).toBe(true);
+    expect(fs.existsSync(path.join(cwd, ".omp", "supipowers", "harness", "marker.json"))).toBe(true);
   });
 });

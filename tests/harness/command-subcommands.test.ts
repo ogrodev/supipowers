@@ -342,7 +342,7 @@ describe("handleStageCommand — plan/implement/validate", () => {
     expect(call.stageInputs.implementInput?.threshold).toBeGreaterThan(0);
   });
 
-  test("implement stage hands the saved plan to the active agent instead of stopping silently", async () => {
+  test("implement stage runs programmatically and does not steer the active agent", async () => {
     const sid = newHarnessSessionId();
     saveHarnessSession(paths, cwd, makeSession(sid));
     savePlan(
@@ -370,21 +370,20 @@ describe("handleStageCommand — plan/implement/validate", () => {
         sentMessages.push({ content, opts });
       },
     } as unknown as Platform;
+    // The implement stage now applies programmatically inside the pipeline driver, so
+    // `handleStageCommand` must not steer the active agent regardless of the pipeline
+    // outcome (no handoff path remains in the dispatcher).
     const driver = mock(async (): Promise<PipelineRunOutcome> => ({
       stage: "implement",
-      status: "awaiting-user",
+      status: "completed",
       promoted: false,
-      trace: [{ stage: "implement", status: "awaiting-user" }],
+      trace: [{ stage: "implement", status: "completed" }],
     }));
     setHarnessPipelineDriver(driver as never);
 
     await handleStageCommand(platform, makeCtx(), "implement", []);
 
-    expect(sentMessages).toHaveLength(1);
-    expect(sentMessages[0].opts).toEqual({ deliverAs: "steer", triggerTurn: true });
-    expect(sentMessages[0].content.customType).toBe("supi-harness-implement");
-    expect(sentMessages[0].content.content[0].text).toContain("Plan approved. You **MUST** execute it now.");
-    expect(sentMessages[0].content.content[0].text).toContain("### Task 1: Generate AGENTS.md");
+    expect(sentMessages).toEqual([]);
   });
 
   test("validate stage builds adapter from the design spec", async () => {

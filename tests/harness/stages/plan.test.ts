@@ -65,9 +65,34 @@ describe("buildHarnessPlanTasks", () => {
     expect(names).toContain("Write docs/architecture.md");
     expect(names).toContain("Write docs/golden-principles.md");
     expect(names.some((n) => n.includes("fallow"))).toBe(true);
-    expect(names).toContain("Register anti-slop hooks");
+    expect(names).toContain("Enable repo-local anti-slop hooks");
     expect(names).toContain("Add architecture-aware review agent");
     expect(names).toContain("Wire `/supi:checks` gate");
+  });
+
+  test("orders AGENTS.md after every artifact it summarizes", () => {
+    const names = buildHarnessPlanTasks(makeSpec()).map((task) => task.name);
+
+    expect(names.at(-1)).toBe("Generate AGENTS.md");
+    expect(names.indexOf("Write docs/architecture.md")).toBeLessThan(names.indexOf("Generate AGENTS.md"));
+    expect(names.indexOf("Write docs/golden-principles.md")).toBeLessThan(names.indexOf("Generate AGENTS.md"));
+    expect(names.indexOf("Add architecture-aware review agent")).toBeLessThan(names.indexOf("Generate AGENTS.md"));
+    expect(names.indexOf("Wire `/supi:checks` gate")).toBeLessThan(names.indexOf("Generate AGENTS.md"));
+  });
+
+  test("does not ask target repos to edit supipowers extension hook source", () => {
+    const tasks = buildHarnessPlanTasks(makeSpec());
+    const rendered = renderHarnessPlanMarkdown({
+      spec: makeSpec(),
+      tasks,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      planName: "harness-test",
+    });
+    const hookTask = tasks.find((task) => task.name === "Enable repo-local anti-slop hooks");
+
+    expect(hookTask).toBeDefined();
+    expect(hookTask?.files).toEqual([".omp/supipowers/harness/marker.json"]);
+    expect(rendered).not.toContain("src/harness/hooks/register.ts");
   });
 
   test("emits local and CI wiring tasks from CI config", () => {

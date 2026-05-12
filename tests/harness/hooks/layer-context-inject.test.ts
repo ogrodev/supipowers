@@ -55,7 +55,7 @@ describe("computeLayerAddendum", () => {
     });
     expect(result.addendum).toContain("domain");
     expect(result.addendum).toContain("Permitted imports: domain");
-    expect(result.reason).toBe("matched");
+    expect(result.reason).toBe("matched (architecture.md fallback)");
   });
 
   test("no candidate → no-op", () => {
@@ -99,5 +99,71 @@ describe("computeLayerAddendum", () => {
     });
     expect(result.addendum.length).toBeLessThanOrEqual(40);
     expect(result.addendum.endsWith("…")).toBe(true);
+  });
+
+  test("prefers per-layer doc Agent context section when present", () => {
+    const layerDocPath = path.join(tmpDir, "docs", "layers", "domain.md");
+    fs.mkdirSync(path.dirname(layerDocPath), { recursive: true });
+    const layerDocBody = [
+      "---",
+      "layer: domain",
+      "generatedAt: 2026-05-12T12:00:00.000Z",
+      "sourceHash: " + "a".repeat(64),
+      "---",
+      "## Agent context",
+      "Crisp per-layer agent context.",
+      "Don't import infra.",
+      "## Purpose",
+      "domain layer.",
+    ].join("\n");
+    fs.writeFileSync(layerDocPath, layerDocBody);
+
+    const result = computeLayerAddendum({
+      cwd: tmpDir,
+      candidateFile: "src/domain/user.ts",
+      config: { enabled: true, addendum_max_chars: 800 },
+      archPath,
+    });
+    expect(result.addendum).toContain("Crisp per-layer agent context.");
+    expect(result.addendum).toContain("Don't import infra.");
+    expect(result.reason).toBe("matched (per-layer doc)");
+  });
+
+  test("per-layer doc agent-context section respects max_chars cap", () => {
+    const layerDocPath = path.join(tmpDir, "docs", "layers", "domain.md");
+    fs.mkdirSync(path.dirname(layerDocPath), { recursive: true });
+    const body = [
+      "---",
+      "layer: domain",
+      "generatedAt: 2026-05-12T12:00:00.000Z",
+      "sourceHash: deadbeef",
+      "---",
+      "## Agent context",
+      "a".repeat(2000),
+      "## Purpose",
+      "p",
+    ].join("\n");
+    fs.writeFileSync(layerDocPath, body);
+
+    const result = computeLayerAddendum({
+      cwd: tmpDir,
+      candidateFile: "src/domain/user.ts",
+      config: { enabled: true, addendum_max_chars: 40 },
+      archPath,
+    });
+    expect(result.addendum.length).toBeLessThanOrEqual(40);
+    expect(result.addendum.endsWith("…")).toBe(true);
+    expect(result.reason).toBe("matched (per-layer doc)");
+  });
+
+  test("missing per-layer doc falls back to architecture.md", () => {
+    const result = computeLayerAddendum({
+      cwd: tmpDir,
+      candidateFile: "src/domain/user.ts",
+      config: { enabled: true, addendum_max_chars: 800 },
+      archPath,
+    });
+    expect(result.addendum).toContain("Architecture context (from docs/architecture.md)");
+    expect(result.reason).toBe("matched (architecture.md fallback)");
   });
 });
