@@ -7,16 +7,53 @@ const budgets = DEFAULT_CONFIG.mempalace.budgets;
 describe("mempalace result formatting", () => {
   test("formats status results with stable diagnostics", () => {
     const formatted = formatMempalaceResult("status", {
-      palacePath: "/tmp/palace",
+      palace_path: "/tmp/palace",
       ready: true,
-      wings: ["supipowers", "omp"],
+      // tool_status returns wings/rooms as dicts of counts, not arrays.
+      wings: { supipowers: 12, omp: 4 },
+      rooms: { src: 5, docs: 2 },
+      total_drawers: 16,
       version: "3.3.4",
     }, budgets);
 
     expect(formatted.text).toContain("MemPalace status");
     expect(formatted.text).toContain("palace: /tmp/palace");
     expect(formatted.text).toContain("wings: 2");
+    expect(formatted.text).toContain("drawers: 16");
     expect(formatted.details).toMatchObject({ ready: true, version: "3.3.4" });
+  });
+
+  test("formats list_wings with per-wing counts and totals", () => {
+    const formatted = formatMempalaceResult("list_wings", {
+      wings: { supipowers: 259, sij_mono: 9377, safelys: 216 },
+    }, budgets);
+
+    expect(formatted.text.startsWith("Wings (3, 9852 drawers)")).toBe(true);
+    // Sorted by count desc, then name asc.
+    const lines = formatted.text.split("\n");
+    expect(lines[1]).toBe("- sij_mono (9377)");
+    expect(lines[2]).toBe("- supipowers (259)");
+    expect(lines[3]).toBe("- safelys (216)");
+  });
+
+  test("formats list_rooms scoped to a wing", () => {
+    const formatted = formatMempalaceResult("list_rooms", {
+      wing: "sij_mono",
+      rooms: { apps: 8934, documentation: 264, general: 113 },
+    }, budgets);
+
+    expect(formatted.text.startsWith("Rooms in sij_mono (3, 9311 drawers)")).toBe(true);
+    expect(formatted.text).toContain("- apps (8934)");
+    expect(formatted.text).toContain("- documentation (264)");
+  });
+
+  test("formats list_rooms when wing is unspecified", () => {
+    const formatted = formatMempalaceResult("list_rooms", {
+      wing: "all",
+      rooms: {},
+    }, budgets);
+
+    expect(formatted.text).toBe("Rooms in all (0)");
   });
 
   test("formats search results with ids, similarity, and bounded text", () => {

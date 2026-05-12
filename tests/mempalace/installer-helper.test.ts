@@ -161,13 +161,16 @@ describe("checkMempalaceProjectInitialized + steerMempalaceInitialization", () =
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test("treats wing as initialized when list_wings returns the wing name", async () => {
+  test("treats wing as initialized when list_wings dict contains the wing", async () => {
     const paths = isolatedPaths(tmpDir);
     const bridge = {
       execute: mock(async () => ({
         ok: true as const,
         action: "list_wings" as const,
-        result: { wings: ["supi-powers", "other"] },
+        // Real mempalace.mcp_server.tool_list_wings returns a dict
+        // `{ wings: { name: count, ... } }`. supi_powers is the
+        // underscore-canonical slug for the repo dir `Supi Powers`.
+        result: { wings: { supi_powers: 7, other: 3 } },
         diagnostics: {},
       })),
     };
@@ -178,7 +181,7 @@ describe("checkMempalaceProjectInitialized + steerMempalaceInitialization", () =
       bridge: bridge as any,
     });
 
-    expect(state.wing).toBe("supi-powers");
+    expect(state.wing).toBe("supi_powers");
     expect(state.initialized).toBe(true);
     expect(state.bridgeError).toBeUndefined();
     expect(bridge.execute).toHaveBeenCalledWith({ action: "list_wings" });
@@ -190,7 +193,7 @@ describe("checkMempalaceProjectInitialized + steerMempalaceInitialization", () =
       execute: async () => ({
         ok: true as const,
         action: "list_wings" as const,
-        result: { wings: [{ name: "other-project" }] },
+        result: { wings: { other_project: 2 } },
         diagnostics: {},
       }),
     };
@@ -202,6 +205,26 @@ describe("checkMempalaceProjectInitialized + steerMempalaceInitialization", () =
     });
 
     expect(state.initialized).toBe(false);
+  });
+
+  test("still accepts legacy array-shaped list_wings responses", async () => {
+    const paths = isolatedPaths(tmpDir);
+    const bridge = {
+      execute: async () => ({
+        ok: true as const,
+        action: "list_wings" as const,
+        result: { wings: [{ name: "supi_powers" }, "other"] },
+        diagnostics: {},
+      }),
+    };
+
+    const state = await checkMempalaceProjectInitialized({
+      paths,
+      cwd: repoDir,
+      bridge: bridge as any,
+    });
+
+    expect(state.initialized).toBe(true);
   });
 
   test("treats wing as not initialized when the bridge call errors", async () => {

@@ -56,6 +56,24 @@ describe("mempalace runtime bridge path", () => {
     expect(resolved.error.message).toContain("mempalace_bridge.py");
     expect(resolved.path).toBe(path.join(moduleDir, "python", "mempalace_bridge.py"));
   });
+  test("falls back to an installed extension root when runtime module is temp-copied", () => {
+    const tempModuleDir = path.join(tmpDir, "omp-legacy-pi-file", "module-copy");
+    fs.mkdirSync(tempModuleDir, { recursive: true });
+    const extensionRoot = path.join(tmpDir, "agent", "extensions", "supipowers");
+    const bridgeDir = path.join(extensionRoot, "src", "mempalace", "python");
+    fs.mkdirSync(bridgeDir, { recursive: true });
+    const bridgePath = path.join(bridgeDir, "mempalace_bridge.py");
+    fs.writeFileSync(bridgePath, "print('ok')\n");
+
+    const resolved = resolveBridgeScriptPath({
+      moduleUrl: pathToFileURL(path.join(tempModuleDir, "runtime.ts")).href,
+      extensionRoots: [extensionRoot],
+    });
+
+    expect(resolved.ok).toBe(true);
+    expect(resolved.path).toBe(bridgePath);
+  });
+
 });
 
 describe("mempalace runtime Python discovery", () => {

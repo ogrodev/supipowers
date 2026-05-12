@@ -118,7 +118,7 @@ describe("mempalace config helpers", () => {
   test("derives repo-name default wing deterministically", () => {
     const resolved = resolveMempalaceConfig(DEFAULT_CONFIG, repoDir, createPaths(".omp"));
 
-    expect(resolveDefaultWing(resolved, repoDir, createPaths(".omp"))).toBe("supi-powers");
+    expect(resolveDefaultWing(resolved, repoDir, createPaths(".omp"))).toBe("supi_powers");
   });
 
   test("derives project-slug default wing from project state directory", () => {
@@ -155,7 +155,7 @@ describe("mempalace config helpers", () => {
       paths,
     );
 
-    expect(resolveDefaultWing(explicit, repoDir, paths)).toBe("team-alpha");
+    expect(resolveDefaultWing(explicit, repoDir, paths)).toBe("team_alpha");
 
     const missing = resolveMempalaceConfig(
       {
@@ -173,9 +173,13 @@ describe("mempalace config helpers", () => {
     expect(() => resolveDefaultWing(missing, repoDir, paths)).toThrow("explicitWing");
   });
 
-  test("normalizes wings and falls back when empty", () => {
-    expect(normalizeMempalaceWing(" Feature/Auth v2 ")).toBe("feature-auth-v2");
+  test("normalizes wings to mempalace's underscore-canonical slug", () => {
+    // Mirrors mempalace.config.normalize_wing_name: hyphens and spaces fold to underscores.
+    expect(normalizeMempalaceWing(" Feature/Auth v2 ")).toBe("feature_auth_v2");
+    expect(normalizeMempalaceWing("sij-mono")).toBe("sij_mono");
+    expect(normalizeMempalaceWing("sij_mono")).toBe("sij_mono");
     expect(normalizeMempalaceWing("___")).toBe("project");
+    expect(normalizeMempalaceWing("---")).toBe("project");
     expect(normalizeMempalaceWing("🔥")).toBe("project");
   });
 });
