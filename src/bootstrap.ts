@@ -174,9 +174,9 @@ export function bootstrap(platform: Platform): void {
   registerPlanningSystemPromptHook(platform);
   registerUiDesignSystemPromptHook(platform);
 
-  // Register harness anti-slop hooks (gated by per-repo marker file at session start).
-  // Idempotent — safe to call once per process. The hooks themselves no-op on every
-  // event when the marker is missing, so other repos see no behavior change.
+  // Register harness anti-slop hooks only for repos with a harness marker at extension boot.
+  // Registered handlers also check the marker per event, so removing the marker disables
+  // an already-started process without affecting other repos.
   registerHarnessHooks(platform);
 
 
