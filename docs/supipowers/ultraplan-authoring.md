@@ -129,6 +129,18 @@ matching the file slug and `supportedSlots: [<slot>]`.
   authored.md                  # canonical render
 ```
 
+## Cross-session artifact resolution
+
+Scenario proofs are stored as `artifact://<phase>-<attemptId>` references
+(`src/ultraplan/runtime/reducer.ts`). As of OMP ≥14.9.5, `agent://`,
+`artifact://`, and `memory://` URLs resolve across every active session in
+the agent graph, not just the originating session. A tester sub-agent reading
+the executor's red-proof artifact, or a downstream reviewer reading a peer's
+output, gets the artifact transparently — no manual hand-off needed. The
+ultraplan supervisor / worktree split (`src/commands/ultraplan.ts`) relies on
+this contract; downgrading below OMP 14.9.5 will break cross-attempt proof
+introspection.
+
 ## Migration from the legacy single-shot path
 
 The legacy `ultraplan_create` tool is preserved for one release behind
