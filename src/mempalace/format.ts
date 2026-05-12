@@ -28,6 +28,17 @@ function asArray(value: unknown): RecordValue[] {
   return Array.isArray(value) ? value.map(asRecord) : [];
 }
 
+function asCountMap(value: unknown): Array<[string, number]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const out: Array<[string, number]> = [];
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const count = typeof raw === "number" && Number.isFinite(raw) ? raw : Number(raw);
+    out.push([key, Number.isFinite(count) ? count : 0]);
+  }
+  out.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return out;
+}
+
 function stringValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
@@ -81,6 +92,29 @@ function formatDrawerList(result: RecordValue, budgets: ResultBudgets): string {
   return truncateText(lines.join("\n"), budgets.listResultChars, TRUNCATED_LIST_GUIDANCE);
 }
 
+function formatWingList(result: RecordValue, budgets: ResultBudgets): string {
+  const wings = asCountMap(result.wings);
+  const total = wings.reduce((acc, [, n]) => acc + n, 0);
+  const lines = [`Wings (${wings.length}${total ? `, ${total} drawers`: ""})`];
+  for (const [name, count] of wings) {
+    lines.push(`- ${name} (${count})`);
+  }
+  if (result.partial) lines.push("(partial result — palace returned an error mid-scan)");
+  return truncateText(lines.join("\n"), budgets.listResultChars, TRUNCATED_LIST_GUIDANCE);
+}
+
+function formatRoomList(result: RecordValue, budgets: ResultBudgets): string {
+  const wing = stringValue(result.wing) || "all";
+  const rooms = asCountMap(result.rooms);
+  const total = rooms.reduce((acc, [, n]) => acc + n, 0);
+  const lines = [`Rooms in ${wing} (${rooms.length}${total ? `, ${total} drawers` : ""})`];
+  for (const [name, count] of rooms) {
+    lines.push(`- ${name} (${count})`);
+  }
+  if (result.partial) lines.push("(partial result — palace returned an error mid-scan)");
+  return truncateText(lines.join("\n"), budgets.listResultChars, TRUNCATED_LIST_GUIDANCE);
+}
+
 function formatDiary(result: RecordValue, budgets: ResultBudgets): string {
   const entries = asArray(result.entries ?? result.results ?? result.items);
   const lines = [`Diary entries (${entries.length})`];
@@ -96,13 +130,23 @@ function formatDiary(result: RecordValue, budgets: ResultBudgets): string {
 }
 
 function formatStatus(result: RecordValue): string {
-  const wings = Array.isArray(result.wings) ? result.wings.length : result.wingCount ?? result.wings_count ?? "unknown";
   const lines = ["MemPalace status"];
   const palacePath = stringValue(result.palacePath ?? result.palace_path ?? result.palace);
   if (palacePath) lines.push(`palace: ${palacePath}`);
   if ("ready" in result) lines.push(`ready: ${String(result.ready)}`);
   if ("version" in result) lines.push(`version: ${stringValue(result.version)}`);
-  lines.push(`wings: ${String(wings)}`);
+
+  const wingsCount = Array.isArray(result.wings)
+    ? result.wings.length
+    : result.wings && typeof result.wings === "object"
+      ? Object.keys(result.wings as Record<string, unknown>).length
+      : (typeof result.wingCount === "number" ? result.wingCount : undefined)
+        ?? (typeof result.wings_count === "number" ? result.wings_count : undefined);
+  lines.push(`wings: ${wingsCount === undefined ? "unknown" : String(wingsCount)}`);
+
+  if (typeof result.total_drawers === "number") lines.push(`drawers: ${result.total_drawers}`);
+  else if (typeof result.totalDrawers === "number") lines.push(`drawers: ${result.totalDrawers}`);
+
   return lines.join("\n");
 }
 
@@ -124,8 +168,12 @@ export function formatMempalaceResult(
     text = formatStatus(record);
   } else if (action === "search" || action === "wake_up") {
     text = formatSearch(record, budgets);
-  } else if (action === "list_drawers" || action === "list_wings" || action === "list_rooms") {
+  } else if (action === "list_drawers") {
     text = formatDrawerList(record, budgets);
+  } else if (action === "list_wings") {
+    text = formatWingList(record, budgets);
+  } else if (action === "list_rooms") {
+    text = formatRoomList(record, budgets);
   } else if (action === "diary_read") {
     text = formatDiary(record, budgets);
   } else {

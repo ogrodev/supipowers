@@ -5,7 +5,7 @@ import { resolveMempalaceConfig, type ResolvedMempalaceConfig } from "./config.j
 import { formatMempalaceError, formatMempalaceResult } from "./format.js";
 import { mempalaceToolParameters, validateMempalaceParams, type MempalaceParams } from "./schema.js";
 import {
-  resolveBridgeScriptPath,
+  resolveInstalledBridgeScriptPath,
   setupMempalaceRuntime,
   type BridgePathResult,
   type SetupMempalaceRuntimeOptions,
@@ -55,10 +55,11 @@ async function executeSetup(
   resolved: ResolvedMempalaceConfig,
   cwd: string,
   managedBinDir: string,
+  defaultResolveBridgeScriptPath: () => BridgePathResult,
   deps: MempalaceToolDeps,
   onUpdate: unknown,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> {
-  const bridgePath = (deps.resolveBridgeScriptPath ?? resolveBridgeScriptPath)();
+  const bridgePath = (deps.resolveBridgeScriptPath ?? defaultResolveBridgeScriptPath)();
   if (!bridgePath.ok) {
     const formatted = formatMempalaceError(bridgePath.error, {
       ok: false,
@@ -121,6 +122,10 @@ export function registerMempalaceTool(
     return;
   }
   if (!snapshot.ready) return;
+  const bridgeRuntime = {
+    resolveBridgeScriptPath: () => resolveInstalledBridgeScriptPath(platform.paths),
+  };
+
 
   platform.registerTool({
     name: "mempalace",
@@ -143,12 +148,20 @@ export function registerMempalaceTool(
         const params = validation.params;
 
         if (params.action === "setup") {
-          return await executeSetup(params, resolved, cwd, platform.paths.global("bin"), deps, onUpdate);
+          return await executeSetup(
+            params,
+            resolved,
+            cwd,
+            platform.paths.global("bin"),
+            bridgeRuntime.resolveBridgeScriptPath,
+            deps,
+            onUpdate,
+          );
         }
 
         const bridge = deps.createBridge
           ? deps.createBridge(resolved, cwd)
-          : createMempalaceBridge({ cwd, config: resolved });
+          : createMempalaceBridge({ cwd, config: resolved, runtime: bridgeRuntime });
         const result = await bridge.execute(params);
 
         if (!result.ok) {

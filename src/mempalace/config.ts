@@ -26,13 +26,19 @@ function expandUserPath(input: string, cwd: string): string {
 }
 
 function sanitizedWing(value: string): string {
+  // MemPalace's own normalize_wing_name canonicalizes wing slugs with
+  // underscores (`hyphens` and spaces are folded to `_`). We mirror that
+  // here so a project directory like `sij_mono` and a supipowers-resolved
+  // wing `sij-mono` collapse to the same slug; otherwise data ends up
+  // split across two wings (`sij_mono` vs `sij-mono`) and search/diary
+  // writes diverge between the CLI and the hook bridge.
   return value
     .trim()
     .toLowerCase()
-    .replace(/[\s/\\]+/g, "-")
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/[-_]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/[\s/\\-]+/g, "_")
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 export function normalizeMempalaceWing(value: string): string {

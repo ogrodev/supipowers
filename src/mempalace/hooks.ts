@@ -3,6 +3,7 @@ import { normalizeSystemPromptBlocks } from "../platform/system-prompt.js";
 import type { SupipowersConfig } from "../types.js";
 import { createMempalaceBridge, type MempalaceBridgeFacade } from "./bridge.js";
 import { resolveDefaultWing, resolveMempalaceConfig, type ResolvedMempalaceConfig } from "./config.js";
+import { resolveInstalledBridgeScriptPath } from "./runtime.js";
 import { getEventStore as getContextEventStore, getSessionId as getContextSessionId } from "../context-mode/hooks.js";
 import { buildCompactionCheckpoint, buildShutdownDiary } from "./session-summary.js";
 
@@ -209,6 +210,10 @@ export function registerMempalaceHooks(
   deps: MempalaceHooksDeps = {},
 ): void {
   if (!config.mempalace.enabled) return;
+  const bridgeRuntime = {
+    resolveBridgeScriptPath: () => resolveInstalledBridgeScriptPath(platform.paths),
+  };
+
 
   const clearAll = () => {
     wakeUpCache.clear();
@@ -238,7 +243,7 @@ export function registerMempalaceHooks(
 
     const bridge = deps.createBridge
       ? deps.createBridge(resolved, cwd)
-      : createMempalaceBridge({ cwd, config: resolved });
+      : createMempalaceBridge({ cwd, config: resolved, runtime: bridgeRuntime });
 
     // Cadence gating: wake-up dump on turn 1 and every Nth turn; refresher
     // otherwise. Saves ~750 tokens/turn average for a default cadence of 10.
@@ -311,7 +316,7 @@ export function registerMempalaceHooks(
         });
         const bridge = deps.createBridge
           ? deps.createBridge(resolved, cwd)
-          : createMempalaceBridge({ cwd, config: resolved });
+          : createMempalaceBridge({ cwd, config: resolved, runtime: bridgeRuntime });
         await bridge.execute({
           action: "add_drawer",
           wing: checkpoint.metadata.wing,
@@ -351,7 +356,7 @@ export function registerMempalaceHooks(
         });
         const bridge = deps.createBridge
           ? deps.createBridge(resolved, cwd)
-          : createMempalaceBridge({ cwd, config: resolved });
+          : createMempalaceBridge({ cwd, config: resolved, runtime: bridgeRuntime });
         await bridge.execute({
           action: "diary_write",
           agent_name: diary.metadata.agent_name,

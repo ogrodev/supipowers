@@ -6,7 +6,7 @@ import type { SupipowersConfig } from "../types.js";
 import { createMempalaceBridge, type MempalaceBridgeFacade } from "./bridge.js";
 import { resolveDefaultWing, resolveMempalaceConfig } from "./config.js";
 import {
-  resolveBridgeScriptPath,
+  resolveInstalledBridgeScriptPath,
   resolveManagedVenvPaths,
   setupMempalaceRuntime,
   type ProcessRunner,
@@ -44,7 +44,7 @@ export function snapshotMempalaceInstall(
   const managedBinDir = paths.global("bin");
   const uvBinary = process.platform === "win32" ? "uv.exe" : "uv";
   const uvPath = path.join(managedBinDir, uvBinary);
-  const bridge = resolveBridgeScriptPath();
+  const bridge = resolveInstalledBridgeScriptPath(paths);
 
   const uvInstalled = existsSync(uvPath);
   const venvInstalled = existsSync(venv.python);
@@ -85,7 +85,7 @@ export async function runMempalaceSetup(
 ): Promise<SetupMempalaceRuntimeResult> {
   const config = options.config ?? DEFAULT_CONFIG;
   const resolved = resolveMempalaceConfig(config, options.cwd, options.paths);
-  const bridge = resolveBridgeScriptPath();
+  const bridge = resolveInstalledBridgeScriptPath(options.paths);
   if (!bridge.ok) {
     return { ok: false, error: bridge.error };
   }
@@ -109,6 +109,16 @@ export interface MempalaceInitState {
 function isWingPresent(result: unknown, wing: string): boolean {
   if (!result || typeof result !== "object") return false;
   const record = result as Record<string, unknown>;
+
+  // tool_list_wings returns `{ wings: { <name>: <count>, ... } }`. The
+  // dict shape is the canonical one from mempalace.mcp_server. Older
+  // / partial responses may carry array shapes (items/results), so we
+  // accept both rather than coupling tightly.
+  const wings = record.wings;
+  if (wings && typeof wings === "object" && !Array.isArray(wings)) {
+    if (Object.prototype.hasOwnProperty.call(wings, wing)) return true;
+  }
+
   const candidates = [record.wings, record.items, record.results];
   for (const list of candidates) {
     if (!Array.isArray(list)) continue;
@@ -145,7 +155,11 @@ export async function checkMempalaceProjectInitialized(options: {
   } catch {
     wing = "project";
   }
-  const bridge = options.bridge ?? createMempalaceBridge({ cwd: options.cwd, config: resolved });
+  const bridge = options.bridge ?? createMempalaceBridge({
+    cwd: options.cwd,
+    config: resolved,
+    runtime: { resolveBridgeScriptPath: () => resolveInstalledBridgeScriptPath(options.paths) },
+  });
   const result = await bridge.execute({ action: "list_wings" });
   if (!result.ok) {
     return {

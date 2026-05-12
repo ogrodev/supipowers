@@ -19,6 +19,15 @@ export type BridgePathResult =
 
 export interface BridgePathOptions {
   moduleUrl?: string;
+  /**
+   * Installed extension package roots. Used when OMP executes temp-copied TS
+   * modules that do not preserve adjacent non-TypeScript assets.
+   */
+  extensionRoots?: string[];
+}
+
+export interface BridgePathPlatformPaths {
+  agent(...segments: string[]): string;
 }
 
 export interface ProcessRunResult {
@@ -132,21 +141,39 @@ export interface SetupMempalaceRuntimeOptions {
 export function resolveBridgeScriptPath(options: BridgePathOptions = {}): BridgePathResult {
   const moduleUrl = options.moduleUrl ?? import.meta.url;
   const runtimePath = fileURLToPath(moduleUrl);
-  const bridgePath = path.join(path.dirname(runtimePath), "python", "mempalace_bridge.py");
-
-  if (!fs.existsSync(bridgePath)) {
-    return {
-      ok: false,
-      path: bridgePath,
-      error: {
-        code: "bridge_not_found",
-        message: `Bundled MemPalace bridge not found at ${bridgePath}`,
-        remediation: "Reinstall supipowers or verify the package includes src/mempalace/python/mempalace_bridge.py.",
-      },
-    };
+  const moduleBridgePath = path.join(path.dirname(runtimePath), "python", "mempalace_bridge.py");
+  if (fs.existsSync(moduleBridgePath)) {
+    return { ok: true, path: moduleBridgePath };
   }
 
-  return { ok: true, path: bridgePath };
+  let missingBridgePath = moduleBridgePath;
+  for (const extensionRoot of options.extensionRoots ?? []) {
+    const extensionBridgePath = path.join(extensionRoot, "src", "mempalace", "python", "mempalace_bridge.py");
+    missingBridgePath = extensionBridgePath;
+    if (fs.existsSync(extensionBridgePath)) {
+      return { ok: true, path: extensionBridgePath };
+    }
+  }
+
+  return {
+    ok: false,
+    path: missingBridgePath,
+    error: {
+      code: "bridge_not_found",
+      message: `Bundled MemPalace bridge not found at ${missingBridgePath}`,
+      remediation: "Reinstall supipowers or verify the package includes src/mempalace/python/mempalace_bridge.py.",
+    },
+  };
+}
+
+export function resolveInstalledBridgeScriptPath(
+  paths: BridgePathPlatformPaths,
+  options: BridgePathOptions = {},
+): BridgePathResult {
+  return resolveBridgeScriptPath({
+    ...options,
+    extensionRoots: [paths.agent("extensions", "supipowers"), ...(options.extensionRoots ?? [])],
+  });
 }
 
 export function resolveManagedVenvPaths(
