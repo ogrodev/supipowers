@@ -12,7 +12,7 @@
  */
 
 import type { Platform } from "../../platform/types.js";
-import type { HarnessConfig, HarnessHookConfig } from "../../types.js";
+import type { HarnessConfig, HarnessDocsConfig, HarnessHookConfig } from "../../types.js";
 import { buildBackendAdapter } from "../anti_slop/backend-factory.js";
 import {
   registerLayerContextInjectHook,
@@ -31,9 +31,21 @@ export const DEFAULT_HARNESS_HOOK_CONFIG: HarnessHookConfig = {
   score_floor: { strict: 75, lenient: 90, release_blocking: false },
 };
 
+export const DEFAULT_HARNESS_DOCS_CONFIG: HarnessDocsConfig = {
+  tier: "simple",
+  max_per_doc_loc: 150,
+  agent_context_loc: 30,
+  max_index_loc: 50,
+  max_units: 12,
+  max_concurrent_subagents: null,
+  drift_warning: { enabled: true },
+  regen_preview_threshold: 1,
+};
+
 export const DEFAULT_HARNESS_CONFIG: HarnessConfig = {
   anti_slop: DEFAULT_HARNESS_HOOK_CONFIG,
   implement_in_session_threshold: 10,
+  docs: DEFAULT_HARNESS_DOCS_CONFIG,
 };
 
 export interface HarnessHookRegistration {
@@ -54,19 +66,28 @@ export interface RegisterHooksOptions {
    * unless a real resolver is wired).
    */
   resolveCandidateFile?: (event: unknown, ctx: unknown) => string | null;
+  /** CWD whose repo-local marker controls registration. Defaults to process.cwd(). */
+  cwd?: string;
 }
 
 // Re-export so existing call sites keep working without an import path change.
 export { buildBackendAdapter };
 
 /**
- * Register every harness hook. Idempotent at the dispose boundary: calling
- * `dispose()` twice is safe.
+ * Register every harness hook. Hooks subscribe unconditionally at bootstrap time; each
+ * hook checks the repo-local marker per event, so creating the marker after install
+ * activates already-registered handlers without an OMP restart, and removing the marker
+ * disables them. `dispose()` is idempotent.
+ *
+ * The `cwd` option is retained for tests that exercise the legacy marker check; it is
+ * unused by the new registration path because per-event handlers resolve cwd from the
+ * event payload.
  */
 export function registerHarnessHooks(
   platform: Platform,
   options: RegisterHooksOptions = {},
 ): HarnessHookRegistration {
+  void options.cwd; // reserved for future per-repo gating
   const backend = options.backend ?? "fallow";
   const hooks = options.hooks ?? DEFAULT_HARNESS_HOOK_CONFIG;
   const adapter = buildBackendAdapter(backend);

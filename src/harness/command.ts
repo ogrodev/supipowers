@@ -26,8 +26,6 @@ import { notifyError, notifyInfo } from "../notifications/renderer.js";
 import { modelRegistry } from "../config/model-registry-instance.js";
 import { loadModelConfig } from "../config/model-config.js";
 import { getProjectStatePath } from "../workspace/state-paths.js";
-import { parsePlan } from "../storage/plans.js";
-import { buildExecutionPrompt } from "../planning/approval-flow.js";
 import { loadMarker, describeMarker, resolveBareEntry } from "./bare-entry.js";
 import {
   backlog as readBacklog,
@@ -43,7 +41,6 @@ import {
   readSlopQueue,
   saveHarnessSession,
 } from "./storage.js";
-import { getHarnessSessionDir } from "./project-paths.js";
 import { computeScore } from "./anti_slop/score.js";
 import {
   type BuildRunnerInput,
@@ -84,6 +81,7 @@ export const HARNESS_SUBCOMMANDS = [
   { name: "design", description: "Run/advance the design stage (requires Discover + Research)" },
   { name: "plan-draft", description: "Render and persist the plan from the in-flight design spec" },
   { name: "implement", description: "Route plan to in-session steer or batch" },
+  { name: "docs", description: "Generate per-layer agent docs (extensive mode only)" },
   { name: "validate", description: "Run validate sub-checks" },
   { name: "resume", description: "Pick up an in-flight session" },
   { name: "status", description: "Print stage + score badge" },
@@ -105,6 +103,7 @@ const HARNESS_STAGE_LABELS: Readonly<Record<HarnessStage, string>> = {
   design: "Design harness",
   plan: "Draft plan",
   implement: "Apply artifacts",
+  docs: "Generate per-layer docs",
   validate: "Validate results",
 };
 
@@ -127,7 +126,7 @@ export interface HarnessCommandRequest {
 // ── Progress (status-bar + one final notification) ───────────────
 
 function createHarnessProgress(ctx: HarnessCommandContext) {
-  const SO = ["discover", "research", "design", "plan", "implement", "validate"] as HarnessStage[];
+  const SO = ["discover", "research", "design", "plan", "implement", "docs", "validate"] as HarnessStage[];
   let done = 0;
   let cur: HarnessStage | null = null;
   const completed: string[] = [];
@@ -202,6 +201,7 @@ export async function handleHarness(
       case "design": await handleStageCommand(platform, ctx, "design", request.args); return;
       case "plan-draft": await handleStageCommand(platform, ctx, "plan", request.args); return;
       case "implement": await handleStageCommand(platform, ctx, "implement", request.args); return;
+      case "docs": await handleStageCommand(platform, ctx, "docs", request.args); return;
       case "validate": await handleStageCommand(platform, ctx, "validate", request.args); return;
       case "resume": await handleResume(platform, ctx, request.args); return;
       case "pr-comment": await handlePrComment(platform, ctx, request.args); return;
@@ -282,7 +282,8 @@ async function presentGateForStage(
         `Design spec ready\n\n${summary}\n\nContinue to plan?`,
         ["Continue", "Stop — I'll customize the design"],
       );
-      return choice === "Continue" ? "continue" : "stop";
+      if (choice !== "Continue") return "stop";
+      return await promptDocsTierIfNeeded(platform, ctx, sessionId, layers);
     }
     case "plan": {
       const plansDir = getProjectStatePath(platform.paths, ctx.cwd, "plans");
@@ -298,6 +299,27 @@ async function presentGateForStage(
         ["Approve and continue", "Stop — I need to review the plan"],
       );
       return choice === "Approve and continue" ? "continue" : "stop";
+    }
+    case "docs": {
+      const session = loadHarnessSession(platform.paths, ctx.cwd, sessionId);
+      const tier = session.ok ? (session.value.docsTier ?? "simple") : "simple";
+      const docsDir = path.join(ctx.cwd, "docs", "layers");
+      let layerCount = 0;
+      if (fs.existsSync(docsDir)) {
+        try {
+          layerCount = fs.readdirSync(docsDir).filter((f) => f.endsWith(".md")).length;
+        } catch {
+          /* best-effort */
+        }
+      }
+      const summary = tier === "extensive"
+        ? `Tier: extensive\nPer-layer docs at docs/layers/ (${layerCount} layer file${layerCount === 1 ? "" : "s"}).\nIndex: docs/README.md.`
+        : `Tier: simple\nNo per-layer docs were generated.`;
+      const choice = await ctx.ui.select(
+        `Per-layer agent docs\n\n${summary}\n\nContinue to validate?`,
+        ["Continue", "Stop — I want to inspect the docs first"],
+      );
+      return choice === "Continue" ? "continue" : "stop";
     }
     case "validate": {
       const report = loadHarnessValidateReport(platform.paths, ctx.cwd, sessionId);
@@ -318,67 +340,53 @@ async function presentGateForStage(
   }
 }
 
-function getHarnessPlanPath(paths: PlatformPaths, cwd: string, sessionId: string): string {
-  return path.join(getProjectStatePath(paths, cwd, "plans"), `harness-${sessionId}.md`);
-}
-
-async function handoffHarnessImplementation(
+/**
+ * Ask the user whether the upcoming docs stage should generate per-layer agent docs.
+ *
+ * Behavior:
+ *   - If the session manifest already records a `docsTier`, skip the prompt.
+ *   - In `auto` gate mode (no UI), default to "simple" silently.
+ *   - In default/manual modes, prompt the user; "cancel" aborts via `stop` propagated
+ *     by the caller; "simple"/"extensive" persist on the manifest.
+ *
+ * Layer count <2 always resolves to "simple" — extensive mode is meaningless with a
+ * single-bucket architecture.
+ */
+async function promptDocsTierIfNeeded(
   platform: Platform,
   ctx: HarnessCommandContext,
   sessionId: string,
-): Promise<boolean> {
-  const planPath = getHarnessPlanPath(platform.paths, ctx.cwd, sessionId);
-  let planContent: string;
-  try {
-    planContent = fs.readFileSync(planPath, "utf8");
-  } catch (error) {
-    notifyError(
-      ctx,
-      "/supi:harness implement",
-      `Unable to read harness plan at ${planPath}: ${error instanceof Error ? error.message : String(error)}`,
+  layerCount: number,
+): Promise<"continue" | "stop"> {
+  const session = loadHarnessSession(platform.paths, ctx.cwd, sessionId);
+  if (!session.ok) return "continue";
+  const isRerun =
+    session.value.reRunMode === "rebuild" || session.value.reRunMode === "harden";
+  if (session.value.docsTier && !isRerun) return "continue";
+
+  let tier: "simple" | "extensive" = session.value.docsTier ?? "simple";
+  if (layerCount >= 2 && ctx.ui.select) {
+    const currentLabel = session.value.docsTier ? ` (current: ${session.value.docsTier})` : "";
+    const summary = `simple    — Tier 1 docs only (AGENTS.md, architecture.md, golden-principles.md)\nextensive — Tier 1 + per-layer docs at docs/layers/<id>.md + index at docs/README.md\n              (≤150 LOC/doc, ${layerCount} layers detected → ~${layerCount} subagent calls)`;
+    const choice = await ctx.ui.select(
+      `Generate per-layer agent docs in the upcoming Docs stage?${currentLabel}\n\n${summary}\n\nPick a tier:`,
+      ["simple", "extensive"],
     );
-    return false;
+    // `ctx.ui.select` returns `null` when the user cancels. Per the function doc, cancel
+    // aborts the gate — we must NOT silently coerce that to "simple" and persist it.
+    if (choice == null) return "stop";
+    tier = choice === "extensive" ? "extensive" : "simple";
   }
 
-  let parsedPlan: ReturnType<typeof parsePlan> | undefined;
-  try {
-    parsedPlan = parsePlan(planContent, planPath);
-  } catch {
-    parsedPlan = undefined;
-  }
-
-  const prompt = [
-    buildExecutionPrompt(planContent, planPath, parsedPlan),
-    "",
-    "<instruction>",
-    `After completing the harness plan, tell the user to run \`/supi:harness validate --session ${sessionId}\`.`,
-    "</instruction>",
-  ].join("\n");
-
-  if (ctx.newSession) {
-    const result = await ctx.newSession();
-    if (result?.cancelled) {
-      notifyInfo(ctx, "Harness implementation paused", `Plan saved at ${planPath}.`);
-      return false;
-    }
-    platform.sendUserMessage(prompt);
-  } else {
-    platform.sendMessage(
-      {
-        customType: "supi-harness-implement",
-        content: [{ type: "text", text: prompt }],
-        display: "none",
-      },
-      { deliverAs: "steer", triggerTurn: true },
-    );
-  }
-
-  notifyInfo(
-    ctx,
-    "Harness implementation started",
-    `Executing ${path.basename(planPath)}. Validate with /supi:harness validate --session ${sessionId} after the agent finishes.`,
-  );
-  return true;
+  saveHarnessSession(platform.paths, ctx.cwd, {
+    ...session.value,
+    docsTier: tier,
+    updatedAt: nowIso(),
+  });
+  notifyInfo(ctx, `Docs tier set: ${tier}`, tier === "extensive"
+    ? `Per-layer docs will be generated for ${layerCount} layers.`
+    : "Tier 1 docs only. Re-run /supi:harness design and choose 'extensive' to enable per-layer docs.");
+  return "continue";
 }
 
 interface DesignAnalysisOutput {
@@ -759,11 +767,6 @@ async function runRebuildWithGates(
       return; // runPipelineWithProgress already notified the error
     }
 
-    if (outcome.stage === "implement" && outcome.status === "awaiting-user") {
-      await handoffHarnessImplementation(platform, ctx, sessionId);
-      return;
-    }
-
     // ── Discover gate: present findings, then run design Q&A ──
     if (outcome.stage === "discover") {
       const choice = await presentGateForStage(outcome.stage, platform, ctx, sessionId);
@@ -875,15 +878,31 @@ async function handleBareEntry(platform: Platform, ctx: HarnessCommandContext): 
     if (!p.ok) { notifyError(ctx, "/supi:harness", p.error.message); return; }
   }
 
+  // Persist the rerun mode so downstream gate prompts can adapt (e.g. Docs tier
+  // re-prompts on rebuild with the stored value as the default).
+  const existingSession = loadHarnessSession(platform.paths, ctx.cwd, sessionId);
+  if (existingSession.ok) {
+    saveHarnessSession(platform.paths, ctx.cwd, {
+      ...existingSession.value,
+      reRunMode: decision.mode,
+      updatedAt: nowIso(),
+    });
+  }
+
   const modeLabel = decision.mode === "harden" ? "Gap-fill" : "Full rebuild";
   notifyInfo(ctx, `Harness ${decision.mode}`, `${modeLabel} (session ${sessionId}) — pipeline running...`);
 
   if (decision.mode === "harden") {
-    // Harden: gap-fill, no user gates until the implementation handoff.
-    const outcome = await runPipelineWithProgress(platform, ctx, sessionId, "auto", {});
-    if (outcome.stage === "implement" && outcome.status === "awaiting-user") {
-      await handoffHarnessImplementation(platform, ctx, sessionId);
+    // Harden: no gates between stages. Re-prompt the docs tier so users can promote
+    // `simple` → `extensive` without forcing a full rebuild (only meaningful with ≥2
+    // layer rules). The pipeline then runs end-to-end including implement (programmatic
+    // apply) → docs → validate inside the same `/supi:harness` invocation.
+    const designSpec = loadHarnessDesignSpecJson(platform.paths, ctx.cwd, sessionId);
+    const layerCount = designSpec.ok ? designSpec.value.layerRules.length : 0;
+    if (layerCount >= 2) {
+      await promptDocsTierIfNeeded(platform, ctx, sessionId, layerCount);
     }
+    await runPipelineWithProgress(platform, ctx, sessionId, "auto", {});
   } else {
     // Rebuild: full regeneration with user gates at each stage.
     await runRebuildWithGates(platform, ctx, sessionId);
@@ -1012,7 +1031,7 @@ function buildStageInputs(
   paths: PlatformPaths, cwd: string, sid: string, stage: HarnessStage,
 ): { input: BuildRunnerInput } | { error: string } {
   switch (stage) {
-    case "discover": case "research": case "plan": return { input: {} };
+    case "discover": case "research": case "plan": case "docs": return { input: {} };
     case "design": {
       const existing = loadHarnessDesignSpecJson(paths, cwd, sid);
       if (existing.ok) return { input: { designInput: { spec: existing.value } } };
@@ -1056,10 +1075,7 @@ export async function handleStageCommand(
     notifyInfo(ctx, "Using default design spec", "Edit <session>/design-spec.json to customize.");
   }
 
-  const outcome = await runPipelineWithProgress(platform, ctx, res.sessionId, "auto", built.input, stage);
-  if (stage === "implement" && outcome.stage === "implement" && outcome.status === "awaiting-user") {
-    await handoffHarnessImplementation(platform, ctx, res.sessionId);
-  }
+  await runPipelineWithProgress(platform, ctx, res.sessionId, "auto", built.input, stage);
 }
 
 async function handleResume(platform: Platform, ctx: HarnessCommandContext, args: string[]): Promise<void> {
@@ -1080,7 +1096,8 @@ function nextSubcommandFor(stage: HarnessSession["stage"], status: HarnessSessio
     case "research": return "design";
     case "design": return "plan-draft";
     case "plan": return "implement";
-    case "implement": return "validate";
+    case "implement": return "docs";
+    case "docs": return "validate";
     case "validate": return "validate";
   }
 }

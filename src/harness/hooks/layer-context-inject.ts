@@ -31,6 +31,8 @@ import {
   getHarnessArchitectureDocPath,
   getHarnessMarkerPath,
 } from "../project-paths.js";
+import { extractAgentContextSection } from "../docs/validator.js";
+import { parseProvenance } from "../docs/provenance.js";
 
 export interface LayerContextHookOptions {
   /**
@@ -86,6 +88,13 @@ export interface LayerContextInjectionResult {
 /**
  * Compute the addendum for a single hook invocation. Pure-ish: reads the file system but
  * never mutates state. Tests call this directly with a known cwd + candidate file.
+ *
+ * Resolution order:
+ *   1. If `docs/layers/<layerId>.md` exists, extract its `## Agent context` section and
+ *      return it (capped at `addendum_max_chars`). This is the preferred path once the
+ *      docs stage has run.
+ *   2. Otherwise, fall back to the architecture-doc-derived addendum so projects that
+ *      have not generated per-layer docs still receive a useful reminder.
  */
 export function computeLayerAddendum(input: {
   cwd: string;
@@ -93,6 +102,8 @@ export function computeLayerAddendum(input: {
   config: HarnessHookConfig["layer_context_inject"];
   /** Override the resolved architecture-doc path; tests use this to point at a fixture. */
   archPath?: string;
+  /** Override the resolved per-layer doc path; tests use this to point at a fixture. */
+  layerDocPath?: (layerId: string) => string;
 }): LayerContextInjectionResult {
   if (!input.config.enabled) return { addendum: "", reason: "disabled" };
   if (!input.candidateFile) return { addendum: "", reason: "no candidate file" };
@@ -101,8 +112,31 @@ export function computeLayerAddendum(input: {
   if (rules.length === 0) return { addendum: "", reason: "no rules parsed" };
   const rule = resolveLayerForFile(input.candidateFile, rules);
   if (!rule) return { addendum: "", reason: "no rule matches candidate file" };
+
+  // Preferred path: per-layer agent doc.
+  const docPath = input.layerDocPath
+    ? input.layerDocPath(rule.layer)
+    : `${input.cwd}/docs/layers/${rule.layer}.md`;
+  if (fs.existsSync(docPath)) {
+    try {
+      const contents = fs.readFileSync(docPath, "utf8");
+      const parsed = parseProvenance(contents);
+      const body = parsed ? parsed.body : contents;
+      const section = extractAgentContextSection(body);
+      if (section.length > 0) {
+        const cap = input.config.addendum_max_chars;
+        const capped = section.length <= cap
+          ? section
+          : `${section.slice(0, Math.max(0, cap - 1))}…`;
+        return { addendum: capped, reason: "matched (per-layer doc)" };
+      }
+    } catch {
+      // fall through to architecture-doc fallback on any read error
+    }
+  }
+
   const addendum = buildLayerAddendum(input.candidateFile, rule, input.config.addendum_max_chars);
-  return { addendum, reason: "matched" };
+  return { addendum, reason: "matched (architecture.md fallback)" };
 }
 
 /**
