@@ -1542,6 +1542,7 @@ export type HarnessStage =
   | "design"
   | "plan"
   | "implement"
+  | "docs"
   | "validate";
 
 /** Operational status of a harness stage. Mirrors UltraPlanAuthoringStageStatus. */
@@ -1682,6 +1683,38 @@ export interface HarnessConfig {
   backend?: HarnessAntiSlopBackend;
   /** Threshold above which Implement defers to ultraplan batch. Default 10. */
   implement_in_session_threshold?: number;
+  /** Per-layer agent-docs stage config. Absent → defaults treated as "simple" tier. */
+  docs?: HarnessDocsConfig;
+}
+
+/** Per-layer agent-docs configuration. */
+export interface HarnessDocsConfig {
+  /**
+   * Doc tier toggle. `simple` makes the `docs` stage a no-op (Tier 1 docs unchanged);
+   * `extensive` fans out one subagent per layer to produce `docs/layers/<id>.md` and a
+   * mechanical `docs/README.md` index.
+   */
+  tier: "simple" | "extensive";
+  /** Hard cap on total LOC per per-layer doc, including frontmatter. Default 150. */
+  max_per_doc_loc: number;
+  /** Hard cap on the `## Agent context` section LOC. Default 30. */
+  agent_context_loc: number;
+  /** Hard cap on `docs/README.md` LOC. Default 50. */
+  max_index_loc: number;
+  /** Defensive cap on the number of layers the stage will process. Default 12. */
+  max_units: number;
+  /**
+   * Concurrency cap for subagent dispatch. `null` = unbounded (bounded only by `max_units`);
+   * any positive integer caps `Promise.all` parallelism.
+   */
+  max_concurrent_subagents: number | null;
+  /** Validate-stage drift warning toggle. */
+  drift_warning: { enabled: boolean };
+  /**
+   * Minimum stale-layer count before bare-entry Harden surfaces the pre-regen preview.
+   * Default 1 (always show when any layer is stale).
+   */
+  regen_preview_threshold: number;
 }
 
 /** Discover artifact (`<session>/discover.json`). */
@@ -1900,6 +1933,8 @@ export interface HarnessSession {
   iteration: number;
   /** Re-run mode user chose at bare entry (when applicable). */
   reRunMode?: HarnessReRunMode;
+  /** Per-layer agent-docs tier resolved at end-of-Design. Absent → treated as "simple". */
+  docsTier?: "simple" | "extensive";
   /** Recorded blocker, if any. */
   blocker: { code: string; message: string; detectedAt: string } | null;
   /** Artifacts produced so far (relative to <session>/). */
@@ -1915,6 +1950,29 @@ export interface HarnessArtifactRefs {
   plan?: string;
   implementLog?: string;
   validateReport?: string;
+  /** Per-layer agent docs (relative to <session>/docs/layers/<id>.md). */
+  docs?: { layerId: string; path: string }[];
+}
+
+/**
+ * Metadata describing a single per-layer agent knowledge document. Used by the docs stage
+ * to track provenance, source-hash invalidation, and atomic promotion to the repo. The
+ * canonical rendered doc lives at `docs/layers/<id>.md`; this record is part of the
+ * stage's run result and the session staging artifacts.
+ */
+export interface HarnessDocsArtifact {
+  /** Layer id this doc covers (matches HarnessLayerRule.layer). */
+  layerId: string;
+  /** Layer glob list, copied verbatim from the layer rule at render time. */
+  layerGlobs: string[];
+  /** Hash of every input that should invalidate the doc when changed. */
+  sourceHash: string;
+  /** Hash of the doc body after the provenance marker (excludes the marker itself). */
+  contentHash: string;
+  /** ISO timestamp the doc was generated. */
+  generatedAt: string;
+  /** Session that generated the doc. */
+  sessionId: string;
 }
 
 /** Append-only pipeline log entry. */
