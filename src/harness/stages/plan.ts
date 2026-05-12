@@ -24,6 +24,7 @@ import {
 } from "../stage-runner.js";
 import {
   loadHarnessDesignSpecJson,
+  loadHarnessSession,
 } from "../storage.js";
 
 export interface HarnessPlanTask {
@@ -36,22 +37,14 @@ export interface HarnessPlanTask {
 }
 
 /**
- * Build the canonical task list from a design spec. Always emits the "harden" tasks
- * (AGENTS.md, docs/architecture.md, docs/golden-principles.md, lint/structural/eval
- * configs); appends the conditional anti-slop tasks per Design's backend choice.
+ * Build the canonical task list from a design spec. Always emits the source
+ * harness artifacts first (docs, tooling, CI, queue, review wiring), then ends
+ * with AGENTS.md so the agent-facing summary can reference completed artifacts.
  */
 export function buildHarnessPlanTasks(spec: HarnessDesignSpec): HarnessPlanTask[] {
   const tasks: HarnessPlanTask[] = [];
   let id = 1;
 
-  tasks.push({
-    id: id++,
-    name: "Generate AGENTS.md",
-    description: "Write a ≤120-line AGENTS.md at the repo root summarizing the harness contract for any agent.",
-    files: ["AGENTS.md"],
-    criteria: "AGENTS.md exists, references docs/architecture.md and docs/golden-principles.md, and ends with a 'When in doubt' section.",
-    complexity: "small",
-  });
 
   tasks.push({
     id: id++,
@@ -159,10 +152,10 @@ export function buildHarnessPlanTasks(spec: HarnessDesignSpec): HarnessPlanTask[
 
   tasks.push({
     id: id++,
-    name: "Register anti-slop hooks",
-    description: "Ensure src/harness/hooks/register.ts wires pre-edit dupe probe, post-session sweep, and layer-context-inject only when the harness marker exists.",
-    files: ["src/harness/hooks/register.ts"],
-    criteria: "Hooks are registered idempotently and gated by the marker file.",
+    name: "Enable repo-local anti-slop hooks",
+    description: "Create the repo-local harness marker. The installed Supipowers extension already registers the runtime hooks; the marker gates them for this repository.",
+    files: [".omp/supipowers/harness/marker.json"],
+    criteria: `Marker JSON exists with backend ${spec.antiSlop.backend}; no supipowers extension source files are modified.`,
     complexity: "small",
   });
 
@@ -206,8 +199,19 @@ export function buildHarnessPlanTasks(spec: HarnessDesignSpec): HarnessPlanTask[
     });
   }
 
+  tasks.push({
+    id: id++,
+    name: "Generate AGENTS.md",
+    description: "Write a ≤120-line AGENTS.md at the repo root summarizing the harness contract for any agent.",
+    files: ["AGENTS.md"],
+    criteria: "AGENTS.md exists, references docs/architecture.md and docs/golden-principles.md, and ends with a 'When in doubt' section.",
+    complexity: "small",
+  });
+
   return tasks;
 }
+
+
 
 /** Render the plan markdown that lands in the canonical plans directory. */
 export function renderHarnessPlanMarkdown(input: {
@@ -321,7 +325,12 @@ export function emitHarnessPlanFromSpec(input: {
   const recordedAt = input.recordedAt ?? new Date().toISOString();
   const planName = input.planName ?? `harness-${input.spec.sessionId}`;
   const tasks = buildHarnessPlanTasks(input.spec);
-  const planMarkdown = renderHarnessPlanMarkdown({ spec: input.spec, tasks, recordedAt, planName });
+  const planMarkdown = renderHarnessPlanMarkdown({
+    spec: input.spec,
+    tasks,
+    recordedAt,
+    planName,
+  });
   const filename = `${planName}.md`;
   const planPath = savePlan(input.ctx.paths, input.ctx.cwd, filename, planMarkdown);
   return { planPath, planMarkdown, tasks };

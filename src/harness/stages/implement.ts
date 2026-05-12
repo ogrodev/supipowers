@@ -1,20 +1,20 @@
 /**
  * IMPLEMENT stage runner.
  *
- * Counts the tasks in the approved plan and decides whether to run them in-session (steer
- * loop, mirrors `/supi:plan`) or to hand off to `/supi:ultraplan` batch / worktree
- * runtime. The threshold is configurable via `harness.implement_in_session_threshold`
- * (default 10).
+ * Programmatic apply of every Tier 1 artifact defined by the design spec. Mirrors the
+ * `/supi:checks` pattern: the stage runs deterministically inside the harness command,
+ * with no handoff to the user's active agent. After this stage completes, the pipeline
+ * naturally continues to docs (per-layer subagent dispatch) and validate (mechanical
+ * checks) inside the same `/supi:harness` invocation.
  *
- * The actual execution loop lives in the command handler — the stage runner records the
- * routing decision and validates pre-conditions (clean git tree, plan readable, etc.).
+ * `decideImplementRouting` is retained as an exported helper for tests + future tooling;
+ * the in-session-vs-batch heuristic is no longer used by the stage runner itself because
+ * the apply path no longer needs the active agent.
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
 
 import type { Plan } from "../../types.js";
-import { parsePlan } from "../../storage/plans.js";
 import {
   type HarnessStageRunResult,
   type HarnessStageRunner,
@@ -23,7 +23,10 @@ import {
 } from "../stage-runner.js";
 import {
   appendImplementLog,
+  hasSuccessfulImplementApply,
+  loadHarnessDesignSpecJson,
 } from "../storage.js";
+import { applyHarnessPlan } from "./implement-apply.js";
 
 const DEFAULT_IN_SESSION_THRESHOLD = 10;
 
@@ -81,20 +84,15 @@ export class HarnessImplementStage implements HarnessStageRunner {
     return fs.existsSync(this.input.planPath);
   }
 
+  /**
+   * Implement is driven by the programmatic apply, so `isComplete` returns true once a
+   * successful apply has been recorded in `implement-log.jsonl`. This keeps reruns
+   * idempotent without re-walking every applier (the appliers themselves are also
+   * idempotent — this is a fast-skip for the common case). A subsequent failed apply in
+   * the same session resets the result via the scan-from-end logic in storage.
+   */
   async isComplete(ctx: HarnessStageRunnerContext): Promise<boolean> {
-    // Implement is complete when the post-implement self-check has been recorded in
-    // implement-log.jsonl with `kind: "self-check-passed"`. The command handler appends
-    // that record after running typecheck/test/scan.
-    const logPath = path.join(
-      path.dirname(this.input.planPath),
-      "..",
-      "harness",
-      "sessions",
-      ctx.sessionId,
-      "implement-log.jsonl",
-    );
-    void logPath; // tracked but the stage runner does not introspect it directly.
-    return false;
+    return hasSuccessfulImplementApply(ctx.paths, ctx.cwd, ctx.sessionId);
   }
 
   async run(ctx: HarnessStageRunnerContext): Promise<HarnessStageRunResult> {
@@ -111,51 +109,66 @@ export class HarnessImplementStage implements HarnessStageRunner {
         blocker: { code: "implement-preflight-failed", message: errors.join("; ") },
       };
     }
-    let raw: string;
-    try {
-      raw = fs.readFileSync(this.input.planPath, "utf8");
-    } catch (error) {
+    const designResult = loadHarnessDesignSpecJson(ctx.paths, ctx.cwd, ctx.sessionId);
+    if (!designResult.ok) {
       return {
-        status: "failed",
+        status: "blocked",
         stage: this.stage,
         artifactPaths: [],
-        error: `unable to read plan: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    let plan: Plan;
-    try {
-      plan = parsePlan(raw, this.input.planPath);
-    } catch (error) {
-      return {
-        status: "failed",
-        stage: this.stage,
-        artifactPaths: [],
-        error: `unable to parse plan: ${error instanceof Error ? error.message : String(error)}`,
+        blocker: {
+          code: "design-spec-missing",
+          message: "implement stage requires <session>/design-spec.json. Run /supi:harness design first.",
+        },
       };
     }
 
-    const decision = decideImplementRouting({
-      plan,
-      threshold: this.input.threshold ?? DEFAULT_IN_SESSION_THRESHOLD,
+    const recordedAt = nowIso(ctx);
+    const outcome = await applyHarnessPlan({
+      platform: ctx.platform,
+      paths: ctx.paths,
+      cwd: ctx.cwd,
+      spec: designResult.value,
+      apply: true,
     });
 
     appendImplementLog(ctx.paths, ctx.cwd, ctx.sessionId, {
-      recordedAt: nowIso(ctx),
-      kind: "routing-decision",
-      routing: decision.routing,
-      taskCount: decision.taskCount,
-      reason: decision.reason,
+      recordedAt,
+      kind: "applied",
       planPath: this.input.planPath,
+      applied: outcome.applied,
+      warnings: outcome.warnings,
+      errors: outcome.errors,
     });
 
+    const artifactPaths = outcome.applied
+      .filter((entry) => entry.action === "wrote" || entry.action === "patched")
+      .map((entry) => entry.path);
+
+    if (outcome.errors.length > 0) {
+      const summary = outcome.errors
+        .map((err) => `${err.step}: ${err.message}`)
+        .join("; ");
+      return {
+        status: "blocked",
+        stage: this.stage,
+        artifactPaths,
+        blocker: { code: "implement-apply-failed", message: summary },
+        details: {
+          applied: outcome.applied.length,
+          errors: outcome.errors.length,
+          warnings: outcome.warnings.length,
+        },
+      };
+    }
+
     return {
-      status: "awaiting-user",
+      status: "completed",
       stage: this.stage,
-      artifactPaths: ["implement-log.jsonl"],
+      artifactPaths,
       details: {
-        routing: decision.routing,
-        taskCount: decision.taskCount,
-        reason: decision.reason,
+        applied: outcome.applied.length,
+        warnings: outcome.warnings.length,
+        wrote: artifactPaths.length,
       },
     };
   }
