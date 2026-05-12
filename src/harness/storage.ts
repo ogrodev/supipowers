@@ -29,15 +29,22 @@ import {
   getHarnessDecisionsPath,
   getHarnessDesignSpecJsonPath,
   getHarnessDiscoverPath,
+  getHarnessDocsStagingDir,
+  getHarnessDocsStagingLayerPath,
+  getHarnessDocsStagingReadmePath,
   getHarnessImplementLogPath,
   getHarnessManifestPath,
   getHarnessPipelineLogPath,
   getHarnessQueuePath,
+  getHarnessRepoDocsLayerPath,
+  getHarnessRepoDocsLayersDir,
+  getHarnessRepoDocsReadmePath,
   getHarnessRepoScorePath,
   getHarnessResearchTopicPath,
   getHarnessScoreHistoryPath,
   getHarnessSessionDir,
   getHarnessValidateReportPath,
+  HARNESS_DOCS_LAYERS_DIRNAME,
 } from "./project-paths.js";
 
 // ---------------------------------------------------------------------------
@@ -418,6 +425,44 @@ export function appendImplementLog(
   return appendJsonl(getHarnessImplementLogPath(paths, cwd, sessionId), record);
 }
 
+/**
+ * Return true if the implement log records a successful programmatic apply for this
+ * session: the most recent record has `kind: "applied"` and an empty `errors` array.
+ * Used by `HarnessImplementStage.isComplete` to fast-skip reruns.
+ */
+export function hasSuccessfulImplementApply(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): boolean {
+  const logPath = getHarnessImplementLogPath(paths, cwd, sessionId);
+  if (!fs.existsSync(logPath)) return false;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(logPath, "utf8");
+  } catch {
+    return false;
+  }
+  // Scan from the end so a later failed re-apply correctly overrides an earlier success.
+  const lines = raw.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.length === 0) continue;
+    let record: unknown;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+    const r = record as { kind?: unknown; errors?: unknown };
+    if (r.kind !== "applied") continue;
+    const errCount = Array.isArray(r.errors) ? r.errors.length : 0;
+    return errCount === 0;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Project-scoped queue + score (shared across worktrees)
 // ---------------------------------------------------------------------------
@@ -464,4 +509,101 @@ export function appendScoreHistory(
   record: Record<string, unknown>,
 ): UltraPlanStorageResult<string> {
   return appendJsonl(getHarnessScoreHistoryPath(paths, cwd), record);
+}
+
+// ---------------------------------------------------------------------------
+// Docs stage — staging + repo promotion.
+// ---------------------------------------------------------------------------
+
+/** Save a single layer doc into the session's staging area. Atomic write. */
+export function saveHarnessDocsLayerStaging(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  layerId: string,
+  markdown: string,
+): UltraPlanStorageResult<string> {
+  return writeTextAtomic(
+    getHarnessDocsStagingLayerPath(paths, cwd, sessionId, layerId),
+    markdown,
+  );
+}
+
+/** Read a single staged layer doc. */
+export function loadHarnessDocsLayerStaging(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  layerId: string,
+): UltraPlanStorageResult<string> {
+  return readTextFile(getHarnessDocsStagingLayerPath(paths, cwd, sessionId, layerId));
+}
+
+/** List staged layer ids (file basenames without `.md`). Returns [] when dir is absent. */
+export function listHarnessDocsLayerStaging(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): string[] {
+  const dir = path.join(
+    getHarnessDocsStagingDir(paths, cwd, sessionId),
+    HARNESS_DOCS_LAYERS_DIRNAME,
+  );
+  if (!fs.existsSync(dir)) return [];
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((name) => name.endsWith(".md"))
+      .map((name) => name.slice(0, -3))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Save the staged docs index. Atomic write. */
+export function saveHarnessDocsIndexStaging(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  markdown: string,
+): UltraPlanStorageResult<string> {
+  return writeTextAtomic(getHarnessDocsStagingReadmePath(paths, cwd, sessionId), markdown);
+}
+
+/**
+ * Promote staged docs to the repo-local docs/ tree.
+ *
+ * Atomicity contract: layer docs are written first (each via temp → rename); the index
+ * is written last so an observer reading mid-promotion never sees an index pointing at
+ * a yet-to-land layer doc. A failure midway leaves the previous repo state in place for
+ * already-rewritten files only when their layer was earlier in the list — callers must
+ * therefore treat partial failures as a "blocked" outcome and rely on the next run to
+ * re-promote from staging.
+ */
+export function promoteHarnessDocsToRepo(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  layerIds: readonly string[],
+): UltraPlanStorageResult<{ layerPaths: string[]; indexPath: string }> {
+  fs.mkdirSync(getHarnessRepoDocsLayersDir(paths, cwd), { recursive: true });
+
+  const layerPaths: string[] = [];
+  for (const layerId of layerIds) {
+    const staged = loadHarnessDocsLayerStaging(paths, cwd, sessionId, layerId);
+    if (!staged.ok) return staged;
+    const repoPath = getHarnessRepoDocsLayerPath(paths, cwd, layerId);
+    const wrote = writeTextAtomic(repoPath, staged.value);
+    if (!wrote.ok) return wrote;
+    layerPaths.push(wrote.value);
+  }
+
+  const indexStaged = readTextFile(getHarnessDocsStagingReadmePath(paths, cwd, sessionId));
+  if (!indexStaged.ok) return indexStaged;
+  const indexRepo = getHarnessRepoDocsReadmePath(paths, cwd);
+  const wroteIndex = writeTextAtomic(indexRepo, indexStaged.value);
+  if (!wroteIndex.ok) return wroteIndex;
+
+  return success({ layerPaths, indexPath: wroteIndex.value });
 }

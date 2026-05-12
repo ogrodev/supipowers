@@ -52,6 +52,13 @@ export const HARNESS_IMPLEMENT_LOG_FILENAME = "implement-log.jsonl";
 export const HARNESS_PIPELINE_LOG_FILENAME = "pipeline-log.jsonl";
 export const HARNESS_RESEARCH_DIRNAME = "research";
 
+/** Per-session staging directory for the docs stage. */
+export const HARNESS_DOCS_STAGING_DIRNAME = "docs";
+/** Layers subdirectory within the docs staging or repo-docs directory. */
+export const HARNESS_DOCS_LAYERS_DIRNAME = "layers";
+/** Index filename rendered after layer docs promote. */
+export const HARNESS_DOCS_README_FILENAME = "README.md";
+
 /** Tier 1 / Tier 2 output paths in the repo. */
 export const HARNESS_AGENTS_MD_FILENAME = "AGENTS.md";
 export const HARNESS_DOCS_DIRNAME = "docs";
@@ -232,4 +239,92 @@ export function getHarnessGoldenPrinciplesPath(_paths: PlatformPaths, cwd: strin
 /** Tier 1 — repo-root .fallowrc.json. */
 export function getHarnessFallowConfigPath(_paths: PlatformPaths, cwd: string): string {
   return path.join(cwd, HARNESS_FALLOW_CONFIG_FILENAME);
+}
+
+// ---------------------------------------------------------------------------
+// Docs stage — staging + repo paths.
+// ---------------------------------------------------------------------------
+/**
+ * Strict whitelist for per-layer doc identifiers.
+ *
+ * Layer ids are user/model-controlled (set in `design-spec.json`) and feed into
+ * `<repo>/docs/layers/<id>.md` plus the per-session staging mirror. Without a strict
+ * boundary an id like `../golden-principles` would let the docs stage overwrite Tier 1
+ * docs (or escape `docs/layers/` entirely). Reject anything that isn't a safe filename
+ * stem: alnum, hyphen, underscore, and (non-leading, non-consecutive) dots.
+ */
+const LAYER_ID_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/;
+
+export function isSafeLayerId(layerId: string): boolean {
+  return (
+    typeof layerId === "string" &&
+    LAYER_ID_PATTERN.test(layerId) &&
+    !layerId.includes("..")
+  );
+}
+
+export function assertSafeLayerId(layerId: string): void {
+  if (!isSafeLayerId(layerId)) {
+    throw new Error(
+      `harness: invalid layer id ${JSON.stringify(layerId)} — expected [A-Za-z0-9._-]{1,64} with no path separators, leading dot, or '..'.`,
+    );
+  }
+}
+
+
+/**
+ * Per-session staging dir for the docs stage:
+ * `<projectRoot>/sessions/<sid>/docs/`. Subagents write `layers/<id>.md` here; the stage
+ * renders the index and atomically promotes both staging files to the repo.
+ */
+export function getHarnessDocsStagingDir(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): string {
+  return path.join(getHarnessSessionDir(paths, cwd, sessionId), HARNESS_DOCS_STAGING_DIRNAME);
+}
+
+/** Per-session staging path for a single layer doc. */
+export function getHarnessDocsStagingLayerPath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+  layerId: string,
+): string {
+  assertSafeLayerId(layerId);
+  return path.join(
+    getHarnessDocsStagingDir(paths, cwd, sessionId),
+    HARNESS_DOCS_LAYERS_DIRNAME,
+    `${layerId}.md`,
+  );
+}
+
+/** Per-session staging path for the rendered docs index. */
+export function getHarnessDocsStagingReadmePath(
+  paths: PlatformPaths,
+  cwd: string,
+  sessionId: string,
+): string {
+  return path.join(getHarnessDocsStagingDir(paths, cwd, sessionId), HARNESS_DOCS_README_FILENAME);
+}
+
+/** Repo-root path for the rendered docs index: `<repo>/docs/README.md`. */
+export function getHarnessRepoDocsReadmePath(_paths: PlatformPaths, cwd: string): string {
+  return path.join(cwd, HARNESS_DOCS_DIRNAME, HARNESS_DOCS_README_FILENAME);
+}
+
+/** Repo-root path for a single per-layer doc: `<repo>/docs/layers/<id>.md`. */
+export function getHarnessRepoDocsLayerPath(
+  _paths: PlatformPaths,
+  cwd: string,
+  layerId: string,
+): string {
+  assertSafeLayerId(layerId);
+  return path.join(cwd, HARNESS_DOCS_DIRNAME, HARNESS_DOCS_LAYERS_DIRNAME, `${layerId}.md`);
+}
+
+/** Repo-root directory hosting the per-layer docs: `<repo>/docs/layers/`. */
+export function getHarnessRepoDocsLayersDir(_paths: PlatformPaths, cwd: string): string {
+  return path.join(cwd, HARNESS_DOCS_DIRNAME, HARNESS_DOCS_LAYERS_DIRNAME);
 }

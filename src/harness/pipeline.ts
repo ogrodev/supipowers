@@ -31,6 +31,7 @@ import {
 } from "./stages/design.js";
 import { HarnessPlanStage, type PlanStageInput } from "./stages/plan.js";
 import { HarnessImplementStage, type ImplementStageInput } from "./stages/implement.js";
+import { HarnessDocsStage, type DocsStageInput } from "./stages/docs.js";
 import { HarnessValidateStage, type ValidateStageInput } from "./stages/validate.js";
 import { loadHarnessDesignSpecJson, loadHarnessDiscover } from "./storage.js";
 import { buildBackendAdapter } from "./anti_slop/backend-factory.js";
@@ -52,6 +53,7 @@ const STAGE_ORDER: readonly HarnessStage[] = [
   "design",
   "plan",
   "implement",
+  "docs",
   "validate",
 ];
 
@@ -60,6 +62,7 @@ const GATE_STAGES_DEFAULT: ReadonlySet<HarnessStage> = new Set([
   "discover",
   "design",
   "plan",
+  "docs",
   "validate",
 ]);
 const GATE_STAGES_MANUAL: ReadonlySet<HarnessStage> = new Set([
@@ -68,6 +71,7 @@ const GATE_STAGES_MANUAL: ReadonlySet<HarnessStage> = new Set([
   "design",
   "plan",
   "implement",
+  "docs",
   "validate",
 ]);
 
@@ -89,6 +93,8 @@ export interface BuildRunnerInput {
   planInput?: PlanStageInput;
   /** Required when running the implement stage. */
   implementInput?: ImplementStageInput;
+  /** Optional override for the docs stage (tier, max-units, test-only factories). */
+  docsInput?: DocsStageInput;
   /** Required when running the validate stage. */
   validateInput?: ValidateStageInput;
 }
@@ -111,6 +117,8 @@ export function buildHarnessRunner(stage: HarnessStage, input: BuildRunnerInput)
         throw new Error("buildHarnessRunner: implement stage requires implementInput");
       }
       return new HarnessImplementStage(input.implementInput);
+    case "docs":
+      return new HarnessDocsStage(input.docsInput ?? {});
     case "validate":
       if (!input.validateInput) {
         throw new Error("buildHarnessRunner: validate stage requires validateInput");
@@ -215,6 +223,15 @@ function formatStageDetail(result: HarnessStageRunResult): string {
     const layers = typeof d.layerCount === "number" ? `${d.layerCount} layers` : "";
     return layers ? `${backend} · ${layers}` : `${backend}`;
   }
+  if (result.stage === "docs") {
+    const regen = Array.isArray(d.regenerated) ? (d.regenerated as string[]).length : 0;
+    const skip = Array.isArray(d.skipped) ? (d.skipped as string[]).length : 0;
+    const user = Array.isArray(d.userEdited) ? (d.userEdited as string[]).length : 0;
+    if (typeof d.tier === "string" && d.tier === "extensive") {
+      return `${regen} regen · ${skip} skip${user > 0 ? ` · ${user} user-edited` : ""}`;
+    }
+    if (typeof d.reason === "string") return d.reason;
+  }
   if (result.stage === "validate" && typeof d.passed === "boolean") {
     return d.passed ? "passed" : "issues found";
   }
@@ -279,14 +296,12 @@ export async function runHarnessPipelineUntilGate(
 
     const result = await runner.run(ctx);
 
-    // In auto mode, most awaiting-user results are equivalent to completed.
-    // Implement is different: it is an execution handoff, not a completed
-    // artifact write. If we normalize it, Validate runs against unapplied plan
-    // artifacts and reports false failures.
+    // In auto mode, awaiting-user from authoring stages (design, etc.) is equivalent to
+    // completed: the artifact is on disk and the next stage can consume it. Gates honor
+    // awaiting-user as a real stop signal.
     const isGate = gateStages.has(stage);
-    const isImplementHandoff = stage === "implement" && result.status === "awaiting-user";
     const normalizedStatus: HarnessStageRunResult["status"] =
-      result.status === "awaiting-user" && !isGate && !isImplementHandoff
+      result.status === "awaiting-user" && !isGate
         ? "completed"
         : result.status;
     trace.push({ stage, status: normalizedStatus });
@@ -309,15 +324,13 @@ export async function runHarnessPipelineUntilGate(
       };
     }
 
-    // In auto mode, awaiting-user normally continues without stopping. Preserve
-    // implement handoff because the active agent still has to execute the plan.
-    if (normalizedStatus === "awaiting-user" && (isGate || isImplementHandoff)) {
+    if (normalizedStatus === "awaiting-user" && isGate) {
       input.onProgress?.({ type: "awaiting-user", stage, detail: awaitUserDetail(result) });
     } else {
       input.onProgress?.({ type: "stage-completed", stage, detail });
     }
 
-    if ((isGate || isImplementHandoff) && normalizedStatus !== "skipped") {
+    if (isGate && normalizedStatus !== "skipped") {
       return {
         stage,
         status: "awaiting-user",

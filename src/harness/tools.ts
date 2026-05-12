@@ -28,6 +28,7 @@ import {
   appendImplementLog,
   saveHarnessDesignSpec,
   saveHarnessDiscover,
+  saveHarnessDocsLayerStaging,
   saveHarnessResearchTopic,
 } from "./storage.js";
 import {
@@ -36,6 +37,8 @@ import {
   resolve as resolveQueueEntry,
   markWontfix as markQueueWontfix,
 } from "./anti_slop/queue.js";
+import { validateLayerDocMarkdown } from "./docs/validator.js";
+import { isSafeLayerId } from "./project-paths.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -410,6 +413,79 @@ export function registerHarnessPipelineTools(platform: Platform): void {
       return toolResult({ ok: true, id, details: { state } });
     },
   });
+
+  // -------- harness_docs_record ----------
+  platform.registerTool({
+    name: "harness_docs_record",
+    label: "Harness Docs Record",
+    description: "Record one per-layer agent knowledge document for the docs stage.",
+    parameters: {
+      type: "object",
+      properties: {
+        sessionId: SESSION_ID_PROP,
+        layerId: {
+          type: "string",
+          description: "Layer id this doc covers (matches the assigned layer rule).",
+        },
+        markdown: {
+          type: "string",
+          description: "Full markdown body, including the provenance marker, frontmatter, and required headings.",
+        },
+      },
+      required: ["sessionId", "layerId", "markdown"],
+    },
+    async execute(_id: string, params: unknown, _signal: AbortSignal, _onUpdate: unknown, toolCtx: unknown) {
+      const cwdR = readCwd(toolCtx, "harness_docs_record");
+      if (!cwdR.ok) return toolResult(cwdR);
+      const sidR = readSessionId(params, "harness_docs_record");
+      if (!sidR.ok) return toolResult(sidR);
+      if (!isRecord(params)) {
+        return toolResult({ ok: false, message: "harness_docs_record requires an object payload" });
+      }
+      const p = params as Record<string, unknown>;
+      const layerId = typeof p.layerId === "string" ? p.layerId : "";
+      if (!layerId) {
+        return toolResult({ ok: false, message: "harness_docs_record requires a non-empty layerId" });
+      }
+      if (!isSafeLayerId(layerId)) {
+        return toolResult({
+          ok: false,
+          message: `harness_docs_record: layerId ${JSON.stringify(layerId)} is not a safe filename stem (alnum/_/-/non-leading dots, ≤64 chars, no '..' or path separators)`,
+        });
+      }
+      const markdown = typeof p.markdown === "string" ? p.markdown : "";
+      if (markdown.length === 0) {
+        return toolResult({ ok: false, message: "harness_docs_record requires a non-empty markdown body" });
+      }
+
+      const expectation = lookupDocsLayerExpectation(sidR.sessionId, layerId);
+      if (!expectation) {
+        return toolResult({
+          ok: false,
+          message: `harness_docs_record: no expectation registered for session ${sidR.sessionId} layer ${layerId}. The docs stage is the only valid invocation context.`,
+        });
+      }
+
+      const validation = validateLayerDocMarkdown(markdown, {
+        expectedLayerId: layerId,
+        expectedSourceHash: expectation.expectedSourceHash,
+        maxDocLoc: expectation.maxDocLoc,
+        maxAgentContextLoc: expectation.maxAgentContextLoc,
+      });
+      if (!validation.ok) {
+        return toolResult({
+          ok: false,
+          message: `harness_docs_record rejected: ${validation.errors.join("; ")}`,
+          details: { errors: validation.errors },
+        });
+      }
+
+      const persisted = saveHarnessDocsLayerStaging(platform.paths, cwdR.cwd, sidR.sessionId, layerId, markdown);
+      const r = unwrap(persisted, "harness_docs_record");
+      if (!r.ok) return toolResult(r);
+      return toolResult({ ok: true, path: r.value });
+    },
+  });
 }
 
 /** Names exposed for hook-bridge correlation. */
@@ -421,6 +497,60 @@ export const HARNESS_PIPELINE_TOOL_NAMES = [
   "harness_validate_finding",
   "harness_slop_queue_append",
   "harness_slop_queue_resolve",
+  "harness_docs_record",
 ] as const;
 
 export type HarnessPipelineToolName = (typeof HARNESS_PIPELINE_TOOL_NAMES)[number];
+
+// ---------------------------------------------------------------------------
+// Docs stage expectations registry.
+//
+// The docs stage registers per-(session, layer) expectations before dispatching each
+// subagent so the `harness_docs_record` handler can validate `layerId`, `sourceHash`,
+// and LOC caps synchronously. Module-scoped Map is intentional: registration and
+// consumption both run in the same process within a single pipeline driver invocation.
+// ---------------------------------------------------------------------------
+
+export interface HarnessDocsLayerExpectation {
+  expectedSourceHash: string;
+  maxDocLoc: number;
+  maxAgentContextLoc: number;
+}
+
+const docsLayerExpectations = new Map<string, HarnessDocsLayerExpectation>();
+
+function docsKey(sessionId: string, layerId: string): string {
+  return `${sessionId}::${layerId}`;
+}
+
+/** Register the expectations the docs tool will validate on the next record call. */
+export function registerDocsLayerExpectation(
+  sessionId: string,
+  layerId: string,
+  expectation: HarnessDocsLayerExpectation,
+): void {
+  if (!isSafeLayerId(layerId)) {
+    throw new Error(
+      `registerDocsLayerExpectation: refusing to register unsafe layerId ${JSON.stringify(layerId)}`,
+    );
+  }
+  docsLayerExpectations.set(docsKey(sessionId, layerId), expectation);
+}
+
+/** Remove a registered expectation. Idempotent. */
+export function clearDocsLayerExpectation(sessionId: string, layerId: string): void {
+  docsLayerExpectations.delete(docsKey(sessionId, layerId));
+}
+
+/** Lookup the registered expectation (returns null when none is registered). */
+export function lookupDocsLayerExpectation(
+  sessionId: string,
+  layerId: string,
+): HarnessDocsLayerExpectation | null {
+  return docsLayerExpectations.get(docsKey(sessionId, layerId)) ?? null;
+}
+
+/** Clear every registration (test helper). */
+export function _clearAllDocsLayerExpectationsForTests(): void {
+  docsLayerExpectations.clear();
+}
