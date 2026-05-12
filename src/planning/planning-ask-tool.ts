@@ -4,10 +4,16 @@ import { isUiDesignActive, recordUiDesignReviewApproval } from "../ui-design/ses
 
 /**
  * Register a `planning_ask` tool — identical to the built-in `ask` tool
- * but with **no timeout**. OMP's built-in ask tool applies the user's
- * `ask.timeout` setting (default 30s) and only disables it for OMP's
- * native plan mode. Since `/supi:plan` is not native plan mode, planning
- * questions would auto-dismiss. This tool bypasses that limitation.
+ * but with **no timeout**, regardless of the user's `ask.timeout` setting.
+ * OMP 14.9.5 changed the `ask.timeout` default from 30s to 0 (wait
+ * indefinitely), but a user-configured non-zero value still applies to the
+ * generic `ask` tool; this wrapper keeps planning-mode questions blocking
+ * for any such configuration.
+ *
+ * Also records the chosen option into the ui-design session ledger via
+ * `recordUiDesignReviewApproval` and pairs with
+ * `registerPlanningAskToolGuard`, which redirects generic `ask` calls back
+ * to this tool during planning / ui-design sessions.
  *
  * The tool is always registered (lightweight) but the planning system
  * prompt directs the model to use it only during planning sessions.
