@@ -3,15 +3,12 @@ import { isSupiOwnedTool, orderOwnedTools } from "../../src/tool-catalog/tool-gr
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { planActiveTools } from "../../src/tool-catalog/active-tool-planner.js";
 import type { ContextModeLazyToolsConfig } from "../../src/types.js";
-import type { ServerConfig } from "../../src/mcp/types.js";
 
 describe("supipowers-owned tool groups", () => {
   test("identifies only supipowers-owned tool names", () => {
     expect(isSupiOwnedTool("ctx_execute")).toBe(true);
     expect(isSupiOwnedTool("ctx_search")).toBe(true);
     expect(isSupiOwnedTool("ctx_open_cached")).toBe(true);
-    expect(isSupiOwnedTool("mcpc_manager")).toBe(true);
-    expect(isSupiOwnedTool("mcpc_figma")).toBe(true);
 
     expect(isSupiOwnedTool("bash")).toBe(false);
     expect(isSupiOwnedTool("read")).toBe(false);
@@ -23,14 +20,12 @@ describe("supipowers-owned tool groups", () => {
   test("orders owned tools by stable priority and removes duplicates", () => {
     expect(
       orderOwnedTools([
-        "mcpc_figma",
         "ctx_search",
         "ctx_open_cached",
         "ctx_execute",
         "ctx_search",
-        "mcpc_manager",
       ]),
-    ).toEqual(["ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager", "mcpc_figma"]);
+    ).toEqual(["ctx_execute", "ctx_search", "ctx_open_cached"]);
   });
 });
 
@@ -45,7 +40,6 @@ const ALL_CTX_TOOLS = [
   "ctx_fetch_and_index",
   "ctx_stats",
   "ctx_purge",
-  "mcpc_manager",
 ] as const;
 
 function lazyTools(overrides: Partial<ContextModeLazyToolsConfig> = {}): ContextModeLazyToolsConfig {
@@ -64,24 +58,23 @@ describe("planActiveTools base policy", () => {
       lazyTools: lazyTools(),
     });
 
-    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]);
+    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "ctx_open_cached"]);
     expect(plan.deactivated).toEqual(["ctx_batch_execute"]);
   });
 
-  test("neutral prompts preserve non-owned tools and omit specialized ctx and unmatched mcpc gateways", () => {
+  test("neutral prompts preserve non-owned tools and omit specialized ctx", () => {
     const plan = planActiveTools({
       prompt: "edit the file",
-      currentActive: ["bash", "read", "mcpc_figma", "ctx_batch_execute"],
-      allTools: ["bash", "read", ...ALL_CTX_TOOLS, "mcpc_figma"],
+      currentActive: ["bash", "read", "ctx_batch_execute"],
+      allTools: ["bash", "read", ...ALL_CTX_TOOLS],
       lazyTools: lazyTools(),
     });
 
-    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]);
+    expect(plan.activeTools).toEqual(["bash", "read", "ctx_execute", "ctx_search", "ctx_open_cached"]);
     expect(plan.activeTools).not.toContain("ctx_batch_execute");
-    expect(plan.activeTools).not.toContain("mcpc_figma");
   });
 
-  test("balanced mode keeps only default rescue tools and manager for neutral prompts", () => {
+  test("balanced mode keeps only default rescue tools for neutral prompts", () => {
     const plan = planActiveTools({
       prompt: "edit the file",
       currentActive: [],
@@ -89,7 +82,7 @@ describe("planActiveTools base policy", () => {
       lazyTools: lazyTools({ mode: "balanced" }),
     });
 
-    expect(plan.activeTools).toEqual(["ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]);
+    expect(plan.activeTools).toEqual(["ctx_execute", "ctx_search", "ctx_open_cached"]);
   });
 
   test("conservative mode keeps registered context tools except rare destructive tools", () => {
@@ -108,7 +101,6 @@ describe("planActiveTools base policy", () => {
       "ctx_execute_file",
       "ctx_fetch_and_index",
       "ctx_index",
-      "mcpc_manager",
     ]);
     expect(plan.activeTools).not.toContain("ctx_stats");
     expect(plan.activeTools).not.toContain("ctx_purge");
@@ -212,17 +204,17 @@ describe("planActiveTools prompt triggers", () => {
     expect(phrasePlan.activeTools).toContain("ctx_batch_execute");
   });
 
-  test("treats configured keyword keys as literal terms, not regular expressions", () => {
+  test("ignores unknown configured tools", () => {
     const plan = planActiveTools({
       prompt: "please use figma",
       currentActive: [],
-      allTools: [...ALL_CTX_TOOLS, "mcpc_figma"],
+      allTools: [...ALL_CTX_TOOLS],
       lazyTools: lazyTools({
-        keywordTools: { "fi.*gma": ["mcpc_figma"] },
+        keywordTools: { "fi.*gma": ["fictional_tool"] },
       }),
     });
 
-    expect(plan.activeTools).not.toContain("mcpc_figma");
+    expect(plan.activeTools).not.toContain("fictional_tool");
   });
 
   test("command allowlists add tools without removing defaults", () => {
@@ -240,64 +232,6 @@ describe("planActiveTools prompt triggers", () => {
       "ctx_search",
       "ctx_open_cached",
       "ctx_batch_execute",
-      "mcpc_manager",
     ]);
-  });
-});
-
-const MCP_SERVER_FIXTURE: Record<string, ServerConfig> = {
-  figma: {
-    transport: "http",
-    activation: "contextual",
-    taggable: true,
-    triggers: ["figma"],
-    antiTriggers: [],
-    enabled: true,
-    authPending: false,
-    addedAt: "2026-04-29T00:00:00.000Z",
-  },
-};
-
-describe("planActiveTools MCP activation", () => {
-  test("activates mcpc gateways from registry triggers using prompt text", () => {
-    const plan = planActiveTools({
-      prompt: "inspect the figma design",
-      currentActive: [],
-      allTools: [...ALL_CTX_TOOLS, "mcpc_figma"],
-      lazyTools: lazyTools(),
-      mcpServers: MCP_SERVER_FIXTURE,
-      pendingTags: [],
-    });
-
-    expect(plan.activeTools).toContain("mcpc_figma");
-  });
-
-  test("activates mcpc gateways from pending tags once supplied", () => {
-    const plan = planActiveTools({
-      prompt: "inspect the design",
-      currentActive: [],
-      allTools: [...ALL_CTX_TOOLS, "mcpc_figma"],
-      lazyTools: lazyTools(),
-      mcpServers: MCP_SERVER_FIXTURE,
-      pendingTags: ["figma"],
-    });
-
-    expect(plan.activeTools).toContain("mcpc_figma");
-  });
-
-  test("diagnoses unmatched tags without outputting unknown gateway tools", () => {
-    const plan = planActiveTools({
-      prompt: "inspect the design",
-      currentActive: [],
-      allTools: [...ALL_CTX_TOOLS],
-      lazyTools: lazyTools(),
-      mcpServers: MCP_SERVER_FIXTURE,
-      pendingTags: ["unknown", "figma"],
-    });
-
-    expect(plan.activeTools).not.toContain("mcpc_unknown");
-    expect(plan.activeTools).not.toContain("mcpc_figma");
-    expect(plan.diagnostics.unmatchedTags).toContain("unknown");
-    expect(plan.diagnostics.missingMcpGatewayTools).toContain("mcpc_figma");
   });
 });

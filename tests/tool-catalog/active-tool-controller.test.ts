@@ -6,7 +6,6 @@ import * as path from "node:path";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { _resetCache } from "../../src/context-mode/hooks.js";
 import { MetricsStore, __setMetricsStoreForTest } from "../../src/context-mode/metrics-store.js";
-import type { McpRegistry } from "../../src/mcp/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
 import type { SupipowersConfig } from "../../src/types.js";
 import { registerActiveToolController } from "../../src/tool-catalog/active-tool-controller.js";
@@ -20,10 +19,9 @@ function createPlatformWithHandlers(overrides: Record<string, unknown> = {}) {
       "bash",
       "ctx_execute",
       "ctx_search",
+      "ctx_open_cached",
       "ctx_batch_execute",
       "ctx_fetch_and_index",
-      "mcpc_manager",
-      "mcpc_figma",
     ]),
     setActiveTools: mock(async () => {}),
     on: mock((event: string, handler: Function) => {
@@ -56,16 +54,11 @@ afterEach(() => {
   _resetCache();
 });
 
-const EMPTY_MCP_REGISTRY: McpRegistry = { schemaVersion: 1, servers: {} };
-
 describe("registerActiveToolController degraded mode", () => {
   test("does not register when lazy tools are disabled", () => {
     const platform = createPlatformWithHandlers();
 
-    registerActiveToolController(platform, lazyToolsConfig({ enabled: false }), {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, lazyToolsConfig({ enabled: false }));
 
     expect(platform.on).not.toHaveBeenCalled();
   });
@@ -78,10 +71,6 @@ describe("registerActiveToolController degraded mode", () => {
         ...DEFAULT_CONFIG,
         contextMode: { ...DEFAULT_CONFIG.contextMode, enabled: false },
       },
-      {
-        loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-        consumePendingTags: mock(() => []),
-      },
     );
 
     expect(platform.on).not.toHaveBeenCalled();
@@ -89,10 +78,7 @@ describe("registerActiveToolController degraded mode", () => {
 
   test("returns undefined and does not mutate when getAllTools is unavailable", async () => {
     const platform = createPlatformWithHandlers({ getAllTools: undefined });
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     expect(handler).toBeDefined();
@@ -107,10 +93,7 @@ describe("registerActiveToolController degraded mode", () => {
 
   test("returns undefined and does not mutate when setActiveTools is unavailable", async () => {
     const platform = createPlatformWithHandlers({ setActiveTools: undefined });
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     const result = await handler({ prompt: "search repo", systemPrompt: ["before"] }, {
@@ -124,10 +107,7 @@ describe("registerActiveToolController degraded mode", () => {
 
   test("returns undefined and does not mutate when getSystemPrompt is unavailable", async () => {
     const platform = createPlatformWithHandlers();
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     const result = await handler({ prompt: "search repo", systemPrompt: ["before"] }, {
@@ -138,23 +118,6 @@ describe("registerActiveToolController degraded mode", () => {
     expect(platform.setActiveTools).not.toHaveBeenCalled();
   });
 });
-
-
-const MCP_SERVER_FIXTURE: McpRegistry = {
-  schemaVersion: 1,
-  servers: {
-    figma: {
-      transport: "http",
-      activation: "contextual",
-      taggable: true,
-      triggers: ["figma"],
-      antiTriggers: [],
-      enabled: true,
-      authPending: false,
-      addedAt: "2026-04-29T00:00:00.000Z",
-    },
-  },
-};
 
 describe("registerActiveToolController mutation flow", () => {
   test("awaits setActiveTools before returning the rebuilt system prompt", async () => {
@@ -171,10 +134,7 @@ describe("registerActiveToolController mutation flow", () => {
       return ["rebuilt prompt"];
     });
 
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     const result = await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {
@@ -186,8 +146,8 @@ describe("registerActiveToolController mutation flow", () => {
       "bash",
       "ctx_execute",
       "ctx_search",
+      "ctx_open_cached",
       "ctx_batch_execute",
-      "mcpc_manager",
     ]);
     expect(calls).toEqual(["set:start", "set:end", "prompt"]);
     expect(result).toEqual({ systemPrompt: ["rebuilt prompt"] });
@@ -195,14 +155,11 @@ describe("registerActiveToolController mutation flow", () => {
 
   test("does not rebuild the prompt when the planned tool list is unchanged", async () => {
     const platform = createPlatformWithHandlers({
-      getActiveTools: mock(() => ["bash", "ctx_execute", "ctx_search", "mcpc_manager"]),
+      getActiveTools: mock(() => ["bash", "ctx_execute", "ctx_search", "ctx_open_cached"]),
     });
     const getSystemPrompt = mock(() => ["rebuilt prompt"]);
 
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     const result = await handler({ prompt: "edit file", systemPrompt: ["original prompt"] }, {
@@ -215,41 +172,6 @@ describe("registerActiveToolController mutation flow", () => {
     expect(result).toBeUndefined();
   });
 
-  test("consumes pending tags so tag activation is one turn only", async () => {
-    let pendingTags = ["figma"];
-    let activeTools = ["bash", "ctx_execute", "ctx_search", "mcpc_manager"];
-    const platform = createPlatformWithHandlers({
-      getActiveTools: mock(() => activeTools),
-      setActiveTools: mock(async (names: string[]) => {
-        activeTools = names;
-      }),
-    });
-    const consumePendingTags = mock(() => {
-      const tags = pendingTags;
-      pendingTags = [];
-      return tags;
-    });
-
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => MCP_SERVER_FIXTURE),
-      consumePendingTags,
-    });
-
-    const handler = platform._handlers.get("before_agent_start");
-    await handler({ prompt: "inspect design", systemPrompt: ["original prompt"] }, {
-      cwd: "/tmp/project",
-      getSystemPrompt: mock(() => ["rebuilt prompt 1"]),
-    });
-    await handler({ prompt: "inspect design", systemPrompt: ["rebuilt prompt 1"] }, {
-      cwd: "/tmp/project",
-      getSystemPrompt: mock(() => ["rebuilt prompt 2"]),
-    });
-
-    expect(platform.setActiveTools.mock.calls[0][0]).toContain("mcpc_figma");
-    expect(platform.setActiveTools.mock.calls[1][0]).not.toContain("mcpc_figma");
-    expect(consumePendingTags).toHaveBeenCalledTimes(2);
-  });
-
   test("preserves original prompt when setActiveTools rejects", async () => {
     const platform = createPlatformWithHandlers({
       setActiveTools: mock(async () => {
@@ -258,10 +180,7 @@ describe("registerActiveToolController mutation flow", () => {
     });
     const getSystemPrompt = mock(() => ["rebuilt prompt"]);
 
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     const result = await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {
@@ -295,15 +214,11 @@ describe("registerActiveToolController mutation flow", () => {
         "ctx_batch_execute",
         "ctx_fetch_and_index",
         "ctx_open_cached",
-        "mcpc_manager",
       ]),
     });
     const getSystemPrompt = mock(() => ["rebuilt prompt"]);
 
-    registerActiveToolController(platform, DEFAULT_CONFIG, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, DEFAULT_CONFIG);
 
     const handler = platform._handlers.get("before_agent_start");
     await handler({ prompt: "search repo and fetch http docs", systemPrompt: ["original prompt"] }, {
@@ -333,7 +248,6 @@ describe("registerActiveToolController mutation flow", () => {
         "ctx_search",
         "ctx_batch_execute",
         "ctx_open_cached",
-        "mcpc_manager",
       ]),
     });
     const getSystemPrompt = mock(() => ["rebuilt prompt"]);
@@ -342,10 +256,7 @@ describe("registerActiveToolController mutation flow", () => {
       ...DEFAULT_CONFIG,
       contextMode: { ...DEFAULT_CONFIG.contextMode, enforceRouting: false },
     };
-    registerActiveToolController(platform, config, {
-      loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-      consumePendingTags: mock(() => []),
-    });
+    registerActiveToolController(platform, config);
 
     const handler = platform._handlers.get("before_agent_start");
     await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {
@@ -371,10 +282,7 @@ describe("registerActiveToolController metrics", () => {
 
     try {
       const platform = createPlatformWithHandlers();
-      registerActiveToolController(platform, DEFAULT_CONFIG, {
-        loadMcpRegistryForCwd: mock(() => EMPTY_MCP_REGISTRY),
-        consumePendingTags: mock(() => []),
-      });
+      registerActiveToolController(platform, DEFAULT_CONFIG);
 
       const handler = platform._handlers.get("before_agent_start");
       await handler({ prompt: "search repo", systemPrompt: ["original prompt"] }, {

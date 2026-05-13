@@ -75,7 +75,7 @@ describe("DEPENDENCIES", () => {
       expect(typeof dep.name).toBe("string");
       expect(typeof dep.binary).toBe("string");
       expect(typeof dep.required).toBe("boolean");
-      expect(["core", "mcp", "lsp", "testing"]).toContain(dep.category);
+      expect(["core", "lsp", "testing"]).toContain(dep.category);
       expect(typeof dep.checkFn).toBe("function");
     }
   });
@@ -83,7 +83,6 @@ describe("DEPENDENCIES", () => {
   it("contains the expected dependency names", () => {
     const names = DEPENDENCIES.map((d) => d.name);
     expect(names).toContain("Git");
-    expect(names).toContain("mcpc");
     expect(names).toContain("TypeScript LSP");
     expect(names).toContain("playwright-cli");
     expect(names).toContain("Playwright Test");
@@ -204,8 +203,8 @@ describe("scanMissing", () => {
 
     const names = missing.map((m) => m.name);
     expect(names).not.toContain("Git");
-    // mcpc is not in Bun.which results so should be missing
-    expect(names).toContain("mcpc");
+    // typescript-language-server is not in Bun.which results so should be missing
+    expect(names).toContain("TypeScript LSP");
   });
 });
 
@@ -214,9 +213,9 @@ describe("scanMissing", () => {
 describe("installDep", () => {
   it("runs install command and returns success", async () => {
     const exec = createMockExec();
-    const result = await installDep(exec, "mcpc");
+    const result = await installDep(exec, "TypeScript LSP");
     expect(result.success).toBe(true);
-    expect(result.name).toBe("mcpc");
+    expect(result.name).toBe("TypeScript LSP");
   });
 
   it("returns error for unknown dependency", async () => {
@@ -239,7 +238,7 @@ describe("installDep", () => {
       stderr: "permission denied",
       code: 1,
     });
-    const result = await installDep(exec, "mcpc");
+    const result = await installDep(exec, "TypeScript LSP");
     expect(result.success).toBe(false);
     expect(result.error).toBe("permission denied");
   });
@@ -262,19 +261,19 @@ describe("installAll", () => {
         installed: false,
       },
       {
-        name: "mcpc",
-        binary: "mcpc",
+        name: "TypeScript LSP",
+        binary: "typescript-language-server",
         required: false,
-        category: "mcp",
-        description: "MCP CLI",
-        installCmd: "npm install -g @apify/mcpc",
-        url: "https://github.com/apify/mcpc",
+        category: "lsp",
+        description: "Language server",
+        installCmd: "bun add -g typescript-language-server typescript",
+        url: "https://github.com/typescript-language-server/typescript-language-server",
         installed: false,
       },
     ];
     const results = await installAll(exec, deps);
     expect(results.length).toBe(1);
-    expect(results[0].name).toBe("mcpc");
+    expect(results[0].name).toBe("TypeScript LSP");
   });
 
   it("returns empty array when no installable deps", async () => {
@@ -309,13 +308,13 @@ describe("installAll", () => {
         installed: false,
       },
       {
-        name: "mcpc",
-        binary: "mcpc",
+        name: "TypeScript LSP",
+        binary: "typescript-language-server",
         required: false,
-        category: "mcp",
-        description: "MCP CLI",
-        installCmd: "npm install -g @apify/mcpc",
-        url: "https://github.com/apify/mcpc",
+        category: "lsp",
+        description: "Language server",
+        installCmd: "bun add -g typescript-language-server typescript",
+        url: "https://github.com/typescript-language-server/typescript-language-server",
         installed: false,
       },
     ];
@@ -323,7 +322,7 @@ describe("installAll", () => {
     // null installCmd entries are silently skipped — no result entry produced
     const names = results.map((r) => r.name);
     expect(names).not.toContain("Git");
-    expect(names).toContain("mcpc");
+    expect(names).toContain("TypeScript LSP");
   });
 });
 
@@ -352,19 +351,19 @@ describe("formatReport", () => {
   it("shows missing dep with manual install URL", () => {
     const statuses: DependencyStatus[] = [
       {
-        name: "mcpc",
-        binary: "mcpc",
+        name: "TypeScript LSP",
+        binary: "typescript-language-server",
         required: false,
-        category: "mcp",
-        description: "MCP CLI",
-        installCmd: "npm install -g @apify/mcpc",
-        url: "https://github.com/apify/mcpc",
+        category: "lsp",
+        description: "Language server",
+        installCmd: "bun add -g typescript-language-server typescript",
+        url: "https://github.com/typescript-language-server/typescript-language-server",
         installed: false,
       },
     ];
     const report = formatReport(statuses);
-    expect(report).toContain("✗ mcpc");
-    expect(report).toContain("npm install -g @apify/mcpc");
+    expect(report).toContain("✗ TypeScript LSP");
+    expect(report).toContain("bun add -g typescript-language-server typescript");
   });
 
   it("groups by category and shows status icons", () => {
@@ -381,39 +380,39 @@ describe("formatReport", () => {
         version: "2.43.0",
       },
       {
-        name: "mcpc",
-        binary: "mcpc",
+        name: "TypeScript LSP",
+        binary: "typescript-language-server",
         required: false,
-        category: "mcp",
-        description: "MCP CLI",
-        installCmd: "npm install -g @apify/mcpc",
-        url: "https://github.com/apify/mcpc",
+        category: "lsp",
+        description: "Language server",
+        installCmd: "bun add -g typescript-language-server typescript",
+        url: "https://github.com/typescript-language-server/typescript-language-server",
         installed: false,
       },
     ];
     const report = formatReport(statuses);
     expect(report).toContain("✓ Git");
     expect(report).toContain("2.43.0");
-    expect(report).toContain("✗ mcpc");
-    expect(report).toContain("npm install -g @apify/mcpc");
+    expect(report).toContain("✗ TypeScript LSP");
+    expect(report).toContain("bun add -g typescript-language-server typescript");
     expect(report).toContain("Core");
-    expect(report).toContain("MCP");
+    expect(report).toContain("Language Servers");
   });
 
   it("shows install results when provided", () => {
     const statuses: DependencyStatus[] = [
       {
-        name: "mcpc",
-        binary: "mcpc",
+        name: "TypeScript LSP",
+        binary: "typescript-language-server",
         required: false,
-        category: "mcp",
-        description: "MCP CLI",
-        installCmd: "npm install -g @apify/mcpc",
-        url: "https://github.com/apify/mcpc",
+        category: "lsp",
+        description: "Language server",
+        installCmd: "bun add -g typescript-language-server typescript",
+        url: "https://github.com/typescript-language-server/typescript-language-server",
         installed: false,
       },
     ];
-    const installResults = [{ name: "mcpc", success: true }];
+    const installResults = [{ name: "TypeScript LSP", success: true }];
     const report = formatReport(statuses, installResults);
     expect(report).toContain("→ installed");
   });
@@ -421,18 +420,18 @@ describe("formatReport", () => {
   it("shows install failure when provided", () => {
     const statuses: DependencyStatus[] = [
       {
-        name: "mcpc",
-        binary: "mcpc",
+        name: "TypeScript LSP",
+        binary: "typescript-language-server",
         required: false,
-        category: "mcp",
-        description: "MCP CLI",
-        installCmd: "npm install -g @apify/mcpc",
-        url: "https://github.com/apify/mcpc",
+        category: "lsp",
+        description: "Language server",
+        installCmd: "bun add -g typescript-language-server typescript",
+        url: "https://github.com/typescript-language-server/typescript-language-server",
         installed: false,
       },
     ];
     const installResults = [
-      { name: "mcpc", success: false, error: "permission denied" },
+      { name: "TypeScript LSP", success: false, error: "permission denied" },
     ];
     const report = formatReport(statuses, installResults);
     expect(report).toContain("→ failed: permission denied");
