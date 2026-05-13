@@ -13,7 +13,7 @@ function makeDep(overrides: Partial<DependencyStatus> = {}): DependencyStatus {
     name: "test-tool",
     binary: "test-tool",
     required: false,
-    category: "mcp",
+    category: "lsp",
     description: "A test tool",
     installCmd: "npm install -g test-tool",
     url: "https://example.com",
@@ -25,7 +25,7 @@ function makeDep(overrides: Partial<DependencyStatus> = {}): DependencyStatus {
 describe("buildUpdateOptions", () => {
   it("returns 4 options with correct missing count", () => {
     const missing: DependencyStatus[] = [
-      makeDep({ name: "mcpc", installCmd: "npm install -g @apify/mcpc" }),
+      makeDep({ name: "TypeScript LSP", installCmd: "bun add -g typescript-language-server typescript" }),
       makeDep({ name: "context-mode", installCmd: "npm install -g context-mode" }),
       makeDep({ name: "pyright", installCmd: "pip install pyright" }),
     ];
@@ -50,12 +50,12 @@ describe("buildUpdateOptions", () => {
     const missing: DependencyStatus[] = [
       makeDep({ name: "Git", installCmd: null }),         // no installCmd — should not count
       makeDep({ name: "bun:sqlite", installCmd: null }),  // no installCmd — should not count
-      makeDep({ name: "mcpc", installCmd: "npm install -g @apify/mcpc" }), // has installCmd
+      makeDep({ name: "TypeScript LSP", installCmd: "bun add -g typescript-language-server typescript" }), // has installCmd
     ];
 
     const options = buildUpdateOptions(missing);
 
-    // Only mcpc has installCmd, so count should be 1
+    // Only TypeScript LSP has installCmd, so count should be 1
     expect(options[1]).toBe("Update supipowers + install missing tools (1 missing)");
   });
 

@@ -1,8 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { runUltraPlanBatchSupervisor, resumeUltraPlanBatchSupervisor } from "../../../src/ultraplan/batch/supervisor.js";
 import { renderUltraPlanBatchSummary } from "../../../src/ultraplan/batch/presenter.js";
 import { saveUltraPlanBatchRun, loadUltraPlanBatchRun } from "../../../src/ultraplan/batch/storage.js";
 import { createTestPaths, createTestRepo, makeUltraPlanBatchNode, makeUltraPlanBatchRunWithNodes } from "../fixtures.js";
+
+let tmpDir: string;
+beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-ultraplan-batch-")); });
+afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
 describe("ultraplan batch integration", () => {
   test("launches two independent sessions and merges them cleanly across serialized merge passes", async () => {
@@ -102,8 +109,8 @@ describe("ultraplan batch integration", () => {
   });
 
   test("reconciles persisted restart state before resuming scheduling", async () => {
-    const paths = createTestPaths(process.cwd());
-    const { repoRoot: cwd } = createTestRepo(process.cwd(), `repo-${Date.now()}`);
+    const paths = createTestPaths(tmpDir);
+    const { repoRoot: cwd } = createTestRepo(tmpDir, `repo-${Date.now()}`);
     const run = makeUltraPlanBatchRunWithNodes([
       makeUltraPlanBatchNode({ nodeId: "node-running", sessionId: "up-running", waveIndex: 0, state: "running" }),
       makeUltraPlanBatchNode({ nodeId: "node-pending", sessionId: "up-pending", waveIndex: 0 }),
