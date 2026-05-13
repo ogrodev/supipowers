@@ -46,7 +46,7 @@ function makeDiscover(): HarnessDiscoverArtifact {
     lintTools: [],
     monorepoShape: "single-package",
     ci: { detected: false, configFiles: [] },
-    ompInfra: { hasSupipowers: false, skills: [], reviewAgents: [], mcpServers: [], plansCount: 0 },
+    ompInfra: { hasSupipowers: false, skills: [], reviewAgents: [], plansCount: 0 },
     antiSlopExisting: {
       fallowConfig: null,
       desloppifyConfig: null,

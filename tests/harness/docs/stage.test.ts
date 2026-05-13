@@ -73,7 +73,6 @@ function discover(id: string): HarnessDiscoverArtifact {
       hasSupipowers: true,
       skills: [],
       reviewAgents: [],
-      mcpServers: [],
       plansCount: 0,
     },
     antiSlopExisting: {

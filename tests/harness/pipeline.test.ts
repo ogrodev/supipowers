@@ -110,7 +110,6 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
         hasSupipowers: true,
         skills: [],
         reviewAgents: [],
-        mcpServers: [],
         plansCount: 0,
       },
       antiSlopExisting: {

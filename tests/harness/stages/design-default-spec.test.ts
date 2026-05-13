@@ -20,7 +20,6 @@ function makeDiscover(overrides: Partial<HarnessDiscoverArtifact> = {}): Harness
       hasSupipowers: false,
       skills: [],
       reviewAgents: [],
-      mcpServers: [],
       plansCount: 0,
     },
     antiSlopExisting: {
