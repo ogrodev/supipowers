@@ -23,7 +23,7 @@ Run the interactive installer:
 bunx supipowers
 ```
 
-The installer detects Pi (`~/.pi`) and OMP (`~/.omp`) — when both are present it offers a multiselect to install to one or both. It registers the extension, removes legacy external context-mode MCP registrations from `agent/mcp.json` and cleans up the old `settings/mcp.json` if present, and can install missing optional tooling such as LSP servers, `mcpc`, and Playwright CLI.
+The installer detects Pi (`~/.pi`) and OMP (`~/.omp`) — when both are present it offers a multiselect to install to one or both. It registers the extension, removes legacy external context-mode MCP registrations from `agent/mcp.json` and cleans up the old `settings/mcp.json` if present, and can install missing optional tooling such as LSP servers and Playwright CLI.
 
 > [!TIP]
 > Run `/supi:update` at any time to upgrade to the latest version, or `/supi:doctor` to check your setup.
@@ -42,7 +42,6 @@ The installer scans for these and offers to install missing tooling where it can
 
 | Dependency                            | What it enables                                                       |
 | ------------------------------------- | --------------------------------------------------------------------- |
-| [mcpc](https://github.com/apify/mcpc) | MCP server management via `/supi:mcp`                                 |
 | `typescript-language-server`          | TypeScript/JS diagnostics and references in review gates              |
 | `pyright`                             | Python type checking                                                  |
 | `rust-analyzer`                       | Rust language server                                                  |
@@ -70,7 +69,6 @@ The installer scans for these and offers to install missing tooling where it can
 | `/supi:model`            | Configure model assignments per action (plan, review, qa…)    |
 | `/supi:context`          | Show current context window usage and system prompt breakdown |
 | `/supi:optimize-context` | Analyze loaded prompt/context usage and suggest reductions    |
-| `/supi:mcp`              | Manage MCP servers (connect, disconnect, migrate)             |
 | `/supi:config`           | Interactive settings TUI                                      |
 | `/supi:status`           | Show project plans and configuration summary                  |
 | `/supi:doctor`           | Diagnose extension health and missing dependencies            |
@@ -82,7 +80,7 @@ The installer scans for these and offers to install missing tooling where it can
 | `/supi:memory`           | Manage native MemPalace memory integration (`status`, `setup`) |
 | `/supi:clear`            | Clear metrics, cache, session knowledge, and memory           |
 
-Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:review`, `/supi:update`, `/supi:doctor`, `/supi:mcp`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`, `/supi:release`, `/supi:checks`, `/supi:agents`, `/supi:ultraplan`, `/supi:harness`, `/supi:memory`, `/supi:clear`.
+Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:review`, `/supi:update`, `/supi:doctor`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`, `/supi:release`, `/supi:checks`, `/supi:agents`, `/supi:ultraplan`, `/supi:harness`, `/supi:memory`, `/supi:clear`.
 
 ## How it works
 
@@ -127,7 +125,6 @@ Use `/supi:agents` to inspect the merged set that will actually run.
 | Release automation                    | ✅         | ❌               |
 | Commit workflow                       | ✅         | ❌               |
 | Context-window optimizations          | ✅         | ❌               |
-| MCP server management through mcpc    | ✅         | ❌               |
 | Git worktree workflow                 | ❌         | ✅               |
 
 ## Quality gates
