@@ -233,7 +233,7 @@ function buildPlanningCriticalBlock(options: PlanningSystemPromptOptions): strin
     "## Plan submission",
     "",
     "This is NOT native OMP plan mode.",
-    "You **MUST NOT** call `exit_plan_mode` or `ExitPlanMode` — it will fail.",
+    "You **MUST NOT** call `exit_plan_mode` or `ExitPlanMode` — that is OMP's native approval path and bypasses supipowers' file-based approval hook.",
     `You **MUST NOT** write plans to \`local://PLAN.md\` — that is OMP's native plan location and will not trigger the approval flow.`,
     `You **MUST** save the plan to \`${options.plansDir}/YYYY-MM-DD-<feature-name>.md\` using the Write tool.`,
     "After saving, tell the user the plan path, then **stop and yield your turn**.",

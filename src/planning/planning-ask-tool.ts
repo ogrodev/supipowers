@@ -68,6 +68,22 @@ export function registerPlanningAskTool(platform: Platform): void {
         };
       }
 
+      if (ctx?.hasUI === false || typeof ctx?.ui?.select !== "function") {
+        const result = {
+          error: "interactive_planning_question_unavailable",
+          message: "Interactive planning questions cannot be answered in this runtime. Present this question and its options to the user instead of choosing a default.",
+          question: params.question,
+          options: labels,
+          recommended: params.recommended ?? null,
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          details: result,
+          error: true,
+        };
+      }
+
+
       const choice = await ctx.ui.select(params.question, labels, {
         initialIndex: params.recommended,
         // No timeout — planning decisions need unlimited time
@@ -113,6 +129,14 @@ function getAskRedirectReason(): string | null {
  */
 export function registerPlanningAskToolGuard(platform: Platform): void {
   platform.on("tool_call", (event) => {
+    if (event.toolName === "exit_plan_mode" && isPlanningActive()) {
+      return {
+        block: true,
+        reason:
+          "Planning mode: /supi:plan uses a file-based approval hook. Do not call exit_plan_mode because it is OMP's native approval path and bypasses supipowers plan tracking.",
+      };
+    }
+
     if (event.toolName !== "ask") return;
 
     const reason = getAskRedirectReason();

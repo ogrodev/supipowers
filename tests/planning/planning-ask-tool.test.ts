@@ -99,6 +99,37 @@ describe("registerPlanningAskTool — execution", () => {
       fs.rmSync(sessionDir, { recursive: true, force: true });
     }
   });
+
+  test("no-UI execution returns an explicit unanswered question instead of a default", async () => {
+    const platform = makePlatform();
+    registerPlanningAskTool(platform as any);
+    const tool = platform.getRegisteredTool();
+    const select = mock(async () => "First");
+
+    const result = await tool.execute(
+      "call-1",
+      {
+        question: "Which path?",
+        options: [{ label: "First" }, { label: "Second" }],
+        recommended: 1,
+      },
+      new AbortController().signal,
+      null,
+      { hasUI: false, ui: { select } },
+    );
+
+    expect(select).not.toHaveBeenCalled();
+    expect(result.error).toBe(true);
+    expect(result.details).toEqual({
+      error: "interactive_planning_question_unavailable",
+      message: expect.stringContaining("cannot be answered"),
+      question: "Which path?",
+      options: ["First", "Second"],
+      recommended: 1,
+    });
+    expect(result.content[0].text).toContain("interactive_planning_question_unavailable");
+    expect(result.content[0].text).not.toContain('"selected"');
+  });
 });
 
 describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
@@ -127,6 +158,26 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("planning_ask");
     expect(result?.reason).toContain("`ask`");
+  });
+
+  test("blocks native exit_plan_mode while planning is active", async () => {
+    const platform = makePlatform();
+    registerPlanningAskToolGuard(platform as any);
+
+    startPlanTracking("/cwd", {
+      dotDirDisplay: ".omp",
+      project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist",
+      global: (..._parts: string[]) => "/tmp/does-not-exist-global",
+    } as any);
+
+    const result = (await platform.fireToolCall("exit_plan_mode")) as
+      | { block: true; reason: string }
+      | undefined;
+
+    expect(result).toBeDefined();
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("file-based approval hook");
+    expect(result?.reason).toContain("bypasses supipowers");
   });
 
   test("blocks the `ask` tool when ui-design is active", async () => {

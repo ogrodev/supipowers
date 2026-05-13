@@ -124,7 +124,7 @@ describe("agent_end hook guards", () => {
     expect(ctx.ui.select).not.toHaveBeenCalled();
   });
 
-  test("does nothing when ctx has no UI", async () => {
+  test("does not show approval UI when ctx has no UI and no new plans exist", async () => {
     mockListPlans.mockReturnValue([]);
     startPlanTracking("/cwd", { dotDirDisplay: ".omp" });
 
@@ -135,6 +135,7 @@ describe("agent_end hook guards", () => {
     await platform.fireAgentEnd(ctx);
 
     expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(platform.sendMessage).not.toHaveBeenCalled();
   });
 
   test("no UI shown and snapshot updated when no new plans detected", async () => {
@@ -154,6 +155,37 @@ describe("agent_end hook guards", () => {
     expect(ctx.ui.select).not.toHaveBeenCalled();
   });
 });
+
+  test("valid plan in no-UI mode is surfaced without execution", async () => {
+    mockListPlans
+      .mockReturnValueOnce([])
+      .mockReturnValue(["plan.md"]);
+    mockReadPlanFile.mockReturnValue("content");
+
+    const ctx = makeCtx({ hasUI: false } as any);
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, ctx.newSession as any);
+
+    const platform = makePlatform();
+    registerPlanApprovalHook(platform as any);
+
+    await platform.fireAgentEnd(ctx);
+
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(ctx.newSession).not.toHaveBeenCalled();
+    expect(platform.sendUserMessage).not.toHaveBeenCalled();
+    expect(platform.sendMessage).toHaveBeenCalledTimes(1);
+    const [msg, opts] = platform.sendMessage.mock.calls[0];
+    expect(msg.customType).toBe("supi-plan-awaiting-interactive-approval");
+    expect(msg.display).toBe(true);
+    expect(msg.content[0].text).toContain("Interactive approval is unavailable");
+    expect(msg.content[0].text).toContain("Execute the saved plan");
+    expect(opts).toEqual({ deliverAs: "steer", triggerTurn: false });
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Plan saved; interactive approval is required before execution.",
+      "warning",
+    );
+    expect(isPlanningActive()).toBe(false);
+  });
 
 // ---------------------------------------------------------------------------
 // "Approve and execute" — happy path (newSession available)

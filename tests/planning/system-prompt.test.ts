@@ -29,6 +29,8 @@ describe("planning system prompt", () => {
 
     expect(prompt).toContain("Plans describe the work — they do not generate it.");
     expect(prompt).toContain("Additional planning note.");
+    expect(prompt).toContain("native approval path and bypasses supipowers");
+    expect(prompt).not.toContain("it will fail");
   });
 
   test("includes quick-plan content guidance", () => {

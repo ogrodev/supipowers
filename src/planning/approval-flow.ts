@@ -313,7 +313,7 @@ async function executeApproveFlow(
  */
 export function registerPlanApprovalHook(platform: Platform): void {
   platform.on("agent_end", async (_event: any, ctx: any) => {
-    if (!planningActive || !ctx?.hasUI || approvalPending) return;
+    if (!planningActive || approvalPending) return;
 
     // Detect newly written plan files
     const plansNow = listPlans(platform.paths, planCwd);
@@ -407,6 +407,29 @@ export function registerPlanApprovalHook(platform: Platform): void {
         cwd: planCwd,
       });
     } catch {}
+    if (!ctx?.hasUI) {
+      const message = [
+        `Plan saved to \`${planPath}\`.`,
+        "Interactive approval is unavailable in this runtime, so no execution was started.",
+        `To continue manually, explicitly send: \`Execute the saved plan at ${planPath} step by step; verify each step before proceeding.\``,
+      ].join("\n");
+      debugLogger?.log("approval_flow_no_ui", {
+        planName,
+        planPath,
+      });
+      ctx?.ui?.notify?.("Plan saved; interactive approval is required before execution.", "warning");
+      platform.sendMessage(
+        {
+          customType: "supi-plan-awaiting-interactive-approval",
+          content: [{ type: "text", text: message }],
+          display: true,
+        },
+        { deliverAs: "steer", triggerTurn: false },
+      );
+      cancelPlanTracking();
+      return;
+    }
+
     const approvalOptions = [
       "Approve and execute",
       "Refine plan",
