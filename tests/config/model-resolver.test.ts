@@ -169,7 +169,7 @@ describe("applyModelOverride", () => {
     };
   }
 
-  function makeCtx(model: any, available: any[], ui?: { setStatus?: Function }) {
+  function makeCtx(model: any, available: any[], ui?: { setStatus?: Function; notify?: Function }) {
     return { model, modelRegistry: { getAvailable: () => available }, ui };
   }
 
@@ -301,6 +301,19 @@ describe("applyModelOverride", () => {
     await handlers["agent_end"][0](); // second call — should be no-op
 
     expect(calls.setModel).toHaveLength(2); // override + restore, not 3
+  });
+
+  test("does not register unsupported credential_disabled hook", async () => {
+    const { platform, handlers } = makeMockPlatform();
+    const originalModel = makeFakeModel("claude-sonnet-4-6");
+    const overrideModel = makeFakeModel("claude-opus-4-6");
+    const ctx = makeCtx(originalModel, [overrideModel, originalModel]);
+    const resolved = { model: "claude-opus-4-6", thinkingLevel: null, source: "action" as const };
+
+    await applyModelOverride(platform, ctx, "plan", resolved);
+
+    expect(handlers["agent_end"]).toHaveLength(1);
+    expect(handlers["credential_disabled"]).toBeUndefined();
   });
 
   test("always registers agent_end hook to clear status bar", async () => {

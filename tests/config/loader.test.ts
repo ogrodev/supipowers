@@ -173,7 +173,7 @@ describe("loadConfig", () => {
     expect(DEFAULT_CONFIG.contextMode.lazyTools.enabled).toBe(true);
     expect(DEFAULT_CONFIG.contextMode.lazyTools.mode).toBe("balanced");
     expect(DEFAULT_CONFIG.contextMode.lazyTools.alwaysKeep).toEqual(
-      expect.arrayContaining(["ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"]),
+      expect.arrayContaining(["ctx_execute", "ctx_search", "ctx_open_cached"]),
     );
   });
 
@@ -198,7 +198,7 @@ describe("loadConfig", () => {
           mode: "aggressive",
           alwaysKeep: ["ctx_execute"],
           commandAllowlist: { "supi:review": ["ctx_batch_execute"] },
-          keywordTools: { "design review": ["mcpc_figma"] },
+          keywordTools: { "design review": ["ctx_batch_execute"] },
         },
       },
     });
@@ -209,7 +209,7 @@ describe("loadConfig", () => {
       mode: "aggressive",
       alwaysKeep: ["ctx_execute"],
       commandAllowlist: { "supi:review": ["ctx_batch_execute"] },
-      keywordTools: { "design review": ["mcpc_figma"] },
+      keywordTools: { "design review": ["ctx_batch_execute"] },
     });
   });
 });
@@ -387,6 +387,21 @@ describe("strict and inspection config loading", () => {
     expect("orchestration" in merged).toBe(false);
     expect("command" in (merged.qa as Record<string, unknown>)).toBe(false);
     expect("pipeline" in (merged.release as Record<string, unknown>)).toBe(false);
+  });
+
+  test("migrates retired top-level mcp config before validation", () => {
+    writeProjectConfig(localPaths, tmpDir, {
+      mcp: {
+        closeSessionsOnExit: true,
+      },
+    });
+
+    const inspection = inspectConfig(localPaths, tmpDir);
+
+    expect(inspection.validationErrors).toHaveLength(0);
+    expect(inspection.effectiveConfig).not.toBeNull();
+    expect("mcp" in inspection.mergedConfig).toBe(false);
+    expect(loadConfig(localPaths, tmpDir)).toEqual(DEFAULT_CONFIG);
   });
 
   test("migrates legacy single-command gates to canonical runs", () => {
