@@ -1,7 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { createPaths } from "../../src/platform/types.js";
 import { cancelUiDesignTracking, isUiDesignActive, startUiDesignTracking } from "../../src/ui-design/session.js";
 
@@ -20,8 +17,6 @@ function createPlatform(options: { withRegisterTool?: boolean } = {}) {
       "ctx_execute",
       "ctx_search",
       "ctx_batch_execute",
-      "mcpc_manager",
-      "mcpc_figma",
     ]),
     setActiveTools: mock(async () => {}),
     exec: mock(async () => ({ stdout: "", stderr: "", code: 0 })),
@@ -145,7 +140,6 @@ describe("bootstrap input interception", () => {
       "ctx_execute",
       "ctx_search",
       "ctx_batch_execute",
-      "mcpc_manager",
     ]);
     expect(result).toEqual({ systemPrompt: ["rebuilt prompt"] });
   });
@@ -180,46 +174,5 @@ describe("bootstrap input interception", () => {
     expect(prompt).toContain("rebuilt prompt");
     expect(prompt).not.toContain("original prompt");
     expect(prompt).toContain("# supi-context-mode");
-  });
-
-  test("uses before_agent_start prompt text for MCP trigger activation", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-mcp-"));
-    try {
-      const bootstrapModulePath = "../../src/bootstrap.js?bootstrap-input-lazy-tools-mcp";
-      const { bootstrap } = await import(bootstrapModulePath);
-      const { platform, handlersByEvent } = createPlatform();
-      const configPath = platform.paths.project(tmpDir, ".mcp.json");
-      fs.mkdirSync(path.dirname(configPath), { recursive: true });
-      fs.writeFileSync(
-        configPath,
-        JSON.stringify({
-          schemaVersion: 1,
-          servers: {
-            figma: {
-              transport: "http",
-              activation: "contextual",
-              taggable: true,
-              triggers: ["figma"],
-              antiTriggers: [],
-              enabled: true,
-              authPending: false,
-              addedAt: "2026-04-29T00:00:00.000Z",
-            },
-          },
-        }),
-      );
-
-      bootstrap(platform);
-
-      const beforeHandlers = handlersByEvent.get("before_agent_start") ?? [];
-      await beforeHandlers[0](
-        { prompt: "inspect the figma design", systemPrompt: ["original prompt"] },
-        { cwd: tmpDir, getSystemPrompt: mock(() => ["rebuilt prompt"]) },
-      );
-
-      expect(platform.setActiveTools).toHaveBeenCalledWith(expect.arrayContaining(["mcpc_figma"]));
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
   });
 });

@@ -9,7 +9,7 @@
 // This test scans `src/` and fails when any forbidden execution-state segment
 // appears as the first segment passed to `paths.project(…)` (or `platform.paths.project(…)`
 // and similar aliases). Team-shareable config segments (config.json, model.json,
-// mcpc, …) are explicitly allowed.
+// review-agents, …) are explicitly allowed.
 //
 // Regression class: execution state silently reintroduced into the committed
 // `<cwd>/.omp/supipowers/` tree.
@@ -105,6 +105,28 @@ describe("execution-state path guardrail", () => {
       const stripped = stripComments(source);
       for (const match of stripped.matchAll(callPattern)) {
         offenders.push(`${rel}: paths.project(..., "${match[1]}")`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  test("tests do not create throwaway repositories or caches in the repo root", () => {
+    const offenders: string[] = [];
+    const testsDir = path.join(repoRoot, "tests");
+    const forbiddenPatterns = [
+      /createTestRepo\s*\(\s*process\.cwd\s*\(/,
+      /createTestPaths\s*\(\s*process\.cwd\s*\(/,
+      /path\.join\s*\(\s*process\.cwd\s*\(\s*\)\s*,\s*["'`](?:repo-|node-compile-cache|jest_dx)/,
+      /mkdtempSync\s*\(\s*path\.join\s*\(\s*process\.cwd\s*\(\s*\)/,
+    ];
+
+    for (const file of walk(testsDir)) {
+      const rel = path.relative(repoRoot, file);
+      if (rel === path.join("tests", "integration", "state-path-guardrail.test.ts")) continue;
+      const stripped = stripComments(fs.readFileSync(file, "utf8"));
+      if (forbiddenPatterns.some((pattern) => pattern.test(stripped))) {
+        offenders.push(rel);
       }
     }
 
