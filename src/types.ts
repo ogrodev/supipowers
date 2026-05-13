@@ -545,12 +545,6 @@ export interface ContextModeConfig {
   memory: ContextModeMemoryConfig;
 }
 
-/** MCP management settings */
-export interface McpManagementConfig {
-  /** Close mcpc sessions on agent shutdown (default: false) */
-  closeSessionsOnExit: boolean;
-}
-
 /** MemPalace native integration default wing derivation mode */
 export type MempalaceWingStrategy = "repo-name" | "project-slug" | "explicit";
 
@@ -674,7 +668,6 @@ export interface SupipowersConfig {
   };
   ultraplan: UltraPlanConfig;
   contextMode: ContextModeConfig;
-  mcp: McpManagementConfig;
   mempalace: MempalaceConfig;
 }
 
@@ -1746,7 +1739,6 @@ export interface HarnessDiscoverArtifact {
     hasSupipowers: boolean;
     skills: string[];
     reviewAgents: string[];
-    mcpServers: string[];
     plansCount: number;
   };
   /** Existing anti-slop tooling. */

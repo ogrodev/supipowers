@@ -120,12 +120,6 @@ export const ConfigSchema = Type.Object(
       },
       { additionalProperties: false },
     ),
-    mcp: Type.Object(
-      {
-        closeSessionsOnExit: Type.Boolean(),
-      },
-      { additionalProperties: false },
-    ),
     mempalace: Type.Object(
       {
         enabled: Type.Boolean(),
