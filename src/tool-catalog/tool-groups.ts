@@ -14,9 +14,6 @@ export const CONTEXT_MODE_TOOL_NAMES = [
 
 export type ContextModeToolName = (typeof CONTEXT_MODE_TOOL_NAMES)[number];
 
-export const MCPC_MANAGER_TOOL_NAME = "mcpc_manager";
-export const MCPC_TOOL_PREFIX = "mcpc_";
-
 export const OWNED_TOOL_PRIORITY = [
   "ctx_execute",
   "ctx_search",
@@ -29,7 +26,6 @@ export const OWNED_TOOL_PRIORITY = [
   "ctx_purge",
   "ctx_repomap",
   "ctx_symbol",
-  MCPC_MANAGER_TOOL_NAME,
 ] as const;
 
 const CONTEXT_MODE_TOOL_SET = new Set<string>(CONTEXT_MODE_TOOL_NAMES);
@@ -81,12 +77,8 @@ export function isContextModeTool(name: string): boolean {
   return CONTEXT_MODE_TOOL_SET.has(name);
 }
 
-export function isMcpcGatewayTool(name: string): boolean {
-  return name.startsWith(MCPC_TOOL_PREFIX) && /^mcpc_[^_].+/.test(name);
-}
-
 export function isSupiOwnedTool(name: string): boolean {
-  return isContextModeTool(name) || name === MCPC_MANAGER_TOOL_NAME || isMcpcGatewayTool(name);
+  return isContextModeTool(name);
 }
 
 export function orderOwnedTools(names: Iterable<string>): string[] {

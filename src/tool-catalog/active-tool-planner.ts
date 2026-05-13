@@ -1,10 +1,7 @@
-import { computeActiveServers } from "../mcp/activation.js";
-import type { ServerConfig } from "../mcp/types.js";
 import type { ContextModeLazyToolsConfig } from "../types.js";
 import {
   BALANCED_KEYWORD_TOOLS,
   CONTEXT_MODE_TOOL_NAMES,
-  MCPC_MANAGER_TOOL_NAME,
   isSupiOwnedTool,
   orderOwnedTools,
 } from "./tool-groups.js";
@@ -12,8 +9,6 @@ import {
 export interface ActiveToolPlannerDiagnostics {
   unknownConfiguredTools: string[];
   unavailableTools: string[];
-  unmatchedTags: string[];
-  missingMcpGatewayTools: string[];
 }
 
 export interface PlanActiveToolsInput {
@@ -21,8 +16,6 @@ export interface PlanActiveToolsInput {
   currentActive: string[];
   allTools: string[];
   lazyTools: ContextModeLazyToolsConfig;
-  mcpServers?: Record<string, ServerConfig>;
-  pendingTags?: string[];
   cacheHandlesEnabled?: boolean;
 }
 
@@ -41,8 +34,6 @@ export function planActiveTools(input: PlanActiveToolsInput): ActiveToolPlan {
   const diagnostics: ActiveToolPlannerDiagnostics = {
     unknownConfiguredTools: [],
     unavailableTools: [],
-    unmatchedTags: [],
-    missingMcpGatewayTools: [],
   };
 
   const addRegisteredTool = (toolName: string, source: "config" | "policy"): void => {
@@ -69,7 +60,6 @@ export function planActiveTools(input: PlanActiveToolsInput): ActiveToolPlan {
     for (const toolName of CONTEXT_MODE_TOOL_NAMES) {
       if (!RARE_CONTEXT_TOOLS.has(toolName)) addRegisteredTool(toolName, "policy");
     }
-    addRegisteredTool(MCPC_MANAGER_TOOL_NAME, "policy");
   }
 
   for (const toolName of getTriggeredTools(input.prompt, BALANCED_KEYWORD_TOOLS)) {
@@ -81,20 +71,6 @@ export function planActiveTools(input: PlanActiveToolsInput): ActiveToolPlan {
   }
 
 
-  const mcpServers = input.mcpServers ?? {};
-  const pendingTags = input.pendingTags ?? [];
-  const knownServerNames = new Set(Object.keys(mcpServers));
-  for (const tag of pendingTags) {
-    if (!knownServerNames.has(tag)) diagnostics.unmatchedTags.push(tag);
-  }
-  for (const serverName of computeActiveServers(mcpServers, input.prompt, pendingTags)) {
-    const gatewayToolName = `mcpc_${serverName}`;
-    if (registeredOwnedTools.has(gatewayToolName)) {
-      selectedOwnedTools.add(gatewayToolName);
-    } else {
-      diagnostics.missingMcpGatewayTools.push(gatewayToolName);
-    }
-  }
   for (const toolName of getCommandAllowlistTools(input.prompt, input.lazyTools.commandAllowlist)) {
     addRegisteredTool(toolName, "config");
   }
@@ -206,7 +182,5 @@ function dedupeDiagnostics(diagnostics: ActiveToolPlannerDiagnostics): ActiveToo
   return {
     unknownConfiguredTools: [...new Set(diagnostics.unknownConfiguredTools)],
     unavailableTools: [...new Set(diagnostics.unavailableTools)],
-    unmatchedTags: [...new Set(diagnostics.unmatchedTags)],
-    missingMcpGatewayTools: [...new Set(diagnostics.missingMcpGatewayTools)],
   };
 }

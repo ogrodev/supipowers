@@ -4,16 +4,10 @@ import { getMetricsStore, getSessionId } from "../context-mode/hooks.js";
 import { getProjectStateDir } from "../workspace/state-paths.js";
 import type { Platform } from "../platform/types.js";
 import { normalizeSystemPromptBlocks, systemPromptText } from "../platform/system-prompt.js";
-import type { McpRegistry } from "../mcp/types.js";
 import type { SupipowersConfig } from "../types.js";
 import { planActiveTools } from "./active-tool-planner.js";
 import { detectContextMode } from "../context-mode/detector.js";
 import { getShadowedNativeTools } from "../context-mode/routing.js";
-
-export interface ActiveToolControllerDeps {
-  loadMcpRegistryForCwd(cwd: string): McpRegistry;
-  consumePendingTags(): string[];
-}
 
 type BeforeAgentStartEventLike = {
   prompt?: string;
@@ -33,7 +27,6 @@ type BeforeAgentStartContextLike = {
 export function registerActiveToolController(
   platform: Platform,
   config: SupipowersConfig,
-  _deps: ActiveToolControllerDeps,
 ): void {
   if (!config.contextMode.enabled || !config.contextMode.lazyTools.enabled) return;
 
@@ -46,19 +39,6 @@ export function registerActiveToolController(
     if (typeof ctx.getSystemPrompt !== "function") return undefined;
 
     const cwd = typeof ctx.cwd === "string" && ctx.cwd.length > 0 ? ctx.cwd : process.cwd();
-    let registry: McpRegistry = { schemaVersion: 1, servers: {} };
-    try {
-      registry = _deps.loadMcpRegistryForCwd(cwd);
-    } catch (error) {
-      (platform as any).logger?.warn?.("supi-lazy-tools: failed to load MCP registry", error);
-    }
-
-    let pendingTags: string[] = [];
-    try {
-      pendingTags = _deps.consumePendingTags();
-    } catch (error) {
-      (platform as any).logger?.warn?.("supi-lazy-tools: failed to consume MCP tags", error);
-    }
 
     let plan;
     try {
@@ -67,8 +47,6 @@ export function registerActiveToolController(
         currentActive: platform.getActiveTools(),
         allTools: platform.getAllTools(),
         lazyTools: config.contextMode.lazyTools,
-        mcpServers: registry.servers,
-        pendingTags,
         cacheHandlesEnabled: config.contextMode.cacheHandles.enabled,
       });
     } catch (error) {

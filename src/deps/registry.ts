@@ -10,7 +10,7 @@ export interface Dependency {
   name: string;
   binary: string;
   required: boolean;
-  category: "core" | "mcp" | "lsp" | "testing";
+  category: "core" | "lsp" | "testing";
   description: string;
   checkFn: (exec: ExecFn) => Promise<{ installed: boolean; version?: string }>;
   installCmd: string | null;
@@ -82,16 +82,6 @@ export const DEPENDENCIES: Dependency[] = [
     checkFn: () => Promise.resolve(checkBunSqlite()),
     installCmd: null,
     url: "https://bun.sh",
-  },
-  {
-    name: "mcpc",
-    binary: "mcpc",
-    required: false,
-    category: "mcp",
-    description: "MCP client CLI for server management",
-    checkFn: (exec) => checkBinary(exec, "mcpc"),
-    installCmd: "npm install -g @apify/mcpc",
-    url: "https://github.com/apify/mcpc",
   },
   {
     name: "TypeScript LSP",
@@ -244,7 +234,6 @@ export function formatReport(
   // Object.keys preserves insertion order for string keys in all major engines (V8/JSC/SM).
   const categoryLabels: Record<Dependency["category"], string> = {
     core: "Core",
-    mcp: "MCP",
     lsp: "Language Servers",
     testing: "Testing",
   };

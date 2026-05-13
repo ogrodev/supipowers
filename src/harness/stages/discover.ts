@@ -190,7 +190,6 @@ function detectOmpInfra(cwd: string): HarnessDiscoverArtifact["ompInfra"] {
   const hasSupipowers = existsSync(supipowersDir);
   const skills: string[] = [];
   const reviewAgents: string[] = [];
-  const mcpServers: string[] = [];
   let plansCount = 0;
 
   // Skills are typically in skills/ at the repo root.
@@ -226,20 +225,9 @@ function detectOmpInfra(cwd: string): HarnessDiscoverArtifact["ompInfra"] {
         plansCount = 0;
       }
     }
-    const mcpJson = path.join(supipowersDir, ".mcp.json");
-    if (existsSync(mcpJson)) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(mcpJson, "utf8")) as {
-          servers?: Record<string, unknown>;
-        };
-        if (parsed.servers) mcpServers.push(...Object.keys(parsed.servers));
-      } catch {
-        // ignore
-      }
-    }
   }
 
-  return { hasSupipowers, skills, reviewAgents, mcpServers, plansCount };
+  return { hasSupipowers, skills, reviewAgents, plansCount };
 }
 
 function detectFrameworks(cwd: string): string[] {

@@ -17,7 +17,7 @@ function splitWorkspacePath(relativeDir: string): string[] {
 // Team-shared (local) state: <cwd-or-repoRoot>/.omp/supipowers/<...>
 //
 // These paths are committed (or at least shareable) across a team clone. Used for
-// config.json, model.json, review-agents/config.yml, mcpc manifests, etc.
+// config.json, model.json, review-agents/config.yml, etc.
 // ──────────────────────────────────────────────────────────────────────────
 
 export function getRootStateDir(paths: PlatformPaths, repoRoot: string): string {
