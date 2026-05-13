@@ -765,6 +765,106 @@ function discardSessionDir(sessionDir: string): void {
   }
 }
 
+function buildCompletionRepairSteer(
+  sessionDir: string,
+  manifest: Manifest,
+  completionIssues: string[],
+): string {
+  return manifest.backend === "pencil-mcp"
+    ? REPAIR_COMPLETE_STEER_TEMPLATE_PENCIL(sessionDir, manifest.penFilePath, completionIssues)
+    : REPAIR_COMPLETE_STEER_TEMPLATE(sessionDir, completionIssues);
+}
+
+function sendNoUiPauseMessage(
+  platform: Platform,
+  sessionDir: string,
+  status: ManifestStatus,
+): void {
+  const message = [
+    `ui-design session paused with status \`${status}\` in a no-UI runtime.`,
+    `Artifacts were preserved at \`${sessionDir}\`.`,
+    "Interactive review is unavailable here. Continue manually by inspecting that directory or rerun `/supi:ui-design` in an interactive TUI.",
+  ].join("\n");
+  platform.sendMessage(
+    {
+      customType: "supi-ui-design-paused-no-ui",
+      content: [{ type: "text", text: message }],
+      display: true,
+    },
+    { deliverAs: "steer", triggerTurn: false },
+  );
+}
+
+async function handleNoUiUiDesignAgentEnd(
+  platform: Platform,
+  ctx: any,
+  session: UiDesignSession,
+  manifest: Manifest | null,
+): Promise<void> {
+  const sessionDir = session.dir;
+
+  if (!manifest) {
+    await runCleanup();
+    ctx?.ui?.notify?.(
+      `ui-design session state is unreadable; artifacts preserved at ${sessionDir}.`,
+      "warning",
+    );
+    cancelUiDesignTracking("manifest_missing_no_ui");
+    return;
+  }
+
+  if (manifest.status === "complete") {
+    const completion = validateCompletionProof(sessionDir, manifest);
+    const validatedManifest = completion.validatedManifest;
+    if (
+      !sameCritiqueSummary(manifest.critique, validatedManifest.critique) ||
+      manifest.approvedAt !== validatedManifest.approvedAt
+    ) {
+      writeManifest(sessionDir, validatedManifest);
+    }
+
+    if (completion.issues.length > 0) {
+      await resumeSession(
+        platform,
+        ctx,
+        session,
+        buildCompletionRepairSteer(sessionDir, manifest, completion.issues),
+      );
+      return;
+    }
+
+    writeManifest(sessionDir, { ...validatedManifest, acknowledged: true });
+    await runCleanup();
+    ctx?.ui?.notify?.(`ui-design complete; artifacts kept at ${sessionDir}.`, "info");
+    cancelUiDesignTracking("complete_no_ui");
+    return;
+  }
+
+  if (manifest.status === "discarded") {
+    await runCleanup();
+    discardSessionDir(sessionDir);
+    cancelUiDesignTracking("discarded_no_ui");
+    return;
+  }
+
+  if (
+    manifest.status === "in-progress" ||
+    manifest.status === "critiquing" ||
+    manifest.status === "awaiting-review"
+  ) {
+    if (sessionMadeProgress(sessionDir)) {
+      await resumeSession(platform, ctx, session, RESUME_STEER_TEMPLATE(sessionDir));
+      return;
+    }
+
+    sendNoUiPauseMessage(platform, sessionDir, manifest.status);
+    ctx?.ui?.notify?.(`ui-design paused; artifacts preserved at ${sessionDir}.`, "warning");
+    await runCleanup();
+    cancelUiDesignTracking("paused_no_ui");
+  }
+}
+
+
 function getUiDesignWritePaths(toolName: string, input: Record<string, unknown>): string[] | undefined {
   switch (toolName) {
     case "write":
@@ -850,11 +950,15 @@ export function registerUiDesignToolGuard(platform: Platform): void {
 export function registerUiDesignApprovalHook(platform: Platform): void {
   platform.on("agent_end", async (_event: any, ctx: any) => {
     const session = activeSession;
-    if (!session || !ctx?.hasUI) return;
+    if (!session) return;
 
     const sessionDir = session.dir;
     const manifest = readManifest(sessionDir);
 
+    if (!ctx?.hasUI) {
+      await handleNoUiUiDesignAgentEnd(platform, ctx, session, manifest);
+      return;
+    }
     // Missing / unparseable manifest — unsafe to resume
     if (!manifest) {
       const choice = await ctx.ui.select(
@@ -888,9 +992,7 @@ export function registerUiDesignApprovalHook(platform: Platform): void {
           // Pencil manifests always cite pencil artifacts in their repair steer,
           // even when `penFilePath` is missing — the HTML template would point
           // at files pencil sessions never produce.
-          const repairSteer = manifest.backend === "pencil-mcp"
-            ? REPAIR_COMPLETE_STEER_TEMPLATE_PENCIL(sessionDir, manifest.penFilePath, completion.issues)
-            : REPAIR_COMPLETE_STEER_TEMPLATE(sessionDir, completion.issues);
+          const repairSteer = buildCompletionRepairSteer(sessionDir, manifest, completion.issues);
           await resumeSession(
             platform,
             ctx,
