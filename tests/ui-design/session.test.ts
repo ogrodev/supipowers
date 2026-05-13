@@ -163,6 +163,7 @@ function registerHookWithPlatform(opts: {
   setModel?: (...args: any[]) => Promise<boolean>;
   availableModels?: any[];
   currentModel?: any;
+  hasUI?: boolean;
 }) {
   let handler: ((event: any, ctx: any) => Promise<void>) | null = null;
   const platform: any = {
@@ -176,7 +177,7 @@ function registerHookWithPlatform(opts: {
   };
   registerUiDesignApprovalHook(platform);
   const ctx = {
-    hasUI: true,
+    hasUI: opts.hasUI ?? true,
     cwd: tmpDir,
     model: opts.currentModel ?? null,
     modelRegistry: {
@@ -545,6 +546,128 @@ describe("ui-design session — approval hook terminal branches", () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(sessionDir)).toBe(false);
     expect(isUiDesignActive()).toBe(false);
+  });
+});
+
+describe("ui-design session — no-UI approval hook handling", () => {
+  test("missing manifest cleans up companion but preserves artifacts", async () => {
+    const sessionDir = path.join(tmpDir, "no-ui-missing");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, "scratch.txt"), "keep");
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+
+    const select = mock(async () => "Discard session");
+    const { handler, ctx } = registerHookWithPlatform({ select, hasUI: false });
+    await handler({}, ctx);
+
+    expect(select).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(sessionDir)).toBe(true);
+    expect(fs.existsSync(path.join(sessionDir, "scratch.txt"))).toBe(true);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("artifacts preserved"),
+      "warning",
+    );
+    expect(isUiDesignActive()).toBe(false);
+  });
+
+  test("valid complete manifest is acknowledged without prompting or deleting artifacts", async () => {
+    const sessionDir = path.join(tmpDir, "no-ui-complete");
+    const manifest = baseManifest();
+    writeManifest(sessionDir, manifest);
+    writeCompletionArtifacts(sessionDir, manifest);
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+
+    const select = mock(async () => "Discard session");
+    const { handler, ctx } = registerHookWithPlatform({ select, hasUI: false });
+    await handler({}, ctx);
+
+    const rewritten = JSON.parse(fs.readFileSync(path.join(sessionDir, "manifest.json"), "utf-8"));
+    const proof = JSON.parse(fs.readFileSync(path.join(sessionDir, "completion-proof.json"), "utf-8"));
+    expect(select).not.toHaveBeenCalled();
+    expect(rewritten.acknowledged).toBe(true);
+    expect(proof.valid).toBe(true);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(sessionDir)).toBe(true);
+    expect(isUiDesignActive()).toBe(false);
+  });
+
+  test("invalid complete manifest sends repair steer and keeps tracking active", async () => {
+    const sessionDir = path.join(tmpDir, "no-ui-invalid-complete");
+    const manifest = baseManifest({ approvedAt: undefined });
+    writeManifest(sessionDir, manifest);
+    writeCompletionArtifacts(sessionDir, manifest, { approvalRecord: null });
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+
+    const sendMessage = mock(() => {});
+    const { handler, ctx } = registerHookWithPlatform({ sendMessage, hasUI: false });
+    await handler({}, ctx);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(extractSteerText(sendMessage)).toContain("claims `status: \"complete\"`");
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(fs.existsSync(sessionDir)).toBe(true);
+    expect(isUiDesignActive()).toBe(true);
+  });
+
+  test("discarded manifest removes the session directory without prompting", async () => {
+    const sessionDir = path.join(tmpDir, "no-ui-discarded");
+    writeManifest(sessionDir, baseManifest({ status: "discarded" }));
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+
+    const select = mock(async () => "Discard session");
+    const { handler, ctx } = registerHookWithPlatform({ select, hasUI: false });
+    await handler({}, ctx);
+
+    expect(select).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(sessionDir)).toBe(false);
+    expect(isUiDesignActive()).toBe(false);
+  });
+
+  test("no-progress resume status pauses visibly, cleans up, and preserves artifacts", async () => {
+    const sessionDir = path.join(tmpDir, "no-ui-paused");
+    writeManifest(sessionDir, baseManifest({ status: "awaiting-review" }));
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+
+    const sendMessage = mock(() => {});
+    const { handler, ctx } = registerHookWithPlatform({ sendMessage, hasUI: false });
+    await handler({}, ctx);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [message, opts] = sendMessage.mock.calls[0] as unknown as [
+      { customType: string; display: boolean; content: Array<{ text: string }> },
+      { deliverAs: string; triggerTurn: boolean },
+    ];
+    expect(message.customType).toBe("supi-ui-design-paused-no-ui");
+    expect(message.display).toBe(true);
+    expect(message.content[0].text).toContain(sessionDir);
+    expect(opts).toEqual({ deliverAs: "steer", triggerTurn: false });
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(sessionDir)).toBe(true);
+    expect(isUiDesignActive()).toBe(false);
+  });
+
+  test("progressing resume status auto-resumes without cleanup", async () => {
+    const sessionDir = path.join(tmpDir, "no-ui-progress");
+    writeManifest(sessionDir, baseManifest({ status: "in-progress" }));
+    const cleanup = mock(async () => {});
+    startUiDesignTracking(makeSession(sessionDir), cleanup);
+    writeManifest(sessionDir, baseManifest({ status: "in-progress", topic: "changed" }));
+
+    const sendMessage = mock(() => {});
+    const { handler, ctx } = registerHookWithPlatform({ sendMessage, hasUI: false });
+    await handler({}, ctx);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(extractSteerText(sendMessage)).toContain("Continue the /supi:ui-design run");
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(isUiDesignActive()).toBe(true);
   });
 });
 
