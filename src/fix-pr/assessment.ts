@@ -55,6 +55,7 @@ function buildAssessmentPrompt(args: BuildAssessmentPromptArgs): string {
     "",
     "Rules:",
     "- Read the referenced code before assigning a verdict.",
+    `- If a comment's diffHunk lacks enough context, read \`pr://${args.repo}/${args.prNumber}/diff/all\`; the changed-file list is \`pr://${args.repo}/${args.prNumber}/diff\`. Use these only for verdict assessment and do not edit during assessment.`,
     "- Do not perform any code edits. This is a pure assessment pass.",
     "- One assessment per comment. `commentId` ties back to the PR comment id.",
     "",

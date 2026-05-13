@@ -84,6 +84,7 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
     `- Session dir: \`${sessionDir}\``,
     `- Iteration: ${iteration} of ${maxIter}`,
     `- Selected target: ${selectedTargetLabel}`,
+    `- Full PR diff: \`pr://${repo}/${prNumber}/diff/all\`; changed-file list: \`pr://${repo}/${prNumber}/diff\``,
     `- Comment reply policy: ${config.commentPolicy}`,
     `- Reviewer: ${reviewer.type}${reviewer.triggerMethod ? ` (trigger: ${reviewer.triggerMethod})` : ""}`,
     deferredCommentsSummary
