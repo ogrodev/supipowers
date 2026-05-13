@@ -84,7 +84,7 @@ Most commands steer the AI session. These are TUI-only — they open native dial
 
 ## How it works
 
-**Planning.** `/supi:plan` steers the AI through planning phases (scope → decompose → estimate → verify), saves the result to `.omp/supipowers/plans/`, and presents an approval UI. On approval, tasks execute in the same session.
+**Planning.** `/supi:plan` steers the AI through planning phases (Explore → Clarify → Brainstorm → Design & Save → Review Loop → User Gate → Plan), saves the result to `.omp/supipowers/plans/`, and presents an approval UI. On approval, tasks execute in the same session.
 
 **Quality gates.** `/supi:checks` runs deterministic quality gates. Six gates are available: `lsp-diagnostics`, `lint`, `typecheck`, `format`, `test-suite`, and `build`. Each gate can be enabled independently via `/supi:config` or the shared repository config at `.omp/supipowers/config.json`. In monorepos, `/supi:checks` defaults to `All`, which runs the root target plus every workspace target sequentially; use `--target <package>` to narrow the run or `--target all` to request the batch mode explicitly. Gates report issues with severity levels.
 
