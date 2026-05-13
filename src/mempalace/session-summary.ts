@@ -185,6 +185,11 @@ export function buildCompactionCheckpoint(options: SessionSummaryOptions): Compa
 
 export function buildShutdownDiary(options: SessionSummaryOptions): ShutdownDiary {
   const { body, now } = buildBody("MemPalace shutdown diary", "shutdown", options);
+  // source_file convention: the bridge's Python layer (mempalace_bridge.py) embeds
+  // the source_file value as a deterministic first-line prefix in the entry text:
+  //   "[source: <source_file>]\n<entry>"
+  // tool_diary_write does not accept source_file natively; the prefix is how the
+  // round-trip proves the linkage (diary_read returns the full document text).
   return {
     entry: body,
     metadata: {

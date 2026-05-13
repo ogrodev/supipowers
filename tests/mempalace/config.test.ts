@@ -10,13 +10,14 @@ import {
   resolveMempalaceConfig,
 } from "../../src/mempalace/config.js";
 import { createPaths } from "../../src/platform/types.js";
+import { MEMPALACE_PACKAGE_VERSION } from "../../src/mempalace/upstream-limits.js";
 import { getProjectStateDir } from "../../src/workspace/state-paths.js";
 
 describe("mempalace config defaults", () => {
   test("matches the approved native MemPalace defaults", () => {
     expect(DEFAULT_CONFIG.mempalace).toEqual({
       enabled: true,
-      packageVersion: "3.3.4",
+      packageVersion: MEMPALACE_PACKAGE_VERSION,
       managedVenvPath: "~/.omp/supipowers/mempalace-venv",
       palacePath: "~/.mempalace/palace",
       defaultWingStrategy: "repo-name",
@@ -37,6 +38,8 @@ describe("mempalace config defaults", () => {
         diaryChars: 8000,
         autoSearchTokens: 150,
         wakeUpInjectionEvery: 10,
+        autoSearchSimilarityFloor: 0.55,
+        autoSearchBm25Floor: 0.3,
       },
       timeouts: {
         setupMs: 120000,

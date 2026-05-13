@@ -12,6 +12,7 @@ import {
 import type { PlatformPaths } from "../../src/platform/types.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
 import { resolveManagedVenvPaths } from "../../src/mempalace/runtime.js";
+import { MEMPALACE_PACKAGE_VERSION } from "../../src/mempalace/upstream-limits.js";
 import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
 
 function isolatedPaths(rootDir: string): PlatformPaths {
@@ -139,7 +140,7 @@ describe("runMempalaceSetup", () => {
     if (!result.ok) throw new Error(result.error.message);
     expect(result.details.uvPath).toBe(uvPath);
     expect(result.details.venvPath).toBe(venvRoot);
-    expect(result.details.packageVersion).toBe("3.3.4");
+    expect(result.details.packageVersion).toBe(MEMPALACE_PACKAGE_VERSION);
     expect(progress.some((m) => m.includes("Provisioning managed Python"))).toBe(true);
     expect(calls.some((c) => c.args[0] === "venv")).toBe(true);
     expect(calls.some((c) => c.args[0] === "pip" && c.args.some((a) => a.startsWith("mempalace==")))).toBe(true);

@@ -1,5 +1,6 @@
 // src/config/defaults.ts
 import type { SupipowersConfig } from "../types.js";
+import { MEMPALACE_PACKAGE_VERSION } from "../mempalace/upstream-limits.js";
 
 export const DEFAULT_CONFIG: SupipowersConfig = {
   version: "1.0.0",
@@ -66,7 +67,7 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
   },
   mempalace: {
     enabled: true,
-    packageVersion: "3.3.4",
+    packageVersion: MEMPALACE_PACKAGE_VERSION,
     managedVenvPath: "~/.omp/supipowers/mempalace-venv",
     palacePath: "~/.mempalace/palace",
     defaultWingStrategy: "repo-name",
@@ -87,6 +88,8 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
       diaryChars: 8000,
       autoSearchTokens: 150,
       wakeUpInjectionEvery: 10,
+      autoSearchSimilarityFloor: 0.55,
+      autoSearchBm25Floor: 0.3,
     },
     timeouts: {
       setupMs: 120000,

@@ -161,6 +161,8 @@ Configuration uses built-in defaults plus two user-managed override layers:
 
 `/supi:config` exposes only `Global` and `Repository`. In monorepos, the repository config is shared across every workspace; there are no per-workspace Supipowers config files for general settings.
 
+MemPalace hook timeouts are configured under `mempalace.timeouts`. Keep `hookMs` at or above `6000` when `mempalace.hooks.autoSearchOnPrompt` is enabled; MemPalace search can now pause before retrying a transient index lookup. The built-in default is `10000`.
+
 ## Release channels
 
 Three built-in channels are available: `github` (GitHub Release via `gh` CLI), `gitlab` (GitLab Release via `glab` CLI), and `gitea` (Gitea Release via `tea` CLI). Channels are selected per-project in `release.channels`.

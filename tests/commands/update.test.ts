@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { resolveManagedVenvPaths } from "../../src/mempalace/runtime.js";
 import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
+import { MEMPALACE_PACKAGE_VERSION } from "../../src/mempalace/upstream-limits.js";
 function makeDep(overrides: Partial<DependencyStatus> = {}): DependencyStatus {
   return {
     name: "test-tool",
@@ -360,7 +361,7 @@ describe("handleUpdate — MemPalace prompt", () => {
       );
       expect(pipCall).toBeDefined();
       const messages = (notify.mock.calls as any[]).map((call) => call[0] as string);
-      expect(messages.some((m) => m.includes("MemPalace v3.3.4 ready"))).toBe(true);
+      expect(messages.some((m) => m.includes(`MemPalace v${MEMPALACE_PACKAGE_VERSION} ready`))).toBe(true);
     } finally {
       // venvRoot is inside tmpDir; afterEach handles cleanup.
     }

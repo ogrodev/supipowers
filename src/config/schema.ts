@@ -158,6 +158,8 @@ export const ConfigSchema = Type.Object(
             diaryChars: Type.Integer({ minimum: 1 }),
             autoSearchTokens: Type.Integer({ minimum: 1 }),
             wakeUpInjectionEvery: Type.Integer({ minimum: 1 }),
+            autoSearchSimilarityFloor: Type.Number({ minimum: 0, maximum: 1 }),
+            autoSearchBm25Floor: Type.Number({ minimum: 0 }),
           },
           { additionalProperties: false },
         ),

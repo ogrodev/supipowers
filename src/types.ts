@@ -590,10 +590,19 @@ export interface MempalaceConfig {
      * one-line refresher instead. `1` = always inject (legacy behavior).
      */
     wakeUpInjectionEvery: number;
+    /** Minimum cosine similarity (0–1) for a hit to be injected by auto-search. Default 0.55. */
+    autoSearchSimilarityFloor: number;
+    /** Minimum BM25 score for a hit to be injected by auto-search. Default 0.3. */
+    autoSearchBm25Floor: number;
   };
   timeouts: {
     setupMs: number;
     bridgeMs: number;
+    /**
+     * Per-hook bridge timeout in milliseconds. Keep this at or above 6000
+     * when autoSearchOnPrompt is enabled; MemPalace 3.3.5 can sleep before
+     * retrying a transient search-index lookup.
+     */
     hookMs: number;
   };
 }

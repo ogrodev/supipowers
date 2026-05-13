@@ -7,6 +7,7 @@ import { createMockContext, createMockPlatform } from "../../src/platform/test-u
 import { createPaths, type PlatformPaths } from "../../src/platform/types.js";
 import { resolveManagedVenvPaths } from "../../src/mempalace/runtime.js";
 import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
+import { MEMPALACE_PACKAGE_VERSION } from "../../src/mempalace/upstream-limits.js";
 
 function isolatedPaths(rootDir: string): PlatformPaths {
   return {
@@ -135,7 +136,7 @@ describe("/supi:memory command", () => {
 
     const messages = notify.mock.calls.map((call: any[]) => call[0] as string);
     expect(messages.some((msg) => msg.includes("Provisioning managed Python 3.12 via uv"))).toBe(true);
-    expect(messages.some((msg) => msg.includes("Installing mempalace==3.3.4 from PyPI"))).toBe(true);
+    expect(messages.some((msg) => msg.includes(`Installing mempalace==${MEMPALACE_PACKAGE_VERSION} from PyPI`))).toBe(true);
     expect(messages.some((msg) => msg.includes("MemPalace setup complete."))).toBe(true);
     expect(messages.some((msg) => msg.includes("uv:"))).toBe(true);
     expect(messages.some((msg) => msg.includes("python:  3.12 (managed by uv)"))).toBe(true);

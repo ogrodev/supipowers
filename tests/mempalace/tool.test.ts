@@ -3,6 +3,7 @@ import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { registerMempalaceTool, type MempalaceToolDeps } from "../../src/mempalace/tool.js";
 import { createMockPlatform } from "../../src/platform/test-utils.js";
 import type { MempalaceInstallSnapshot } from "../../src/mempalace/installer-helper.js";
+import { MEMPALACE_PACKAGE_VERSION } from "../../src/mempalace/upstream-limits.js";
 
 function createPlatformWithTool() {
   return createMockPlatform({ registerTool: mock() as any });
@@ -105,8 +106,8 @@ describe("registerMempalaceTool", () => {
     registerMempalaceTool(platform, DEFAULT_CONFIG, withReadyInstall({
       resolveBridgeScriptPath: () => ({ ok: true, path: "/bridge.py" }),
       setupRuntime: async (_options) => {
-        _options.onProgress?.("Installing mempalace==3.3.4 from PyPI");
-        return { ok: true, details: { packageVersion: "3.3.4", venvPath: "/venv" } } as any;
+        _options.onProgress?.(`Installing mempalace==${MEMPALACE_PACKAGE_VERSION} from PyPI`);
+        return { ok: true, details: { packageVersion: MEMPALACE_PACKAGE_VERSION, venvPath: "/venv" } } as any;
       },
     }));
     const definition = (platform.registerTool as any).mock.calls[0][0];
@@ -114,10 +115,10 @@ describe("registerMempalaceTool", () => {
     const result = await definition.execute("tool-call", { action: "setup" }, new AbortController().signal, (update: unknown) => updates.push(update), { cwd: process.cwd() });
 
     expect(updates).toEqual([
-      { content: [{ type: "text", text: "Installing mempalace==3.3.4 from PyPI" }] },
+      { content: [{ type: "text", text: `Installing mempalace==${MEMPALACE_PACKAGE_VERSION} from PyPI` }] },
     ]);
     expect(result.content[0].text).toContain("setup");
-    expect(result.details).toMatchObject({ ok: true, action: "setup", setup: { packageVersion: "3.3.4" } });
+    expect(result.details).toMatchObject({ ok: true, action: "setup", setup: { packageVersion: MEMPALACE_PACKAGE_VERSION } });
   });
 
   test("returns a valid tool result when the bridge throws unexpectedly", async () => {
