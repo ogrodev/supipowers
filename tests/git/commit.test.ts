@@ -421,6 +421,106 @@ describe("analyzeAndCommit", () => {
     );
   });
 
+  test("asks whether to stage all changes when index and worktree differ", async () => {
+    const plan: CommitPlan = {
+      commits: [
+        {
+          type: "fix",
+          scope: null,
+          summary: "commit staged fix",
+          details: [],
+          files: ["src/staged.ts"],
+        },
+      ],
+    };
+    const capture = { prompt: "" };
+    const exec = createMockExec({
+      "git status": {
+        stdout: "M  src/staged.ts\n M src/unstaged.ts\n?? src/new.ts\n",
+        code: 0,
+      },
+      "git diff --cached --name-only": { stdout: "src/staged.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 1 file changed\n", code: 0 },
+      "git diff --cached": { stdout: "diff --git a/src/staged.ts\n+fix", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mock(() => Promise.resolve(createPromptCapturingSession(plan, capture) as any)),
+    });
+    const select = mock()
+      .mockResolvedValueOnce("Use staged changes only — commit the index as-is")
+      .mockResolvedValueOnce("commit — fix: commit staged fix");
+    const ctx = createMockCtx({
+      ui: { select, notify: mock(), input: mock() },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    expect(result).not.toBeNull();
+    expect(select.mock.calls[0]?.[0]).toBe("Staged and unstaged changes detected");
+    expect(select.mock.calls[0]?.[2]?.helpText).toContain("src/unstaged.ts");
+    expect(capture.prompt).toContain("src/staged.ts");
+    expect(capture.prompt).not.toContain("src/unstaged.ts");
+    expect(exec.mock.calls.some(
+      (call: any[]) => call[0] === "git" && call[1][0] === "add",
+    )).toBe(false);
+  });
+
+  test("stages all changes when mixed-state prompt selects all files", async () => {
+    const plan: CommitPlan = {
+      commits: [
+        {
+          type: "feat",
+          scope: null,
+          summary: "commit all files",
+          details: [],
+          files: ["src/staged.ts", "src/unstaged.ts"],
+        },
+      ],
+    };
+    const capture = { prompt: "" };
+    const exec = createMockExec({
+      "git status": {
+        stdout: "M  src/staged.ts\n M src/unstaged.ts\n",
+        code: 0,
+      },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "src/staged.ts\nsrc/unstaged.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 2 files changed\n", code: 0 },
+      "git diff --cached": { stdout: "diff --git a/src/staged.ts\n+fix\ndiff --git a/src/unstaged.ts\n+new", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mock(() => Promise.resolve(createPromptCapturingSession(plan, capture) as any)),
+    });
+    const select = mock()
+      .mockResolvedValueOnce("Stage all changes — include staged, unstaged, and untracked files")
+      .mockResolvedValueOnce("commit — feat: commit all files");
+    const ctx = createMockCtx({
+      ui: { select, notify: mock(), input: mock() },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    expect(result).not.toBeNull();
+    expect(capture.prompt).toContain("src/staged.ts");
+    expect(capture.prompt).toContain("src/unstaged.ts");
+    expect(exec.mock.calls.some(
+      (call: any[]) => call[0] === "git" && call[1].join(" ") === "add -A",
+    )).toBe(true);
+  });
+
+
   test("executes single commit from agent plan", async () => {
     const plan: CommitPlan = {
       commits: [{
