@@ -381,3 +381,272 @@ describe("KnowledgeStore", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Layered fallback: trigram substring, fuzzy correction, RRF, cleanup
+// ─────────────────────────────────────────────────────────────────────
+
+describe("KnowledgeStore fallback search", () => {
+  let tmpDir: string;
+  let store: KnowledgeStore;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-store-fallback-"));
+    store = new KnowledgeStore(path.join(tmpDir, "knowledge.db"));
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    if (fs.existsSync(tmpDir)) rmDirWithRetry(tmpDir);
+  });
+
+  test("trigram fallback finds an identifier fragment porter cannot", () => {
+    // Porter tokenizes 'executable' / 'executor' as whole tokens; a query
+    // fragment like 'execut' has no matching porter token, but trigram does.
+    store.index(
+      [makeChunk("Runner", "the executor coordinates background jobs")],
+      "code",
+    );
+
+    const results = store.search(["execut"]);
+    expect(results[0].results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0].results[0].title).toBe("Runner");
+    expect(results[0].results[0].matchLayer).toBe("rrf");
+  });
+
+  test("fuzzy correction recovers a typo whose trigrams miss the body", () => {
+    store.index(
+      [makeChunk("Quantum", "research notes on quantum entanglement and decoherence")],
+      "physics",
+    );
+
+    // Body has 'quantum' (trigrams: qua, uan, ant, ntu, tum). Typo 'quontom'
+    // has trigrams quo, uon, ont, nto, tom — zero overlap with the body, so
+    // both porter and trigram return empty. Only fuzzy correction (snap to
+    // 'quantum' via Levenshtein 2 against the vocab) can recover this.
+    const results = store.search(["quontom"]);
+    expect(results[0].results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0].results[0].title).toBe("Quantum");
+    expect(results[0].results[0].matchLayer).toBe("rrf-fuzzy");
+  });
+
+  test("RRF fuses porter and trigram into one ranked list", () => {
+    store.index(
+      [
+        makeChunk("Both", "executor handles execution requests"),
+        makeChunk("PorterOnly", "completely unrelated retrieval lexicon"),
+      ],
+      "mix",
+    );
+
+    const results = store.search(["executor"]);
+    // 'Both' is the only doc with 'executor' — porter and trigram both rank
+    // it first; RRF should keep it on top and label it as rrf.
+    expect(results[0].results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0].results[0].title).toBe("Both");
+    expect(results[0].results[0].matchLayer).toBe("rrf");
+  });
+
+  test("RRF keeps same-title chunks distinct within one source", () => {
+    store.index(
+      [
+        makeChunk("Repeated heading", "alpha first body"),
+        makeChunk("Repeated heading", "alpha second body"),
+      ],
+      "same-document",
+    );
+
+    const results = store.search(["alpha"], { limit: 10 });
+
+    expect(results[0].results.map((r) => r.body).sort()).toEqual([
+      "alpha first body",
+      "alpha second body",
+    ]);
+  });
+
+  test("nonsense query still returns empty (no spurious fuzzy match)", () => {
+    store.index([makeChunk("Real", "actual content here")], "src");
+    const results = store.search(["xyzzyplugh"]);
+    expect(results[0].results).toHaveLength(0);
+  });
+
+  test("source filter scopes both porter and trigram layers", () => {
+    store.index([makeChunk("A", "executor coordinator service")], "src-a");
+    store.index([makeChunk("B", "executor coordinator service")], "src-b");
+
+    const onlyA = store.search(["execut"], { source: "src-a", limit: 10 });
+    expect(onlyA[0].results.map((r) => r.source)).toEqual(["src-a"]);
+  });
+
+  test("contentType filter scopes both layers", () => {
+    store.index(
+      [
+        makeChunk("Code", "fn execute() { run() }", { contentType: "code" }),
+        makeChunk("Prose", "execute the plan carefully", { contentType: "prose" }),
+      ],
+      "mix",
+    );
+
+    const onlyCode = store.search(["execut"], { contentType: "code", limit: 10 });
+    expect(onlyCode[0].results.map((r) => r.contentType)).toEqual(["code"]);
+  });
+
+  test("session ownership filter applies on the trigram fallback path", () => {
+    store.index([makeChunk("Mine", "executor secret")], "shared", {
+      ownerScope: "session",
+      ownerId: "active",
+    });
+    store.index([makeChunk("Theirs", "executor secret")], "shared", {
+      ownerScope: "session",
+      ownerId: "other",
+    });
+
+    const mine = store.search(["execut"], {
+      owner: { ownerScope: "session", ownerId: "active" },
+      limit: 10,
+    });
+    expect(mine[0].results.map((r) => r.title)).toEqual(["Mine"]);
+  });
+
+  test("purge clears chunks, trigram, and vocabulary", () => {
+    store.index([makeChunk("X", "wormhole content")], "src");
+    const db = (store as any).db;
+
+    expect((db.prepare("SELECT COUNT(*) AS c FROM content_chunks_trigram").get() as { c: number }).c).toBeGreaterThan(0);
+    expect((db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c).toBeGreaterThan(0);
+
+    store.purge();
+
+    expect((db.prepare("SELECT COUNT(*) AS c FROM content_chunks_trigram").get() as { c: number }).c).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c).toBe(0);
+  });
+
+  test("clearProject clears trigram and vocabulary", () => {
+    store.index([makeChunk("X", "wormhole content")], "src");
+    const db = (store as any).db;
+
+    store.clearProject();
+
+    expect((db.prepare("SELECT COUNT(*) AS c FROM content_chunks_trigram").get() as { c: number }).c).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c).toBe(0);
+  });
+
+  test("clearSession leaves vocabulary intact (per-session purge only)", () => {
+    store.index([makeChunk("Mine", "wormhole physics")], "src", {
+      ownerScope: "session",
+      ownerId: "active",
+    });
+    const db = (store as any).db;
+    const vocabBefore = (db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c;
+    expect(vocabBefore).toBeGreaterThan(0);
+
+    store.clearSession("active");
+
+    // Trigram is rebuilt (now empty); vocabulary survives so other sessions'
+    // fuzzy correction still works.
+    expect((db.prepare("SELECT COUNT(*) AS c FROM content_chunks_trigram").get() as { c: number }).c).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c).toBe(vocabBefore);
+  });
+
+  test("re-index of same source replaces trigram rows too", () => {
+    store.index([makeChunk("Old", "deprecated executor lexicon")], "same");
+    store.index([makeChunk("New", "fresh runner pipeline")], "same");
+
+    // Trigram search for the old fragment must not surface stale rows.
+    const stale = store.search(["deprecat"], { limit: 10 });
+    expect(stale[0].results).toHaveLength(0);
+
+    const fresh = store.search(["pipelin"], { limit: 10 });
+    expect(fresh[0].results.map((r) => r.title)).toEqual(["New"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Migration from v2 schema (no trigram, no vocabulary) to v3
+// ─────────────────────────────────────────────────────────────────────
+
+describe("KnowledgeStore v2 → v3 migration", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-store-migrate-"));
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tmpDir)) rmDirWithRetry(tmpDir);
+  });
+
+  test("trigram + vocabulary are backfilled from existing v2 chunks", async () => {
+    const dbPath = path.join(tmpDir, "knowledge.db");
+
+    // Hand-build a minimal v2-shape DB: content_chunks + the single-target
+    // porter-FTS table and triggers, marked user_version = 2.
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(dbPath);
+    raw.exec(`
+      CREATE TABLE content_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL,
+        content_type TEXT NOT NULL DEFAULT 'prose',
+        owner_scope TEXT NOT NULL DEFAULT 'project',
+        owner_id TEXT NOT NULL DEFAULT ''
+      );
+      CREATE VIRTUAL TABLE content_chunks_fts USING fts5(
+        title, body, content='content_chunks', content_rowid='id', tokenize='porter'
+      );
+      CREATE TRIGGER content_chunks_ai AFTER INSERT ON content_chunks BEGIN
+        INSERT INTO content_chunks_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+      END;
+      CREATE TRIGGER content_chunks_ad AFTER DELETE ON content_chunks BEGIN
+        INSERT INTO content_chunks_fts(content_chunks_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+      END;
+      INSERT INTO content_chunks (source, title, body, content_type, owner_scope, owner_id)
+        VALUES ('legacy-src', 'Wormhole Notes', 'wormhole physics and entanglement', 'prose', 'legacy', '');
+      PRAGMA user_version = 2;
+    `);
+    raw.close();
+
+    // Now open through KnowledgeStore — should migrate to v3 and backfill.
+    const store = new KnowledgeStore(dbPath);
+    store.init();
+    try {
+      const db = (store as any).db;
+
+      expect((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(3);
+
+      const trigramCount = (db.prepare("SELECT COUNT(*) AS c FROM content_chunks_trigram").get() as { c: number }).c;
+      expect(trigramCount).toBeGreaterThan(0);
+
+      const vocabCount = (db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c;
+      expect(vocabCount).toBeGreaterThan(0);
+
+      // The migrated row should be reachable via trigram fragment search.
+      const fragment = store.search(["wormhol"], { limit: 5 });
+      expect(fragment[0].results.map((r) => r.title)).toContain("Wormhole Notes");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("re-running init on a v3 store does not double-fill vocabulary", () => {
+    const dbPath = path.join(tmpDir, "knowledge.db");
+    const store = new KnowledgeStore(dbPath);
+    store.init();
+    store.index([makeChunk("Topic", "vocabulary stability check")], "src");
+    const db = (store as any).db;
+    const before = (db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c;
+    store.close();
+
+    const reopened = new KnowledgeStore(dbPath);
+    reopened.init();
+    try {
+      const after = ((reopened as any).db.prepare("SELECT COUNT(*) AS c FROM vocabulary").get() as { c: number }).c;
+      expect(after).toBe(before);
+    } finally {
+      reopened.close();
+    }
+  });
+});

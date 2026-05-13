@@ -303,12 +303,30 @@ const AUTO_INDEX_MAX_FILE_BYTES = 256 * 1024;
 const AUTO_INDEX_MAX_DEPTH = 8;
 const AUTO_INDEX_MIN_TERM_LEN = 3;
 
-/** Sessions for which we have already attempted bootstrap. Prevents repeat scans. */
+/**
+ * Sessions for which bootstrap should NOT run again. A `sessionKey` lands
+ * here when bootstrap was either successful (chunks indexed) or definitively
+ * barren (no scannable files in the cwd at all) — neither warrants a retry.
+ */
 const _autoIndexAttempted = new Set<string>();
+
+/**
+ * Per-session memoization of failed bootstrap scans, keyed by the query-term
+ * fingerprint. A scan that walked files but produced zero indexed chunks is
+ * not retried for the same fingerprint, but a different fingerprint (i.e. a
+ * reformulated query) is allowed through.
+ */
+const _autoIndexNoMatchByQuery = new Map<string, Set<string>>();
 
 /** Reset auto-index attempt tracking. Test-only. */
 export function _resetAutoIndexAttempts(): void {
   _autoIndexAttempted.clear();
+  _autoIndexNoMatchByQuery.clear();
+}
+
+/** Compute the per-query fingerprint used to gate retries on no-match scans. */
+function autoIndexQueryFingerprint(queries: string[]): string {
+  return extractIndexTerms(queries).slice().sort().join("|");
 }
 
 /** Drop bootstrap-attempted entries that belong to a closed session. */
@@ -317,6 +335,9 @@ export function _forgetAutoIndexSession(ownerId: string): void {
   const prefix = `${ownerId}|`;
   for (const key of _autoIndexAttempted) {
     if (key.startsWith(prefix)) _autoIndexAttempted.delete(key);
+  }
+  for (const key of [..._autoIndexNoMatchByQuery.keys()]) {
+    if (key.startsWith(prefix)) _autoIndexNoMatchByQuery.delete(key);
   }
 }
 
@@ -736,15 +757,17 @@ export function registerContextModeTools(
 
       const allEmpty = results.every((g) => g.results.length === 0);
       const sessionKey = `${owner.ownerId}|${source ?? ""}`;
+      const queryFingerprint = autoIndexQueryFingerprint(queries);
+      const failedFingerprints = _autoIndexNoMatchByQuery.get(sessionKey);
       const canBootstrap =
         allEmpty &&
         Array.isArray(queries) &&
         queries.length > 0 &&
         !source &&
-        !_autoIndexAttempted.has(sessionKey);
+        !_autoIndexAttempted.has(sessionKey) &&
+        !(failedFingerprints?.has(queryFingerprint) ?? false);
 
       if (canBootstrap) {
-        _autoIndexAttempted.add(sessionKey);
         const stats = store.getStats();
         if (stats.totalChunks === 0) {
           const cwd = typeof ctx?.cwd === "string" && ctx.cwd.length > 0 ? ctx.cwd : process.cwd();
@@ -755,15 +778,30 @@ export function registerContextModeTools(
             bootstrap = { chunksIndexed: 0, filesIndexed: 0, filesScanned: 0 };
           }
           if (bootstrap.chunksIndexed > 0) {
+            _autoIndexAttempted.add(sessionKey);
             results = store.search(queries, { source, contentType, limit, owner });
             bootstrapNote =
               `[auto-indexed ${bootstrap.filesIndexed} files (${bootstrap.chunksIndexed} chunks) ` +
               `from ${bootstrap.filesScanned} scanned to bootstrap the empty knowledge store]\n\n`;
           } else if (bootstrap.filesScanned > 0) {
+            // Scan ran but nothing matched this query fingerprint. Memoize by
+            // fingerprint so a reformulated query still gets a fresh scan.
+            let set = _autoIndexNoMatchByQuery.get(sessionKey);
+            if (!set) {
+              set = new Set<string>();
+              _autoIndexNoMatchByQuery.set(sessionKey, set);
+            }
+            set.add(queryFingerprint);
             bootstrapNote =
               `[scanned ${bootstrap.filesScanned} files but none matched the query terms; ` +
               `use ctx_batch_execute or ctx_index to index relevant content explicitly]\n\n`;
+          } else {
+            // No scannable files at all — cwd is barren. Don't retry, period.
+            _autoIndexAttempted.add(sessionKey);
           }
+        } else {
+          // Store had chunks but the query still missed; record nothing here —
+          // the search-side fallback already exhausted its options.
         }
       }
 

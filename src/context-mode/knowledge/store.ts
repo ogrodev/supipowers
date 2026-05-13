@@ -11,6 +11,8 @@ export interface SearchOptions {
   includeAllSessions?: boolean;
 }
 
+export type SearchMatchLayer = "porter" | "trigram" | "rrf" | "rrf-fuzzy";
+
 export interface SearchResult {
   title: string;
   body: string;
@@ -19,6 +21,12 @@ export interface SearchResult {
   score: number;
   ownerScope: KnowledgeOwnerScope;
   ownerId: string;
+  /** Which layer of the fallback chain surfaced this row. Optional for backward compat. */
+  matchLayer?: SearchMatchLayer;
+}
+
+interface RankedSearchResult extends SearchResult {
+  chunkId: number;
 }
 
 export interface QueryGroupedResults {
@@ -37,7 +45,7 @@ export interface KnowledgeClearResult {
   urlCacheDeleted: number;
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS content_chunks (
@@ -58,12 +66,26 @@ CREATE VIRTUAL TABLE IF NOT EXISTS content_chunks_fts USING fts5(
   tokenize='porter'
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS content_chunks_trigram USING fts5(
+  title,
+  body,
+  content='content_chunks',
+  content_rowid='id',
+  tokenize='trigram'
+);
+
+CREATE TABLE IF NOT EXISTS vocabulary (
+  word TEXT PRIMARY KEY
+);
+
 CREATE TRIGGER IF NOT EXISTS content_chunks_ai AFTER INSERT ON content_chunks BEGIN
   INSERT INTO content_chunks_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+  INSERT INTO content_chunks_trigram(rowid, title, body) VALUES (new.id, new.title, new.body);
 END;
 
 CREATE TRIGGER IF NOT EXISTS content_chunks_ad AFTER DELETE ON content_chunks BEGIN
   INSERT INTO content_chunks_fts(content_chunks_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+  INSERT INTO content_chunks_trigram(content_chunks_trigram, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
 END;
 
 CREATE INDEX IF NOT EXISTS idx_content_chunks_owner ON content_chunks(owner_scope, owner_id);
@@ -107,6 +129,33 @@ export class KnowledgeStore {
     this.#migrate();
     this._db.exec(SCHEMA);
     this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
+    this._db.exec("INSERT INTO content_chunks_trigram(content_chunks_trigram) VALUES('rebuild')");
+    this.#backfillVocabularyIfNeeded();
+  }
+
+  /**
+   * Populate `vocabulary` from existing chunks when it is empty but the store
+   * is not. Runs once on the first init() after a v2 → v3 migration; a no-op
+   * for fresh stores (no chunks) and for already-populated stores.
+   */
+  #backfillVocabularyIfNeeded(): void {
+    const vocabCount = this._db.prepare("SELECT COUNT(*) AS cnt FROM vocabulary").get() as { cnt: number };
+    if (vocabCount.cnt > 0) return;
+
+    const chunkCount = this._db.prepare("SELECT COUNT(*) AS cnt FROM content_chunks").get() as { cnt: number };
+    if (chunkCount.cnt === 0) return;
+
+    const ins = this._db.prepare("INSERT OR IGNORE INTO vocabulary (word) VALUES (?)");
+    const rows = this._db
+      .prepare("SELECT title, body FROM content_chunks")
+      .iterate() as IterableIterator<{ title: string; body: string }>;
+    this._db.transaction(() => {
+      for (const row of rows) {
+        for (const word of extractVocabWords(`${row.title}\n${row.body}`)) {
+          ins.run(word);
+        }
+      }
+    })();
   }
 
   #ensureDeleteJournalMode(): void {
@@ -176,6 +225,15 @@ export class KnowledgeStore {
       `);
     }
 
+    if (user_version < 3) {
+      // v2 → v3: the INSERT/DELETE triggers now also fan out to
+      // `content_chunks_trigram`. Drop the legacy single-table triggers so the
+      // idempotent CREATE TRIGGER IF NOT EXISTS in `SCHEMA` reinstalls the
+      // multi-table versions. Trigram + vocab backfill happen in init().
+      this._db.exec(`DROP TRIGGER IF EXISTS content_chunks_ai;`);
+      this._db.exec(`DROP TRIGGER IF EXISTS content_chunks_ad;`);
+    }
+
     this._db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -193,6 +251,7 @@ export class KnowledgeStore {
       `INSERT INTO content_chunks (source, title, body, content_type, owner_scope, owner_id)
        VALUES (?, ?, ?, ?, ?, ?)`,
     );
+    const vocabIns = this._db.prepare("INSERT OR IGNORE INTO vocabulary (word) VALUES (?)");
 
     this._db.transaction(() => {
       del.run(source, resolvedOwner.ownerScope, resolvedOwner.ownerId, resolvedOwner.ownerScope);
@@ -205,6 +264,9 @@ export class KnowledgeStore {
           resolvedOwner.ownerScope,
           resolvedOwner.ownerId,
         );
+        for (const word of extractVocabWords(`${chunk.title}\n${chunk.body}`)) {
+          vocabIns.run(word);
+        }
       }
     })();
   }
@@ -216,51 +278,124 @@ export class KnowledgeStore {
     const results: QueryGroupedResults[] = [];
 
     for (const query of queries) {
-      const sanitized = sanitizeFtsQuery(query);
-      if (!sanitized) {
+      const tokens = tokenizeQuery(query);
+      if (tokens.length === 0) {
         results.push({ query, results: [] });
         continue;
       }
 
-      let sql = `
-        SELECT c.title, c.body, c.source, c.content_type AS contentType,
-               c.owner_scope AS ownerScope,
-               c.owner_id AS ownerId,
-               bm25(content_chunks_fts, 5.0, 1.0) AS score
-        FROM content_chunks_fts f
-        JOIN content_chunks c ON c.id = f.rowid
-        WHERE content_chunks_fts MATCH ?
-      `;
-      const params: (string | number)[] = [sanitized];
+      const fetchLimit = Math.max(limit * 2, 10);
+      const porterRows = this.#runFts("content_chunks_fts", buildOrQuery(tokens), fetchLimit, options);
+      const trigramRows = this.#runFts("content_chunks_trigram", buildOrQuery(tokens.filter(t => t.length >= 3)), fetchLimit, options);
 
-      if (options?.source) {
-        sql += " AND c.source LIKE '%' || ? || '%'";
-        params.push(options.source);
-      }
-      if (options?.contentType) {
-        sql += " AND c.content_type = ?";
-        params.push(options.contentType);
+      let fused = rrfFuse(porterRows, trigramRows, limit, "rrf");
+
+      if (fused.length === 0) {
+        const corrected = this.#fuzzyCorrectTokens(tokens);
+        if (corrected && corrected.join(" ") !== tokens.join(" ")) {
+          const porter2 = this.#runFts("content_chunks_fts", buildOrQuery(corrected), fetchLimit, options);
+          const trigram2 = this.#runFts("content_chunks_trigram", buildOrQuery(corrected.filter(t => t.length >= 3)), fetchLimit, options);
+          fused = rrfFuse(porter2, trigram2, limit, "rrf-fuzzy");
+        }
       }
 
-      const visibility = buildVisibilityClause(options);
-      if (visibility) {
-        sql += ` AND ${visibility.sql}`;
-        params.push(...visibility.params);
-      }
-
-      sql += " ORDER BY score LIMIT ?";
-      params.push(limit);
-
-      try {
-        const rows = this._db.prepare(sql).all(...params) as SearchResult[];
-        results.push({ query, results: rows });
-      } catch {
-        // FTS5 query syntax error — return empty for this query
-        results.push({ query, results: [] });
-      }
+      const reranked = applyProximityReranking(fused, tokens);
+      results.push({ query, results: reranked });
     }
 
     return results;
+  }
+
+  /**
+   * Run one FTS5 MATCH query against `table` with the standard source /
+   * contentType / visibility filters. Returns empty on FTS5 syntax errors so
+   * a single bad token in a multi-query call cannot break sibling queries.
+   */
+  #runFts(
+    table: "content_chunks_fts" | "content_chunks_trigram",
+    matchExpr: string,
+    limit: number,
+    options: SearchOptions | undefined,
+  ): RankedSearchResult[] {
+    if (!matchExpr) return [];
+
+    const sql: string[] = [
+      `SELECT c.id AS chunkId, c.title, c.body, c.source, c.content_type AS contentType,`,
+      `       c.owner_scope AS ownerScope,`,
+      `       c.owner_id AS ownerId,`,
+      `       bm25(${table}, 5.0, 1.0) AS score`,
+      `FROM ${table} f`,
+      `JOIN content_chunks c ON c.id = f.rowid`,
+      `WHERE ${table} MATCH ?`,
+    ];
+    const params: (string | number)[] = [matchExpr];
+
+    if (options?.source) {
+      sql.push("AND c.source LIKE '%' || ? || '%'");
+      params.push(options.source);
+    }
+    if (options?.contentType) {
+      sql.push("AND c.content_type = ?");
+      params.push(options.contentType);
+    }
+
+    const visibility = buildVisibilityClause(options);
+    if (visibility) {
+      sql.push(`AND ${visibility.sql}`);
+      params.push(...visibility.params);
+    }
+
+    sql.push("ORDER BY score LIMIT ?");
+    params.push(limit);
+
+    try {
+      return this._db.prepare(sql.join("\n")).all(...params) as RankedSearchResult[];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Try to repair each token via Levenshtein lookup against `vocabulary`.
+   * Returns null when nothing was corrected (caller skips fuzzy retry).
+   */
+  #fuzzyCorrectTokens(tokens: string[]): string[] | null {
+    const candidatesByLen = this._db.prepare(
+      "SELECT word FROM vocabulary WHERE length(word) BETWEEN ? AND ?",
+    );
+    const corrected: string[] = [];
+    let changed = false;
+    for (const token of tokens) {
+      const lower = token.toLowerCase();
+      if (lower.length < 3) {
+        corrected.push(token);
+        continue;
+      }
+      const maxDist = maxEditDistance(lower.length);
+      const candidates = candidatesByLen.all(lower.length - maxDist, lower.length + maxDist) as Array<{ word: string }>;
+      let best: string | null = null;
+      let bestDist = maxDist + 1;
+      let exact = false;
+      for (const { word } of candidates) {
+        if (word === lower) { exact = true; break; }
+        const dist = levenshtein(lower, word);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = word;
+        }
+      }
+      if (exact) {
+        corrected.push(token);
+        continue;
+      }
+      if (best && bestDist <= maxDist) {
+        corrected.push(best);
+        changed = true;
+      } else {
+        corrected.push(token);
+      }
+    }
+    return changed ? corrected : null;
   }
 
   purge(): number {
@@ -270,6 +405,8 @@ export class KnowledgeStore {
     const count = row.cnt;
     this._db.exec("DELETE FROM content_chunks");
     this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
+    this._db.exec("INSERT INTO content_chunks_trigram(content_chunks_trigram) VALUES('rebuild')");
+    this._db.exec("DELETE FROM vocabulary");
     this._db.exec("DELETE FROM url_cache");
     return count;
   }
@@ -325,6 +462,7 @@ export class KnowledgeStore {
       "DELETE FROM url_cache WHERE owner_scope = 'session' AND owner_id = ?",
     ).run(ownerId);
     this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
+    this._db.exec("INSERT INTO content_chunks_trigram(content_chunks_trigram) VALUES('rebuild')");
     return { chunksDeleted: chunks.cnt, urlCacheDeleted: urls.cnt };
   }
 
@@ -338,6 +476,8 @@ export class KnowledgeStore {
     this._db.exec("DELETE FROM content_chunks");
     this._db.exec("DELETE FROM url_cache");
     this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
+    this._db.exec("INSERT INTO content_chunks_trigram(content_chunks_trigram) VALUES('rebuild')");
+    this._db.exec("DELETE FROM vocabulary");
     return { chunksDeleted: chunks.cnt, urlCacheDeleted: urls.cnt };
   }
 
@@ -420,12 +560,194 @@ function addColumnIfMissing(db: Database, table: string, column: string, definit
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-/** Strip FTS5 special operators to prevent syntax errors. Keep alphanumeric + spaces. */
-function sanitizeFtsQuery(query: string): string {
-  // Remove characters that have special meaning in FTS5: ^, *, ", (, ), {, }, +, -
-  // Keep words separated by spaces for implicit AND matching
+// ── Tokenization ─────────────────────────────────────────────
+
+/** Common English stopwords and noise terms — kept out of the vocabulary
+ *  table so fuzzy correction does not snap rare typos to "the" or "fix". */
+const STOPWORDS = new Set<string>([
+  "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
+  "her", "was", "one", "our", "out", "has", "his", "how", "its", "may",
+  "new", "now", "old", "see", "way", "who", "did", "get", "got", "let",
+  "say", "she", "too", "use", "will", "with", "this", "that", "from",
+  "they", "been", "have", "many", "some", "them", "than", "each", "make",
+  "like", "just", "over", "such", "take", "into", "year", "your", "good",
+  "could", "would", "about", "which", "their", "there", "other", "after",
+  "should", "through", "also", "more", "most", "only", "very", "when",
+  "what", "then", "these", "those", "being", "does", "done", "both",
+  "same", "still", "while", "where", "here", "were", "much",
+  "update", "updates", "updated", "deps", "dev", "tests", "test",
+  "add", "added", "fix", "fixed", "run", "running", "using",
+]);
+
+/** FTS5 operators we strip from queries to avoid syntax errors. */
+const FTS5_OPERATORS = new Set(["AND", "OR", "NOT", "NEAR"]);
+
+/**
+ * Split a user query into FTS5-safe tokens.
+ *
+ * - Unicode-letters, digits, and underscore are token chars (so snake_case
+ *   stays joined for trigram matching — the porter tokenizer will resplit
+ *   on underscore at index-time, which is what we want).
+ * - Bare FTS5 operators (`AND`, `OR`, `NOT`, `NEAR`) are dropped.
+ * - Returns lowercase tokens with no quoting; caller picks AND/OR shape.
+ */
+function tokenizeQuery(query: string): string[] {
   return query
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/[^\p{L}\p{N}_\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 0 && !FTS5_OPERATORS.has(w.toUpperCase()))
+    .map((w) => w.toLowerCase());
+}
+
+/** Build an FTS5 OR query: each token quoted and joined by " OR ". */
+function buildOrQuery(tokens: string[]): string {
+  if (tokens.length === 0) return "";
+  return tokens.map((t) => `"${t.replace(/"/g, "")}"`).filter((t) => t !== `""`).join(" OR ");
+}
+
+/** Words ≥3 chars, stopword-filtered, lowercased — used for the vocab table. */
+function extractVocabWords(text: string): Set<string> {
+  const seen = new Set<string>();
+  for (const raw of text.toLowerCase().split(/[^\p{L}\p{N}_-]+/u)) {
+    if (raw.length < 3) continue;
+    if (STOPWORDS.has(raw)) continue;
+    seen.add(raw);
+  }
+  return seen;
+}
+
+// ── Fuzzy correction ─────────────────────────────────────────
+
+/** Edit-distance budget by word length — short words tolerate fewer typos. */
+function maxEditDistance(wordLength: number): number {
+  if (wordLength <= 4) return 1;
+  if (wordLength <= 12) return 2;
+  return 3;
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = a[i - 1] === b[j - 1]
+        ? prev[j - 1]
+        : 1 + Math.min(prev[j], curr[j - 1], prev[j - 1]);
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+// ── Reciprocal Rank Fusion (Cormack et al. 2009) ────────────
+
+/**
+ * Fuse two BM25-ranked result lists into one ranking. Standard RRF with
+ * K = 60: each result contributes 1/(K + rank) to its chunk-id key,
+ * top-`limit` survives, lower RRF score becomes a more negative `score`
+ * for downstream ORDER-BY-`score` ascending callers (e.g. tests).
+ */
+function rrfFuse(
+  porter: RankedSearchResult[],
+  trigram: RankedSearchResult[],
+  limit: number,
+  layer: SearchMatchLayer,
+): SearchResult[] {
+  const K = 60;
+  const scoreMap = new Map<number, { result: RankedSearchResult; score: number }>();
+  const key = (r: RankedSearchResult) => r.chunkId;
+
+  for (let i = 0; i < porter.length; i++) {
+    const r = porter[i];
+    const k = key(r);
+    const existing = scoreMap.get(k);
+    const contribution = 1 / (K + i + 1);
+    if (existing) existing.score += contribution;
+    else scoreMap.set(k, { result: r, score: contribution });
+  }
+  for (let i = 0; i < trigram.length; i++) {
+    const r = trigram[i];
+    const k = key(r);
+    const existing = scoreMap.get(k);
+    const contribution = 1 / (K + i + 1);
+    if (existing) existing.score += contribution;
+    else scoreMap.set(k, { result: r, score: contribution });
+  }
+
+  return Array.from(scoreMap.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ result, score }) => {
+      const { chunkId: _chunkId, ...publicResult } = result;
+      return { ...publicResult, score: -score, matchLayer: layer };
+    });
+}
+
+// ── Proximity reranking ─────────────────────────────────────
+
+function findAllPositions(text: string, term: string): number[] {
+  if (!term) return [];
+  const positions: number[] = [];
+  let idx = text.indexOf(term);
+  while (idx !== -1) {
+    positions.push(idx);
+    idx = text.indexOf(term, idx + 1);
+  }
+  return positions;
+}
+
+/**
+ * Find the minimum span (window size in chars) covering one position from
+ * each list. Sweep-line: advance the pointer at the current minimum.
+ */
+function findMinSpan(positionLists: number[][]): number {
+  if (positionLists.length === 0) return Infinity;
+  if (positionLists.length === 1) return 0;
+
+  const sorted = positionLists.map((p) => [...p].sort((a, b) => a - b));
+  const ptrs = new Array(sorted.length).fill(0);
+  let minSpan = Infinity;
+
+  while (true) {
+    let curMin = Infinity;
+    let curMax = -Infinity;
+    let minIdx = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      const val = sorted[i][ptrs[i]];
+      if (val < curMin) { curMin = val; minIdx = i; }
+      if (val > curMax) curMax = val;
+    }
+    const span = curMax - curMin;
+    if (span < minSpan) minSpan = span;
+    ptrs[minIdx]++;
+    if (ptrs[minIdx] >= sorted[minIdx].length) break;
+  }
+
+  return minSpan;
+}
+
+/**
+ * For multi-term queries, rerank fused results so that rows where the terms
+ * appear close together (small min-span) float to the top. Single-term
+ * queries are returned untouched.
+ */
+function applyProximityReranking(results: SearchResult[], tokens: string[]): SearchResult[] {
+  const terms = tokens.filter((t) => t.length >= 2);
+  if (terms.length < 2) return results;
+
+  return results
+    .map((r) => {
+      const haystack = r.body.toLowerCase();
+      const positions = terms.map((t) => findAllPositions(haystack, t));
+      if (positions.some((p) => p.length === 0)) {
+        return { result: r, boost: 0 };
+      }
+      const minSpan = findMinSpan(positions);
+      const boost = 1 / (1 + minSpan / Math.max(haystack.length, 1));
+      return { result: r, boost };
+    })
+    .sort((a, b) => b.boost - a.boost || a.result.score - b.result.score)
+    .map(({ result }) => result);
 }

@@ -534,6 +534,118 @@ describe("ctx_search", () => {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }
   });
+  test("retries bootstrap when the query fingerprint changes", async () => {
+    registerAll();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "notes.md"),
+        "# Comet\n\ncomet trajectory analysis and ephemerides",
+      );
+      const tool = registeredTools.get("ctx_search");
+
+      // First call uses a query that matches nothing in `notes.md`. Scan
+      // walks the file but indexes zero chunks → memoized as failed for
+      // this fingerprint, not for the whole session.
+      const first = await tool.execute(
+        "id-1",
+        { queries: ["xyzzqq-never-occurs"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      expect(first.content[0].text as string).toContain("none matched");
+
+      // Different fingerprint → bootstrap is allowed to scan again and now
+      // matches the actual content. This is the fix: the previous failed
+      // scan must not poison subsequent reformulated queries.
+      const second = await tool.execute(
+        "id-2",
+        { queries: ["comet trajectory"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      const text = second.content[0].text as string;
+      expect(text).toContain("auto-indexed");
+      expect(text).toContain("Comet");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("skips bootstrap retry when the same fingerprint repeats", async () => {
+    registerAll();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-"));
+    try {
+      fs.writeFileSync(
+        path.join(projectDir, "notes.md"),
+        "# Coffee\n\nAll about coffee beans.",
+      );
+      const tool = registeredTools.get("ctx_search");
+
+      // First scan walks one file, finds no matches for the alien query.
+      const first = await tool.execute(
+        "id-1",
+        { queries: ["xyzzqq-vanishes"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      expect(first.content[0].text as string).toContain("none matched");
+
+      // Same fingerprint → memo short-circuits the rescan; the response no
+      // longer carries a `scanned` bootstrap note.
+      const second = await tool.execute(
+        "id-2",
+        { queries: ["xyzzqq-vanishes"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      const text = second.content[0].text as string;
+      expect(text).not.toContain("none matched");
+      expect(text).not.toContain("auto-indexed");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("locks bootstrap out after a scan with no scannable files", async () => {
+    registerAll();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-bootstrap-"));
+    try {
+      // Only a binary file (not in AUTO_INDEX_EXTENSIONS) — scan walks zero
+      // entries with content. That is treated as a barren cwd: never retry.
+      fs.writeFileSync(path.join(projectDir, "blob.bin"), Buffer.alloc(16));
+      const tool = registeredTools.get("ctx_search");
+
+      const first = await tool.execute(
+        "id-1",
+        { queries: ["nothing"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      // No "scanned … files" note (filesScanned === 0) and no "auto-indexed".
+      expect(first.content[0].text as string).not.toContain("auto-indexed");
+      expect(first.content[0].text as string).not.toContain("scanned");
+
+      // Subsequent call with a totally different fingerprint must also skip
+      // the scan — the cwd is barren, retries would just burn syscalls.
+      const second = await tool.execute(
+        "id-2",
+        { queries: ["something-else-entirely"] },
+        AbortSignal.timeout(30000),
+        () => {},
+        { cwd: projectDir },
+      );
+      expect(second.content[0].text as string).not.toContain("auto-indexed");
+      expect(second.content[0].text as string).not.toContain("scanned");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
