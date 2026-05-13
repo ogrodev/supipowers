@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   TOKENIGNORE_BEGIN_MARKER,
   TOKENIGNORE_END_MARKER,
+  DEFAULT_TOKENIGNORE_ENTRIES,
   hashTokenignoreEntries,
   mergeManagedTokenignore,
   parseManagedTokenignore,
@@ -18,6 +19,13 @@ describe("hashTokenignoreEntries", () => {
     expect(hashTokenignoreEntries(["dist/"])).not.toBe(hashTokenignoreEntries(["build/"]));
   });
 });
+
+describe("DEFAULT_TOKENIGNORE_ENTRIES", () => {
+  test("does not list legacy MCP gateway artifacts", () => {
+    expect(DEFAULT_TOKENIGNORE_ENTRIES).not.toContain(".omp/supipowers/mcpc/");
+  });
+});
+
 
 describe("renderManagedTokenignoreBlock", () => {
   test("renders begin/end markers, hash, and deduplicated entries", () => {
