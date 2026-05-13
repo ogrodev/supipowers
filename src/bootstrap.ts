@@ -13,9 +13,7 @@ import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand, handleRelease } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
 import { registerDoctorCommand, handleDoctor } from "./commands/doctor.js";
-import { registerMcpCommand, handleMcp, handleMcpCli, parseCliArgs } from "./commands/mcp.js";
 import { registerModelCommand, handleModel } from "./commands/model.js";
-import { executeManagerAction } from "./mcp/manager-tool.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
 import { registerContextCommand, handleContext } from "./commands/context.js";
 import { registerOptimizeContextCommand, handleOptimizeContext } from "./commands/optimize-context.js";
@@ -30,10 +28,6 @@ import { registerHarnessPipelineTools } from "./harness/tools.js";
 import { registerHarnessHooks } from "./harness/hooks/register.js";
 import { loadConfig } from "./config/loader.js";
 import { registerContextModeHooks } from "./context-mode/hooks.js";
-import { loadMcpRegistry } from "./mcp/config.js";
-import { McpcClient } from "./mcp/mcpc.js";
-import { parseTags } from "./mcp/activation.js";
-import { initializeMcpServers, shutdownMcpServers } from "./mcp/lifecycle.js";
 import { registerPlanApprovalHook } from "./planning/approval-flow.js";
 import { registerPlanningSystemPromptHook } from "./planning/system-prompt.js";
 import { registerPlanningAskTool, registerPlanningAskToolGuard } from "./planning/planning-ask-tool.js";
@@ -60,7 +54,6 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:review": (platform, ctx, args) => handleAiReview(platform, ctx, args),
   "supi:update": (platform, ctx) => handleUpdate(platform, ctx),
   "supi:doctor": (platform, ctx) => handleDoctor(platform, ctx),
-  "supi:mcp": (platform, ctx) => handleMcp(platform, ctx),
   "supi:model": (platform, ctx) => handleModel(platform, ctx),
   "supi:context": (platform, ctx) => handleContext(platform, ctx),
   "supi:optimize-context": (platform, ctx, args) => handleOptimizeContext(platform, ctx, args),
@@ -73,8 +66,6 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:harness": (platform, ctx, args) => { void handleHarness(platform, ctx, args); },
   "supi:memory": (platform, ctx, args) => handleMemory(platform, ctx, args),
 };
-
-let pendingTags: string[] = [];
 
 function getInstalledVersion(platform: Platform): string | null {
   const pkgPath = platform.paths.agent("extensions", "supipowers", "package.json");
@@ -99,7 +90,6 @@ export function bootstrap(platform: Platform): void {
   registerUpdateCommand(platform);
   registerFixPrCommand(platform);
   registerDoctorCommand(platform);
-  registerMcpCommand(platform);
   registerModelCommand(platform);
   registerContextCommand(platform);
   registerOptimizeContextCommand(platform);
@@ -131,17 +121,6 @@ export function bootstrap(platform: Platform): void {
   // message submission, so no chat message appears and no "Working..." indicator
   platform.on("input", (event, ctx) => {
     const text = event.text.trim();
-
-    // Scan for $tags
-    const registry = loadMcpRegistry(platform.paths, ctx.cwd);
-    const registeredNames = new Set(Object.keys(registry.servers));
-    if (registeredNames.size > 0) {
-      const tags = parseTags(event.text, registeredNames);
-      if (tags.length > 0) {
-        pendingTags = tags;
-      }
-    }
-
     if (!text.startsWith("/")) return;
 
     const spaceIndex = text.indexOf(" ");
@@ -157,14 +136,7 @@ export function bootstrap(platform: Platform): void {
 
   // Context-mode integration
   const config = loadConfig(platform.paths, process.cwd());
-  registerActiveToolController(platform, config, {
-    loadMcpRegistryForCwd: (cwd: string) => loadMcpRegistry(platform.paths, cwd),
-    consumePendingTags: () => {
-      const tags = pendingTags;
-      pendingTags = [];
-      return tags;
-    },
-  });
+  registerActiveToolController(platform, config);
   registerContextModeHooks(platform, config);
   registerMempalaceTool(platform, config);
   registerMempalaceHooks(platform, config);
@@ -196,23 +168,6 @@ export function bootstrap(platform: Platform): void {
     // OMP's StatusLine never clears hook statuses on /new, so extensions must do it.
     ctx.ui?.setStatus?.("supi-model", undefined);
 
-    // MCP: always register mcpc_manager tool (agent needs it even with zero servers)
-    if (platform.registerTool) {
-      registerMcpcManagerTool(platform, ctx);
-    }
-
-    // MCP server initialization (only if servers configured)
-    const mcpRegistry = loadMcpRegistry(platform.paths, ctx.cwd);
-    if (Object.keys(mcpRegistry.servers).length > 0) {
-      const mcpClient = new McpcClient((cmd, args, opts) => platform.exec(cmd, args, opts));
-      const installed = await mcpClient.checkInstalled();
-      if (!installed.installed) {
-        ctx.ui.notify("mcpc not installed — MCP servers won't connect. Run /supi:upgrade to install.", "warning");
-      } else {
-        await initializeMcpServers(mcpRegistry, mcpClient);
-      }
-    }
-
     // Check for updates in the background
     const currentVersion = getInstalledVersion(platform);
     if (!currentVersion) return;
@@ -234,90 +189,7 @@ export function bootstrap(platform: Platform): void {
   });
 
   // Session shutdown
-  platform.on("session_shutdown", async (_event, ctx) => {
+  platform.on("session_shutdown", async () => {
     await stopActiveUiDesignSession();
-
-    const mcpConfig = loadConfig(platform.paths, ctx.cwd ?? process.cwd());
-    if (!mcpConfig.mcp?.closeSessionsOnExit) return;
-
-    const registry = loadMcpRegistry(platform.paths, ctx.cwd ?? process.cwd());
-    const mcpClient = new McpcClient((cmd, args, opts) => platform.exec(cmd, args, opts));
-    const names = Object.keys(registry.servers).filter((n) => registry.servers[n].enabled);
-    await shutdownMcpServers(names, mcpClient, true);
   });
-}
-
-function registerMcpcManagerTool(platform: Platform, ctx: any): void {
-  platform.registerTool!({
-    name: "mcpc_manager",
-    label: "MCP Server Manager",
-    description: "Add, remove, enable, disable, or refresh MCP servers managed by supipowers. Use this when the user asks to install, set up, or manage MCP servers.",
-    promptSnippet: "mcpc_manager — manage MCP servers (add, remove, enable, disable, refresh, login, logout, list, info)",
-    promptGuidelines: [
-      "Use when the user asks to install, add, or set up an MCP server",
-      "Use when the user asks to remove, disable, or manage an MCP server",
-      "Do NOT use for calling MCP tools — use the mcpc_<name> gateway tools instead",
-    ],
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["add", "remove", "enable", "disable", "refresh", "login", "logout", "set-activation", "set-taggable", "list", "info"], description: "Action to perform" },
-        name: { type: "string", description: "Server name (required for all except list/refresh-all)" },
-        url: { type: "string", description: "Server URL (required for add)" },
-        transport: { type: "string", enum: ["http", "stdio"], description: "Transport type" },
-        docsUrl: { type: "string", description: "Documentation URL for richer README generation" },
-        activation: { type: "string", enum: ["always", "contextual", "disabled"], description: "Activation mode" },
-        taggable: { type: "boolean", description: "Whether $name tag activates this server" },
-      },
-      required: ["action"],
-    },
-    async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, toolCtx: any) {
-      // First validate via routeManagerAction
-      const result = await executeManagerAction(params, {
-        hasUI: toolCtx.hasUI ?? true,
-        ui: toolCtx.ui ?? {},
-        cwd: toolCtx.cwd ?? ctx.cwd,
-      }, {
-        addServer: () => {},
-        removeServer: () => {},
-        updateServer: () => {},
-      });
-
-      if (result.error) {
-        throw new Error(result.content[0]?.text ?? "Manager action failed");
-      }
-
-      // For actual operations, delegate to handleMcpCli
-      const cliArgs = buildCliArgsFromParams(params);
-      await handleMcpCli(platform, {
-        cwd: toolCtx.cwd ?? ctx.cwd,
-        hasUI: toolCtx.hasUI ?? true,
-        ui: {
-          notify: (msg: string) => {
-            // Collect notifications — they'll be in the tool result
-          },
-          ...toolCtx.ui,
-        },
-      }, cliArgs);
-
-      return {
-        content: result.content,
-        details: { action: params.action, name: params.name },
-      };
-    },
-  });
-}
-
-function buildCliArgsFromParams(params: any): ReturnType<typeof parseCliArgs> {
-  return {
-    subcommand: params.action === "set-activation" ? "activation"
-      : params.action === "set-taggable" ? "tag"
-      : params.action,
-    name: params.name,
-    url: params.url,
-    transport: params.transport,
-    docsUrl: params.docsUrl,
-    activation: params.activation,
-    taggable: params.taggable,
-  };
 }

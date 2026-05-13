@@ -40,7 +40,7 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
     lazyTools: {
       enabled: true,
       mode: "balanced",
-      alwaysKeep: ["ctx_execute", "ctx_search", "ctx_open_cached", "mcpc_manager"],
+      alwaysKeep: ["ctx_execute", "ctx_search", "ctx_open_cached"],
       commandAllowlist: {},
       keywordTools: {},
     },
@@ -61,9 +61,6 @@ export const DEFAULT_CONFIG: SupipowersConfig = {
       retentionDays: 30,
       focusChainCadence: 6,
     },
-  },
-  mcp: {
-    closeSessionsOnExit: false,
   },
   mempalace: {
     enabled: true,

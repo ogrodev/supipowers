@@ -349,6 +349,7 @@ function migrateConfig(config: Record<string, unknown>): Record<string, unknown>
   const legacyProfile = typeof migrated.defaultProfile === "string" ? migrated.defaultProfile : null;
   delete migrated.defaultProfile;
   delete migrated.orchestration;
+  delete migrated.mcp;
 
   const qa = asRecord(migrated.qa);
   const legacyTestCommand =
