@@ -60,6 +60,12 @@ describe("buildFixPrOrchestratorPrompt", () => {
     expect(result).toContain("owner/repo");
   });
 
+  test("includes PR diff navigation links", () => {
+    const result = buildDefaultPrompt();
+    expect(result).toContain("Full PR diff: `pr://owner/repo/42/diff/all`");
+    expect(result).toContain("changed-file list: `pr://owner/repo/42/diff`");
+  });
+
   test("includes the comments content", () => {
     const result = buildDefaultPrompt();
     expect(result).toContain("This needs fixing");

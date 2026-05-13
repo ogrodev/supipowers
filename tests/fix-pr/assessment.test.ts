@@ -23,7 +23,7 @@ function comment(id: number, path: string | null): PrComment {
   };
 }
 
-function makeFakeSessionFactory(responses: Array<string | Error>) {
+function makeFakeSessionFactory(responses: Array<string | Error>, prompts?: string[]) {
   let callIndex = 0;
   const createAgentSession = async (): Promise<AgentSession> => {
     const idx = callIndex;
@@ -35,7 +35,8 @@ function makeFakeSessionFactory(responses: Array<string | Error>) {
           return messages;
         },
       },
-      async prompt() {
+      async prompt(text: string) {
+        prompts?.push(text);
         const next = responses[idx];
         if (next instanceof Error) throw next;
         messages.push({ role: "assistant", content: next ?? "" });
@@ -98,6 +99,36 @@ describe("runFixPrAssessment", () => {
       expect(result.output.assessments).toHaveLength(1);
       expect(result.output.assessments[0].verdict).toBe("apply");
     }
+  });
+
+  test("assessment prompt includes PR diff navigation guidance", async () => {
+    const valid = JSON.stringify({
+      assessments: [
+        {
+          commentId: 10,
+          verdict: "investigate",
+          rationale: "Needs broader diff context.",
+          affectedFiles: [],
+          rippleEffects: [],
+          verificationPlan: "Read the PR diff.",
+        },
+      ],
+    });
+    const prompts: string[] = [];
+    const factory = makeFakeSessionFactory([valid], prompts);
+
+    await runFixPrAssessment({
+      createAgentSession: factory as any,
+      cwd: "/tmp",
+      comments: [comment(10, "src/foo.ts")],
+      repo: "owner/repo",
+      prNumber: 42,
+      selectedTargetLabel: "root (.)",
+    });
+
+    expect(prompts[0]).toContain("pr://owner/repo/42/diff/all");
+    expect(prompts[0]).toContain("pr://owner/repo/42/diff");
+    expect(prompts[0]).toContain("do not edit during assessment");
   });
 
   test("rejects invalid verdict and surfaces blocked status after retries", async () => {

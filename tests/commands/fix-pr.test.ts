@@ -243,6 +243,8 @@ describe("registerFixPrCommand", () => {
     expect(prompt).toContain('"commentId": 1');
     expect(prompt).toContain("wait-and-check.ts");
     expect(prompt).toContain("trigger-review.ts");
+    expect(prompt).toContain("pr://owner/repo/123/diff/all");
+    expect(prompt).toContain("pr://owner/repo/123/diff");
     expect(prompt).not.toContain("wait-and-check.sh");
     expect(prompt).not.toContain("trigger-review.sh");
     expect(prompt).not.toContain('"id":2');
