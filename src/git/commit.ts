@@ -139,28 +139,27 @@ interface CommitStagingContext {
   stagedFiles: string[];
 }
 
-async function ensureStagedChanges(
-  platform: Platform,
+const STAGE_ALL_CHANGES_OPTION = "Stage all changes — include staged, unstaged, and untracked files";
+const USE_STAGED_CHANGES_OPTION = "Use staged changes only — commit the index as-is";
+
+async function stageAllChanges(
+  exec: ExecFn,
   ctx: any,
   cwd: string,
-  status: Awaited<ReturnType<typeof getWorkingTreeStatus>>,
+  fileCount: number,
   progress: ReturnType<typeof createProgress>,
-): Promise<CommitStagingContext | null> {
-  const exec = platform.exec.bind(platform);
-
-  if (status.stagedFiles.length === 0) {
-    progress.activate(1, `${status.files.length} file(s)`);
-    const addResult = await exec("git", ["add", "-A"], { cwd });
-    if (addResult.code !== 0) {
-      notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
-      return null;
-    }
-    progress.complete(1, `${status.files.length} file(s)`);
-  } else {
-    progress.activate(1, `${status.stagedFiles.length} staged`);
-    progress.complete(1, `${status.stagedFiles.length} staged`);
+): Promise<boolean> {
+  progress.activate(1, `${fileCount} file(s)`);
+  const addResult = await exec("git", ["add", "-A"], { cwd });
+  if (addResult.code !== 0) {
+    notifyError(ctx, "git add failed", addResult.stderr || "Non-zero exit");
+    return false;
   }
+  progress.complete(1, `${fileCount} file(s)`);
+  return true;
+}
 
+async function readStagedFiles(exec: ExecFn, ctx: any, cwd: string): Promise<string[] | null> {
   const stagedFilesResult = await exec("git", ["diff", "--cached", "--name-only"], { cwd });
   if (stagedFilesResult.code !== 0) {
     notifyError(ctx, "git diff failed", stagedFilesResult.stderr || "Could not read staged files");
@@ -173,7 +172,66 @@ async function ensureStagedChanges(
     return null;
   }
 
-  return { stagedFiles };
+  return stagedFiles;
+}
+
+function formatFilePreview(files: string[], label: string): string {
+  const preview = files.slice(0, 8).join("\n");
+  const extra = files.length > 8 ? `\n… and ${files.length - 8} more ${label}` : "";
+  return `${preview}${extra}`;
+}
+
+async function ensureStagedChanges(
+  platform: Platform,
+  ctx: any,
+  cwd: string,
+  status: Awaited<ReturnType<typeof getWorkingTreeStatus>>,
+  progress: ReturnType<typeof createProgress>,
+): Promise<CommitStagingContext | null> {
+  const exec = platform.exec.bind(platform);
+
+  if (status.stagedFiles.length > 0 && status.unstagedFiles.length > 0) {
+    const selection = await ctx.ui.select(
+      "Staged and unstaged changes detected",
+      [STAGE_ALL_CHANGES_OPTION, USE_STAGED_CHANGES_OPTION],
+      {
+        helpText: [
+          "Choose the source of truth for /supi:commit.",
+          `Staged (${status.stagedFiles.length}):\n${formatFilePreview(status.stagedFiles, "staged")}`,
+          `Unstaged/untracked (${status.unstagedFiles.length}):\n${formatFilePreview(status.unstagedFiles, "unstaged")}`,
+        ].join("\n\n"),
+      },
+    );
+
+    if (!selection) {
+      progress.dispose();
+      return null;
+    }
+
+    if (selection === STAGE_ALL_CHANGES_OPTION) {
+      if (!await stageAllChanges(exec, ctx, cwd, status.files.length, progress)) {
+        return null;
+      }
+    } else {
+      progress.activate(1, `${status.stagedFiles.length} staged`);
+      progress.complete(1, `${status.stagedFiles.length} staged`);
+    }
+
+    const stagedFiles = await readStagedFiles(exec, ctx, cwd);
+    return stagedFiles ? { stagedFiles } : null;
+  }
+
+  if (status.stagedFiles.length === 0) {
+    if (!await stageAllChanges(exec, ctx, cwd, status.files.length, progress)) {
+      return null;
+    }
+  } else {
+    progress.activate(1, `${status.stagedFiles.length} staged`);
+    progress.complete(1, `${status.stagedFiles.length} staged`);
+  }
+
+  const stagedFiles = await readStagedFiles(exec, ctx, cwd);
+  return stagedFiles ? { stagedFiles } : null;
 }
 
 // ── Main entry point ───────────────────────────────────────
