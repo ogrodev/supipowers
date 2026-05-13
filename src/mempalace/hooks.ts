@@ -6,15 +6,70 @@ import { resolveDefaultWing, resolveMempalaceConfig, type ResolvedMempalaceConfi
 import { resolveInstalledBridgeScriptPath } from "./runtime.js";
 import { getEventStore as getContextEventStore, getSessionId as getContextSessionId } from "../context-mode/hooks.js";
 import { buildCompactionCheckpoint, buildShutdownDiary } from "./session-summary.js";
+import { snapshotMempalaceInstall } from "./installer-helper.js";
 
 export interface MempalaceHooksDeps {
   createBridge?: (config: ResolvedMempalaceConfig, cwd: string) => MempalaceBridgeFacade;
   getEventStore?: () => Parameters<typeof buildCompactionCheckpoint>[0]["eventStore"];
   getSessionId?: () => string;
   now?: () => string;
+  snapshotInstall?: (paths: Platform["paths"], cwd: string, config: SupipowersConfig) => { ready: boolean };
 }
 
-const wakeUpCache = new Map<string, string>();
+/** Maximum number of (sessionId × wing × palace) entries to keep in memory. */
+const HOOK_CACHE_LRU_CAP = 64;
+
+/** Insertion-ordered bounded LRU. Drops the least-recently-used entry on overflow. */
+class BoundedLRU<K, V> {
+  private readonly inner = new Map<K, V>();
+
+  constructor(private readonly cap: number) {}
+
+  get(key: K): V | undefined {
+    if (!this.inner.has(key)) return undefined;
+    const value = this.inner.get(key) as V;
+    this.inner.delete(key);
+    this.inner.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    if (this.inner.has(key)) {
+      this.inner.delete(key);
+    } else if (this.inner.size >= this.cap) {
+      const oldest = this.inner.keys().next().value;
+      if (oldest !== undefined) this.inner.delete(oldest);
+    }
+    this.inner.set(key, value);
+  }
+
+  delete(key: K): boolean {
+    return this.inner.delete(key);
+  }
+
+  clear(): void {
+    this.inner.clear();
+  }
+
+  keys(): IterableIterator<K> {
+    return this.inner.keys();
+  }
+}
+
+function warnHookStateFallback(platform: Platform, message: string): void {
+  const logger = (platform as { logger?: { warn?: (message: string) => void } }).logger;
+  if (typeof logger?.warn === "function") {
+    logger.warn(message);
+    return;
+  }
+  console.warn(message);
+}
+
+function hookTimeoutSeconds(timeoutMs: number): number {
+  return Math.max(1, Math.floor(timeoutMs / 1000));
+}
+
+const wakeUpCache = new BoundedLRU<string, string>(HOOK_CACHE_LRU_CAP);
 
 /**
  * Per-session turn counter for wake-up cadence gating. The full wake-up block
@@ -22,7 +77,7 @@ const wakeUpCache = new Map<string, string>();
  * `mempalace.budgets.wakeUpInjectionEvery`); other turns get a one-line
  * refresher. Cleared on session_start / session_switch.
  */
-const turnCounters = new Map<string, number>();
+const turnCounters = new BoundedLRU<string, number>(HOOK_CACHE_LRU_CAP);
 
 /** Test-only: reset cadence state between cases. */
 export function _resetMempalaceHookState(): void {
@@ -92,6 +147,15 @@ function setupGuidanceBlock(resolved: ResolvedMempalaceConfig, wing: string): st
   ].join("\n");
 }
 
+function wakeFailureBlock(resolved: ResolvedMempalaceConfig, wing: string, error: string): string {
+  return [
+    "# MemPalace memory",
+    `- palace: ${resolved.palacePath}`,
+    `- default wing: ${wing}`,
+    `- Wake-up failed: ${error}`,
+  ].join("\n");
+}
+
 function wakeUpBlock(resolved: ResolvedMempalaceConfig, wing: string, text: string): string {
   const excerpt = truncateByTokenBudget(text, resolved.budgets.wakeUpTokens);
   const lines = [
@@ -140,19 +204,33 @@ function extractUserPrompt(event: unknown): string {
 /** Minimum prompt length below which we skip auto-search (saves a bridge call). */
 const AUTO_SEARCH_MIN_PROMPT_CHARS = 15;
 
-/** Cap on the search query length. Long prompts are truncated to the first N chars. */
-const AUTO_SEARCH_QUERY_MAX_CHARS = 500;
-
 /**
- * Returns `true` when `prompt` is a trivial acknowledgement that does not warrant
- * a memory search (saves the bridge round-trip for "yes", "ok", "thanks", etc.).
+ * Returns `true` when `prompt` warrants a MemPalace auto-search.
+ * Rules applied in order:
+ *   1. Too-short or trivial filler word → skip (saves the bridge round-trip).
+ *   2. Contains "?" or starts with a question word → search.
+ *   3. Contains a memory/recall signal → search.
+ *   4. Starts with a clearly imperative verb and has no search signal → skip.
+ *   5. Ambiguous → search (preserves recall on uncertain prompts).
  */
-function isTrivialPrompt(prompt: string): boolean {
+function shouldAutoSearchPrompt(prompt: string): boolean {
   const normalized = prompt.toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, " ").replace(/\s+/g, " ").trim();
-  if (normalized.length < AUTO_SEARCH_MIN_PROMPT_CHARS) return true;
-  // Conservative wordlist: only strip obvious filler.
+  // Rule 1: trivial length or obvious filler.
+  if (normalized.length < AUTO_SEARCH_MIN_PROMPT_CHARS) return false;
   const TRIVIAL = new Set(["yes", "no", "ok", "okay", "thanks", "thank you", "great", "cool", "go", "continue", "proceed"]);
-  return TRIVIAL.has(normalized);
+  if (TRIVIAL.has(normalized)) return false;
+  // Rule 2: explicit question signals → search.
+  if (prompt.includes("?")) return true;
+  const QUESTION_PREFIXES = ["what", "why", "when", "who", "where", "how", "which", "do", "does", "is", "are", "can", "should"];
+  if (QUESTION_PREFIXES.some(p => normalized.startsWith(p + " ") || normalized === p)) return true;
+  // Rule 3: memory/recall signal words → search.
+  const RECALL_SIGNALS = ["remember", "recall", "decided", "decision", "chose", "last time", "previously", "earlier", "before"];
+  if (RECALL_SIGNALS.some(s => normalized.includes(s))) return true;
+  // Rule 4: clearly imperative verb at start, no search signal above → skip.
+  const IMPERATIVE_PREFIXES = ["fix", "add", "remove", "delete", "run", "update", "refactor", "rename", "move", "write", "create", "make", "implement", "build"];
+  if (IMPERATIVE_PREFIXES.some(p => normalized.startsWith(p + " ") || normalized === p)) return false;
+  // Rule 5: ambiguous → search.
+  return true;
 }
 
 interface SearchHit {
@@ -170,13 +248,13 @@ function pickHits(result: unknown): SearchHit[] {
 }
 
 /** Score-gated relevance check so we don't inject low-quality matches as noise. */
-function isRelevantHit(hit: SearchHit): boolean {
+function isRelevantHit(hit: SearchHit, similarityFloor: number, bm25Floor: number): boolean {
   const sim = typeof hit.similarity === "number" ? hit.similarity : null;
   const bm25 = typeof hit.bm25_score === "number" ? hit.bm25_score : null;
-  // Either signal must clear a low bar. Mempalace's `similarity` is ~1.0 for
+  // Either signal must clear the configured floor. similarity is ~1.0 for
   // perfect, ~0.5 for "kinda related"; bm25 is unbounded but >0.3 is meaningful.
-  if (sim !== null && sim >= 0.55) return true;
-  if (bm25 !== null && bm25 >= 0.3) return true;
+  if (sim !== null && sim >= similarityFloor) return true;
+  if (bm25 !== null && bm25 >= bm25Floor) return true;
   return false;
 }
 
@@ -210,17 +288,39 @@ export function registerMempalaceHooks(
   deps: MempalaceHooksDeps = {},
 ): void {
   if (!config.mempalace.enabled) return;
+
+  const snapshotInstall = deps.snapshotInstall ?? snapshotMempalaceInstall;
+  const isInstallReady = (cwd: string): boolean => snapshotInstall(platform.paths, cwd, config).ready;
+
   const bridgeRuntime = {
     resolveBridgeScriptPath: () => resolveInstalledBridgeScriptPath(platform.paths),
   };
 
-
-  const clearAll = () => {
-    wakeUpCache.clear();
-    turnCounters.clear();
+  const clearSessionState = (sessionId: string): void => {
+    for (const key of [...wakeUpCache.keys()]) {
+      if (key.startsWith(`${sessionId}|`)) wakeUpCache.delete(key);
+    }
+    for (const key of [...turnCounters.keys()]) {
+      if (key.startsWith(`${sessionId}|`)) turnCounters.delete(key);
+    }
   };
-  platform.on("session_start", clearAll);
-  platform.on("session_switch", clearAll);
+
+  const clearForSession = (event: unknown): void => {
+    const source = typeof event === "object" && event !== null ? event as { sessionId?: unknown; previousSessionId?: unknown } : null;
+    const sessionId = typeof source?.sessionId === "string" && source.sessionId.length > 0 ? source.sessionId : null;
+    const previousSessionId =
+      typeof source?.previousSessionId === "string" && source.previousSessionId.length > 0 ? source.previousSessionId : null;
+    if (sessionId === null && previousSessionId === null) {
+      warnHookStateFallback(platform, "[mempalace hooks] session event missing sessionId — clearing all hook state");
+      wakeUpCache.clear();
+      turnCounters.clear();
+      return;
+    }
+    if (sessionId !== null) clearSessionState(sessionId);
+    if (previousSessionId !== null) clearSessionState(previousSessionId);
+  };
+  platform.on("session_start", clearForSession);
+  platform.on("session_switch", clearForSession);
 
   platform.on("before_agent_start", async (event: unknown, ctx: unknown) => {
     const wakeUpEnabled = config.mempalace.hooks.wakeUp;
@@ -239,6 +339,9 @@ export function registerMempalaceHooks(
     const sessionId = sessionIdFrom(event, ctx);
     const cacheKey = `${sessionId}|${wing}|${resolved.palacePath}`;
     const basePrompt = currentSystemPromptBlocks(event, ctx);
+    if (!isInstallReady(cwd)) {
+      return appendPrompt(basePrompt, setupGuidanceBlock(resolved, wing));
+    }
     const userPrompt = extractUserPrompt(event);
 
     const bridge = deps.createBridge
@@ -253,42 +356,78 @@ export function registerMempalaceHooks(
     turnCounters.set(turnKey, turnCount);
     const isFullInjectionTurn = turnCount === 1 || turnCount % cadence === 0;
 
-    // Run the cached generic wake_up and the per-prompt search in parallel.
-    // wake_up is cached for the session; auto-search is fresh every turn.
-    const wakePromise = (async (): Promise<string> => {
-      if (!isFullInjectionTurn) return wakeUpRefresher(resolved, wing);
-      const cached = wakeUpCache.get(cacheKey);
-      if (cached) return cached;
-      const wake = await bridge.execute({ action: "wake_up", wing, timeout: resolved.timeouts.hookMs });
-      const block = wake.ok
-        ? wakeUpBlock(resolved, wing, wakeText(wake.result))
-        : setupGuidanceBlock(resolved, wing);
-      wakeUpCache.set(cacheKey, block);
-      return block;
-    })();
+    // On cadence-gated turns: one bridge.execute call handles both wake and search
+    // (wake_up_and_search). On non-injection turns: refresher string + optional
+    // separate search call. Either path issues at most one bridge call per turn.
+    const timeoutSeconds = hookTimeoutSeconds(resolved.timeouts.hookMs); /* seconds; bridge multiplies by 1000 */
+    const wantsSearch = autoSearchEnabled && shouldAutoSearchPrompt(userPrompt);
+    // Let upstream MemPalace extract the salient question/tail from long prompts.
+    const query = wantsSearch ? userPrompt : undefined;
 
-    const searchPromise = (async (): Promise<string | null> => {
-      if (!autoSearchEnabled) return null;
-      if (!userPrompt || isTrivialPrompt(userPrompt)) return null;
-      const query = userPrompt.slice(0, AUTO_SEARCH_QUERY_MAX_CHARS);
-      try {
-        const result = await bridge.execute({
-          action: "search",
-          query,
-          wing,
-          limit: 3,
-          timeout: resolved.timeouts.hookMs,
-        });
-        if (!result.ok) return null;
-        const hits = pickHits(result.result).filter(isRelevantHit);
-        return autoSearchBlock(hits, resolved.budgets.autoSearchTokens);
-      } catch {
-        // Auto-search is best-effort. A failure here must never block the turn.
-        return null;
+    let wakeBlock: string;
+    let searchBlock: string | null = null;
+
+    if (!isFullInjectionTurn) {
+      // Non-injection turns: lightweight refresher, no wake bridge call needed.
+      wakeBlock = wakeUpRefresher(resolved, wing);
+      if (wantsSearch) {
+        try {
+          const result = await bridge.execute({ action: "search", query: query!, wing, limit: 3, timeout: timeoutSeconds });
+          if (result.ok) {
+            const { autoSearchSimilarityFloor, autoSearchBm25Floor } = resolved.budgets;
+            const hits = pickHits(result.result).filter(hit => isRelevantHit(hit, autoSearchSimilarityFloor, autoSearchBm25Floor));
+            searchBlock = autoSearchBlock(hits, resolved.budgets.autoSearchTokens);
+          }
+        } catch {
+          // Auto-search is best-effort. A failure here must never block the turn.
+        }
       }
-    })();
+    } else {
+      const cached = wakeUpCache.get(cacheKey);
+      if (cached) {
+        // Wake block is already cached — only issue a search call if warranted.
+        wakeBlock = cached;
+        if (wantsSearch) {
+          try {
+            const result = await bridge.execute({ action: "search", query: query!, wing, limit: 3, timeout: timeoutSeconds });
+            if (result.ok) {
+              const { autoSearchSimilarityFloor, autoSearchBm25Floor } = resolved.budgets;
+              const hits = pickHits(result.result).filter(hit => isRelevantHit(hit, autoSearchSimilarityFloor, autoSearchBm25Floor));
+              searchBlock = autoSearchBlock(hits, resolved.budgets.autoSearchTokens);
+            }
+          } catch {
+            // Auto-search is best-effort. A failure here must never block the turn.
+          }
+        }
+      } else {
+        // Cache miss: batch wake + search into one bridge call.
+        const batchResult = await bridge.execute({
+          action: "wake_up_and_search",
+          wing,
+          timeout: timeoutSeconds,
+          ...(query !== undefined ? { query, limit: 3 } : {}),
+        });
+        const composite = batchResult.ok ? (batchResult.result as Record<string, unknown>) : null;
+        const compositeWake = composite !== null ? (composite.wake as Record<string, unknown> | null | undefined) : undefined;
+        const wakeError = composite !== null && typeof composite.wake_error === "string" ? composite.wake_error : "wake_up failed";
+        const block = compositeWake != null
+          ? wakeUpBlock(resolved, wing, wakeText(compositeWake))
+          : batchResult.ok
+            ? wakeFailureBlock(resolved, wing, wakeError)
+            : setupGuidanceBlock(resolved, wing);
+        wakeUpCache.set(cacheKey, block);
+        wakeBlock = block;
 
-    const [wakeBlock, searchBlock] = await Promise.all([wakePromise, searchPromise]);
+        // Extract search hits from the composite result (only if search was requested).
+        const compositeSearch = composite !== null ? composite.search : undefined;
+        if (compositeSearch != null && autoSearchEnabled) {
+          const { autoSearchSimilarityFloor, autoSearchBm25Floor } = resolved.budgets;
+          const hits = pickHits(compositeSearch).filter(hit => isRelevantHit(hit, autoSearchSimilarityFloor, autoSearchBm25Floor));
+          searchBlock = autoSearchBlock(hits, resolved.budgets.autoSearchTokens);
+        }
+      }
+    }
+
     const combined = searchBlock ? `${wakeBlock}\n${searchBlock}` : wakeBlock;
     return appendPrompt(basePrompt, combined);
   });
@@ -297,6 +436,7 @@ export function registerMempalaceHooks(
     platform.on("session_before_compact", async (_event: unknown, ctx: unknown) => {
       try {
         const cwd = contextCwd(ctx);
+        if (!isInstallReady(cwd)) return undefined;
         const resolved = resolveMempalaceConfig(config, cwd, platform.paths);
         let wing: string;
         try {
@@ -324,7 +464,7 @@ export function registerMempalaceHooks(
           content: checkpoint.content,
           added_by: checkpoint.metadata.added_by,
           source_file: checkpoint.metadata.source_file,
-          timeout: resolved.timeouts.hookMs,
+          timeout: hookTimeoutSeconds(resolved.timeouts.hookMs), /* seconds; bridge multiplies by 1000 */
         });
       } catch {
         // Compaction must never be cancelled by MemPalace checkpoint failures.
@@ -337,6 +477,7 @@ export function registerMempalaceHooks(
     platform.on("session_shutdown", async (_event: unknown, ctx: unknown) => {
       try {
         const cwd = contextCwd(ctx);
+        if (!isInstallReady(cwd)) return undefined;
         const resolved = resolveMempalaceConfig(config, cwd, platform.paths);
         let wing: string;
         try {
@@ -364,7 +505,7 @@ export function registerMempalaceHooks(
           topic: diary.metadata.topic,
           entry: diary.entry,
           source_file: diary.metadata.source_file,
-          timeout: resolved.timeouts.hookMs,
+          timeout: hookTimeoutSeconds(resolved.timeouts.hookMs), /* seconds; bridge multiplies by 1000 */
         });
       } catch {
         // Shutdown must never be delayed or failed by MemPalace diary writes.
@@ -372,4 +513,6 @@ export function registerMempalaceHooks(
       return undefined;
     });
   }
+
+  platform.on("session_shutdown", clearForSession);
 }

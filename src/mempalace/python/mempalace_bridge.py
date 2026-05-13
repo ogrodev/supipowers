@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-shot JSON bridge for the native supipowers MemPalace tool.
 
-Action mapping (auditable API surface) — wired against MemPalace 3.3.4:
+Action mapping (auditable API surface):
 - version: stdlib importlib.metadata only; does not import MemPalace runtime modules.
 - 29 MCP-equivalent actions dispatch to ``mempalace.mcp_server.tool_<action>``
   (with the ``traverse → tool_traverse_graph`` rename). The mcp_server
@@ -129,6 +129,8 @@ def _handle_version(params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str
 
 def _apply_palace_path(options: Dict[str, Any]) -> None:
     """Set MEMPALACE_PALACE_PATH so MemPalace's MempalaceConfig picks it up."""
+    # NOTE: mutates os.environ — safe only because we run in a fresh process per
+    # call. Any future daemon/persistent-process refactor MUST re-evaluate this.
     palace = options.get("palacePath") or options.get("palace")
     if palace and isinstance(palace, str) and palace:
         os.environ["MEMPALACE_PALACE_PATH"] = os.path.expanduser(palace)
@@ -203,6 +205,42 @@ def _rename(mapping: Dict[str, str]) -> Callable[[Dict[str, Any]], Dict[str, Any
     return extract
 
 
+
+# ── diary_write: source_file embedding ───────────────────────────────────
+#
+# tool_diary_write(agent_name, entry, topic, wing) does not accept source_file.
+# When a source_file is provided, embed it as a deterministic first-line prefix
+# "[source: <source_file>]" in the entry text so that diary_read content
+# carries the linkage. This is the Option-2 convention documented in
+# session-summary.ts: the caller supplies source_file in params; the bridge
+# embeds it; the round-trip proves it via content inspection.
+DIARY_SOURCE_PREFIX = "[source: "
+
+# Upstream sanitize_content default in mempalace.config (3.3.5). Mirrored in
+# src/mempalace/upstream-limits.ts (MEMPALACE_MAX_CONTENT_LENGTH). Bump both
+# when upgrading.
+_MAX_CONTENT_LENGTH = 100_000
+
+
+def _diary_write_extractor(params: Dict[str, Any]) -> Dict[str, Any]:
+    kwargs = _select("agent_name", "topic", "wing")(params)
+    entry: str = params.get("entry") or ""
+    source_file = params.get("source_file")
+    if source_file and isinstance(source_file, str):
+        # MemPalace's tool_diary_write calls sanitize_content(entry), which
+        # raises ValueError if len(entry) > MAX_CONTENT_LENGTH. Adding the
+        # deterministic `[source: ...]\n` prefix can push a TS-valid entry
+        # past that limit and turn a previously-valid request into a domain
+        # failure. Reserve the prefix budget here by clipping the entry tail
+        # so the prefixed payload always fits.
+        prefix = f"{DIARY_SOURCE_PREFIX}{source_file}]\n"
+        budget = max(0, _MAX_CONTENT_LENGTH - len(prefix))
+        if len(entry) > budget:
+            entry = entry[:budget]
+        entry = f"{prefix}{entry}"
+    kwargs["entry"] = entry
+    return kwargs
+
 # ── MCP-equivalent action dispatch ───────────────────────────────────────
 #
 # Each entry maps our action -> (function name in mempalace.mcp_server,
@@ -224,7 +262,7 @@ MCP_TOOL_DISPATCH: Dict[str, "tuple[str, Callable[[Dict[str, Any]], Dict[str, An
     "delete_drawer": ("tool_delete_drawer", _select("drawer_id")),
     # Knowledge graph: MemPalace uses `entity` for the subject in queries.
     "kg_query": ("tool_kg_query", _rename({"subject": "entity", "as_of": "as_of", "direction": "direction"})),
-    "kg_add": ("tool_kg_add", _select("subject", "predicate", "object", "valid_from", "source_closet")),
+    "kg_add": ("tool_kg_add", _select("subject", "predicate", "object", "valid_from", "valid_to", "source_file", "source_drawer_id")),
     "kg_invalidate": ("tool_kg_invalidate", _select("subject", "predicate", "object", "ended")),
     "kg_timeline": ("tool_kg_timeline", _rename({"subject": "entity"})),
     "kg_stats": ("tool_kg_stats", lambda p: {}),
@@ -239,7 +277,9 @@ MCP_TOOL_DISPATCH: Dict[str, "tuple[str, Callable[[Dict[str, Any]], Dict[str, An
     "delete_tunnel": ("tool_delete_tunnel", _select("tunnel_id")),
     # follow_tunnels: MemPalace uses wing/room (not source_wing/source_room).
     "follow_tunnels": ("tool_follow_tunnels", _rename({"source_wing": "wing", "source_room": "room"})),
-    "diary_write": ("tool_diary_write", _select("agent_name", "entry", "topic", "wing")),
+    # diary_write: source_file is embedded as a prefix in the entry text by
+    # _diary_write_extractor — tool_diary_write does not accept source_file natively.
+    "diary_write": ("tool_diary_write", _diary_write_extractor),
     "diary_read": ("tool_diary_read", _select("agent_name", "wing")),
     "hook_settings": ("tool_hook_settings", lambda p: {}),
     "memories_filed_away": ("tool_memories_filed_away", lambda p: {}),
@@ -287,6 +327,84 @@ def _handle_wake_up(params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str
     return _ok({"text": text}, options)
 
 
+
+# ── wake_up_and_search: composite action (saves one python process spawn) ─
+
+
+def _handle_wake_up_and_search(params: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
+    """Batch wake_up + optional search into a single python process.
+
+    Returns {"wake": {"text": ...}, "search": <tool_search payload or null>}.
+    Either half may fail independently; the other half is still returned.
+    """
+    _apply_palace_path(options)
+    palace = options.get("palacePath")
+
+    # ── Wake half ─────────────────────────────────────────────────────────────
+    wake_result: Any = None
+    wake_error: "str | None" = None
+    try:
+        layers = _import_or_raise("mempalace.layers")
+        stack = layers.MemoryStack(palace_path=palace) if palace else layers.MemoryStack()
+        wake_kwargs: Dict[str, Any] = {}
+        if params.get("wing"):
+            wake_kwargs["wing"] = params["wing"]
+        text = _wrap_runtime_errors("MemoryStack.wake_up", lambda: stack.wake_up(**wake_kwargs))
+        wake_result = {"text": text}
+    except BridgeDomainError as exc:
+        wake_error = f"{exc.code}: {exc.message}"
+    except Exception as exc:  # pragma: no cover — defensive isolation
+        wake_error = str(exc)
+
+    # ── Search half (skipped when query is absent or empty) ───────────────────
+    search_result: Any = None
+    search_error: "str | None" = None
+    query = params.get("query")
+    if query and isinstance(query, str) and query.strip():
+        try:
+            module = _import_or_raise("mempalace.mcp_server")
+            tool_search = getattr(module, "tool_search", None)
+            if not callable(tool_search):
+                raise BridgeDomainError(
+                    "mempalace_missing",
+                    "mempalace.mcp_server.tool_search is not callable.",
+                    "Upgrade the managed MemPalace runtime via `/supi:memory setup`.",
+                )
+            search_kwargs: Dict[str, Any] = {"query": query}
+            if params.get("wing"):
+                search_kwargs["wing"] = params["wing"]
+            if params.get("room"):
+                search_kwargs["room"] = params["room"]
+            if isinstance(params.get("limit"), int):
+                search_kwargs["limit"] = params["limit"]
+            raw = _wrap_runtime_errors(
+                "mempalace.mcp_server.tool_search",
+                lambda: tool_search(**search_kwargs),
+            )
+            normalized = _to_jsonable(raw)
+            if isinstance(normalized, dict) and normalized.get("ok") is False and isinstance(normalized.get("error"), dict):
+                err = normalized["error"]
+                code = err.get("code") if isinstance(err.get("code"), str) else "mempalace_runtime_error"
+                message = err.get("message") if isinstance(err.get("message"), str) else json.dumps(err, sort_keys=True)
+                search_error = f"{code}: {message}"
+            else:
+                search_result = normalized
+        except BridgeDomainError as exc:
+            # Surface as partial error so the caller can distinguish a real
+            # search failure from "no query / no hits". Mirrors the wake half.
+            search_error = f"{exc.code}: {exc.message}"
+        except Exception as exc:  # pragma: no cover — defensive isolation
+            # Same contract: never let one half kill the other, but the caller
+            # gets a string they can render or log.
+            search_error = str(exc)
+
+    payload: Dict[str, Any] = {"wake": wake_result, "search": search_result}
+    if wake_error is not None:
+        payload["wake_error"] = wake_error
+    if search_error is not None:
+        payload["search_error"] = search_error
+    return _ok(payload, options)
+
 # ── Native CLI args builders ──────────────────────────────────────────────
 
 
@@ -307,6 +425,8 @@ def _make_cli_args_mine(params: Dict[str, Any]) -> "list[str]":
         args.append("--include-ignored")
     if params.get("no_gitignore"):
         args.append("--no-gitignore")
+    if params.get("dry_run"):
+        args.append("--dry-run")
     if params.get("extract"):
         args.append("--extract")
     return args
@@ -331,6 +451,10 @@ def _make_cli_args_repair(params: Dict[str, Any]) -> "list[str]":
         args.append("--yes")
     if params.get("mode"):
         args.extend(["--mode", str(params["mode"])])
+    if params.get("source"):
+        args.extend(["--source", str(params["source"])])
+    if params.get("archive_existing"):
+        args.append("--archive-existing")
     if params.get("dry_run"):
         args.append("--dry-run")
     return args
@@ -396,6 +520,7 @@ def _make_cli_handler(action: str) -> Callable[[Dict[str, Any], Dict[str, Any]],
 DISPATCH: Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]] = {
     "version": _handle_version,
     "wake_up": _handle_wake_up,
+    "wake_up_and_search": _handle_wake_up_and_search,
 }
 for _action in MCP_TOOL_DISPATCH:
     DISPATCH[_action] = _make_mcp_handler(_action)

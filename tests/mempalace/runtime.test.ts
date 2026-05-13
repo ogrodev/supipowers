@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -15,6 +15,7 @@ import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { resolveMempalaceConfig } from "../../src/mempalace/config.js";
 import { createPaths } from "../../src/platform/types.js";
 import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
+import { MEMPALACE_PACKAGE_VERSION } from "../../src/mempalace/upstream-limits.js";
 
 describe("mempalace runtime bridge path", () => {
   let tmpDir: string;
@@ -210,6 +211,23 @@ describe("mempalace runtime bridge subprocess protocol", () => {
     expect(result.stderrTail).toBe("boom");
   });
 
+  test("returns bridge_process_failed for synchronous runner launch failures", async () => {
+    const result = await runBridgeRequest({
+      pythonPath: "python",
+      bridgeScriptPath: "/bridge.py",
+      timeoutMs: 1000,
+      request: { action: "status", params: {}, options: {} },
+      runner: () => {
+        throw new Error("spawn exploded");
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error.code).toBe("bridge_process_failed");
+    expect(result.error.message).toBe("spawn exploded");
+  });
+
   test("returns bridge_timeout when the subprocess exceeds timeout", async () => {
     const result = await runBridgeRequest({
       pythonPath: "python",
@@ -222,6 +240,54 @@ describe("mempalace runtime bridge subprocess protocol", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected failure");
     expect(result.error.code).toBe("bridge_timeout");
+  });
+
+  test("returns bridge_timeout with a completion signal for the runner exit", async () => {
+    let resolveRunner!: (value: { code: number; stdout: string; stderr: string }) => void;
+    const runnerResult = new Promise<{ code: number; stdout: string; stderr: string }>((res) => {
+      resolveRunner = res;
+    });
+
+    const result = await runBridgeRequest({
+      pythonPath: "python",
+      bridgeScriptPath: "/bridge.py",
+      timeoutMs: 5,
+      request: { action: "status", params: {}, options: {} },
+      runner: async () => runnerResult,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected failure");
+    expect(result.error.code).toBe("bridge_timeout");
+    expect(result.completion).toBeDefined();
+
+    let settled = false;
+    const completion = result.completion?.then(() => { settled = true; });
+    await new Promise<void>((res) => setTimeout(res, 10));
+    expect(settled).toBe(false);
+
+    resolveRunner({ code: -1, stdout: "", stderr: "" });
+    await completion;
+    expect(settled).toBe(true);
+  });
+});
+
+describe("mempalace runtime bridge timeout cleanup", () => {
+  test("clears the timeout handle when runner settles before timeout (no orphan timer)", async () => {
+    const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+    try {
+      const result = await runBridgeRequest({
+        pythonPath: "python",
+        bridgeScriptPath: "/bridge.py",
+        timeoutMs: 5000,
+        request: { action: "status", params: {}, options: {} },
+        runner: async () => ({ code: 0, stdout: JSON.stringify({ ok: true, result: {} }), stderr: "" }),
+      });
+      expect(result.ok).toBe(true);
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+    } finally {
+      clearTimeoutSpy.mockRestore();
+    }
   });
 });
 
@@ -263,7 +329,7 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
         runner: async (command, args, runnerOptions) => {
           calls.push({ command, args, input: runnerOptions?.input });
           if (runnerOptions?.input?.includes("\"action\":\"version\"")) {
-            return { code: 0, stdout: JSON.stringify({ ok: true, result: { version: "3.3.4" } }), stderr: "" };
+            return { code: 0, stdout: JSON.stringify({ ok: true, result: { version: MEMPALACE_PACKAGE_VERSION } }), stderr: "" };
           }
           if (runnerOptions?.input?.includes("\"action\":\"status\"")) {
             return { code: 0, stdout: JSON.stringify({ ok: true, result: { ready: true } }), stderr: "" };
@@ -278,21 +344,21 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
       expect(calls.map((call) => [call.command, call.args])).toEqual([
         [uvPath, ["python", "install", "3.12"]],
         [uvPath, ["venv", config.managedVenvPath, "--python", "3.12"]],
-        [uvPath, ["pip", "install", "--python", venv.python, "mempalace==3.3.4"]],
+        [uvPath, ["pip", "install", "--python", venv.python, `mempalace==${MEMPALACE_PACKAGE_VERSION}`]],
         [venv.python, ["/bridge.py"]],
         [venv.python, ["/bridge.py"]],
       ]);
       expect(progress).toEqual([
         "Provisioning managed Python 3.12 via uv",
         "Creating managed MemPalace virtual environment",
-        "Installing mempalace==3.3.4 from PyPI",
+        `Installing mempalace==${MEMPALACE_PACKAGE_VERSION} from PyPI`,
         "Verifying MemPalace bridge",
         "Checking MemPalace palace status",
       ]);
       expect(result.details.uvPath).toBe(uvPath);
       expect(result.details.uvVersion).toBe("0.5.30");
       expect(result.details.managedPython).toBe("3.12");
-      expect(result.details.packageVersion).toBe("3.3.4");
+      expect(result.details.packageVersion).toBe(MEMPALACE_PACKAGE_VERSION);
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
@@ -336,7 +402,7 @@ describe("mempalace runtime setup flow (uv-driven)", () => {
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected setup failure");
       expect(result.error.code).toBe("setup_failed");
-      expect(result.error.message).toContain("Failed to install mempalace==3.3.4");
+      expect(result.error.message).toContain(`Failed to install mempalace==${MEMPALACE_PACKAGE_VERSION}`);
       expect(result.error.message).toContain("ERROR: dependency conflict");
       expect(result.error.remediation).toContain("PyPI");
       expect(result.error.remediation).toContain("astral-sh/uv");
@@ -362,6 +428,17 @@ describe("mempalace runtime native CLI argument building", () => {
       "--mode",
       "conversation",
     ]);
-    expect(buildMempalaceCliArgs("repair", { dir: ".", dry_run: true })).toEqual(["repair", ".", "--dry-run"]);
+    expect(buildMempalaceCliArgs("repair", { dir: ".", dry_run: true })).toEqual(["repair", "--dry-run"]);
+    expect(buildMempalaceCliArgs("repair", {
+      mode: "from-sqlite",
+      source: "~/palace.sqlite",
+      archive_existing: true,
+    })).toEqual(["repair", "--mode", "from-sqlite", "--source", "~/palace.sqlite", "--archive-existing"]);
+  });
+
+  test("repair ignores dir param — dir is never included in argv regardless of value", () => {
+    const argv = buildMempalaceCliArgs("repair", { dir: "/whatever" });
+    expect(argv).not.toContain("/whatever");
+    expect(argv[0]).toBe("repair");
   });
 });

@@ -46,6 +46,10 @@ function stringValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function truncateText(text: string, maxChars: number, guidance: string): string {
   if (text.length <= maxChars) return text;
   if (maxChars <= guidance.length + 1) {
@@ -60,10 +64,28 @@ function formatSimilarity(value: unknown): string {
 }
 
 function formatSearch(result: RecordValue, budgets: ResultBudgets): string {
-  const results = asArray(result.results ?? result.items);
+  const results = asArray(result.results);
   const query = stringValue(result.query) || "(unspecified query)";
   const count = typeof result.count === "number" ? result.count : results.length;
   const lines = [`MemPalace search`, `Search results for ${query} (${count})`];
+
+  if (result.index_recovered) {
+    lines.push("Index recovered: retried after transient index lookup failure.");
+  }
+
+  // Surface filter context so agents can tell "empty palace" from "over-filtered".
+  const filters = asRecord(result.filters);
+  const filterParts = (["wing", "room"] as string[]).flatMap(k => {
+    const v = stringValue(filters[k]);
+    return v ? [`${k}=${v}`] : [];
+  });
+  if (filterParts.length > 0) {
+    lines.push(`Filters applied: ${filterParts.join(", ")}`);
+  }
+  const totalBeforeFilter = finiteNumber(result.total_before_filter);
+  if (totalBeforeFilter !== undefined && totalBeforeFilter > count) {
+    lines.push(`Filtered out ${totalBeforeFilter - count} hit(s) by wing/room scope.`);
+  }
 
   for (const [index, item] of results.entries()) {
     const id = stringValue(item.id ?? item.drawer_id) || `#${index + 1}`;
@@ -75,12 +97,17 @@ function formatSearch(result: RecordValue, budgets: ResultBudgets): string {
     if (excerpt) lines.push(`   ${excerpt}`);
   }
 
+
   return truncateText(lines.join("\n"), budgets.searchResultChars, TRUNCATED_SEARCH_GUIDANCE);
 }
 
 function formatDrawerList(result: RecordValue, budgets: ResultBudgets): string {
-  const drawers = asArray(result.drawers ?? result.results ?? result.items);
-  const lines = [`Drawers (${drawers.length})`];
+  const drawers = asArray(result.drawers ?? result.results);
+  const total = finiteNumber(result.total);
+  const header = total === undefined
+    ? `Drawers (${drawers.length})`
+    : `Drawers (${drawers.length} shown, ${total} total)`;
+  const lines = [header];
 
   for (const drawer of drawers) {
     const id = stringValue(drawer.id ?? drawer.drawer_id) || "unknown";
@@ -156,6 +183,45 @@ function formatGeneric(action: MempalaceAction, result: RecordValue, budgets: Re
   return truncateText(`MemPalace ${action} result\n${JSON.stringify(result, null, 2)}`, budgets.listResultChars, TRUNCATED_LIST_GUIDANCE);
 }
 
+function formatWake(wake: RecordValue, budgets: ResultBudgets): string {
+  const text = stringValue(wake.text);
+  if (!text) return "MemPalace wake: (no text returned)";
+  // Wake payloads are roughly the size of a search result block (L0/L1
+  // condensation), so reuse the search budget rather than introducing a new
+  // dimension. truncateText preserves trailing guidance so the agent can ask
+  // for more if it was clipped.
+  return truncateText(`MemPalace wake\n${text}`, budgets.searchResultChars, TRUNCATED_SEARCH_GUIDANCE);
+}
+
+function formatWakeUpAndSearch(result: RecordValue, budgets: ResultBudgets): string {
+  const wake = result.wake;
+  const search = result.search;
+  const parts: string[] = [];
+
+  // Wake half: null means wake failed — emit a one-line notice so the operator
+  // can see something went wrong without poisoning the turn with empty output.
+  // Wake payloads from python are `{ text: <L0+L1 markdown> }` — render that
+  // text directly. Passing through formatSearch() would drop it entirely
+  // because formatSearch only reads `query`/`results`.
+  if (wake === null || wake === undefined) {
+    const notice = typeof result.wake_error === "string" ? result.wake_error : "wake_up failed";
+    parts.push(`MemPalace wake: ${notice}`);
+  } else {
+    parts.push(formatWake(asRecord(wake), budgets));
+  }
+
+  // Search half: omit when null AND no error reported. If python attached a
+  // search_error (composite call failed mid-way), surface it as a one-liner so
+  // the caller can distinguish "no query / no hits" from "search blew up".
+  if (search !== null && search !== undefined) {
+    parts.push(formatSearch(asRecord(search), budgets));
+  } else if (typeof result.search_error === "string") {
+    parts.push(`MemPalace search: ${result.search_error}`);
+  }
+
+  return truncateText(parts.join("\n\n"), budgets.searchResultChars, TRUNCATED_SEARCH_GUIDANCE);
+}
+
 export function formatMempalaceResult(
   action: MempalaceAction,
   result: unknown,
@@ -168,6 +234,8 @@ export function formatMempalaceResult(
     text = formatStatus(record);
   } else if (action === "search" || action === "wake_up") {
     text = formatSearch(record, budgets);
+  } else if (action === "wake_up_and_search") {
+    text = formatWakeUpAndSearch(record, budgets);
   } else if (action === "list_drawers") {
     text = formatDrawerList(record, budgets);
   } else if (action === "list_wings") {

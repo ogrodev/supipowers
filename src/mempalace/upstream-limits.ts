@@ -25,7 +25,7 @@
  * `DEFAULT_CONFIG.mempalace.packageVersion` and, from there, into the
  * `mempalace==<version>` argument handed to `uv pip install`.
  */
-export const MEMPALACE_PACKAGE_VERSION = "3.3.4";
+export const MEMPALACE_PACKAGE_VERSION = "3.3.5";
 
 /**
  * Upper bound applied internally by `tool_search` and `tool_list_drawers`

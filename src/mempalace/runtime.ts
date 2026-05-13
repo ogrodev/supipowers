@@ -83,6 +83,7 @@ export type RunBridgeRequestResult =
       stdoutPreview: string;
       stderrTail: string;
       durationMs: number;
+      completion?: Promise<void>;
     };
 
 export interface RunBridgeRequestOptions {
@@ -323,8 +324,14 @@ export async function runBridgeRequest(options: RunBridgeRequestOptions): Promis
   const input = JSON.stringify(options.request);
   const runner = options.runner ?? defaultProcessRunner;
 
+  const runnerPromise = Promise.resolve().then(() =>
+    runner(options.pythonPath, [options.bridgeScriptPath], { input, timeoutMs: options.timeoutMs }),
+  );
+  const completion = runnerPromise.then(() => {}, () => {});
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<ProcessRunResult>((resolve) => {
-    setTimeout(() => resolve({
+    timeoutHandle = setTimeout(() => resolve({
       code: -1,
       stdout: "",
       stderr: "",
@@ -334,9 +341,9 @@ export async function runBridgeRequest(options: RunBridgeRequestOptions): Promis
   let runResult: ProcessRunResult;
   try {
     runResult = await Promise.race([
-      runner(options.pythonPath, [options.bridgeScriptPath], { input, timeoutMs: options.timeoutMs }),
+      runnerPromise,
       timeout,
-    ]);
+    ]).finally(() => clearTimeout(timeoutHandle));
   } catch (error) {
     return {
       ok: false,
@@ -363,6 +370,7 @@ export async function runBridgeRequest(options: RunBridgeRequestOptions): Promis
       stdoutPreview: "",
       stderrTail: "",
       durationMs,
+      completion,
     };
   }
 
@@ -577,13 +585,15 @@ export function buildMempalaceCliArgs(
   const args: string[] = [action];
   if (action === "split") {
     if (params.source_file) args.push(params.source_file);
-  } else if (params.dir) {
+  } else if (action !== "repair" && params.dir) {
     args.push(params.dir);
   }
 
   if (typeof params.limit === "number") args.push("--limit", String(params.limit));
   if (params.mode) args.push("--mode", params.mode);
+  if (action === "repair" && params.source) args.push("--source", params.source);
   if (params.extract) args.push("--extract");
+  if (action === "repair" && params.archive_existing) args.push("--archive-existing");
   if (params.dry_run) args.push("--dry-run");
   if (params.include_ignored) args.push("--include-ignored");
   if (params.no_gitignore) args.push("--no-gitignore");
