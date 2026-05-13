@@ -128,9 +128,25 @@ export class KnowledgeStore {
     this.#ensureDeleteJournalMode();
     this.#migrate();
     this._db.exec(SCHEMA);
+    this.#rebuildFtsIfNeeded();
+    this.#backfillVocabularyIfNeeded();
+  }
+
+  #rebuildFtsIfNeeded(): void {
+    const chunkCount = this._db.prepare("SELECT COUNT(*) AS cnt FROM content_chunks").get() as { cnt: number };
+    if (chunkCount.cnt === 0) return;
+
+    const ftsCount = this.#countRows("content_chunks_fts");
+    const trigramCount = this.#countRows("content_chunks_trigram");
+    if (ftsCount === chunkCount.cnt && trigramCount === chunkCount.cnt) return;
+
     this._db.exec("INSERT INTO content_chunks_fts(content_chunks_fts) VALUES('rebuild')");
     this._db.exec("INSERT INTO content_chunks_trigram(content_chunks_trigram) VALUES('rebuild')");
-    this.#backfillVocabularyIfNeeded();
+  }
+
+  #countRows(table: "content_chunks_fts" | "content_chunks_trigram"): number {
+    const row = this._db.prepare(`SELECT COUNT(*) AS cnt FROM ${table}`).get() as { cnt: number };
+    return row.cnt;
   }
 
   /**
