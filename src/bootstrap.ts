@@ -43,6 +43,7 @@ import { registerUltraPlanAuthoringTool } from "./ultraplan/authoring-tool.js";
 import { registerUltraPlanAuthoringPipelineTools } from "./ultraplan/authoring/authoring-tools.js";
 import { registerActiveToolController } from "./tool-catalog/active-tool-controller.js";
 import { registerMempalaceHooks } from "./mempalace/hooks.js";
+import { registerRunbookCommand, handleRunbook } from "./commands/runbook.js";
 import { registerMempalaceTool } from "./mempalace/tool.js";
 
 // TUI-only commands — intercepted at the input level to prevent
@@ -65,6 +66,7 @@ const TUI_COMMANDS: Record<string, (platform: Platform, ctx: any, args?: string)
   "supi:ultraplan": (platform, ctx, args) => handleUltraplan(platform, ctx, args),
   "supi:harness": (platform, ctx, args) => { void handleHarness(platform, ctx, args); },
   "supi:memory": (platform, ctx, args) => handleMemory(platform, ctx, args),
+  "runbook": (platform, ctx, args) => handleRunbook(platform, ctx, args),
 };
 
 function getInstalledVersion(platform: Platform): string | null {
@@ -101,6 +103,7 @@ export function bootstrap(platform: Platform): void {
   registerUltraplanCommand(platform);
   registerHarnessCommand(platform);
   registerMemoryCommand(platform);
+  registerRunbookCommand(platform);
 
 
   registerUltraPlanRuntimeTools(platform);

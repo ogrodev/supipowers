@@ -18,9 +18,11 @@ import {
 import type {
   ManualOptimizationAction,
   OptimizationPlan,
+  WriteCommandAction,
   WriteRuleAction,
+  WriteExtensionAction,
 } from "../context/startup-optimizer.js";
-import { parseManagedRule, renderManagedRule } from "../context/rule-renderer.js";
+import { parseManagedCommand, parseManagedExtension, parseManagedRule, renderManagedCommand, renderManagedExtension, renderManagedRule } from "../context/rule-renderer.js";
 import { DEFAULT_TOKENIGNORE_ENTRIES, mergeManagedTokenignore } from "../context/tokenignore.js";
 import {
   parseStartupOptimizerManifest,
@@ -142,6 +144,20 @@ async function runCheck(
     }
   }
 
+  const commandFiles: Record<string, string | null> = {};
+  if (manifest) {
+    for (const command of manifest.commands) {
+      commandFiles[command.path] = readOptionalFile(path.join(ctx.cwd, command.path));
+    }
+  }
+
+  const extensionFiles: Record<string, string | null> = {};
+  if (manifest) {
+    for (const extension of manifest.extensions) {
+      extensionFiles[extension.path] = readOptionalFile(path.join(ctx.cwd, extension.path));
+    }
+  }
+
   const currentSkills: ParsedSkill[] = currentPrompt ? parseIndividualSkills(currentPrompt) : [];
   const currentSections: PromptSection[] = currentPrompt ? parseSystemPrompt(currentPrompt) : [];
 
@@ -149,6 +165,8 @@ async function runCheck(
     manifestPath,
     manifestText,
     ruleFiles,
+    commandFiles,
+    extensionFiles,
     tokenignorePath,
     tokenignoreText: readOptionalFile(tokenignorePath),
     currentPrompt,
@@ -232,17 +250,23 @@ async function showDryRun(ctx: PlatformContext, plan: OptimizationPlan): Promise
 
 function buildPlanPreview(plan: OptimizationPlan): string[] {
   const writeRuleCount = plan.actions.filter((action) => action.kind === "write-rule").length;
-  const manualCount = plan.actions.filter((action) => action.kind !== "write-rule").length;
+  const writeCommandCount = plan.actions.filter((action) => action.kind === "write-command").length;
+  const writeExtensionCount = plan.actions.filter((action) => action.kind === "write-extension").length;
+  const manualCount = plan.actions.filter((action) => action.kind !== "write-rule" && action.kind !== "write-command" && action.kind !== "write-extension").length;
   const lines = [
     `Source set: ${plan.sourceSetHash.slice(0, 12)}`,
     `Current: ~${formatTokens(Math.ceil(plan.beforeBytes / 4))} tokens  |  Estimated after planned removals: ~${formatTokens(Math.ceil(plan.estimatedAfterBytes / 4))} tokens`,
-    `Actions: ${writeRuleCount} write-rule, ${manualCount} manual`,
+    `Actions: ${writeRuleCount} write-rule, ${writeCommandCount} write-command, ${writeExtensionCount} write-extension, ${manualCount} manual`,
     "",
   ];
 
   for (const action of plan.actions) {
     if (action.kind === "write-rule") {
       lines.push(`write-rule ${action.mode}: ${action.targetPath}`);
+    } else if (action.kind === "write-command") {
+      lines.push(`write-command: /${action.commandName} -> ${action.targetPath}`);
+    } else if (action.kind === "write-extension") {
+      lines.push(`write-extension: ${action.extensionName} -> ${action.targetPath}`);
     } else if (action.kind === "manual-disable") {
       lines.push(`manual-disable ${action.sourceName}: ${action.reason}`);
     } else {
@@ -268,9 +292,14 @@ async function applyOptimizationPlan(
   }
 
   const writeRules = plan.actions.filter((action): action is WriteRuleAction => action.kind === "write-rule");
-  const preflight = preflightRuleWrites(ctx.cwd, writeRules);
-  if (preflight.conflicts.length > 0) {
-    ctx.ui.notify(`Apply blocked: ${preflight.conflicts.join("; ")}`, "error");
+  const writeCommands = plan.actions.filter((action): action is WriteCommandAction => action.kind === "write-command");
+  const writeExtensions = plan.actions.filter((action): action is WriteExtensionAction => action.kind === "write-extension");
+  const rulePreflight = preflightRuleWrites(ctx.cwd, writeRules);
+  const commandPreflight = preflightCommandWrites(ctx.cwd, writeCommands);
+  const extensionPreflight = preflightExtensionWrites(ctx.cwd, writeExtensions);
+  const preflightConflicts = [...rulePreflight.conflicts, ...commandPreflight.conflicts, ...extensionPreflight.conflicts];
+  if (preflightConflicts.length > 0) {
+    ctx.ui.notify(`Apply blocked: ${preflightConflicts.join("; ")}`, "error");
     return;
   }
 
@@ -279,7 +308,7 @@ async function applyOptimizationPlan(
     return;
   }
 
-  const summary = buildApplySummary(plan, preflight.updates);
+  const summary = buildApplySummary(plan, [...rulePreflight.updates, ...commandPreflight.updates, ...extensionPreflight.updates]);
   const accepted = await confirmApply(ctx, summary);
   if (!accepted) {
     ctx.ui.notify("Apply cancelled.", "info");
@@ -299,6 +328,18 @@ async function applyOptimizationPlan(
       fs.writeFileSync(target, renderManagedRule(action));
     }
 
+    for (const action of writeCommands) {
+      const target = absoluteRulePath(ctx.cwd, action.targetPath);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, renderManagedCommand(action));
+    }
+
+    for (const action of writeExtensions) {
+      const target = absoluteRulePath(ctx.cwd, action.targetPath);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, renderManagedExtension(action));
+    }
+
     fs.mkdirSync(path.dirname(tokenignorePath), { recursive: true });
     fs.writeFileSync(tokenignorePath, tokenignore.content);
 
@@ -315,7 +356,7 @@ async function applyOptimizationPlan(
   // process can't see the just-written .omp/rules without a full restart.
   // Be honest about this rather than silently calling reload() and lying.
   ctx.ui.notify(
-    "Applied deterministic context migration. Restart OMP so the new managed rules in .omp/rules are picked up by rule discovery, then disable the original sources and run /supi:optimize-context --check to validate runtime savings.",
+    "Applied deterministic context migration. Restart OMP so new managed rules in .omp/rules, commands in .omp/commands, and the runbook extension in .omp/extensions are picked up by discovery, then disable the original sources and run /supi:optimize-context --check to validate runtime savings.",
     "info",
   );
 }
@@ -358,11 +399,7 @@ function preflightRuleWrites(
       conflicts.push(`${action.targetPath} is malformed: ${parsed.error}`);
       continue;
     }
-    if (
-      parsed.metadata.sourceHash !== action.sourceHash ||
-      parsed.metadata.sourceId !== action.sourceId ||
-      parsed.metadata.mode !== action.mode
-    ) {
+    if (fs.readFileSync(target, "utf-8") !== renderManagedRule(action)) {
       updates.push(action.targetPath);
     }
   }
@@ -370,11 +407,82 @@ function preflightRuleWrites(
   return { conflicts, updates };
 }
 
+function preflightCommandWrites(
+  cwd: string,
+  actions: WriteCommandAction[],
+): { conflicts: string[]; updates: string[] } {
+  const conflicts: string[] = [];
+  const updates: string[] = [];
+
+  for (const action of actions) {
+    const target = absoluteRulePath(cwd, action.targetPath);
+    if (!fs.existsSync(target)) continue;
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) {
+      conflicts.push(`${action.targetPath} exists and is not a file`);
+      continue;
+    }
+
+    const parsed = parseManagedCommand(fs.readFileSync(target, "utf-8"));
+    if (parsed.status === "unmanaged") {
+      conflicts.push(`${action.targetPath} is unmanaged`);
+      continue;
+    }
+    if (parsed.status === "malformed") {
+      conflicts.push(`${action.targetPath} is malformed: ${parsed.error}`);
+      continue;
+    }
+    if (fs.readFileSync(target, "utf-8") !== renderManagedCommand(action)) {
+      updates.push(action.targetPath);
+    }
+  }
+
+  return { conflicts, updates };
+}
+
+function preflightExtensionWrites(
+  cwd: string,
+  actions: WriteExtensionAction[],
+): { conflicts: string[]; updates: string[] } {
+  const conflicts: string[] = [];
+  const updates: string[] = [];
+
+  for (const action of actions) {
+    const target = absoluteRulePath(cwd, action.targetPath);
+    if (!fs.existsSync(target)) continue;
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) {
+      conflicts.push(`${action.targetPath} exists and is not a file`);
+      continue;
+    }
+
+    const parsed = parseManagedExtension(fs.readFileSync(target, "utf-8"));
+    if (parsed.status === "unmanaged") {
+      conflicts.push(`${action.targetPath} is unmanaged`);
+      continue;
+    }
+    if (parsed.status === "malformed") {
+      conflicts.push(`${action.targetPath} is malformed: ${parsed.error}`);
+      continue;
+    }
+    if (fs.readFileSync(target, "utf-8") !== renderManagedExtension(action)) {
+      updates.push(action.targetPath);
+    }
+  }
+
+  return { conflicts, updates };
+}
+
+
 function buildApplySummary(plan: OptimizationPlan, updates: string[]): string {
   const writeRuleCount = plan.actions.filter((action) => action.kind === "write-rule").length;
-  const manualCount = plan.actions.filter((action) => action.kind !== "write-rule").length;
+  const writeCommandCount = plan.actions.filter((action) => action.kind === "write-command").length;
+  const writeExtensionCount = plan.actions.filter((action) => action.kind === "write-extension").length;
+  const manualCount = plan.actions.filter((action) => action.kind !== "write-rule" && action.kind !== "write-command" && action.kind !== "write-extension").length;
   const lines = [
     `Write ${writeRuleCount} managed rule file${writeRuleCount === 1 ? "" : "s"}.`,
+    `Write ${writeCommandCount} managed command file${writeCommandCount === 1 ? "" : "s"}.`,
+    `Write ${writeExtensionCount} managed extension file${writeExtensionCount === 1 ? "" : "s"}.`,
     `Merge ${DEFAULT_TOKENIGNORE_ENTRIES.length} managed .tokenignore entries.`,
     `Record ${manualCount} manual follow-up action${manualCount === 1 ? "" : "s"}.`,
     `Estimated savings after planned removals: ~${formatTokens(Math.ceil(plan.estimatedSavedBytes / 4))} tokens.`,
@@ -382,7 +490,7 @@ function buildApplySummary(plan: OptimizationPlan, updates: string[]): string {
   if (updates.length > 0) {
     lines.push(`Managed update candidate${updates.length === 1 ? "" : "s"}: ${updates.join(", ")}`);
   }
-  lines.push("Manifest is written last after managed rule and tokenignore writes succeed.");
+  lines.push("Manifest is written last after managed rule, command, extension, and tokenignore writes succeed.");
   return lines.join("\n");
 }
 
@@ -406,8 +514,35 @@ function buildManifest(plan: OptimizationPlan): StartupOptimizerManifest {
       slug: action.slug,
       sourceBytes: action.sourceBytes,
       ...(action.condition ? { condition: action.condition } : {}),
+      ...(action.triggers ? { triggers: action.triggers } : {}),
+      ...(action.scope ? { scope: action.scope } : {}),
       ...(action.description ? { description: action.description } : {}),
     }));
+  const commands = plan.actions
+    .filter((action): action is WriteCommandAction => action.kind === "write-command")
+    .map((action) => ({
+      path: action.targetPath,
+      sourceId: action.sourceId,
+      sourceName: action.sourceName,
+      sourceHash: action.sourceHash,
+      slug: action.slug,
+      commandName: action.commandName,
+      sourceBytes: action.sourceBytes,
+      ...(action.description ? { description: action.description } : {}),
+    }));
+  const extensions = plan.actions
+    .filter((action): action is WriteExtensionAction => action.kind === "write-extension")
+    .map((action) => ({
+      path: action.targetPath,
+      sourceId: action.sourceId,
+      sourceName: action.sourceName,
+      sourceHash: action.sourceHash,
+      slug: action.slug,
+      extensionName: action.extensionName,
+      sourceBytes: action.sourceBytes,
+    }));
+
+
 
   return {
     version: 1,
@@ -417,12 +552,14 @@ function buildManifest(plan: OptimizationPlan): StartupOptimizerManifest {
     estimatedAfterBytes: plan.estimatedAfterBytes,
     estimatedSavedBytes: plan.estimatedSavedBytes,
     rules,
+    commands,
+    extensions,
     tokenignore: {
       path: ".omp/supipowers/.tokenignore",
       entries: tokenignore.entries,
       hash: tokenignore.hash,
     },
-    manualActions: plan.actions.filter((action): action is ManualOptimizationAction => action.kind !== "write-rule"),
+    manualActions: plan.actions.filter((action): action is ManualOptimizationAction => action.kind !== "write-rule" && action.kind !== "write-command" && action.kind !== "write-extension"),
   };
 }
 
