@@ -50,6 +50,28 @@ function installFakePlaywright(binDir: string): void {
   );
 }
 
+function readPathValue(env: NodeJS.ProcessEnv): string | undefined {
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path");
+  return pathKey ? env[pathKey] : undefined;
+}
+
+function buildRunnerEnv(binDir: string, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const pathValue = readPathValue(overrides) ?? readPathValue(process.env) ?? "";
+  const env = {
+    ...process.env,
+    ...overrides,
+  };
+
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === "path") {
+      delete env[key];
+    }
+  }
+
+  env[process.platform === "win32" ? "Path" : "PATH"] = `${binDir}${path.delimiter}${pathValue}`;
+  return env;
+}
+
 function runRunner(
   binDir: string,
   testDir: string,
@@ -65,11 +87,7 @@ function runRunner(
     args.push(opts.testFilter);
   }
 
-  const env = {
-    ...process.env,
-    PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-    ...opts?.env,
-  };
+  const env = buildRunnerEnv(binDir, opts?.env);
 
   try {
     const stdout = execFileSync(process.execPath, args, {

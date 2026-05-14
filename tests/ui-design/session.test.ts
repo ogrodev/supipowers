@@ -653,12 +653,18 @@ describe("ui-design session — no-UI approval hook handling", () => {
     expect(isUiDesignActive()).toBe(false);
   });
 
-  test("progressing resume status auto-resumes without cleanup", async () => {
+  test("progressing resume status auto-resumes when same-size artifact content changes", async () => {
     const sessionDir = path.join(tmpDir, "no-ui-progress");
+    const manifestPath = path.join(sessionDir, "manifest.json");
+    const fixedTimestamp = new Date("2026-04-18T00:00:00.000Z");
     writeManifest(sessionDir, baseManifest({ status: "in-progress" }));
+    fs.utimesSync(manifestPath, fixedTimestamp, fixedTimestamp);
+    fs.utimesSync(sessionDir, fixedTimestamp, fixedTimestamp);
     const cleanup = mock(async () => {});
     startUiDesignTracking(makeSession(sessionDir), cleanup);
     writeManifest(sessionDir, baseManifest({ status: "in-progress", topic: "changed" }));
+    fs.utimesSync(manifestPath, fixedTimestamp, fixedTimestamp);
+    fs.utimesSync(sessionDir, fixedTimestamp, fixedTimestamp);
 
     const sendMessage = mock(() => {});
     const { handler, ctx } = registerHookWithPlatform({ sendMessage, hasUI: false });

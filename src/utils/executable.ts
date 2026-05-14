@@ -36,8 +36,17 @@ function isFile(filePath: string): boolean {
   }
 }
 
+function defaultSearchPath(): string {
+  if (process.env.PATH !== undefined) {
+    return process.env.PATH;
+  }
+
+  const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path");
+  return pathKey ? process.env[pathKey] ?? "" : "";
+}
+
 function resolveSearchDirectories(options: ExecutableSearchOptions): string[] {
-  const pathDirs = (options.searchPath ?? process.env.PATH ?? "")
+  const pathDirs = (options.searchPath ?? defaultSearchPath())
     .split(path.delimiter)
     .filter(Boolean);
   const localDirs = (options.localDirs ?? []).map((dir) =>

@@ -108,15 +108,19 @@ function snapshotSessionProgress(sessionDir: string): string | null {
     for (const entry of entries) {
       const absolutePath = path.join(currentDir, entry.name);
       const relativePath = path.relative(sessionDir, absolutePath);
-      const stats = fs.statSync(absolutePath);
-
       if (entry.isDirectory()) {
-        hash.update(`dir:${relativePath}:${stats.mtimeMs}\n`);
+        hash.update("dir\0");
+        hash.update(relativePath);
+        hash.update("\0");
         visit(absolutePath);
         continue;
       }
 
-      hash.update(`file:${relativePath}:${stats.size}:${stats.mtimeMs}\n`);
+      hash.update("file\0");
+      hash.update(relativePath);
+      hash.update("\0");
+      hash.update(fs.readFileSync(absolutePath));
+      hash.update("\0");
     }
   };
 
