@@ -1,5 +1,5 @@
 import type { ParsedSkill, PromptSection } from "./analyzer.js";
-import { parseManagedRule } from "./rule-renderer.js";
+import { MANAGED_COMMAND_HEADER, parseManagedCommand, parseManagedExtension, parseManagedRule } from "./rule-renderer.js";
 import {
   hashOptimizationSource,
   type ManualOptimizationAction,
@@ -16,7 +16,30 @@ export interface StartupOptimizerManifestRule {
   slug: string;
   sourceBytes: number;
   condition?: string;
+  triggers?: string;
+  scope?: string;
   description?: string;
+}
+
+export interface StartupOptimizerManifestCommand {
+  path: string;
+  sourceId: string;
+  sourceName: string;
+  sourceHash: string;
+  slug: string;
+  commandName: string;
+  sourceBytes: number;
+  description?: string;
+}
+
+export interface StartupOptimizerManifestExtension {
+  path: string;
+  sourceId: string;
+  sourceName: string;
+  sourceHash: string;
+  slug: string;
+  extensionName: string;
+  sourceBytes: number;
 }
 
 export interface StartupOptimizerManifest {
@@ -27,6 +50,8 @@ export interface StartupOptimizerManifest {
   estimatedAfterBytes: number;
   estimatedSavedBytes: number;
   rules: StartupOptimizerManifestRule[];
+  commands: StartupOptimizerManifestCommand[];
+  extensions: StartupOptimizerManifestExtension[];
   tokenignore: {
     path: string;
     entries: string[];
@@ -46,6 +71,16 @@ export type StartupCheckReason =
   | "rule-drift"
   | "rule-body-drift"
   | "tokenignore-drift"
+  | "missing-command"
+  | "unmanaged-command"
+  | "malformed-command"
+  | "command-drift"
+  | "command-body-drift"
+  | "missing-extension"
+  | "unmanaged-extension"
+  | "malformed-extension"
+  | "extension-drift"
+  | "extension-body-drift"
   | "still-loaded-source"
   | "unresolved-manual-action"
   | "prompt-over-target"
@@ -64,6 +99,8 @@ export interface StartupCheckInput {
   manifestPath: string;
   manifestText: string | null | undefined;
   ruleFiles: Record<string, string | null | undefined>;
+  commandFiles?: Record<string, string | null | undefined>;
+  extensionFiles?: Record<string, string | null | undefined>;
   tokenignorePath: string;
   tokenignoreText: string | null | undefined;
   currentPrompt: string | null | undefined;
@@ -153,7 +190,9 @@ export function runStartupCheck(input: StartupCheckInput): StartupCheckReport {
 
     const metadata = parsed.metadata;
     const frontmatterDrift = rule.mode === "ttsr"
-      ? parsed.frontmatter.condition !== rule.condition
+      ? parsed.frontmatter.condition !== rule.condition ||
+        (typeof rule.triggers === "string" && parsed.frontmatter.triggers !== rule.triggers) ||
+        parsed.frontmatter.scope !== (rule.scope ?? "text")
       : (typeof rule.description === "string" && parsed.frontmatter.description !== rule.description);
 
     if (
@@ -187,6 +226,133 @@ export function runStartupCheck(input: StartupCheckInput): StartupCheckReport {
     }
   }
 
+
+  for (const command of manifest.commands) {
+    const text = input.commandFiles?.[command.path];
+    if (text == null) {
+      issues.push(issue("missing-command", {
+        path: command.path,
+        sourceId: command.sourceId,
+        message: `Managed command file is missing for ${command.sourceId}.`,
+        remediation: "Rerun /supi:optimize-context --apply to regenerate managed commands.",
+      }));
+      continue;
+    }
+
+    const parsed = parseManagedCommand(text);
+    if (parsed.status === "unmanaged") {
+      issues.push(issue("unmanaged-command", {
+        path: command.path,
+        sourceId: command.sourceId,
+        message: `Command file ${command.path} is not managed by supipowers.`,
+        remediation: "Move the user-authored command aside or choose a different command name before applying again.",
+      }));
+      continue;
+    }
+
+    if (parsed.status === "malformed") {
+      issues.push(issue("malformed-command", {
+        path: command.path,
+        sourceId: command.sourceId,
+        message: `Managed command ${command.path} is malformed: ${parsed.error}.`,
+        remediation: "Rerun /supi:optimize-context --apply to rewrite the managed command.",
+      }));
+      continue;
+    }
+
+    // Legacy managed commands stored supipowers metadata before command
+    // frontmatter. OMP sends that prefix as prompt text, so force a refresh.
+    const commandDrift =
+      text.startsWith(MANAGED_COMMAND_HEADER) ||
+      parsed.metadata.sourceId !== command.sourceId ||
+      parsed.metadata.sourceHash !== command.sourceHash ||
+      parsed.metadata.slug !== command.slug ||
+      parsed.metadata.commandName !== command.commandName ||
+      parsed.metadata.sourceBytes !== command.sourceBytes ||
+      (typeof command.description === "string" && parsed.frontmatter.description !== command.description);
+    if (commandDrift) {
+      issues.push(issue("command-drift", {
+        path: command.path,
+        sourceId: command.sourceId,
+        message: `Managed command ${command.path} no longer matches the startup optimizer manifest.`,
+        remediation: "Rerun /supi:optimize-context --apply to refresh managed command artifacts.",
+      }));
+      continue;
+    }
+
+    const actualBodyHash = hashOptimizationSource(parsed.body);
+    const actualBodyBytes = byteLength(parsed.body);
+    if (actualBodyHash !== command.sourceHash || actualBodyBytes !== command.sourceBytes) {
+      issues.push(issue("command-body-drift", {
+        path: command.path,
+        sourceId: command.sourceId,
+        message: `Managed command ${command.path} body has been modified (hash/size no longer matches the manifest).`,
+        remediation: "Rerun /supi:optimize-context --apply to rewrite the managed command from the current prompt source.",
+      }));
+    }
+  }
+
+  for (const extension of manifest.extensions) {
+    const text = input.extensionFiles?.[extension.path];
+    if (text == null) {
+      issues.push(issue("missing-extension", {
+        path: extension.path,
+        sourceId: extension.sourceId,
+        message: `Managed extension file is missing for ${extension.sourceId}.`,
+        remediation: "Rerun /supi:optimize-context --apply to regenerate managed extensions.",
+      }));
+      continue;
+    }
+
+    const parsed = parseManagedExtension(text);
+    if (parsed.status === "unmanaged") {
+      issues.push(issue("unmanaged-extension", {
+        path: extension.path,
+        sourceId: extension.sourceId,
+        message: `Extension file ${extension.path} is not managed by supipowers.`,
+        remediation: "Move the user-authored extension aside or choose a different extension name before applying again.",
+      }));
+      continue;
+    }
+
+    if (parsed.status === "malformed") {
+      issues.push(issue("malformed-extension", {
+        path: extension.path,
+        sourceId: extension.sourceId,
+        message: `Managed extension ${extension.path} is malformed: ${parsed.error}.`,
+        remediation: "Rerun /supi:optimize-context --apply to rewrite the managed extension.",
+      }));
+      continue;
+    }
+
+    const extensionDrift =
+      parsed.metadata.sourceId !== extension.sourceId ||
+      parsed.metadata.sourceHash !== extension.sourceHash ||
+      parsed.metadata.slug !== extension.slug ||
+      parsed.metadata.extensionName !== extension.extensionName ||
+      parsed.metadata.sourceBytes !== extension.sourceBytes;
+    if (extensionDrift) {
+      issues.push(issue("extension-drift", {
+        path: extension.path,
+        sourceId: extension.sourceId,
+        message: `Managed extension ${extension.path} no longer matches the startup optimizer manifest.`,
+        remediation: "Rerun /supi:optimize-context --apply to refresh managed extension artifacts.",
+      }));
+      continue;
+    }
+
+    const actualBodyHash = hashOptimizationSource(parsed.body);
+    const actualBodyBytes = byteLength(parsed.body);
+    if (actualBodyHash !== extension.sourceHash || actualBodyBytes !== extension.sourceBytes) {
+      issues.push(issue("extension-body-drift", {
+        path: extension.path,
+        sourceId: extension.sourceId,
+        message: `Managed extension ${extension.path} body has been modified (hash/size no longer matches the manifest).`,
+        remediation: "Rerun /supi:optimize-context --apply to rewrite the managed extension from the current optimizer template.",
+      }));
+    }
+  }
+
   const tokenignore = parseManagedTokenignore(input.tokenignoreText);
   if (
     tokenignore.status !== "managed" ||
@@ -212,6 +378,10 @@ export function runStartupCheck(input: StartupCheckInput): StartupCheckReport {
   for (const rule of manifest.rules) {
     if (rule.sourceId.startsWith("skill:")) skillSourceIdsToVerify.add(rule.sourceId);
     else if (rule.sourceId.startsWith("section:")) sectionSourceIdsToVerify.add(rule.sourceId);
+  }
+  for (const command of manifest.commands) {
+    if (command.sourceId.startsWith("skill:")) skillSourceIdsToVerify.add(command.sourceId);
+    else if (command.sourceId.startsWith("section:")) sectionSourceIdsToVerify.add(command.sourceId);
   }
   for (const action of manifest.manualActions) {
     if (action.kind !== "manual-disable") continue;
@@ -310,6 +480,29 @@ export function parseStartupOptimizerManifest(
     rules.push(candidate as unknown as StartupOptimizerManifestRule);
   }
 
+  const commands: StartupOptimizerManifestCommand[] = [];
+  const rawCommands = Array.isArray((parsed as any).commands) ? (parsed as any).commands : [];
+  for (const candidate of rawCommands) {
+    if (!isRecord(candidate)) return "Startup optimizer manifest has invalid command entry.";
+    for (const key of ["path", "sourceId", "sourceName", "sourceHash", "slug", "commandName"] as const) {
+      if (typeof candidate[key] !== "string") return `Startup optimizer manifest command is missing ${key}.`;
+    }
+    if (!isFiniteNumber(candidate.sourceBytes)) return "Startup optimizer manifest command is missing sourceBytes.";
+    commands.push(candidate as unknown as StartupOptimizerManifestCommand);
+  }
+
+  const extensions: StartupOptimizerManifestExtension[] = [];
+  const rawExtensions = Array.isArray((parsed as any).extensions) ? (parsed as any).extensions : [];
+  for (const candidate of rawExtensions) {
+    if (!isRecord(candidate)) return "Startup optimizer manifest has invalid extension entry.";
+    for (const key of ["path", "sourceId", "sourceName", "sourceHash", "slug", "extensionName"] as const) {
+      if (typeof candidate[key] !== "string") return `Startup optimizer manifest extension is missing ${key}.`;
+    }
+    if (!isFiniteNumber(candidate.sourceBytes)) return "Startup optimizer manifest extension is missing sourceBytes.";
+    extensions.push(candidate as unknown as StartupOptimizerManifestExtension);
+  }
+
+
   if (typeof parsed.tokenignore.path !== "string") return "Startup optimizer manifest tokenignore is missing path.";
   if (!Array.isArray(parsed.tokenignore.entries) || !parsed.tokenignore.entries.every((entry) => typeof entry === "string")) {
     return "Startup optimizer manifest tokenignore has invalid entries.";
@@ -324,6 +517,8 @@ export function parseStartupOptimizerManifest(
     estimatedAfterBytes: parsed.estimatedAfterBytes,
     estimatedSavedBytes: parsed.estimatedSavedBytes,
     rules,
+    commands,
+    extensions,
     tokenignore: {
       path: parsed.tokenignore.path,
       entries: parsed.tokenignore.entries,

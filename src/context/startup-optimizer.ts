@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ParsedSkill, PromptSection } from "./analyzer.js";
+import { RUNBOOK_EXTENSION_NAME, RUNBOOK_EXTENSION_PATH, RUNBOOK_EXTENSION_SOURCE } from "./runbook-extension-template.js";
 import type { TechStack } from "./optimizer.js";
 
 export const STARTUP_OPTIMIZER_MANIFEST_VERSION = 1;
@@ -33,6 +34,35 @@ export interface WriteRuleAction {
   sourceContent: string;
   condition?: string;
   description?: string;
+  triggers?: string;
+  scope?: string;
+}
+
+export interface WriteCommandAction {
+  kind: "write-command";
+  sourceId: string;
+  sourceName: string;
+  sourceHash: string;
+  slug: string;
+  commandName: string;
+  targetPath: string;
+  sourceBytes: number;
+  estimatedSavedBytes: number;
+  sourceContent: string;
+  description?: string;
+}
+
+export interface WriteExtensionAction {
+  kind: "write-extension";
+  sourceId: string;
+  sourceName: string;
+  sourceHash: string;
+  slug: string;
+  extensionName: string;
+  targetPath: string;
+  sourceBytes: number;
+  estimatedSavedBytes: number;
+  sourceContent: string;
 }
 
 export type ManualDisableReason = "source-still-loaded" | "tech-stack-irrelevant";
@@ -58,7 +88,7 @@ export interface ManualAgentsSplitAction {
 }
 
 export type ManualOptimizationAction = ManualDisableAction | ManualAgentsSplitAction;
-export type OptimizationAction = WriteRuleAction | ManualOptimizationAction;
+export type OptimizationAction = WriteRuleAction | WriteCommandAction | WriteExtensionAction | ManualOptimizationAction;
 
 export interface OptimizationWarning {
   code: string;
@@ -91,27 +121,44 @@ export interface BuildOptimizationPlanInput {
   techStack: TechStack;
 }
 
+interface TtsrRuleOptions {
+  condition: string;
+  triggers?: string;
+  scope?: string;
+}
+
+
 interface BehaviorSkillSpec {
   mode: "ttsr";
   condition: string;
+  triggers: string;
+  scope: string;
 }
 
 const BEHAVIOR_SKILLS: Record<string, BehaviorSkillSpec> = {
   debugging: {
     mode: "ttsr",
     condition: String.raw`\b(?:debug(?:ging)?|root\s+cause|investigate|repro(?:duce|duction)?|failing\s+test)\b`,
+    triggers: "debugging, root cause, investigate, reproduce, failing test",
+    scope: "text",
   },
   tdd: {
     mode: "ttsr",
     condition: String.raw`\b(?:tdd|test\s+first|failing\s+test\s+first|red[-\s]+green[-\s]+refactor)\b`,
+    triggers: "TDD, test first, failing test first, red-green-refactor",
+    scope: "text",
   },
   verification: {
     mode: "ttsr",
     condition: String.raw`\b(?:verify|verification|evidence|prove|proof|run\s+(?:the\s+)?(?:focused\s+)?tests?)\b`,
+    triggers: "verify, verification, evidence, proof, run focused tests",
+    scope: "text",
   },
   "receiving-code-review": {
     mode: "ttsr",
     condition: String.raw`\b(?:pr\s+feedback|code\s+review\s+comments?|reviewer\s+feedback|review\s+comments?)\b`,
+    triggers: "PR feedback, code review comments, reviewer feedback",
+    scope: "text",
   },
 };
 
@@ -130,10 +177,40 @@ const TECH_STACK_SKILLS: Record<string, { anyOf: Array<keyof TechStack>; values:
   },
 };
 
+const WORKFLOW_COMMAND_SKILLS = new Set([
+  "rewrite-page-copy",
+  "e2e-test-orchestrator",
+  "design-refiner",
+  "workflow-extractor",
+  "engaging-writing",
+  "brand-namer",
+  "brand-forge",
+  "product-linear-issues",
+  "skill-auditor",
+  "caveman",
+  "caveman-compress",
+  "security-threat-model",
+  "brand-migrate",
+  "audit",
+  "setup-tyndale",
+  "setup-tyndale-local",
+  "writing-commands",
+  "playwright",
+  "ui-design",
+  "quick-setup",
+  "planning",
+  "fix-pr",
+  "create-readme",
+  "translate-book",
+]);
+
+
 const ACTION_KIND_ORDER: Record<OptimizationAction["kind"], number> = {
   "write-rule": 0,
-  "manual-disable": 1,
-  "manual-agents-split": 2,
+  "write-command": 1,
+  "write-extension": 2,
+  "manual-disable": 3,
+  "manual-agents-split": 4,
 };
 
 export function hashOptimizationSource(content: string): string {
@@ -162,12 +239,24 @@ export function buildOptimizationPlan(input: BuildOptimizationPlanInput): Optimi
   const actions: OptimizationAction[] = [];
   const warnings: OptimizationWarning[] = [];
 
+  actions.push(buildRunbookExtensionAction());
+
   for (const source of sources) {
     if (source.sourceType === "skill") {
       const canonicalName = source.sourceName.toLowerCase();
       const behavior = BEHAVIOR_SKILLS[canonicalName];
       if (behavior) {
-        actions.push(buildWriteRuleAction(source, behavior.mode, behavior.condition));
+        actions.push(buildWriteRuleAction(source, behavior.mode, {
+          condition: behavior.condition,
+          triggers: behavior.triggers,
+          scope: behavior.scope,
+        }));
+        actions.push(buildManualDisableAction(source, "source-still-loaded"));
+        continue;
+      }
+
+      if (WORKFLOW_COMMAND_SKILLS.has(canonicalName)) {
+        actions.push(buildWriteCommandAction(source));
         actions.push(buildManualDisableAction(source, "source-still-loaded"));
         continue;
       }
@@ -202,12 +291,12 @@ export function buildOptimizationPlan(input: BuildOptimizationPlanInput): Optimi
   const beforeBytes = byteLength(input.prompt);
 
   // Sources whose content the user is expected to actually remove from the
-  // startup prompt: write-rule companions and tech-stack manual-disable
-  // actions. Deduplicated by sourceId because a write-rule action is paired
-  // with a `source-still-loaded` manual-disable for the same source.
+  // startup prompt: write-rule companions, write-command companions, and
+  // manual-disable actions. Deduplicated by sourceId because generated artifacts
+  // are paired with `source-still-loaded` manual-disable records.
   const removedSourceIds = new Set<string>();
   for (const action of actions) {
-    if (action.kind === "write-rule" || action.kind === "manual-disable") {
+    if (action.kind === "write-rule" || action.kind === "write-command" || action.kind === "manual-disable") {
       removedSourceIds.add(action.sourceId);
     }
   }
@@ -289,7 +378,7 @@ function canonicalSourceContent(content: string): string {
 function buildWriteRuleAction(
   source: OptimizationSource,
   mode: RuleMode,
-  condition?: string,
+  ttsr?: TtsrRuleOptions,
 ): WriteRuleAction {
   return {
     kind: "write-rule",
@@ -302,7 +391,41 @@ function buildWriteRuleAction(
     sourceBytes: source.bytes,
     estimatedSavedBytes: source.bytes,
     sourceContent: source.content,
-    ...(condition ? { condition } : {}),
+    ...(ttsr ? { condition: ttsr.condition, triggers: ttsr.triggers, scope: ttsr.scope } : {}),
+  };
+}
+
+function buildWriteCommandAction(source: OptimizationSource): WriteCommandAction {
+  const commandName = slugifyOptimizationSource(source.sourceName);
+  return {
+    kind: "write-command",
+    sourceId: source.sourceId,
+    sourceName: source.sourceName,
+    sourceHash: source.sourceHash,
+    slug: source.slug,
+    commandName,
+    targetPath: `.omp/commands/${commandName}.md`,
+    sourceBytes: source.bytes,
+    estimatedSavedBytes: source.bytes,
+    sourceContent: source.content,
+    description: `Run the ${source.sourceName} workflow on demand.`,
+  };
+}
+
+function buildRunbookExtensionAction(): WriteExtensionAction {
+  const sourceContent = canonicalSourceContent(RUNBOOK_EXTENSION_SOURCE);
+  const sourceBytes = byteLength(sourceContent);
+  return {
+    kind: "write-extension",
+    sourceId: "extension:runbook",
+    sourceName: RUNBOOK_EXTENSION_NAME,
+    sourceHash: hashOptimizationSource(sourceContent),
+    slug: "extension-runbook",
+    extensionName: RUNBOOK_EXTENSION_NAME,
+    targetPath: RUNBOOK_EXTENSION_PATH,
+    sourceBytes,
+    estimatedSavedBytes: 0,
+    sourceContent,
   };
 }
 
