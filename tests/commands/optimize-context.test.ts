@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Database } from "bun:sqlite";
 import { handleOptimizeContext } from "../../src/commands/optimize-context.js";
-import { parseManagedRule, renderManagedRule } from "../../src/context/rule-renderer.js";
+import { parseManagedCommand, parseManagedExtension, parseManagedRule, renderManagedRule } from "../../src/context/rule-renderer.js";
 import type { StartupOptimizerManifest } from "../../src/context/startup-check.js";
 import type { WriteRuleAction } from "../../src/context/startup-optimizer.js";
 import { MetricsStore, __setMetricsStoreForTest, _resetMetricsStoreCache } from "../../src/context-mode/metrics-store.js";
@@ -20,6 +20,8 @@ const SYSTEM_PROMPT = [
   "Systematic debugging guidance.",
   "## database-reference",
   "Occasional database migration reference.",
+  "## workflow-extractor",
+  "Step-by-step workflow extraction guidance.",
   "# Project",
   '<file path="/repo/AGENTS.md">',
   "# Repo rules",
@@ -96,6 +98,15 @@ function rulesPath(): string {
   return path.join(tmpDir, ".omp", "rules");
 }
 
+function commandsPath(): string {
+  return path.join(tmpDir, ".omp", "commands");
+}
+
+
+function extensionsPath(): string {
+  return path.join(tmpDir, ".omp", "extensions");
+}
+
 function manifestPath(): string {
   return projectPath("context-optimizer", "manifest.json");
 }
@@ -108,6 +119,14 @@ function rulePath(slug: string): string {
   return path.join(rulesPath(), `${slug}.md`);
 }
 
+function commandPath(slug: string): string {
+  return path.join(commandsPath(), `${slug}.md`);
+}
+
+
+function extensionPath(name: string): string {
+  return path.join(extensionsPath(), `${name}.ts`);
+}
 function readText(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
 }
@@ -182,8 +201,11 @@ describe("/supi:optimize-context args and dry-run", () => {
     const [title, options, opts] = (selectMock as any).mock.calls[0];
     expect(title).toBe("Context Optimization Dry Run");
     expect(options.join("\n")).toContain("write-rule");
+    expect(options.join("\n")).toContain("write-command");
     expect(opts.helpText).toContain("Dry-run: no files will be written");
     expect(fs.existsSync(rulesPath())).toBe(false);
+    expect(fs.existsSync(commandsPath())).toBe(false);
+    expect(fs.existsSync(extensionsPath())).toBe(false);
     expect(fs.existsSync(projectPath(".tokenignore"))).toBe(false);
     expect(fs.existsSync(projectPath("context-optimizer", "manifest.json"))).toBe(false);
   });
@@ -194,8 +216,11 @@ describe("/supi:optimize-context args and dry-run", () => {
     const [title, options, opts] = (selectMock as any).mock.calls[0];
     expect(title).toBe("Context Optimization Dry Run");
     expect(options.join("\n")).toContain("write-rule");
+    expect(options.join("\n")).toContain("write-command");
     expect(opts.helpText).toContain("Dry-run: no files will be written");
     expect(fs.existsSync(rulesPath())).toBe(false);
+    expect(fs.existsSync(commandsPath())).toBe(false);
+    expect(fs.existsSync(extensionsPath())).toBe(false);
     expect(fs.existsSync(projectPath(".tokenignore"))).toBe(false);
     expect(fs.existsSync(projectPath("context-optimizer", "manifest.json"))).toBe(false);
   });
@@ -210,6 +235,8 @@ describe("/supi:optimize-context --apply", () => {
 
     expect(fs.existsSync(rulePath("skill-debugging"))).toBe(true);
     expect(fs.existsSync(rulePath("skill-database-reference"))).toBe(true);
+    expect(fs.existsSync(commandPath("workflow-extractor"))).toBe(true);
+    expect(fs.existsSync(extensionPath("supipowers-runbook"))).toBe(true);
     expect(fs.existsSync(tokenignorePath())).toBe(true);
     expect(fs.existsSync(manifestPath())).toBe(true);
 
@@ -218,6 +245,8 @@ describe("/supi:optimize-context --apply", () => {
       "skill-database-reference",
       "skill-debugging",
     ]);
+    expect(manifest.commands.map((command) => command.commandName)).toEqual(["workflow-extractor"]);
+    expect(manifest.extensions.map((extension) => extension.extensionName)).toEqual(["supipowers-runbook"]);
     expect(manifest.tokenignore.path).toBe(".omp/supipowers/.tokenignore");
     expect(manifest.manualActions.some((action) => action.kind === "manual-disable")).toBe(true);
 
@@ -225,6 +254,20 @@ describe("/supi:optimize-context --apply", () => {
     expect(parsedRule.status).toBe("managed");
     if (parsedRule.status !== "managed") throw new Error("expected managed rule");
     expect(parsedRule.metadata.sourceId).toBe("skill:debugging");
+    expect(parsedRule.frontmatter.scope).toBe("text");
+    expect(parsedRule.frontmatter.triggers).toContain("debugging");
+
+    const parsedCommand = parseManagedCommand(readText(commandPath("workflow-extractor")));
+    expect(parsedCommand.status).toBe("managed");
+    if (parsedCommand.status !== "managed") throw new Error("expected managed command");
+    expect(parsedCommand.metadata.commandName).toBe("workflow-extractor");
+    expect(parsedCommand.frontmatter.description).toContain("workflow-extractor");
+
+    const parsedExtension = parseManagedExtension(readText(extensionPath("supipowers-runbook")));
+    expect(parsedExtension.status).toBe("managed");
+    if (parsedExtension.status !== "managed") throw new Error("expected managed extension");
+    expect(parsedExtension.metadata.extensionName).toBe("supipowers-runbook");
+    expect(parsedExtension.body).toContain("registerCommand?.(\"runbook\"");
 
     const joined = notifyMessages().join("\n");
     expect(joined).toContain("Restart OMP");
@@ -237,6 +280,8 @@ describe("/supi:optimize-context --apply", () => {
     await run("--apply");
 
     expect(fs.existsSync(rulesPath())).toBe(false);
+    expect(fs.existsSync(commandsPath())).toBe(false);
+    expect(fs.existsSync(extensionsPath())).toBe(false);
     expect(fs.existsSync(tokenignorePath())).toBe(false);
     expect(fs.existsSync(manifestPath())).toBe(false);
     expect(notifyMessages().join("\n")).toContain("cancelled");
@@ -285,6 +330,8 @@ describe("/supi:optimize-context --apply", () => {
     const first = {
       debugRule: readText(rulePath("skill-debugging")),
       referenceRule: readText(rulePath("skill-database-reference")),
+      workflowCommand: readText(commandPath("workflow-extractor")),
+      runbookExtension: readText(extensionPath("supipowers-runbook")),
       tokenignore: readText(tokenignorePath()),
       manifest: readText(manifestPath()),
     };
@@ -296,6 +343,8 @@ describe("/supi:optimize-context --apply", () => {
 
     expect(readText(rulePath("skill-debugging"))).toBe(first.debugRule);
     expect(readText(rulePath("skill-database-reference"))).toBe(first.referenceRule);
+    expect(readText(commandPath("workflow-extractor"))).toBe(first.workflowCommand);
+    expect(readText(extensionPath("supipowers-runbook"))).toBe(first.runbookExtension);
     expect(readText(tokenignorePath())).toBe(first.tokenignore);
     expect(readText(manifestPath())).toBe(first.manifest);
   });
@@ -307,6 +356,8 @@ describe("/supi:optimize-context --apply", () => {
     await run("--apply");
 
     expect(fs.existsSync(rulesPath())).toBe(false);
+    expect(fs.existsSync(commandsPath())).toBe(false);
+    expect(fs.existsSync(extensionsPath())).toBe(false);
     expect(fs.existsSync(manifestPath())).toBe(false);
     expect(notifyMessages().join("\n")).toContain("System prompt unavailable");
   });
@@ -317,6 +368,8 @@ describe("/supi:optimize-context --apply", () => {
     await run("--apply");
 
     expect(fs.existsSync(rulesPath())).toBe(false);
+    expect(fs.existsSync(commandsPath())).toBe(false);
+    expect(fs.existsSync(extensionsPath())).toBe(false);
     expect(fs.existsSync(manifestPath())).toBe(false);
   });
 
@@ -334,6 +387,26 @@ describe("/supi:optimize-context --apply", () => {
       if (parsed.status !== "managed") throw new Error("expected managed rule");
       expect(parsed.metadata.sourceId).toBe(rule.sourceId);
       expect(parsed.metadata.sourceHash).toBe(rule.sourceHash);
+    }
+    for (const command of manifest.commands) {
+      const absoluteCommandPath = path.join(tmpDir, command.path);
+      expect(fs.existsSync(absoluteCommandPath)).toBe(true);
+      const parsed = parseManagedCommand(readText(absoluteCommandPath));
+      expect(parsed.status).toBe("managed");
+      if (parsed.status !== "managed") throw new Error("expected managed command");
+      expect(parsed.metadata.sourceId).toBe(command.sourceId);
+      expect(parsed.metadata.sourceHash).toBe(command.sourceHash);
+      expect(parsed.metadata.commandName).toBe(command.commandName);
+    }
+    for (const extension of manifest.extensions) {
+      const absoluteExtensionPath = path.join(tmpDir, extension.path);
+      expect(fs.existsSync(absoluteExtensionPath)).toBe(true);
+      const parsed = parseManagedExtension(readText(absoluteExtensionPath));
+      expect(parsed.status).toBe("managed");
+      if (parsed.status !== "managed") throw new Error("expected managed extension");
+      expect(parsed.metadata.sourceId).toBe(extension.sourceId);
+      expect(parsed.metadata.sourceHash).toBe(extension.sourceHash);
+      expect(parsed.metadata.extensionName).toBe(extension.extensionName);
     }
   });
 });

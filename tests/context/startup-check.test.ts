@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { ParsedSkill, PromptSection } from "../../src/context/analyzer.js";
 import type { StartupOptimizerManifest } from "../../src/context/startup-check.js";
 import { runStartupCheck } from "../../src/context/startup-check.js";
-import { renderManagedRule } from "../../src/context/rule-renderer.js";
+import { MANAGED_COMMAND_HEADER, MANAGED_RULE_END, renderManagedCommand, renderManagedRule } from "../../src/context/rule-renderer.js";
 import {
   hashOptimizationSource,
   type ManualOptimizationAction,
+  type WriteCommandAction,
   type WriteRuleAction,
 } from "../../src/context/startup-optimizer.js";
 import { mergeManagedTokenignore } from "../../src/context/tokenignore.js";
@@ -18,6 +19,10 @@ const TOKENIGNORE_ENTRIES = [".omp/supipowers/debug/", "dist/"];
 const SOURCE_CONTENT = "## debugging\nDebugging guidance";
 const SOURCE_BYTES = new TextEncoder().encode(SOURCE_CONTENT).length;
 const SOURCE_HASH = hashOptimizationSource(SOURCE_CONTENT);
+
+const COMMAND_SOURCE_CONTENT = "## workflow-extractor\nWorkflow guidance";
+const COMMAND_SOURCE_BYTES = new TextEncoder().encode(COMMAND_SOURCE_CONTENT).length;
+const COMMAND_SOURCE_HASH = hashOptimizationSource(COMMAND_SOURCE_CONTENT);
 
 function skill(name: string, content?: string): ParsedSkill {
   const text = content ?? `## ${name}\ncontent`;
@@ -54,6 +59,45 @@ function rule(overrides: Partial<WriteRuleAction> = {}): WriteRuleAction {
   };
 }
 
+function command(overrides: Partial<WriteCommandAction> = {}): WriteCommandAction {
+  return {
+    kind: "write-command",
+    sourceId: "skill:workflow-extractor",
+    sourceName: "workflow-extractor",
+    sourceHash: COMMAND_SOURCE_HASH,
+    slug: "skill-workflow-extractor",
+    commandName: "workflow-extractor",
+    targetPath: ".omp/commands/workflow-extractor.md",
+    sourceBytes: COMMAND_SOURCE_BYTES,
+    estimatedSavedBytes: COMMAND_SOURCE_BYTES,
+    sourceContent: COMMAND_SOURCE_CONTENT,
+    description: "Run workflow-extractor on demand.",
+    ...overrides,
+  };
+}
+
+function legacyManagedCommand(action: WriteCommandAction): string {
+  const description = action.description ?? `Run ${action.sourceName} on demand.`;
+  const body = action.sourceContent.endsWith("\n")
+    ? action.sourceContent
+    : `${action.sourceContent}\n`;
+  return [
+    MANAGED_COMMAND_HEADER,
+    "version: 1",
+    `sourceId: ${action.sourceId}`,
+    `sourceName: ${action.sourceName}`,
+    `sourceHash: ${action.sourceHash}`,
+    `slug: ${action.slug}`,
+    `commandName: ${action.commandName}`,
+    `sourceBytes: ${action.sourceBytes}`,
+    MANAGED_RULE_END,
+    "---",
+    `description: ${JSON.stringify(description)}`,
+    "---",
+    body,
+  ].join("\n");
+}
+
 function manifest(overrides: Partial<StartupOptimizerManifest> = {}): StartupOptimizerManifest {
   const tokenignore = mergeManagedTokenignore(null, TOKENIGNORE_ENTRIES);
   return {
@@ -75,6 +119,8 @@ function manifest(overrides: Partial<StartupOptimizerManifest> = {}): StartupOpt
         condition: String.raw`\bdebug\b`,
       },
     ],
+    commands: [],
+    extensions: [],
     tokenignore: {
       path: TOKENIGNORE_PATH,
       entries: TOKENIGNORE_ENTRIES,
@@ -101,6 +147,8 @@ function input(overrides: Partial<Parameters<typeof runStartupCheck>[0]> = {}): 
     manifestPath: MANIFEST_PATH,
     manifestText: JSON.stringify(manifest(), null, 2),
     ruleFiles: { [RULE_PATH]: renderManagedRule(rule()) },
+    commandFiles: {},
+    extensionFiles: {},
     tokenignorePath: TOKENIGNORE_PATH,
     tokenignoreText: tokenignore.content,
     currentPrompt: "small prompt",
@@ -163,11 +211,102 @@ describe("runStartupCheck", () => {
     expect(reasons(report)).toContain("rule-body-drift");
   });
 
+  test("passes when a managed TTSR rule uses a persisted non-text scope", () => {
+    const scopedRule = rule({ scope: "tool" });
+    const built = manifest({
+      rules: [{
+        path: scopedRule.targetPath,
+        mode: scopedRule.mode,
+        sourceId: scopedRule.sourceId,
+        sourceName: scopedRule.sourceName,
+        sourceHash: scopedRule.sourceHash,
+        slug: scopedRule.slug,
+        sourceBytes: scopedRule.sourceBytes,
+        condition: scopedRule.condition,
+        scope: scopedRule.scope,
+      }],
+    });
+    const report = runStartupCheck(input({
+      manifestText: JSON.stringify(built, null, 2),
+      ruleFiles: { [scopedRule.targetPath]: renderManagedRule(scopedRule) },
+    }));
+
+    expect(report.status).toBe("pass");
+    expect(report.issues).toEqual([]);
+  });
+
   test("fails when a managed rule has malformed frontmatter", () => {
     const malformedRule = renderManagedRule(rule()).replace("condition: ", "condition: \"unterminated");
     const report = runStartupCheck(input({ ruleFiles: { [RULE_PATH]: malformedRule } }));
     expect(report.status).toBe("fail");
     expect(reasons(report)).toContain("malformed-rule");
+  });
+
+  test("fails when a generated command file is missing", () => {
+    const cmd = command();
+    const built = manifest({
+      commands: [{
+        path: cmd.targetPath,
+        sourceId: cmd.sourceId,
+        sourceName: cmd.sourceName,
+        sourceHash: cmd.sourceHash,
+        slug: cmd.slug,
+        commandName: cmd.commandName,
+        sourceBytes: cmd.sourceBytes,
+        description: cmd.description,
+      }],
+    });
+    const report = runStartupCheck(input({
+      manifestText: JSON.stringify(built, null, 2),
+      commandFiles: {},
+    }));
+    expect(report.status).toBe("fail");
+    expect(reasons(report)).toContain("missing-command");
+  });
+
+  test("passes when generated command file matches manifest", () => {
+    const cmd = command();
+    const built = manifest({
+      commands: [{
+        path: cmd.targetPath,
+        sourceId: cmd.sourceId,
+        sourceName: cmd.sourceName,
+        sourceHash: cmd.sourceHash,
+        slug: cmd.slug,
+        commandName: cmd.commandName,
+        sourceBytes: cmd.sourceBytes,
+        description: cmd.description,
+      }],
+    });
+    const report = runStartupCheck(input({
+      manifestText: JSON.stringify(built, null, 2),
+      commandFiles: { [cmd.targetPath]: renderManagedCommand(cmd) },
+    }));
+    expect(report.status).toBe("pass");
+    expect(report.issues).toEqual([]);
+  });
+
+  test("fails when generated command still uses legacy prompt-leaking metadata", () => {
+    const cmd = command();
+    const built = manifest({
+      commands: [{
+        path: cmd.targetPath,
+        sourceId: cmd.sourceId,
+        sourceName: cmd.sourceName,
+        sourceHash: cmd.sourceHash,
+        slug: cmd.slug,
+        commandName: cmd.commandName,
+        sourceBytes: cmd.sourceBytes,
+        description: cmd.description,
+      }],
+    });
+    const report = runStartupCheck(input({
+      manifestText: JSON.stringify(built, null, 2),
+      commandFiles: { [cmd.targetPath]: legacyManagedCommand(cmd) },
+    }));
+
+    expect(report.status).toBe("fail");
+    expect(reasons(report)).toContain("command-drift");
   });
 
   test("fails when tokenignore managed block drifts", () => {

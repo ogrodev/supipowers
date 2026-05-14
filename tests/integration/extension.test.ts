@@ -14,6 +14,7 @@ function createMockPi(overrides: Record<string, unknown> = {}) {
     registerMessageRenderer: mock(),
     on: mock(),
     sendMessage: mock(),
+    sendUserMessage: mock(),
     getActiveTools: mock(() => []),
     getCommands: mock(() => []),
     exec: mock(),
@@ -54,8 +55,39 @@ describe("extension entry point", () => {
     expect(registeredCommands).toContain("supi:commit");
     expect(registeredCommands).toContain("supi:ui-design");
     expect(registeredCommands).toContain("supi:harness");
+    expect(registeredCommands).toContain("runbook");
   });
 
+
+  test("intercepts /runbook without sending an LLM prompt", () => {
+    const notify = mock();
+    const mockPi = createMockPi({
+      getCommands: mock(() => [{ name: "runbook", description: "Show runbook" }]),
+    });
+
+    supipowers(mockPi);
+
+    const inputCall = mockPi.on.mock.calls.find((call: any[]) => call[0] === "input");
+    expect(inputCall).toBeTruthy();
+    const result = inputCall[1](
+      { text: "/runbook commands" },
+      {
+        cwd: process.cwd(),
+        hasUI: true,
+        ui: {
+          notify,
+          select: mock(),
+          input: mock(),
+        },
+      },
+    );
+
+    expect(result).toEqual({ handled: true });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0]).toContain("Registered slash commands: 1");
+    expect(mockPi.sendMessage).not.toHaveBeenCalled();
+    expect(mockPi.sendUserMessage).not.toHaveBeenCalled();
+  });
   test("registers context-mode hooks when enabled", () => {
     const mockPi = createMockPi();
 
