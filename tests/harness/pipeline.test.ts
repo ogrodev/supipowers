@@ -234,3 +234,128 @@ describe("runHarnessPipelineUntilGate — auto-mode normalization", () => {
     expect(outcome.status).toBe("awaiting-user");
   });
 });
+
+// `forceStages` bypasses `isComplete` so a stage whose completion artifact already
+// exists still re-executes. This is the contract the harden flow relies on after the
+// user records a new `ci.git` block: the implement stage must re-render the workflow
+// even though `implement-log.jsonl` records a prior successful apply.
+describe("runHarnessPipelineUntilGate — forceStages", () => {
+  let tmpDir: string;
+  let cwd: string;
+  let paths: ReturnType<typeof createTestPaths>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-harness-force-"));
+    paths = createTestPaths(tmpDir);
+    cwd = createTestRepo(tmpDir).repoRoot;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makePlatform(): Platform {
+    return { paths } as unknown as Platform;
+  }
+
+  function makeModelConfig(): ModelConfig {
+    return { version: "1", default: null, actions: {} };
+  }
+
+  function freshSession(id: string): HarnessSession {
+    const ts = new Date().toISOString();
+    return {
+      sessionId: id,
+      projectName: "supipowers",
+      startedAt: ts,
+      updatedAt: ts,
+      stage: "discover",
+      stageStatus: "pending",
+      gateMode: "default",
+      iteration: 1,
+      blocker: null,
+      artifacts: {},
+    };
+  }
+
+  test("re-executes a stage whose isComplete returns true when listed in forceStages", async () => {
+    const sid = newHarnessSessionId();
+    saveHarnessSession(paths, cwd, freshSession(sid));
+
+    // Seed the discover artifact so HarnessDiscoverStage.isComplete() returns true.
+    // Without forceStages, the pipeline reports stage-skipped; with forceStages, it
+    // must invoke `run` (which itself returns "skipped" because discover's run-path
+    // checks isComplete too — what we care about is that the pipeline-level bypass
+    // emits stage-started instead of stage-skipped).
+    saveHarnessDiscover(paths, cwd, sid, {
+      sessionId: sid,
+      recordedAt: new Date().toISOString(),
+      languages: ["typescript"],
+      frameworks: [],
+      packageManagers: ["bun"],
+      buildTools: ["tsc"],
+      testTools: ["bun:test"],
+      lintTools: [],
+      monorepoShape: "single-package",
+      ci: { detected: false, configFiles: [] },
+      ompInfra: { hasSupipowers: true, skills: [], reviewAgents: [], plansCount: 0 },
+      antiSlopExisting: {
+        fallowConfig: null,
+        desloppifyConfig: null,
+        knipConfig: null,
+        jscpdConfig: null,
+        dependencyCruiserConfig: null,
+        eslintConfig: null,
+        biomeConfig: null,
+      },
+      languageCoverage: [{ language: "typescript", fileCount: 10, share: 100 }],
+      recommendedBackend: "fallow",
+      recommendedBackendReason: "primary language is typescript",
+      commitConventions: { detected: false },
+      duplicates: [],
+      notes: [],
+    });
+
+    const traceSkipped: { stage: string; status: string }[] = [];
+    await runHarnessPipelineUntilGate({
+      platform: makePlatform(),
+      paths,
+      cwd,
+      sessionId: sid,
+      modelConfig: makeModelConfig(),
+      gates: "auto",
+      stageInputs: {},
+      startStage: "discover",
+      safetyLimit: 1,
+      onProgress: (e) => {
+        if (e.type === "stage-skipped" || e.type === "stage-started") {
+          traceSkipped.push({ stage: e.stage, status: e.type });
+        }
+      },
+    });
+    expect(traceSkipped.some((e) => e.stage === "discover" && e.status === "stage-skipped")).toBe(true);
+
+    const traceForced: { stage: string; status: string }[] = [];
+    await runHarnessPipelineUntilGate({
+      platform: makePlatform(),
+      paths,
+      cwd,
+      sessionId: sid,
+      modelConfig: makeModelConfig(),
+      gates: "auto",
+      stageInputs: {},
+      startStage: "discover",
+      forceStages: new Set(["discover"]),
+      safetyLimit: 1,
+      onProgress: (e) => {
+        if (e.type === "stage-skipped" || e.type === "stage-started") {
+          traceForced.push({ stage: e.stage, status: e.type });
+        }
+      },
+    });
+    // With forceStages, discover must NOT be skipped at the pipeline level —
+    // stage-started fires and `run` is invoked.
+    expect(traceForced.some((e) => e.stage === "discover" && e.status === "stage-skipped")).toBe(false);
+    expect(traceForced.some((e) => e.stage === "discover" && e.status === "stage-started")).toBe(true);
+  });
+});

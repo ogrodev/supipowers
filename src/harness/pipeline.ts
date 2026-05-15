@@ -151,6 +151,12 @@ export interface PipelineDriverInput {
    * complete). Used by per-stage subcommands.
    */
   startStage?: HarnessStage;
+  /**
+   * Stages listed here bypass their `isComplete` short-circuit. Used by the harden
+   * path after mutating the persisted design spec to force a fresh re-render even when
+   * a prior successful run left the stage's completion artifact on disk.
+   */
+  forceStages?: ReadonlySet<HarnessStage>;
   /** Hard cap on stage iterations. */
   safetyLimit?: number;
   /** Optional callback for progress events (wire up a progress widget). */
@@ -269,14 +275,17 @@ export async function runHarnessPipelineUntilGate(
     const stageInputs = ensureStageInputs(input, stage);
     const runner = buildHarnessRunner(stage, stageInputs);
 
-    const isComplete = await runner.isComplete({
-      platform: input.platform,
-      paths: input.paths,
-      cwd: input.cwd,
-      sessionId: input.sessionId,
-      modelConfig: input.modelConfig,
-      gateMode: input.gates,
-    });
+    const forced = input.forceStages?.has(stage) ?? false;
+    const isComplete = forced
+      ? false
+      : await runner.isComplete({
+          platform: input.platform,
+          paths: input.paths,
+          cwd: input.cwd,
+          sessionId: input.sessionId,
+          modelConfig: input.modelConfig,
+          gateMode: input.gates,
+        });
 
     if (isComplete) {
       input.onProgress?.({ type: "stage-skipped", stage });
