@@ -39,6 +39,7 @@ import {
   loadHarnessSession,
   loadHarnessValidateReport,
   readSlopQueue,
+  saveHarnessDesignSpecJson,
   saveHarnessSession,
 } from "./storage.js";
 import { computeScore } from "./anti_slop/score.js";
@@ -55,6 +56,8 @@ import { buildBackendAdapter } from "./anti_slop/backend-factory.js";
 import { getWorkingTreeStatus } from "../git/status.js";
 import { DEFAULT_HARNESS_CONFIG } from "./hooks/register.js";
 import { handlePrComment } from "./pr-comment/handler.js";
+import { runGitVerificationQa } from "./git-verify-qa.js";
+import { getHarnessSessionDir } from "./project-paths.js";
 import type { HarnessDesignSpec, HarnessGateMode, HarnessSession, HarnessStage } from "../types.js";
 
 modelRegistry.register({
@@ -223,12 +226,13 @@ async function runPipelineWithProgress(
   gates: HarnessGateMode,
   stageInputs: BuildRunnerInput,
   startStage?: HarnessStage,
+  forceStages?: ReadonlySet<HarnessStage>,
 ): Promise<PipelineRunOutcome> {
   const harnessProgress = createHarnessProgress(ctx);
   const modelConfig = loadModelConfig(platform.paths, ctx.cwd);
   const outcome = await pipelineDriver({
     platform, paths: platform.paths, cwd: ctx.cwd, sessionId,
-    modelConfig, gates, stageInputs, startStage,
+    modelConfig, gates, stageInputs, startStage, forceStages,
     onProgress: harnessProgress.onProgress,
   });
   // Single consolidated notification.
@@ -558,12 +562,12 @@ async function runDesignQa(
 
     if (choice === "Accept all suggestions") {
       applyDesignAnalysis(base, analysis);
-      await askCiAndTooling(ctx, base);
+      await askCiAndTooling(platform, ctx, base);
       return base;
     }
 
     if (choice === "Skip — use bare defaults") {
-      await askCiAndTooling(ctx, base);
+      await askCiAndTooling(platform, ctx, base);
       return base;
     }
   }
@@ -627,7 +631,7 @@ async function runDesignQa(
     }
   }
 
-  await askCiAndTooling(ctx, base);
+  await askCiAndTooling(platform, ctx, base);
   return base;
 }
 
@@ -707,7 +711,7 @@ function localCommandOptions(base: HarnessDesignSpec): string[] {
   ]));
 }
 
-async function askCiAndTooling(ctx: HarnessCommandContext, base: HarnessDesignSpec): Promise<void> {
+async function askCiAndTooling(platform: Platform, ctx: HarnessCommandContext, base: HarnessDesignSpec): Promise<void> {
   if (!ctx.ui.select) return;
 
   const triggerChoice = await ctx.ui.select(
@@ -741,6 +745,84 @@ async function askCiAndTooling(ctx: HarnessCommandContext, base: HarnessDesignSp
   } else if (toolChoice) {
     base.ci.localCommand = toolChoice.replace(/\s+\(.+\)$/, "");
   }
+
+  // After the user picks their CI trigger and local command, offer the optional Git
+  // verification flow. This populates `base.ci.git` so the implement stage renders the
+  // PR-source guardrail and validate confirms the wiring. Skippable; declining leaves
+  // `git` unset and the rest of the pipeline behaves identically to before this feature.
+  await runGitVerificationStep(platform, ctx, base);
+}
+
+/**
+ * Adapter around `runGitVerificationQa` that fits the harness command UI. The QA helper
+ * expects an `ExecFn`-shaped function plus a `select / input / notify` UI trio; we wrap
+ * `platform.exec` and `ctx.ui` so the helper stays independent of the OMP plumbing.
+ *
+ * Persists any returned `HarnessCiGitConfig` onto the in-memory `base` spec; the design
+ * stage runner persists the spec to disk so no extra storage call is needed here. We
+ * also widen `base.ci.trigger.branches` to include both `mainBranch` and `devBranch`
+ * so the rendered workflow runs CI on both PR targets — matching the rule "CI runs on
+ * both the dev branch PR and the main branch".
+ */
+async function runGitVerificationStep(
+  platform: Platform,
+  ctx: HarnessCommandContext,
+  base: HarnessDesignSpec,
+): Promise<void> {
+  if (!ctx.ui.select || !ctx.ui.input) return; // No interactive UI — skip silently.
+
+  const sessionDir = getHarnessSessionDir(platform.paths, ctx.cwd, base.sessionId);
+
+  const result = await runGitVerificationQa({
+    exec: (cmd, args, opts) => platform.exec(cmd, args, opts),
+    cwd: ctx.cwd,
+    sessionDir,
+    ui: {
+      select: (title, options) => ctx.ui.select!(title, options as unknown as string[]),
+      input: (label) => ctx.ui.input!(label),
+      notify: (message) => notifyInfo(ctx, "Git verification", message),
+    },
+  });
+
+  if (!result) return;
+  base.ci.git = result;
+
+  // Ensure the CI trigger includes both branches so the workflow runs on PRs targeting
+  // either. Preserve any user-customized branches the prior step already picked.
+  if (base.ci.trigger.mode === "branches") {
+    const next = new Set(base.ci.trigger.branches);
+    next.add(result.mainBranch);
+    if (result.devBranch) next.add(result.devBranch);
+    base.ci.trigger = { mode: "branches", branches: Array.from(next) };
+  }
+}
+
+/**
+ * Harden-mode entry point for Git verification. Mutates the persisted design spec in
+ * place so the downstream implement stage re-renders the workflow with the new `git`
+ * block. Returns true when a new `ci.git` block was captured and persisted so the
+ * caller can force-re-run the affected stages; false when the user declined or no UI
+ * is available.
+ */
+async function runGitVerificationOnHarden(
+  platform: Platform,
+  ctx: HarnessCommandContext,
+  sessionId: string,
+  spec: HarnessDesignSpec,
+): Promise<boolean> {
+  await runGitVerificationStep(platform, ctx, spec);
+  if (!spec.ci.git) return false; // user declined
+  const persisted = saveHarnessDesignSpecJson(platform.paths, ctx.cwd, sessionId, spec);
+  if (!persisted.ok) {
+    notifyInfo(
+      ctx,
+      "Git verification persisted partially",
+      `In-memory spec updated, but persistence failed: ${persisted.error.message}. ` +
+        `Re-run /supi:harness to retry.`,
+    );
+    return false;
+  }
+  return true;
 }
 
 
@@ -902,7 +984,17 @@ async function handleBareEntry(platform: Platform, ctx: HarnessCommandContext): 
     if (layerCount >= 2) {
       await promptDocsTierIfNeeded(platform, ctx, sessionId, layerCount);
     }
-    await runPipelineWithProgress(platform, ctx, sessionId, "auto", {});
+    // Offer the optional Git verification flow on harden when the existing spec has no
+    // `ci.git` block. Keeps the harden path lightweight by skipping silently when the
+    // user previously declined or completed the verification. When the user captures a
+    // new `ci.git` block, force implement + validate to re-run so the workflow file is
+    // re-rendered with the `verify-pr-source` job and the validate cross-check fires.
+    let forceStages: ReadonlySet<HarnessStage> | undefined;
+    if (designSpec.ok && !designSpec.value.ci.git) {
+      const captured = await runGitVerificationOnHarden(platform, ctx, sessionId, designSpec.value);
+      if (captured) forceStages = new Set<HarnessStage>(["implement", "validate"]);
+    }
+    await runPipelineWithProgress(platform, ctx, sessionId, "auto", {}, undefined, forceStages);
   } else {
     // Rebuild: full regeneration with user gates at each stage.
     await runRebuildWithGates(platform, ctx, sessionId);
