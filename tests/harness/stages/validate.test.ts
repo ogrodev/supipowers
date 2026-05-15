@@ -484,6 +484,334 @@ describe("runValidate", () => {
     const permissionWarning = check?.findings.find((f) => f.message.includes("pull-requests: write"));
     expect(permissionWarning).toBeUndefined();
   });
+
+  test("flags missing verify-pr-source job when enforceMainFromDevOnly is true", async () => {
+    writeArtifacts();
+    const workflowDir = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    // Workflow lacks the verify-pr-source job.
+    fs.writeFileSync(
+      path.join(workflowDir, "harness-quality.yml"),
+      [
+        "name: harness",
+        "on: { pull_request: { branches: [dev, main] } }",
+        "jobs:",
+        "  harness-quality:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: bun run harness:quality",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", scripts: { "harness:quality": "echo ok" } }),
+    );
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev", "main"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+        git: {
+          mainBranch: "main",
+          devBranch: "dev",
+          enforceMainFromDevOnly: true,
+          verification: {
+            checkedAt: "2026-05-14T00:00:00.000Z",
+            appliedProtections: ["ci-guardrail"],
+            findings: [
+              { severity: "warning", message: "gh CLI not installed; ruleset skipped." },
+            ],
+            manualInstructionsPath: "git-verification.md",
+          },
+        },
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    const check = report.checks.find((c) => c.name === "ci-local-wiring");
+    expect(check).toBeDefined();
+    expect(check!.passed).toBe(false);
+    const missingJob = check!.findings.find((f) =>
+      f.message.includes("verify-pr-source"),
+    );
+    expect(missingJob).toBeDefined();
+    expect(missingJob!.severity).toBe("error");
+    // The git-verify warning (gh missing) bubbles through as a finding too.
+    const ghWarning = check!.findings.find((f) => f.message.includes("git-verify"));
+    expect(ghWarning).toBeDefined();
+    expect(ghWarning!.severity).toBe("warning");
+  });
+
+  test("flags stale verify-pr-source job whose `if:` references a previous mainBranch", async () => {
+    writeArtifacts();
+    const workflowDir = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    // Workflow has a verify-pr-source job but it's gated on `old-main`, not the
+    // configured `main`. Substring-matching `verify-pr-source` would silently pass.
+    fs.writeFileSync(
+      path.join(workflowDir, "harness-quality.yml"),
+      [
+        "name: harness",
+        "on: { pull_request: { branches: [dev, main, old-main] } }",
+        "jobs:",
+        "  harness-quality:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: bun run harness:quality",
+        "  verify-pr-source:",
+        "    if: github.event.pull_request.base.ref == 'old-main'",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - name: stale",
+        "        run: |",
+        "          if [ \"x\" != \"dev\" ]; then exit 1; fi",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", scripts: { "harness:quality": "echo ok" } }),
+    );
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev", "main", "old-main"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+        git: {
+          mainBranch: "main",
+          devBranch: "dev",
+          enforceMainFromDevOnly: true,
+          verification: null,
+        },
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    const check = report.checks.find((c) => c.name === "ci-local-wiring");
+    expect(check!.passed).toBe(false);
+    const staleFinding = check!.findings.find((f) =>
+      f.message.includes("not gated on mainBranch 'main'"),
+    );
+    expect(staleFinding).toBeDefined();
+  });
+
+  test("does NOT flag a healthy verify-pr-source job with the configured branches", async () => {
+    writeArtifacts();
+    const workflowDir = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflowDir, "harness-quality.yml"),
+      [
+        "name: harness",
+        "on: { pull_request: { branches: [dev, main] } }",
+        "jobs:",
+        "  harness-quality:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: bun run harness:quality",
+        "  verify-pr-source:",
+        "    if: github.event.pull_request.base.ref == 'main'",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - name: guard",
+        "        run: |",
+        "          if [ \"${{ github.event.pull_request.head.ref }}\" != \"dev\" ]; then exit 1; fi",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", scripts: { "harness:quality": "echo ok" } }),
+    );
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev", "main"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+        git: {
+          mainBranch: "main",
+          devBranch: "dev",
+          enforceMainFromDevOnly: true,
+          verification: null,
+        },
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    const check = report.checks.find((c) => c.name === "ci-local-wiring");
+    // None of the verify-pr-source findings should fire for a healthy workflow.
+    const guardFindings = check!.findings.filter((f) => f.message.includes("verify-pr-source"));
+    expect(guardFindings).toEqual([]);
+  });
+
+  test("substitutes the session-dir path for bubbled findings when manualInstructionsPath is set", async () => {
+    writeArtifacts();
+    const workflowDir = path.join(cwd, ".github", "workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+    // Healthy workflow so we focus only on the bubbled-finding remediation.
+    fs.writeFileSync(
+      path.join(workflowDir, "harness-quality.yml"),
+      [
+        "name: harness",
+        "on: { pull_request: { branches: [dev, main] } }",
+        "jobs:",
+        "  harness-quality:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: bun run harness:quality",
+        "  verify-pr-source:",
+        "    if: github.event.pull_request.base.ref == 'main'",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - name: guard",
+        "        run: |",
+        "          if [ \"x\" != \"dev\" ]; then exit 1; fi",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", scripts: { "harness:quality": "echo ok" } }),
+    );
+    const { saveHarnessDesignSpecJson } = await import("../../../src/harness/storage.js");
+    saveHarnessDesignSpecJson(paths, cwd, SESSION_ID, {
+      sessionId: SESSION_ID,
+      recordedAt: "2026-05-03T12:00:00.000Z",
+      layerRules: [],
+      tasteInvariants: [],
+      tooling: { lint: null, structuralTest: null, eval: null },
+      goldenPrinciples: [],
+      docsTree: ["docs/architecture.md", "docs/golden-principles.md"],
+      validationGates: [],
+      supipowersWiring: { addReviewAgent: false, wireChecksGate: false },
+      ci: {
+        provider: "github-actions",
+        trigger: { mode: "branches", branches: ["dev", "main"] },
+        localCommand: "bun run harness:quality",
+        workflowPath: ".github/workflows/harness-quality.yml",
+        git: {
+          mainBranch: "main",
+          devBranch: "dev",
+          enforceMainFromDevOnly: true,
+          verification: {
+            checkedAt: "2026-05-14T00:00:00.000Z",
+            appliedProtections: ["ci-guardrail"],
+            // Finding has no remediation of its own; the validator must supply one.
+            findings: [{ severity: "warning", message: "gh CLI not installed; ruleset skipped." }],
+            manualInstructionsPath: "git-verification.md",
+          },
+        },
+      },
+      antiSlop: {
+        backend: "supi-native",
+        hooks: {
+          pre_edit_dupe_probe: { enabled: false, threshold: 0.85, min_token_count: 30 },
+          post_session_sweep: { enabled: false, block_on_new_dead_code: false },
+          layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+          score_floor: { strict: 0, lenient: 0, release_blocking: false },
+        },
+        skillTargets: [],
+      },
+    } as any);
+    const report = await runValidate(makeContext(), {
+      backend: "supi-native",
+      scoreFloor: { strict: 0, lenient: 0, release_blocking: false },
+      hooks: {
+        pre_edit_dupe_probe: { enabled: false },
+        post_session_sweep: { enabled: false },
+        layer_context_inject: { enabled: false, addendum_max_chars: 800 },
+      },
+    });
+    const check = report.checks.find((c) => c.name === "ci-local-wiring");
+    const bubbled = check!.findings.find((f) => f.message.includes("git-verify"));
+    expect(bubbled).toBeDefined();
+    // Remediation must NOT contain the literal `<session>` placeholder and must point
+    // at the session-scoped path of the manual instructions doc.
+    expect(bubbled!.remediation).not.toContain("<session>");
+    expect(bubbled!.remediation).toContain("git-verification.md");
+    expect(bubbled!.remediation).toContain(SESSION_ID);
+  });
 });
 
 describe("HarnessValidateStage", () => {

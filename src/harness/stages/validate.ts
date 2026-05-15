@@ -19,6 +19,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { parse as parseYaml } from "yaml";
+
 import type { Platform } from "../../platform/types.js";
 import type {
   HarnessAntiSlopBackend,
@@ -53,6 +55,7 @@ import {
   getHarnessAgentsMdPath,
   getHarnessArchitectureDocPath,
   getHarnessGoldenPrinciplesPath,
+  getHarnessSessionDir,
 } from "../project-paths.js";
 import { resolveDocsConfig } from "../docs/config.js";
 import { matchesLayerGlob } from "../docs/glob-match.js";
@@ -279,6 +282,63 @@ function workflowGrantsPrCommentPermission(workflow: string): boolean {
   return false;
 }
 
+/**
+ * Structurally inspect the rendered workflow for a healthy `verify-pr-source` job.
+ *
+ * Returns `null` when the job is present, gated on the configured `mainBranch`, and
+ * its shell guard names the configured `devBranch`. Returns a short description of
+ * the first mismatch otherwise.
+ *
+ * Parsing the YAML (rather than substring-matching the source) is what catches:
+ *  - a comment mentioning `verify-pr-source` (the substring lives, the job doesn't),
+ *  - a stale job referencing a previous mainBranch/devBranch pair after the spec
+ *    was updated and the workflow was not re-rendered,
+ *  - a structurally wrong job (no `if`, no `run` block, etc.).
+ *
+ * Unparseable YAML falls back to a substring sanity check so a malformed workflow
+ * still reports *something* useful instead of silently passing.
+ */
+function inspectPrSourceGuardrailJob(
+  workflow: string,
+  mainBranch: string,
+  devBranch: string,
+): string | null {
+  let doc: unknown;
+  try {
+    doc = parseYaml(workflow);
+  } catch {
+    return workflow.includes("verify-pr-source")
+      ? "workflow YAML is unparseable; cannot confirm guardrail is correct"
+      : "workflow YAML is unparseable and contains no verify-pr-source job";
+  }
+  if (!doc || typeof doc !== "object") return "workflow root is not a mapping";
+  const jobs = (doc as { jobs?: unknown }).jobs;
+  if (!jobs || typeof jobs !== "object") return "workflow has no `jobs:` mapping";
+  const job = (jobs as Record<string, unknown>)["verify-pr-source"];
+  if (!job || typeof job !== "object") return "job `verify-pr-source` is not defined";
+  const ifExpr = (job as { if?: unknown }).if;
+  if (typeof ifExpr !== "string" || !ifExpr.includes(`'${mainBranch}'`)) {
+    return `job \`verify-pr-source\` is not gated on mainBranch '${mainBranch}'`;
+  }
+  // The shell guard lives in steps[*].run; concatenate every run block we find so we
+  // do not depend on the exact step order or composition.
+  const steps = (job as { steps?: unknown }).steps;
+  const runBlocks: string[] = [];
+  if (Array.isArray(steps)) {
+    for (const step of steps) {
+      if (step && typeof step === "object") {
+        const run = (step as { run?: unknown }).run;
+        if (typeof run === "string") runBlocks.push(run);
+      }
+    }
+  }
+  const combinedRun = runBlocks.join("\n");
+  if (!combinedRun.includes(`"${devBranch}"`)) {
+    return `job \`verify-pr-source\` does not guard against devBranch '${devBranch}'`;
+  }
+  return null;
+}
+
 async function checkCiLocalWiring(
   paths: HarnessStageRunnerContext["paths"],
   cwd: string,
@@ -395,12 +455,60 @@ async function checkCiLocalWiring(
           source: "ci-local-wiring",
         });
       }
+
+      // When the design recorded git verification with `enforceMainFromDevOnly: true`,
+      // confirm the workflow actually contains the `verify-pr-source` job that the
+      // implement stage is supposed to render, with an `if:` that names the current
+      // mainBranch and a shell guard that names the current devBranch. A missing or
+      // stale job means CI-side enforcement is silently absent — surface it as an error
+      // so the user notices. Substring search is intentionally avoided: a comment
+      // containing "verify-pr-source", or a stale job from a previous main/dev pairing,
+      // would pass a `workflow.includes(...)` check but provide no real enforcement.
+      const git = spec.value.ci.git;
+      if (git && git.enforceMainFromDevOnly && git.devBranch) {
+        const issue = inspectPrSourceGuardrailJob(workflow, git.mainBranch, git.devBranch);
+        if (issue) {
+          findings.push({
+            severity: "error",
+            file: spec.value.ci.workflowPath,
+            message: `CI workflow's verify-pr-source job is missing or stale: ${issue}.`,
+            remediation: `Re-run /supi:harness so the workflow re-renders with the dev/main guardrail (dev=${git.devBranch}, main=${git.mainBranch}).`,
+            source: "ci-local-wiring",
+          });
+        }
+      }
     } catch (error) {
       findings.push({
         severity: "error",
         file: spec.value.ci.workflowPath,
         message: `CI workflow is unreadable: ${error instanceof Error ? error.message : String(error)}`,
         remediation: "Fix workflow file permissions or contents.",
+        source: "ci-local-wiring",
+      });
+    }
+  }
+
+  // Bubble git-verification findings recorded by the interactive QA step into the
+  // validate report. The QA helper records non-fatal issues (gh missing, no permission)
+  // so the user sees them in the validation output even if the workflow itself is fine.
+  // When a bubbled finding has no remediation of its own, fall back to the manual
+  // instructions doc — but only when one was actually written (`manualInstructionsPath`
+  // is set). The previous literal-`<session>` placeholder was never substituted and
+  // pointed at a file that was never written for declined / completed verifications.
+  const gitVerification = spec.value.ci.git?.verification;
+  if (gitVerification) {
+    const manualPath = gitVerification.manualInstructionsPath
+      ? path.join(getHarnessSessionDir(paths, cwd, sessionId), gitVerification.manualInstructionsPath)
+      : null;
+    const fallbackRemediation = manualPath
+      ? `See ${manualPath} for manual steps.`
+      : "Re-run /supi:harness to retry git verification.";
+    for (const finding of gitVerification.findings) {
+      findings.push({
+        severity: finding.severity,
+        file: spec.value.ci.workflowPath,
+        message: `git-verify: ${finding.message}`,
+        remediation: finding.remediation ?? fallbackRemediation,
         source: "ci-local-wiring",
       });
     }
