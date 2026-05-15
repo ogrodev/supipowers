@@ -19,6 +19,7 @@ import { loadModelConfig } from "../config/model-config.js";
 import { getProjectStatePath } from "../workspace/state-paths.js";
 import { cancelPlanTracking, startPlanTracking } from "../planning/approval-flow.js";
 import { stopVisualServer } from "../visual/stop-server.js";
+import { execCli } from "../utils/exec-cli.js";
 
 modelRegistry.register({
   id: "plan",
@@ -111,7 +112,7 @@ export function registerPlanCommand(platform: Platform): void {
             const nodeModules = path.join(scriptsDir, "node_modules");
             if (!fs.existsSync(nodeModules)) {
               notifyInfo(ctx, "Installing visual companion dependencies...");
-              const installResult = await platform.exec("npm", ["install", "--production"], { cwd: scriptsDir });
+              const installResult = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "npm", ["install", "--production"], { cwd: scriptsDir });
               if (installResult.code !== 0) {
                 notifyError(ctx, "Failed to install visual companion dependencies", installResult.stderr);
                 debugLogger.log("visual_companion_dependency_install_failed", {

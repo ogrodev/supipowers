@@ -12,6 +12,7 @@ import { registerAiReviewCommand, handleAiReview } from "./commands/ai-review.js
 import { registerQaCommand } from "./commands/qa.js";
 import { registerReleaseCommand, handleRelease } from "./commands/release.js";
 import { registerUpdateCommand, handleUpdate } from "./commands/update.js";
+import { execCli } from "./utils/exec-cli.js";
 import { registerDoctorCommand, handleDoctor } from "./commands/doctor.js";
 import { registerModelCommand, handleModel } from "./commands/model.js";
 import { registerFixPrCommand } from "./commands/fix-pr.js";
@@ -175,7 +176,7 @@ export function bootstrap(platform: Platform): void {
     const currentVersion = getInstalledVersion(platform);
     if (!currentVersion) return;
 
-    platform.exec("npm", ["view", "supipowers", "version"], { cwd: tmpdir() })
+    execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "npm", ["view", "supipowers", "version"], { cwd: tmpdir() })
       .then((result) => {
         if (result.code !== 0) return;
         const latest = result.stdout.trim();

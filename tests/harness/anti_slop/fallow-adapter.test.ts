@@ -4,6 +4,7 @@ import {
   FallowAdapter,
   _resetFallowAvailabilityCacheForTests,
 } from "../../../src/harness/anti_slop/fallow-adapter.js";
+import { normalizeExecCall } from "../../helpers/exec-calls.js";
 
 beforeEach(() => {
   _resetFallowAvailabilityCacheForTests();
@@ -14,8 +15,13 @@ afterEach(() => {
 });
 
 function makePlatform(handler: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string; code: number; killed?: boolean }>) {
+  // execCli rewrites npx → `node <path>/npx-cli.js` on Windows; normalize so
+  // adapter tests can keep matching on the logical command name.
   return {
-    exec: mock(handler),
+    exec: mock(async (cmdRaw: string, argsRaw: string[]) => {
+      const { cmd, args } = normalizeExecCall({ cmd: cmdRaw, args: argsRaw });
+      return handler(cmd, args);
+    }),
     paths: {} as any,
   } as any;
 }
