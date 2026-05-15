@@ -1826,6 +1826,46 @@ export interface HarnessCiConfig {
    * an explicit truthy `enabled`, so legacy specs do not trip it.
    */
   prComment?: HarnessPrCommentConfig;
+  /**
+   * Optional Git topology + branch-protection wiring captured by the interactive
+   * `git-verify` sub-step run between Design and Plan. Absent on legacy specs.
+   *
+   *  - `mainBranch` is the canonical protected branch (typically `main` or `master`).
+   *  - `devBranch` is the development branch dev work flows through; `null` when the user
+   *    opts out of the convention.
+   *  - `enforceMainFromDevOnly` controls both the CI-side guardrail (a `verify-pr-source`
+   *    job appended to the rendered workflow) and the opportunistic server-side ruleset
+   *    applied via `gh api`. The CI guardrail is deterministic; the ruleset is best-effort.
+   *  - `verification` records what the interactive helper actually did. `appliedProtections`
+   *    is the set of enforcement layers that landed (e.g. `"ci-guardrail"`, `"ruleset"`).
+   *    `findings` carries non-fatal issues surfaced during the run; the validate stage
+   *    folds them into its report. `manualInstructionsPath` points at the rendered
+   *    fallback doc when `gh` is unavailable or lacks scope.
+   */
+  git?: HarnessCiGitConfig;
+}
+
+/** Git/branch-protection block recorded by the interactive verification helper. */
+export interface HarnessCiGitConfig {
+  mainBranch: string;
+  devBranch: string | null;
+  enforceMainFromDevOnly: boolean;
+  verification: HarnessCiGitVerification | null;
+}
+
+/** Result block recorded by `runGitVerificationQa` for downstream stages to consume. */
+export interface HarnessCiGitVerification {
+  checkedAt: string;
+  appliedProtections: string[];
+  findings: HarnessCiGitFinding[];
+  /** Relative path (under the session dir) to the rendered manual-instructions doc, or null. */
+  manualInstructionsPath: string | null;
+}
+
+export interface HarnessCiGitFinding {
+  severity: "info" | "warning" | "error";
+  message: string;
+  remediation?: string;
 }
 
 
