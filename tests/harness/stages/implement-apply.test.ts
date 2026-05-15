@@ -232,3 +232,113 @@ describe("applyHarnessPlan — failure handling", () => {
     expect(pkg.scripts["harness:quality"]).toContain("eslint");
   });
 });
+
+describe("applyHarnessPlan — git verification wiring", () => {
+  test("renders verify-pr-source job when enforceMainFromDevOnly is true", async () => {
+    await applyHarnessPlan({
+      platform: makePlatform(),
+      paths,
+      cwd,
+      spec: makeSpec({
+        ci: {
+          provider: "github-actions",
+          trigger: { mode: "branches", branches: ["dev", "main"] },
+          localCommand: "bun run harness:quality",
+          workflowPath: ".github/workflows/harness-quality.yml",
+          git: {
+            mainBranch: "main",
+            devBranch: "dev",
+            enforceMainFromDevOnly: true,
+            verification: null,
+          },
+        },
+      }),
+    });
+    const workflow = fs.readFileSync(
+      path.join(cwd, ".github", "workflows", "harness-quality.yml"),
+      "utf8",
+    );
+    expect(workflow).toContain("verify-pr-source");
+    expect(workflow).toContain("pull_request.base.ref");
+    expect(workflow).toContain("'main'");
+    expect(workflow).toContain("'dev'");
+  });
+
+  test("omits verify-pr-source job when git block is absent", async () => {
+    await applyHarnessPlan({
+      platform: makePlatform(),
+      paths,
+      cwd,
+      spec: makeSpec(), // no git block in default spec
+    });
+    const workflow = fs.readFileSync(
+      path.join(cwd, ".github", "workflows", "harness-quality.yml"),
+      "utf8",
+    );
+    expect(workflow).not.toContain("verify-pr-source");
+  });
+
+  test("omits verify-pr-source job when enforceMainFromDevOnly is false", async () => {
+    await applyHarnessPlan({
+      platform: makePlatform(),
+      paths,
+      cwd,
+      spec: makeSpec({
+        ci: {
+          provider: "github-actions",
+          trigger: { mode: "branches", branches: ["dev", "main"] },
+          localCommand: "bun run harness:quality",
+          workflowPath: ".github/workflows/harness-quality.yml",
+          git: {
+            mainBranch: "main",
+            devBranch: "dev",
+            enforceMainFromDevOnly: false,
+            verification: null,
+          },
+        },
+      }),
+    });
+    const workflow = fs.readFileSync(
+      path.join(cwd, ".github", "workflows", "harness-quality.yml"),
+      "utf8",
+    );
+    expect(workflow).not.toContain("verify-pr-source");
+  });
+
+  test("widens trigger.branches to include mainBranch even when the spec omits it", async () => {
+    // Defense-in-depth: a hand-edited or legacy spec where `trigger.branches` lacks the
+    // protected `mainBranch` would otherwise render a workflow that never fires on PRs
+    // into main — making the `verify-pr-source` job dead code. The render pass must
+    // widen the branches set whenever the guardrail is on.
+    await applyHarnessPlan({
+      platform: makePlatform(),
+      paths,
+      cwd,
+      spec: makeSpec({
+        ci: {
+          provider: "github-actions",
+          // Spec says branches=["dev"] but mainBranch="main" — render must add "main".
+          trigger: { mode: "branches", branches: ["dev"] },
+          localCommand: "bun run harness:quality",
+          workflowPath: ".github/workflows/harness-quality.yml",
+          git: {
+            mainBranch: "main",
+            devBranch: "dev",
+            enforceMainFromDevOnly: true,
+            verification: null,
+          },
+        },
+      }),
+    });
+    const workflow = fs.readFileSync(
+      path.join(cwd, ".github", "workflows", "harness-quality.yml"),
+      "utf8",
+    );
+    expect(workflow).toContain("verify-pr-source");
+    // The trigger's `branches: [...]` line must mention both 'dev' and 'main'.
+    const branchesLine = workflow.split("\n").find((l) => /^\s+branches:/.test(l));
+    expect(branchesLine).toBeDefined();
+    expect(branchesLine).toContain("'dev'");
+    expect(branchesLine).toContain("'main'");
+  });
+});
