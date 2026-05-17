@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Value } from "@sinclair/typebox/value";
+import { checkSchema } from "../../helpers/schema.js"
 import type { ExecResult } from "../../../src/platform/types.js";
 import type { GateExecutionContext, ProjectFacts, WorkspaceTarget } from "../../../src/types.js";
 import { testSuiteGate } from "../../../src/quality/gates/test-suite.js";
@@ -55,14 +55,14 @@ function createContext(execShell: GateExecutionContext["execShell"]): GateExecut
 describe("testSuiteGate", () => {
   test("configSchema matches enabled and disabled test-suite configs", () => {
     expect(
-      Value.Check(testSuiteGate.configSchema, {
+      checkSchema(testSuiteGate.configSchema, {
         enabled: true,
         runs: [{ command: "bun test tests/", target: { scope: "all-targets" } }],
       }),
     ).toBe(true);
-    expect(Value.Check(testSuiteGate.configSchema, { enabled: false })).toBe(true);
-    expect(Value.Check(testSuiteGate.configSchema, { enabled: true, runs: [] })).toBe(false);
-    expect(Value.Check(testSuiteGate.configSchema, { enabled: false, extra: true })).toBe(false);
+    expect(checkSchema(testSuiteGate.configSchema, { enabled: false })).toBe(true);
+    expect(checkSchema(testSuiteGate.configSchema, { enabled: true, runs: [] })).toBe(false);
+    expect(checkSchema(testSuiteGate.configSchema, { enabled: false, extra: true })).toBe(false);
   });
 
   test("detect recommends the package test script when present", () => {

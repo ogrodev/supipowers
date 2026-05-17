@@ -3,8 +3,8 @@
 //    ambiguous state"
 //
 // How to break it: reorder src/commands/fix-pr.ts so
-// `createFixPrSession(...)` runs before `selectWorkspaceTarget(...)`
-// returns, or persist a session when `selectedTarget` is null/undefined.
+// `createFixPrSession(...)` runs before target selection returns, or persist
+// a session when `selected` is null/undefined.
 // Either mutation lets a fix-pr session be written without an owning
 // workspace target, which downstream consumers disambiguate heuristically
 // and wrong.
@@ -12,12 +12,11 @@
 // Strategy: Approach B (structural). The handler is 400+ lines of TUI
 // plus workspace discovery plus snapshot writing. A runtime approach
 // would require mocking discoverWorkspaceTargets, fetchPrComments,
-// clusterCommentsByWorkspaceTarget, selectWorkspaceTarget, the ctx.ui
-// select flow, and fs writes — well past the 70-line budget. The
-// structural check captures the same invariant: in source order,
-// selectWorkspaceTarget(ctx, ...) must precede every
+// clusterCommentsByWorkspaceTarget, the ctx.ui select flow, and fs writes —
+// well past the 70-line budget. The structural check captures the same
+// invariant: in source order, a non-null selected target must precede every
 // createFixPrSession(...) call, and the session-creation branch must be
-// guarded by a non-null selectedTarget.
+// guarded by a non-null selection.
 
 import { defineEval } from "./harness.js";
 import { expect } from "bun:test";
@@ -41,20 +40,15 @@ defineEval({
     );
     const source = fs.readFileSync(sourcePath, "utf8");
 
-    // Sanity: both helpers are imported from their expected modules. If
-    // these imports move, the invariant shape has shifted and the eval
-    // must be revisited rather than silently passing.
-    expect(source).toMatch(
-      /import\s*\{[^}]*selectWorkspaceTarget[^}]*\}\s*from\s*"\.\.\/workspace\/selector\.js"/,
-    );
+    // Sanity: the storage helper is imported from its expected module. If
+    // this import moves, the invariant shape has shifted and the eval must be
+    // revisited rather than silently passing.
     expect(source).toMatch(
       /import\s*\{[\s\S]*?createFixPrSession[\s\S]*?\}\s*from\s*"\.\.\/storage\/fix-pr-sessions\.js"/,
     );
 
-    // Find the first CALL site of selectWorkspaceTarget that takes `ctx`
-    // as its first argument — this is the real orchestrator-level
-    // selection, distinct from the import / dep-type noise.
-    const selectCallIdx = source.indexOf("selectWorkspaceTarget(ctx,");
+    // Find the explicit selected-target assignment in the orchestrator flow.
+    const selectCallIdx = source.indexOf("const selectedTarget = selected.target;");
     expect(selectCallIdx).toBeGreaterThan(-1);
 
     // Find the first CALL site of createFixPrSession.
@@ -64,11 +58,11 @@ defineEval({
     // Core invariant: target selection precedes session creation.
     expect(selectCallIdx).toBeLessThan(createCallIdx);
 
-    // Defense in depth: there is an explicit early return when the user
-    // cancels target selection, so createFixPrSession is unreachable
-    // without a non-null selectedTarget in scope.
+    // Defense in depth: there is an explicit early return when selection
+    // fails, so createFixPrSession is unreachable without a non-null selected
+    // target in scope.
     const between = source.slice(selectCallIdx, createCallIdx);
-    expect(between).toMatch(/if\s*\(\s*!\s*selectedTarget\s*\)/);
+    expect(between).toMatch(/let\s+activeSession\s*=\s*findActiveFixPrSession\([^)]*selectedTarget/);
     expect(between).toMatch(/\breturn\b/);
 
     // And the session-persisting call itself must receive the selected

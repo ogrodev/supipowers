@@ -33,9 +33,9 @@ function makePlatform() {
     registerTool: mock((def: any) => {
       toolDef = def;
     }),
-    fireToolCall: async (toolName: string) => {
+    fireToolCall: async (toolName: string, input: Record<string, unknown> = {}) => {
       if (!toolCallHandler) return undefined;
-      return await toolCallHandler({ toolName, input: {} });
+      return await toolCallHandler({ toolName, input });
     },
     getRegisteredTool: () => toolDef,
   };
@@ -160,7 +160,7 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
     expect(result?.reason).toContain("`ask`");
   });
 
-  test("blocks native exit_plan_mode while planning is active", async () => {
+  test("blocks native resolve plan approval while planning is active", async () => {
     const platform = makePlatform();
     registerPlanningAskToolGuard(platform as any);
 
@@ -170,14 +170,28 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
       global: (..._parts: string[]) => "/tmp/does-not-exist-global",
     } as any);
 
-    const result = (await platform.fireToolCall("exit_plan_mode")) as
+    const result = (await platform.fireToolCall("resolve", { action: "apply", extra: { title: "plan_title" } })) as
       | { block: true; reason: string }
       | undefined;
 
     expect(result).toBeDefined();
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("file-based approval hook");
+    expect(result?.reason).toContain("extra.title");
     expect(result?.reason).toContain("bypasses supipowers");
+  });
+
+  test("leaves ordinary resolve calls alone while planning is active", async () => {
+    const platform = makePlatform();
+    registerPlanningAskToolGuard(platform as any);
+
+    startPlanTracking("/cwd", {
+      dotDirDisplay: ".omp",
+      project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist",
+      global: (..._parts: string[]) => "/tmp/does-not-exist-global",
+    } as any);
+
+    expect(await platform.fireToolCall("resolve", { action: "apply" })).toBeUndefined();
   });
 
   test("blocks the `ask` tool when ui-design is active", async () => {

@@ -250,4 +250,119 @@ describe("registerFixPrCommand", () => {
     expect(prompt).not.toContain('"id":2');
     expect(prompt).not.toContain('"id":3');
   });
+
+  test("offers all comments as the default interactive fix-pr target", async () => {
+    const workspaceDir = setupWorkspaceRepo(tmpDir);
+    const commentsJsonl = [
+      JSON.stringify({
+        id: 1,
+        path: "packages/pkg-a/src/index.ts",
+        line: 1,
+        body: "package comment",
+        user: "reviewer",
+        userType: "User",
+        createdAt: "2026-04-16T00:00:00Z",
+        updatedAt: "2026-04-16T00:00:00Z",
+        inReplyToId: null,
+        diffHunk: null,
+        state: "COMMENTED",
+      }),
+      JSON.stringify({
+        id: 2,
+        path: "README.md",
+        line: 1,
+        body: "root comment",
+        user: "reviewer",
+        userType: "User",
+        createdAt: "2026-04-16T00:00:00Z",
+        updatedAt: "2026-04-16T00:00:00Z",
+        inReplyToId: null,
+        diffHunk: null,
+        state: "COMMENTED",
+      }),
+      JSON.stringify({
+        id: 3,
+        path: null,
+        line: null,
+        body: "review summary",
+        user: "reviewer",
+        userType: "User",
+        createdAt: "2026-04-16T00:00:00Z",
+        updatedAt: "2026-04-16T00:00:00Z",
+        inReplyToId: null,
+        diffHunk: null,
+        state: "COMMENTED",
+      }),
+    ].join("\n");
+    fs.mkdirSync(path.join(workspaceDir, ".omp", "supipowers"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, ".omp", "supipowers", "fix-pr.json"),
+      JSON.stringify(DEFAULT_FIX_PR_CONFIG),
+    );
+
+    const exec = mock(async (cmd: string, args: string[], opts?: { cwd?: string }) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "owner/repo\n", stderr: "", code: 0 };
+      }
+      if (cmd === "git" && args[0] === "rev-parse") {
+        expect(opts?.cwd).toBe(workspaceDir);
+        return { stdout: `${tmpDir}\n`, stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[2] === "repos/owner/repo/pulls/123/comments") {
+        return { stdout: `${commentsJsonl}\n`, stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[2] === "repos/owner/repo/pulls/123/reviews") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "unexpected", code: 1 };
+    });
+    const platform = createPlatform(exec as Platform["exec"], tmpDir);
+    const ctx = {
+      cwd: workspaceDir,
+      hasUI: true,
+      ui: {
+        notify: mock(),
+        select: mock(async (_title: string, options: string[]) => options[0] ?? null),
+        input: mock(),
+        setStatus: mock(),
+      },
+    } as any;
+    const assessmentJson = JSON.stringify({
+      assessments: [1, 2, 3].map((commentId) => ({
+        commentId,
+        verdict: "apply",
+        rationale: "Reviewer correctly flagged an issue.",
+        affectedFiles: [],
+        rippleEffects: [],
+        verificationPlan: "bun test",
+      })),
+    });
+    (platform as any).createAgentSession = mock(async () => {
+      const messages: any[] = [];
+      return {
+        state: { get messages() { return messages; } },
+        async prompt() { messages.push({ role: "assistant", content: assessmentJson }); },
+        async dispose() {},
+      };
+    });
+
+    registerFixPrCommand(platform);
+    const handler = (platform.registerCommand as any).mock.calls[0][1].handler;
+
+    await handler("#123", ctx);
+
+    expect(ctx.ui.select).toHaveBeenCalledWith(
+      "Fix-PR target",
+      expect.arrayContaining([expect.stringMatching(/^all — all — 3 comments$/)]),
+      expect.objectContaining({ helpText: expect.stringContaining("all comments") }),
+    );
+    const targetOptions = (ctx.ui.select as any).mock.calls[0][1];
+    expect(targetOptions[0]).toBe("all — all — 3 comments");
+    const prompt = (platform.sendMessage as any).mock.calls[0][0].content[0].text;
+    expect(prompt).toContain("Selected target: all targets");
+    expect(prompt).toContain('"id":1');
+    expect(prompt).toContain('"id":2');
+    expect(prompt).toContain('"id":3');
+    expect(prompt).toContain("Deferred comments outside this target: none");
+  });
 });

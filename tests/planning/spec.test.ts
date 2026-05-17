@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Value } from "@sinclair/typebox/value";
+import { checkSchema } from "../helpers/schema.js"
 import {
   PlanSpecSchema,
   PlanSpecTaskSchema,
@@ -16,7 +16,7 @@ describe("PlanSpecTaskSchema", () => {
       criteria: "covered by tests",
       complexity: "small",
     };
-    expect(Value.Check(PlanSpecTaskSchema, task)).toBe(true);
+    expect(checkSchema(PlanSpecTaskSchema, task)).toBe(true);
   });
 
   test("accepts an optional model", () => {
@@ -29,7 +29,7 @@ describe("PlanSpecTaskSchema", () => {
       complexity: "medium",
       model: "claude-opus-4-5",
     };
-    expect(Value.Check(PlanSpecTaskSchema, task)).toBe(true);
+    expect(checkSchema(PlanSpecTaskSchema, task)).toBe(true);
   });
 
   test("rejects unknown complexity", () => {
@@ -41,7 +41,7 @@ describe("PlanSpecTaskSchema", () => {
       criteria: "",
       complexity: "epic",
     };
-    expect(Value.Check(PlanSpecTaskSchema, task)).toBe(false);
+    expect(checkSchema(PlanSpecTaskSchema, task)).toBe(false);
   });
 
   test("rejects zero or negative id", () => {
@@ -53,7 +53,7 @@ describe("PlanSpecTaskSchema", () => {
       criteria: "",
       complexity: "small",
     };
-    expect(Value.Check(PlanSpecTaskSchema, task)).toBe(false);
+    expect(checkSchema(PlanSpecTaskSchema, task)).toBe(false);
   });
 
   test("rejects extra properties", () => {
@@ -66,7 +66,7 @@ describe("PlanSpecTaskSchema", () => {
       complexity: "small",
       bogus: true,
     };
-    expect(Value.Check(PlanSpecTaskSchema, task)).toBe(false);
+    expect(checkSchema(PlanSpecTaskSchema, task)).toBe(false);
   });
 });
 
@@ -89,25 +89,25 @@ describe("PlanSpecSchema", () => {
   };
 
   test("accepts a minimal valid plan", () => {
-    expect(Value.Check(PlanSpecSchema, minimal)).toBe(true);
+    expect(checkSchema(PlanSpecSchema, minimal)).toBe(true);
   });
 
   test("accepts an empty task list (agent may plan without tasks initially)", () => {
-    expect(Value.Check(PlanSpecSchema, { ...minimal, tasks: [] })).toBe(true);
+    expect(checkSchema(PlanSpecSchema, { ...minimal, tasks: [] })).toBe(true);
   });
 
   test("tolerates empty created string (legacy plans)", () => {
-    expect(Value.Check(PlanSpecSchema, { ...minimal, created: "" })).toBe(true);
+    expect(checkSchema(PlanSpecSchema, { ...minimal, created: "" })).toBe(true);
   });
 
   test("rejects missing name", () => {
     const plan: any = { ...minimal };
     delete plan.name;
-    expect(Value.Check(PlanSpecSchema, plan)).toBe(false);
+    expect(checkSchema(PlanSpecSchema, plan)).toBe(false);
   });
 
   test("rejects extra top-level properties", () => {
-    expect(Value.Check(PlanSpecSchema, { ...minimal, filePath: "x.md" })).toBe(false);
+    expect(checkSchema(PlanSpecSchema, { ...minimal, filePath: "x.md" })).toBe(false);
   });
 });
 
