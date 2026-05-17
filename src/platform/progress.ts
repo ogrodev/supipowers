@@ -58,6 +58,7 @@ export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgress
   let frame = 0;
   let statusActive = false;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let disposed = false;
 
   function visibleSteps(): WorkflowStepState[] {
     return steps.filter((step) => !step.hidden);
@@ -92,6 +93,9 @@ export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgress
   }
 
   function refresh() {
+    if (disposed) {
+      return;
+    }
     frame++;
     ui.setWidget?.(widgetKey, () => new Text(renderWidgetText(), 0, 0));
     if (statusActive) {
@@ -100,6 +104,9 @@ export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgress
   }
 
   function startTimer() {
+    if (disposed) {
+      return;
+    }
     if (!timer) {
       timer = setInterval(refresh, 80);
     }
@@ -117,6 +124,9 @@ export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgress
   }
 
   function setStatus(stepKey: string, status: WorkflowStepStatus, detail?: string) {
+    if (disposed) {
+      return;
+    }
     const step = getStep(stepKey);
     if (!step) {
       return;
@@ -170,6 +180,7 @@ export function createWorkflowProgress(ui: PlatformUI, options: WorkflowProgress
       refresh();
     },
     dispose() {
+      disposed = true;
       stopTimer();
       ui.setStatus?.(options.statusKey, undefined);
       for (const key of options.clearStatusKeys ?? []) {
