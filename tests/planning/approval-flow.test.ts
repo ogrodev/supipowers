@@ -1,7 +1,8 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { createPaths } from "../../src/platform/types.js";
 import { getProjectStatePath } from "../../src/workspace/state-paths.js";
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import {
   startPlanTracking,
   cancelPlanTracking,
@@ -22,6 +23,29 @@ import { listPlans, readPlanFile } from "../../src/storage/plans.js";
 
 const mockListPlans = listPlans as unknown as ReturnType<typeof mock>;
 const mockReadPlanFile = readPlanFile as unknown as ReturnType<typeof mock>;
+
+function listPlansFallback(paths: any, cwd: string): string[] {
+  const dir = getProjectStatePath(paths, cwd, "plans");
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .reverse();
+}
+
+function readPlanFileFallback(paths: any, cwd: string, name: string): string | null {
+  const filePath = path.join(getProjectStatePath(paths, cwd, "plans"), name);
+  if (!fs.existsSync(filePath)) return null;
+  return fs.readFileSync(filePath, "utf-8");
+}
+
+function resetPlanStorageMocks(): void {
+  mockListPlans.mockReset();
+  mockReadPlanFile.mockReset();
+  mockListPlans.mockImplementation(listPlansFallback);
+  mockReadPlanFile.mockImplementation(readPlanFileFallback);
+}
 
 type MockPlatform = {
   paths: any;
@@ -82,8 +106,12 @@ function makeCtx(overrides: Partial<MockCtx> = {}): MockCtx {
 
 beforeEach(() => {
   cancelPlanTracking();
-  mockListPlans.mockClear();
-  mockReadPlanFile.mockClear();
+  resetPlanStorageMocks();
+});
+
+afterEach(() => {
+  cancelPlanTracking();
+  resetPlanStorageMocks();
 });
 
 // ---------------------------------------------------------------------------
