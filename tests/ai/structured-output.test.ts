@@ -221,6 +221,37 @@ describe("runWithOutputValidation", () => {
 
     expect(result.status).toBe("ok");
   });
+
+  test("returns blocked when the agent session exceeds timeout", async () => {
+    let disposed = false;
+    const factory = async (): Promise<AgentSession> => ({
+      state: {
+        get messages() {
+          return [];
+        },
+      },
+      async prompt() {
+        await new Promise(() => {});
+      },
+      async dispose() {
+        disposed = true;
+      },
+    } as unknown as AgentSession);
+
+    const result = await runWithOutputValidation<Person>(factory as any, {
+      cwd: "/tmp",
+      prompt: "give person",
+      schema: "Person",
+      parse: (raw) => parseStructuredOutput<Person>(raw, PersonSchema),
+      timeoutMs: 1,
+    });
+
+    expect(result.status).toBe("blocked");
+    if (result.status === "blocked") {
+      expect(result.error).toContain("timed out");
+    }
+    expect(disposed).toBe(true);
+  });
 });
 
 
