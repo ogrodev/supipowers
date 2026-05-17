@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Type } from "@sinclair/typebox";
+import { z } from "zod/v4";
 import {
   collectValidationErrors,
   formatValidationErrors,
@@ -9,13 +9,10 @@ import {
 } from "../../src/ai/structured-output.js";
 import type { AgentSession } from "../../src/platform/types.js";
 
-const PersonSchema = Type.Object(
-  {
-    name: Type.String({ minLength: 1 }),
-    age: Type.Integer(),
-  },
-  { additionalProperties: false },
-);
+const PersonSchema = z.object({
+  name: z.string().min(1),
+  age: z.number().int(),
+}).strict();
 
 interface Person {
   name: string;
