@@ -29,6 +29,8 @@ export interface RunFixPrAssessmentInput {
   model?: string;
   thinkingLevel?: string | null;
   maxAttempts?: number;
+  timeoutMs?: number;
+  maxCommentsPerBatch?: number;
 }
 
 interface BuildAssessmentPromptArgs {
@@ -74,6 +76,19 @@ function buildAssessmentPrompt(args: BuildAssessmentPromptArgs): string {
   ].join("\n");
 }
 
+function chunkComments(comments: readonly PrComment[], maxCommentsPerBatch: number): PrComment[][] {
+  if (maxCommentsPerBatch <= 0 || comments.length <= maxCommentsPerBatch) {
+    return [[...comments]];
+  }
+
+  const chunks: PrComment[][] = [];
+  for (let index = 0; index < comments.length; index += maxCommentsPerBatch) {
+    chunks.push(comments.slice(index, index + maxCommentsPerBatch));
+  }
+  return chunks;
+}
+
+
 /**
  * Run a schema-backed assessment over a cluster of PR comments.
  *
@@ -93,30 +108,54 @@ export async function runFixPrAssessment(
   }
 
   const schemaText = renderSchemaText(FixPrAssessmentBatchSchema);
-  const prompt = buildAssessmentPrompt({
-    schemaText,
-    comments: input.comments,
-    repo: input.repo,
-    prNumber: input.prNumber,
-    selectedTargetLabel: input.selectedTargetLabel,
-  });
+  const maxCommentsPerBatch = input.maxCommentsPerBatch ?? input.comments.length;
+  const commentChunks = chunkComments(input.comments, maxCommentsPerBatch);
+  const assessments: FixPrAssessmentBatch["assessments"] = [];
+  const rawOutputs: string[] = [];
+  let attempts = 0;
 
-  return runWithOutputValidation<FixPrAssessmentBatch>(
-    input.createAgentSession as any,
-    {
-      cwd: input.cwd,
-      prompt,
-      schema: schemaText,
-      parse: (raw) =>
-        parseStructuredOutput<FixPrAssessmentBatch>(raw, FixPrAssessmentBatchSchema),
-      model: input.model,
-      thinkingLevel: input.thinkingLevel ?? null,
-      maxAttempts: input.maxAttempts,
-      reliability: input.paths
-        ? { paths: input.paths, cwd: input.cwd, command: "fix-pr", operation: "assessment" }
-        : undefined,
-    },
-  );
+  for (const comments of commentChunks) {
+    const prompt = buildAssessmentPrompt({
+      schemaText,
+      comments,
+      repo: input.repo,
+      prNumber: input.prNumber,
+      selectedTargetLabel: input.selectedTargetLabel,
+    });
+
+    const result = await runWithOutputValidation<FixPrAssessmentBatch>(
+      input.createAgentSession as any,
+      {
+        cwd: input.cwd,
+        prompt,
+        schema: schemaText,
+        parse: (raw) =>
+          parseStructuredOutput<FixPrAssessmentBatch>(raw, FixPrAssessmentBatchSchema),
+        model: input.model,
+        thinkingLevel: input.thinkingLevel ?? null,
+        maxAttempts: input.maxAttempts,
+        timeoutMs: input.timeoutMs,
+        reliability: input.paths
+          ? { paths: input.paths, cwd: input.cwd, command: "fix-pr", operation: "assessment" }
+          : undefined,
+      },
+    );
+
+    attempts += result.attempts;
+    if (result.status === "blocked") {
+      return { ...result, attempts };
+    }
+
+    rawOutputs.push(result.rawOutput);
+    assessments.push(...result.output.assessments);
+  }
+
+  return {
+    status: "ok",
+    output: { assessments },
+    rawOutput: rawOutputs.join("\n"),
+    attempts,
+  };
 }
 
 /**

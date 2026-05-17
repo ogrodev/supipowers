@@ -131,6 +131,64 @@ describe("runFixPrAssessment", () => {
     expect(prompts[0]).toContain("do not edit during assessment");
   });
 
+  test("splits large assessment sets into smaller agent calls", async () => {
+    const prompts: string[] = [];
+    const first = JSON.stringify({
+      assessments: [
+        {
+          commentId: 1,
+          verdict: "apply",
+          rationale: "First comment is valid.",
+          affectedFiles: ["src/a.ts"],
+          rippleEffects: [],
+          verificationPlan: "bun test",
+        },
+        {
+          commentId: 2,
+          verdict: "reject",
+          rationale: "Second comment is stale.",
+          affectedFiles: [],
+          rippleEffects: [],
+          verificationPlan: "No code validation needed.",
+        },
+      ],
+    });
+    const second = JSON.stringify({
+      assessments: [
+        {
+          commentId: 3,
+          verdict: "investigate",
+          rationale: "Third comment needs more context.",
+          affectedFiles: [],
+          rippleEffects: [],
+          verificationPlan: "Inspect the referenced diff.",
+        },
+      ],
+    });
+    const factory = makeFakeSessionFactory([first, second], prompts);
+
+    const result = await runFixPrAssessment({
+      createAgentSession: factory as any,
+      cwd: "/tmp",
+      comments: [comment(1, "src/a.ts"), comment(2, "src/b.ts"), comment(3, "src/c.ts")],
+      repo: "owner/repo",
+      prNumber: 42,
+      selectedTargetLabel: "root (.)",
+      maxCommentsPerBatch: 2,
+    });
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.output.assessments.map((item) => item.commentId)).toEqual([1, 2, 3]);
+      expect(result.attempts).toBe(2);
+    }
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain('"id":1');
+    expect(prompts[0]).toContain('"id":2');
+    expect(prompts[0]).not.toContain('"id":3');
+    expect(prompts[1]).toContain('"id":3');
+  });
+
   test("rejects invalid verdict and surfaces blocked status after retries", async () => {
     const invalid = JSON.stringify({
       assessments: [
@@ -177,6 +235,39 @@ describe("runFixPrAssessment", () => {
       expect(result.attempts).toBe(2);
       expect(result.rawOutputs).toHaveLength(2);
     }
+  });
+
+  test("returns blocked instead of hanging when assessment exceeds timeout", async () => {
+    let disposed = false;
+    const factory = async (): Promise<AgentSession> => ({
+      state: {
+        get messages() {
+          return [];
+        },
+      },
+      async prompt() {
+        await new Promise(() => {});
+      },
+      async dispose() {
+        disposed = true;
+      },
+    } as unknown as AgentSession);
+
+    const result = await runFixPrAssessment({
+      createAgentSession: factory as any,
+      cwd: "/tmp",
+      comments: [comment(10, "src/foo.ts")],
+      repo: "owner/repo",
+      prNumber: 1,
+      selectedTargetLabel: "root (.)",
+      timeoutMs: 1,
+    });
+
+    expect(result.status).toBe("blocked");
+    if (result.status === "blocked") {
+      expect(result.error).toContain("timed out");
+    }
+    expect(disposed).toBe(true);
   });
 });
 
