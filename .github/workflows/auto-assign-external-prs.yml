@@ -1,0 +1,39 @@
+# Assigns the repo owner to any PR opened by an external contributor
+# so it lands in their dashboard immediately.
+#
+# Triggers on pull_request_target so it can write to the PR even when
+# the PR comes from a fork. The job is read-only on repo contents and
+# only mutates issue metadata.
+name: Auto-assign external PRs
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: auto-assign-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'MEMBER' &&
+      github.event.pull_request.author_association != 'COLLABORATOR' &&
+      !github.event.pull_request.draft
+    steps:
+      - name: Assign repo owner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr edit "$PR_NUMBER" \
+            --repo "$REPO" \
+            --add-assignee ogrodev

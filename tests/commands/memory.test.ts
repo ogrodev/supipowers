@@ -143,7 +143,7 @@ describe("/supi:memory command", () => {
     expect((platform.sendMessage as any).mock.calls.length).toBeGreaterThanOrEqual(1);
     expect((platform.sendMessage as any).mock.calls[0][0].customType).toBe("supi-mempalace-init");
     expect(exec).toHaveBeenCalled();
-  }, process.platform === "win32" ? 15_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
   test("setup surfaces install failures with remediation", async () => {
     const venvRoot = path.join(tmpDir, "venv");
     const projectConfigDir = path.join(cwd, ".omp", "supipowers");

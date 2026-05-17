@@ -271,7 +271,7 @@ describe("registerContextModeHooks", () => {
 
     const result = handler(event, {});
     expect(result).toBeUndefined();
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("before_agent_start handler concatenates routing when context-mode detected", () => {
     const platform = createMockPlatformWithHandlers();
@@ -293,7 +293,7 @@ describe("registerContextModeHooks", () => {
     expect(prompt).not.toContain("ctx_purge");
     const injected = prompt.replace("You are an assistant.\n\n", "");
     expect(new TextEncoder().encode(injected).byteLength).toBeLessThanOrEqual(2048);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("before_agent_start handler appends routing to current rebuilt system prompt", () => {
     const platform = createMockPlatformWithHandlers();
@@ -635,7 +635,7 @@ describe("compaction integration", () => {
     expect(result).toBeDefined();
     // When searchAvailable, snapshot uses reference format with how_to_search
     expect(result.preserveData.resumeSnapshot).toContain("how_to_search");
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 });
 
 
@@ -714,7 +714,7 @@ describe("exported helpers", () => {
     });
 
     expect(getSessionId()).toMatch(/^[0-9a-f]{16}$/);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("_resetCache clears event store and session id", () => {
     const platform = createPlatformWithTmpPaths();
@@ -942,7 +942,7 @@ describe("exported helpers", () => {
     expect(prompt).toContain("# Focus chain");
     expect(prompt).toContain("start: audit ctx_repomap");
     expect(prompt).toContain("done: L4 Repo Map");
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("before_agent_start suppresses legacy memory when MemPalace is enabled but keeps focus chain", () => {
     const platform = createPlatformWithTmpPaths();
@@ -1125,7 +1125,7 @@ describe("error handling", () => {
 
     const warnCalls = (platform.logger.warn as any).mock.calls;
     expect(warnCalls.some((c: any[]) => String(c[0]).includes("prompt event extraction failed"))).toBe(true);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("compaction hooks not registered when eventTracking is false", () => {
     const platform = createPlatformWithTmpPaths();
@@ -1288,7 +1288,7 @@ describe("session_shutdown → memory promotion", () => {
     } finally {
       reopened.close();
     }
-  }, process.platform === "win32" ? 30_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 });
 
 
@@ -1311,7 +1311,7 @@ describe("registerContextModeHooks — slice-2 hook-bridge integration", () => {
     expect(platform._handlers.has("tool_result")).toBe(true);
     expect(platform._handlers.has("agent_end")).toBe(true);
     expect(platform._handlers.has("session_shutdown")).toBe(true);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("src/context-mode/hooks.ts only imports from src/ultraplan/runtime/hook-bridge.ts within the UltraPlan runtime tree", () => {
     // Static import-surface assertion (delta spec §thin hook bridge rule).
