@@ -63,7 +63,7 @@ describe("EventStore", () => {
     expect(events).toHaveLength(1);
     expect(events[0].category).toBe("file");
     expect(events[0].data).toBe('{"op":"read","path":"/test.ts"}');
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("writeEvents writes multiple in single transaction", () => {
     store.writeEvents([
@@ -73,7 +73,7 @@ describe("EventStore", () => {
     ]);
     const events = store.getEvents("test-session");
     expect(events).toHaveLength(3);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("getEvents filters by category", () => {
     store.writeEvents([
@@ -591,7 +591,7 @@ describe("EventStore multi-session behavior", () => {
       .getEvents("session-a", { limit: 2000 })
       .filter((e) => e.data === '{"a":"overflow"}');
     expect(overflow).toHaveLength(1);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("dedup key includes session_id", () => {
     const shared = '{"path":"/shared.ts"}';
@@ -605,7 +605,7 @@ describe("EventStore multi-session behavior", () => {
     // suppressed — confirms dedup is scoped, not globally disabled.
     store.writeEvent(event("file", shared, { sessionId: "s-a" }));
     expect(store.getEvents("s-a")).toHaveLength(1);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("getEventCounts is scoped to a single session", () => {
     store.writeEvents([
