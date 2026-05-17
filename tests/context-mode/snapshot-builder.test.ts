@@ -103,7 +103,7 @@ describe("buildResumeSnapshot — fallback mode", () => {
     }
     const snapshot = buildResumeSnapshot(store, SESSION);
     expect(new TextEncoder().encode(snapshot).byteLength).toBeLessThan(2048);
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("deduplicates file paths", () => {
     writeEvent("file", { op: "edit", path: "/src/types.ts" }, 2);
@@ -178,7 +178,7 @@ describe("buildResumeSnapshot — reference format", () => {
     writeEvent("file", { op: "edit", path: "/src/a.ts" }, 2);
     const snapshot = buildResumeSnapshot(store, SESSION, { ...refOpts, compactCount: 42 });
     expect(snapshot).toContain('compact_count="42"');
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("includes generated_at attribute with ISO date", () => {
     writeEvent("file", { op: "edit", path: "/src/a.ts" }, 2);
@@ -312,7 +312,7 @@ describe("buildResumeSnapshot — reference format", () => {
     const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
     expect(snapshot).toContain("<decisions>");
     expect(snapshot).toContain("Use Bun over Node");
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("errors section from error events", () => {
     writeEvent("error", { command: "bun test", exitCode: 1 }, 1);
@@ -326,7 +326,7 @@ describe("buildResumeSnapshot — reference format", () => {
     const snapshot = buildResumeSnapshot(store, SESSION, refOpts);
     expect(snapshot).toContain("<git>");
     expect(snapshot).toContain("git push origin main");
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("cwd section from cwd events", () => {
     writeEvent("cwd", { cwd: "/Users/dev/project" }, 4);

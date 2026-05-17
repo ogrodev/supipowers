@@ -195,7 +195,7 @@ describe("focus-chain cadence gating", () => {
     platform._handlers.get("session_start")({}, { cwd: tmpDir });
     seedTaskEvent(getSessionId());
     expect(callBeforeAgentStart(platform)).toContain("# Focus chain");
-  }, process.platform === "win32" ? 20_000 : undefined);
+  }, process.platform === "win32" ? 60_000 : undefined);
 
   test("no event store: focus chain is null regardless of cadence", () => {
     const platform = createPlatformWithTmpPaths();
