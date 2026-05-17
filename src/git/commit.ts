@@ -484,9 +484,126 @@ async function manualFallback(
   }
 
   notifySuccess(ctx, "Committed", message.split("\n")[0]);
+  await offerPostCommitActions(platform, ctx, cwd);
   return { committed: 1, messages: [message] };
 }
 
+
+const PUSH_NO_OPTION = "No — keep commits local";
+const PR_NO_OPTION = "No — leave branch without a PR";
+const PR_YES_OPTION = "Yes — open a Pull Request";
+
+function pushYesOption(branch: string): string {
+  return `Yes — push to origin/${branch}`;
+}
+
+function isDefaultBranchName(branch: string): boolean {
+  return branch === "main" || branch === "master";
+}
+
+function formatCommandFailure(result: { stdout: string; stderr: string; code: number }): string {
+  return result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`;
+}
+
+async function readCurrentBranch(
+  exec: ExecFn,
+  ctx: any,
+  cwd: string,
+): Promise<string | null> {
+  const result = await exec("git", ["branch", "--show-current"], { cwd });
+  if (result.code !== 0) {
+    notifyError(ctx, "Could not determine current branch", formatCommandFailure(result));
+    return null;
+  }
+
+  return result.stdout.trim() || null;
+}
+
+async function pushCurrentBranch(
+  exec: ExecFn,
+  ctx: any,
+  cwd: string,
+  branch: string,
+): Promise<boolean> {
+  const result = await exec("git", ["push", "-u", "origin", branch], { cwd });
+  if (result.code !== 0) {
+    notifyError(ctx, "Push failed", formatCommandFailure(result));
+    return false;
+  }
+
+  notifySuccess(ctx, "Pushed", `origin/${branch}`);
+  return true;
+}
+
+async function createPullRequest(
+  exec: ExecFn,
+  ctx: any,
+  cwd: string,
+  branch: string,
+): Promise<void> {
+  const result = await exec("gh", ["pr", "create", "--fill", "--head", branch], { cwd });
+  if (result.code !== 0) {
+    notifyError(ctx, "Pull request failed", formatCommandFailure(result));
+    return;
+  }
+
+  const detail = result.stdout.trim() || result.stderr.trim() || `Branch: ${branch}`;
+  notifySuccess(ctx, "Pull request opened", detail);
+}
+
+async function offerPostCommitActions(platform: Platform, ctx: any, cwd: string): Promise<void> {
+  try {
+    const exec = platform.exec.bind(platform);
+    const branch = await readCurrentBranch(exec, ctx, cwd);
+    if (!branch) {
+      return;
+    }
+
+    const yesPush = pushYesOption(branch);
+    const pushSelection = await ctx.ui.select("Push commits?", [
+      PUSH_NO_OPTION,
+      yesPush,
+    ], {
+      helpText: `Current branch: ${branch}`,
+    });
+
+     if (!pushSelection) {
+       return;
+     }
+
+    let pushed = false;
+    let pushAttempted = false;
+    if (pushSelection === yesPush) {
+      pushAttempted = true;
+      pushed = await pushCurrentBranch(exec, ctx, cwd, branch);
+    }
+
+    if (isDefaultBranchName(branch) || (pushAttempted && !pushed)) {
+      return;
+    }
+
+    const prSelection = await ctx.ui.select("Open a Pull Request?", [
+      PR_NO_OPTION,
+      PR_YES_OPTION,
+    ], {
+      helpText: pushed
+        ? `Branch: ${branch}`
+        : `Opening a PR will first push origin/${branch}.`,
+    });
+    if (prSelection !== PR_YES_OPTION) {
+      return;
+    }
+
+    if (!pushed && !await pushCurrentBranch(exec, ctx, cwd, branch)) {
+      return;
+    }
+
+    await createPullRequest(exec, ctx, cwd, branch);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    notifyError(ctx, "Post-commit action failed", message);
+  }
+}
 
 
 // ── Commit execution ───────────────────────────────────────
@@ -554,6 +671,7 @@ async function executeCommitPlan(
     `${committedMessages.length} commit(s) created`,
     committedMessages.map((m) => m.split("\n")[0]).join(" | "),
   );
+  await offerPostCommitActions(platform, ctx, cwd);
 
   return { committed: committedMessages.length, messages: committedMessages };
 }
