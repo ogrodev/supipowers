@@ -1,5 +1,5 @@
-import { Type, type TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { z } from "zod/v4";
+import type { ZodType } from "zod/v4";
 import type {
   ResolvedUltraPlanCatalog,
   ResolvedUltraPlanSlotBinding,
@@ -61,6 +61,7 @@ import type {
   UltraPlanStackReview,
 } from "../types.js";
 import { getUltraPlanBatchGraphErrors } from "./batch/planner.js";
+import { checkSchema, collectSchemaValidationErrors, parseSchema } from "../ai/schema-validation.js";
 
 export type {
   ResolvedUltraPlanCatalog,
@@ -222,170 +223,157 @@ export const ULTRAPLAN_AUTHORING_FINDING_SOURCES = [
 ] as const satisfies readonly UltraPlanAuthoringFindingSource[];
 
 
-function keyedObject(keys: readonly string[], valueSchema: TSchema) {
-  return Type.Object(
-    Object.fromEntries(keys.map((key) => [key, valueSchema])) as Record<string, TSchema>,
-    { additionalProperties: false },
-  );
+function keyedObject(keys: readonly string[], valueSchema: ZodType) {
+  return z.object(
+    Object.fromEntries(keys.map((key) => [key, valueSchema])) as Record<string, ZodType>,
+  ).strict();
 }
 
-function sparseKeyedObject(keys: readonly string[], valueSchema: TSchema) {
-  return Type.Partial(keyedObject(keys, valueSchema));
+function sparseKeyedObject(keys: readonly string[], valueSchema: ZodType) {
+  return keyedObject(keys, valueSchema).partial();
 }
 
 
 
 function literalUnion<const TValue extends readonly string[]>(values: TValue) {
-  return Type.Union(values.map((value) => Type.Literal(value)));
+  return z.enum([...values] as unknown as [TValue[number], ...TValue[number][]]);
 }
 
-export const UltraPlanProgressSummarySchema = Type.Object(
+export const UltraPlanProgressSummarySchema = z.object(
   {
-    total: Type.Number({ minimum: 0 }),
-    terminal: Type.Number({ minimum: 0 }),
-    blocked: Type.Number({ minimum: 0 }),
+    total: z.number().min(0),
+    terminal: z.number().min(0),
+    blocked: z.number().min(0),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAffectedUnitRefSchema = Type.Object(
+export const UltraPlanAffectedUnitRefSchema = z.object(
   {
-    stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
-    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    level: Type.Union([literalUnion(ULTRAPLAN_LEVELS), Type.Null()]),
-    scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    stack: literalUnion(ULTRAPLAN_STACKS).nullable(),
+    domainId: z.string().min(1).nullable(),
+    level: literalUnion(ULTRAPLAN_LEVELS).nullable(),
+    scenarioId: z.string().min(1).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanProofEvidenceSchema = Type.Object(
+export const UltraPlanProofEvidenceSchema = z.object(
   {
-    summary: Type.String({ minLength: 1 }),
-    command: Type.Optional(Type.String({ minLength: 1 })),
-    outputRef: Type.Optional(Type.String({ minLength: 1 })),
-    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    summary: z.string().min(1),
+    command: z.string().min(1).optional(),
+    outputRef: z.string().min(1).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanProofSchema = Type.Object(
+export const UltraPlanProofSchema = z.object(
   {
     type: literalUnion(ULTRAPLAN_PROOF_TYPES),
     phase: literalUnion(ULTRAPLAN_EXECUTION_PHASES),
-    recordedAt: Type.String({ minLength: 1 }),
-    actor: Type.String({ minLength: 1 }),
+    recordedAt: z.string().min(1),
+    actor: z.string().min(1),
     evidence: UltraPlanProofEvidenceSchema,
-    artifactRef: Type.String({ minLength: 1 }),
+    artifactRef: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanBlockerSchema = Type.Object(
+export const UltraPlanBlockerSchema = z.object(
   {
-    code: Type.String({ minLength: 1 }),
-    message: Type.String({ minLength: 1 }),
+    code: z.string().min(1),
+    message: z.string().min(1),
     scope: literalUnion(ULTRAPLAN_BLOCKER_SCOPES),
     affected: UltraPlanAffectedUnitRefSchema,
-    recoverable: Type.Boolean(),
+    recoverable: z.boolean(),
     recoveryMode: literalUnion(ULTRAPLAN_RECOVERY_MODES),
-    nextAction: Type.String({ minLength: 1 }),
-    retryable: Type.Boolean(),
-    detectedAt: Type.String({ minLength: 1 }),
-    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    nextAction: z.string().min(1),
+    retryable: z.boolean(),
+    detectedAt: z.string().min(1),
+    details: z.record(z.string(), z.unknown()).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAgentBindingSchema = Type.Object(
+export const UltraPlanAgentBindingSchema = z.object(
   {
     slot: literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES),
     agentType: literalUnion(ULTRAPLAN_AGENT_TYPES),
-    agentName: Type.String({ minLength: 1 }),
-    model: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    thinkingLevel: Type.Union([literalUnion(ULTRAPLAN_THINKING_LEVELS), Type.Null()]),
+    agentName: z.string().min(1),
+    model: z.string().min(1).nullable(),
+    thinkingLevel: literalUnion(ULTRAPLAN_THINKING_LEVELS).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAgentSlotsSchema = Type.Object(
+export const UltraPlanAgentSlotsSchema = z.object(
   {
     executor: UltraPlanAgentBindingSchema,
     tester: UltraPlanAgentBindingSchema,
-    domainReviewEnabled: Type.Boolean(),
-    stackReviewEnabled: Type.Boolean(),
-    domainReviewer: Type.Optional(UltraPlanAgentBindingSchema),
-    stackReviewer: Type.Optional(UltraPlanAgentBindingSchema),
+    domainReviewEnabled: z.boolean(),
+    stackReviewEnabled: z.boolean(),
+    domainReviewer: UltraPlanAgentBindingSchema.optional(),
+    stackReviewer: UltraPlanAgentBindingSchema.optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanSlotOverrideSchema = Type.Object(
+export const UltraPlanSlotOverrideSchema = z.object(
   {
-    agentName: Type.Optional(Type.String({ minLength: 1 })),
-    model: Type.Optional(Type.String({ minLength: 1 })),
-    thinkingLevel: Type.Optional(literalUnion(ULTRAPLAN_THINKING_LEVELS)),
+    agentName: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    thinkingLevel: literalUnion(ULTRAPLAN_THINKING_LEVELS).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanReviewGatePolicySchema = Type.Object(
+export const UltraPlanReviewGatePolicySchema = z.object(
   {
-    enabled: Type.Boolean(),
+    enabled: z.boolean(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanConfigSchema = Type.Object(
+export const UltraPlanConfigSchema = z.object(
   {
-    slots: Type.Optional(sparseKeyedObject(ULTRAPLAN_AGENT_SLOT_NAMES, UltraPlanSlotOverrideSchema)),
-    reviewGates: Type.Optional(
-      sparseKeyedObject(ULTRAPLAN_REVIEWER_SLOT_NAMES, UltraPlanReviewGatePolicySchema),
-    ),
+    slots: sparseKeyedObject(ULTRAPLAN_AGENT_SLOT_NAMES, UltraPlanSlotOverrideSchema).optional(),
+    reviewGates: sparseKeyedObject(
+      ULTRAPLAN_REVIEWER_SLOT_NAMES,
+      UltraPlanReviewGatePolicySchema,
+    ).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAgentDefinitionFrontmatterSchema = Type.Object(
+export const UltraPlanAgentDefinitionFrontmatterSchema = z.object(
   {
-    name: Type.String({ minLength: 1 }),
-    description: Type.String({ minLength: 1 }),
-    supportedSlots: Type.Array(literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES), { minItems: 1 }),
-    model: Type.Optional(Type.String({ minLength: 1 })),
-    thinkingLevel: Type.Optional(literalUnion(ULTRAPLAN_THINKING_LEVELS)),
-    focus: Type.Optional(Type.String({ minLength: 1 })),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    supportedSlots: z.array(literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES)).min(1),
+    model: z.string().min(1).optional(),
+    thinkingLevel: literalUnion(ULTRAPLAN_THINKING_LEVELS).optional(),
+    focus: z.string().min(1).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const ResolvedUltraPlanSlotBindingSchema = Type.Object(
+export const ResolvedUltraPlanSlotBindingSchema = z.object(
   {
     slot: literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES),
     agentType: literalUnion(ULTRAPLAN_AGENT_TYPES),
-    agentName: Type.String({ minLength: 1 }),
-    model: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    thinkingLevel: Type.Union([literalUnion(ULTRAPLAN_THINKING_LEVELS), Type.Null()]),
+    agentName: z.string().min(1),
+    model: z.string().min(1).nullable(),
+    thinkingLevel: literalUnion(ULTRAPLAN_THINKING_LEVELS).nullable(),
     selectionSource: literalUnion(ULTRAPLAN_SELECTION_SOURCES),
     definitionSource: literalUnion(ULTRAPLAN_DEFINITION_SOURCES),
     modelSource: literalUnion(ULTRAPLAN_RESOLVED_VALUE_SOURCES),
     thinkingLevelSource: literalUnion(ULTRAPLAN_RESOLVED_VALUE_SOURCES),
-    definitionPath: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    definitionPath: z.string().min(1).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const ResolvedUltraPlanCatalogSchema = Type.Object(
+export const ResolvedUltraPlanCatalogSchema = z.object(
   {
     slots: keyedObject(
       ULTRAPLAN_AGENT_SLOT_NAMES,
-      Type.Union([ResolvedUltraPlanSlotBindingSchema, Type.Null()]),
+      ResolvedUltraPlanSlotBindingSchema.nullable(),
     ),
     reviewGates: sparseKeyedObject(
       ULTRAPLAN_REVIEWER_SLOT_NAMES,
       UltraPlanReviewGatePolicySchema,
     ),
   },
-  { additionalProperties: false },
-);
+).strict();
 
 
 const ULTRAPLAN_NON_TERMINAL_SCENARIO_STATUSES = [
@@ -400,280 +388,258 @@ const ULTRAPLAN_NON_TERMINAL_SCENARIO_STATUSES = [
 const ULTRAPLAN_TERMINAL_SCENARIO_STATUSES = ["green-proved", "review-passed", "done"] as const;
 
 const UltraPlanScenarioSharedShape = {
-  id: Type.String({ minLength: 1 }),
-  title: Type.String({ minLength: 1 }),
+  id: z.string().min(1),
+  title: z.string().min(1),
   stack: literalUnion(ULTRAPLAN_STACKS),
-  domainId: Type.String({ minLength: 1 }),
+  domainId: z.string().min(1),
   level: literalUnion(ULTRAPLAN_LEVELS),
-  steps: Type.Array(Type.String({ minLength: 1 })),
-  assignedSlots: Type.Array(literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES)),
-  dependencies: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-  blocker: Type.Optional(Type.Union([UltraPlanBlockerSchema, Type.Null()])),
+  steps: z.array(z.string().min(1)),
+  assignedSlots: z.array(literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES)),
+  dependencies: z.array(z.string().min(1)).optional(),
+  blocker: UltraPlanBlockerSchema.nullable().optional(),
 };
 
-export const UltraPlanScenarioSchema = Type.Union([
-  Type.Object(
+export const UltraPlanScenarioSchema = z.union([
+  z.object(
     {
       ...UltraPlanScenarioSharedShape,
       status: literalUnion(ULTRAPLAN_NON_TERMINAL_SCENARIO_STATUSES),
-      proofs: Type.Array(UltraPlanProofSchema),
+      proofs: z.array(UltraPlanProofSchema),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
       ...UltraPlanScenarioSharedShape,
       status: literalUnion(ULTRAPLAN_TERMINAL_SCENARIO_STATUSES),
-      proofs: Type.Array(UltraPlanProofSchema, { minItems: 1 }),
+      proofs: z.array(UltraPlanProofSchema).min(1),
     },
-    { additionalProperties: false },
-  ),
+  ).strict(),
 ]);
 
-export const UltraPlanDomainReviewGateSchema = Type.Object(
+export const UltraPlanDomainReviewGateSchema = z.object(
   {
-    enabled: Type.Boolean(),
+    enabled: z.boolean(),
     status: literalUnion(ULTRAPLAN_REVIEW_STATUSES),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanDomainSchema = Type.Object(
+export const UltraPlanDomainSchema = z.object(
   {
-    id: Type.String({ minLength: 1 }),
-    name: Type.String({ minLength: 1 }),
-    unit: Type.Array(UltraPlanScenarioSchema),
-    integration: Type.Array(UltraPlanScenarioSchema),
-    e2e: Type.Array(UltraPlanScenarioSchema),
+    id: z.string().min(1),
+    name: z.string().min(1),
+    unit: z.array(UltraPlanScenarioSchema),
+    integration: z.array(UltraPlanScenarioSchema),
+    e2e: z.array(UltraPlanScenarioSchema),
     review: UltraPlanDomainReviewGateSchema,
     progress: UltraPlanProgressSummarySchema,
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanStackSchema = Type.Object(
+export const UltraPlanStackSchema = z.object(
   {
     stack: literalUnion(ULTRAPLAN_STACKS),
     applicability: literalUnion(ULTRAPLAN_APPLICABILITY),
-    domains: Type.Array(UltraPlanDomainSchema),
+    domains: z.array(UltraPlanDomainSchema),
     status: literalUnion(ULTRAPLAN_SESSION_STATES),
     agentSlots: UltraPlanAgentSlotsSchema,
     progress: UltraPlanProgressSummarySchema,
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanCursorSchema = Type.Object(
+export const UltraPlanCursorSchema = z.object(
   {
     targetType: literalUnion(ULTRAPLAN_CURSOR_TARGETS),
-    stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
-    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    level: Type.Union([literalUnion(ULTRAPLAN_LEVELS), Type.Null()]),
-    scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    stack: literalUnion(ULTRAPLAN_STACKS).nullable(),
+    domainId: z.string().min(1).nullable(),
+    level: literalUnion(ULTRAPLAN_LEVELS).nullable(),
+    scenarioId: z.string().min(1).nullable(),
     phase: literalUnion(ULTRAPLAN_EXECUTION_PHASES),
     status: literalUnion([
       ...ULTRAPLAN_SCENARIO_STATUSES,
       ...ULTRAPLAN_REVIEW_STATUSES,
       ...ULTRAPLAN_SESSION_STATES,
     ] as const),
-    summary: Type.String({ minLength: 1 }),
+    summary: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanDomainReviewSchema = Type.Object(
+export const UltraPlanDomainReviewSchema = z.object(
   {
     stack: literalUnion(ULTRAPLAN_STACKS),
-    domainId: Type.String({ minLength: 1 }),
+    domainId: z.string().min(1),
     reviewerSlot: literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES),
     status: literalUnion(ULTRAPLAN_REVIEW_STATUSES),
-    startedAt: Type.String({ minLength: 1 }),
-    completedAt: Type.Optional(Type.String({ minLength: 1 })),
-    summary: Type.String({ minLength: 1 }),
-    artifactRef: Type.String({ minLength: 1 }),
+    startedAt: z.string().min(1),
+    completedAt: z.string().min(1).optional(),
+    summary: z.string().min(1),
+    artifactRef: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanStackReviewSchema = Type.Object(
+export const UltraPlanStackReviewSchema = z.object(
   {
     stack: literalUnion(ULTRAPLAN_STACKS),
     reviewerSlot: literalUnion(ULTRAPLAN_AGENT_SLOT_NAMES),
     status: literalUnion(ULTRAPLAN_REVIEW_STATUSES),
-    startedAt: Type.String({ minLength: 1 }),
-    completedAt: Type.Optional(Type.String({ minLength: 1 })),
-    summary: Type.String({ minLength: 1 }),
-    artifactRef: Type.String({ minLength: 1 }),
+    startedAt: z.string().min(1),
+    completedAt: z.string().min(1).optional(),
+    summary: z.string().min(1),
+    artifactRef: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAuthoredArtifactSchema = Type.Object(
+export const UltraPlanAuthoredArtifactSchema = z.object(
   {
-    sessionId: Type.String({ minLength: 1 }),
-    title: Type.String({ minLength: 1 }),
-    goal: Type.String({ minLength: 1 }),
-    createdAt: Type.String({ minLength: 1 }),
-    updatedAt: Type.String({ minLength: 1 }),
-    stacks: Type.Array(UltraPlanStackSchema),
+    sessionId: z.string().min(1),
+    title: z.string().min(1),
+    goal: z.string().min(1),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    stacks: z.array(UltraPlanStackSchema),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanManifestAuthoredRefsSchema = Type.Object(
+export const UltraPlanManifestAuthoredRefsSchema = z.object(
   {
-    json: Type.String({ minLength: 1 }),
-    markdown: Type.Optional(Type.String({ minLength: 1 })),
+    json: z.string().min(1),
+    markdown: z.string().min(1).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanManifestStackSummarySchema = Type.Object(
+export const UltraPlanManifestStackSummarySchema = z.object(
   {
     stack: literalUnion(ULTRAPLAN_STACKS),
     applicability: literalUnion(ULTRAPLAN_APPLICABILITY),
     progress: UltraPlanProgressSummarySchema,
-    domainCount: Type.Number({ minimum: 0 }),
-    terminalDomainCount: Type.Number({ minimum: 0 }),
+    domainCount: z.number().min(0),
+    terminalDomainCount: z.number().min(0),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanManifestReviewReferenceSchema = Type.Object(
+export const UltraPlanManifestReviewReferenceSchema = z.object(
   {
     type: literalUnion(["domain", "stack"] as const),
     stack: literalUnion(ULTRAPLAN_STACKS),
-    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    path: Type.String({ minLength: 1 }),
+    domainId: z.string().min(1).nullable(),
+    path: z.string().min(1),
     status: literalUnion(ULTRAPLAN_REVIEW_STATUSES),
   },
-  { additionalProperties: false },
-);
+).strict();
 
 // --- Authoring pipeline schemas ---------------------------------------------------
 
-export const UltraPlanAuthoringFindingSchema = Type.Object(
+export const UltraPlanAuthoringFindingSchema = z.object(
   {
-    id: Type.String({ minLength: 1 }),
+    id: z.string().min(1),
     severity: literalUnion(ULTRAPLAN_AUTHORING_FINDING_SEVERITIES),
     source: literalUnion(ULTRAPLAN_AUTHORING_FINDING_SOURCES),
-    target: Type.Object(
+    target: z.object(
       {
-        stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
-        domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-        scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+        stack: literalUnion(ULTRAPLAN_STACKS).nullable(),
+        domainId: z.string().min(1).nullable(),
+        scenarioId: z.string().min(1).nullable(),
       },
-      { additionalProperties: false },
-    ),
-    message: Type.String({ minLength: 1 }),
-    recommendation: Type.String({ minLength: 1 }),
-    recordedAt: Type.String({ minLength: 1 }),
+    ).strict(),
+    message: z.string().min(1),
+    recommendation: z.string().min(1),
+    recordedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAuthoringFindingsArtifactSchema = Type.Object(
+export const UltraPlanAuthoringFindingsArtifactSchema = z.object(
   {
-    iteration: Type.Integer({ minimum: 1 }),
-    draftRef: Type.String({ minLength: 1 }),
-    recordedAt: Type.String({ minLength: 1 }),
-    findings: Type.Array(UltraPlanAuthoringFindingSchema),
+    iteration: z.number().int().min(1),
+    draftRef: z.string().min(1),
+    recordedAt: z.string().min(1),
+    findings: z.array(UltraPlanAuthoringFindingSchema),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAuthoringResearchRefSchema = Type.Object(
+export const UltraPlanAuthoringResearchRefSchema = z.object(
   {
     stack: literalUnion(ULTRAPLAN_STACKS),
-    path: Type.String({ minLength: 1 }),
+    path: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAuthoringArtifactRefsSchema = Type.Object(
+export const UltraPlanAuthoringArtifactRefsSchema = z.object(
   {
-    intake: Type.Optional(Type.String({ minLength: 1 })),
-    scout: Type.Optional(Type.String({ minLength: 1 })),
-    discuss: Type.Optional(Type.String({ minLength: 1 })),
-    deferredIdeas: Type.Optional(Type.String({ minLength: 1 })),
-    research: Type.Optional(Type.Array(UltraPlanAuthoringResearchRefSchema)),
-    researchSummary: Type.Optional(Type.String({ minLength: 1 })),
-    draft: Type.Optional(Type.String({ minLength: 1 })),
-    draftMarkdown: Type.Optional(Type.String({ minLength: 1 })),
-    findings: Type.Optional(Type.String({ minLength: 1 })),
+    intake: z.string().min(1).optional(),
+    scout: z.string().min(1).optional(),
+    discuss: z.string().min(1).optional(),
+    deferredIdeas: z.string().min(1).optional(),
+    research: z.array(UltraPlanAuthoringResearchRefSchema).optional(),
+    researchSummary: z.string().min(1).optional(),
+    draft: z.string().min(1).optional(),
+    draftMarkdown: z.string().min(1).optional(),
+    findings: z.string().min(1).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAuthoringStateSchema = Type.Object(
+export const UltraPlanAuthoringStateSchema = z.object(
   {
     pipeline: literalUnion(ULTRAPLAN_AUTHORING_PIPELINE_MODES),
     stage: literalUnion(ULTRAPLAN_AUTHORING_STAGES),
     stageStatus: literalUnion(ULTRAPLAN_AUTHORING_STAGE_STATUSES),
-    iteration: Type.Integer({ minimum: 1 }),
-    stallReentryCount: Type.Integer({ minimum: 0 }),
+    iteration: z.number().int().min(1),
+    stallReentryCount: z.number().int().min(0),
     artifacts: UltraPlanAuthoringArtifactRefsSchema,
-    blocker: Type.Union([UltraPlanBlockerSchema, Type.Null()]),
-    startedAt: Type.String({ minLength: 1 }),
-    updatedAt: Type.String({ minLength: 1 }),
+    blocker: UltraPlanBlockerSchema.nullable(),
+    startedAt: z.string().min(1),
+    updatedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAuthoringPipelineEventSchema = Type.Object(
+export const UltraPlanAuthoringPipelineEventSchema = z.object(
   {
-    recordedAt: Type.String({ minLength: 1 }),
+    recordedAt: z.string().min(1),
     stage: literalUnion(ULTRAPLAN_AUTHORING_STAGES),
     stageStatus: literalUnion(ULTRAPLAN_AUTHORING_STAGE_STATUSES),
-    iteration: Type.Integer({ minimum: 1 }),
-    summary: Type.String(),
-    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    iteration: z.number().int().min(1),
+    summary: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
 
-export const UltraPlanManifestSchema = Type.Object(
+export const UltraPlanManifestSchema = z.object(
   {
-    sessionId: Type.String({ minLength: 1 }),
-    projectName: Type.String({ minLength: 1 }),
-    title: Type.String({ minLength: 1 }),
+    sessionId: z.string().min(1),
+    projectName: z.string().min(1),
+    title: z.string().min(1),
     authored: UltraPlanManifestAuthoredRefsSchema,
     state: literalUnion(ULTRAPLAN_SESSION_STATES),
-    cursor: Type.Union([UltraPlanCursorSchema, Type.Null()]),
-    lastCompleted: Type.Union([UltraPlanCursorSchema, Type.Null()]),
+    cursor: UltraPlanCursorSchema.nullable(),
+    lastCompleted: UltraPlanCursorSchema.nullable(),
     progress: UltraPlanProgressSummarySchema,
-    stacks: Type.Array(UltraPlanManifestStackSummarySchema),
-    blocker: Type.Union([UltraPlanBlockerSchema, Type.Null()]),
-    reviews: Type.Array(UltraPlanManifestReviewReferenceSchema),
-    createdAt: Type.String({ minLength: 1 }),
-    updatedAt: Type.String({ minLength: 1 }),
-    authoring: Type.Optional(UltraPlanAuthoringStateSchema),
+    stacks: z.array(UltraPlanManifestStackSummarySchema),
+    blocker: UltraPlanBlockerSchema.nullable(),
+    reviews: z.array(UltraPlanManifestReviewReferenceSchema),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    authoring: UltraPlanAuthoringStateSchema.optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanIndexEntrySchema = Type.Object(
+export const UltraPlanIndexEntrySchema = z.object(
   {
-    sessionId: Type.String({ minLength: 1 }),
-    title: Type.String({ minLength: 1 }),
+    sessionId: z.string().min(1),
+    title: z.string().min(1),
     state: literalUnion(ULTRAPLAN_SESSION_STATES),
     bucket: literalUnion(ULTRAPLAN_SESSION_BUCKETS),
-    createdAt: Type.String({ minLength: 1 }),
-    updatedAt: Type.String({ minLength: 1 }),
-    cursor: Type.Union([UltraPlanCursorSchema, Type.Null()]),
-    idleReason: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    authoringStage: Type.Optional(Type.Union([literalUnion(ULTRAPLAN_AUTHORING_STAGES), Type.Null()])),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    cursor: UltraPlanCursorSchema.nullable(),
+    idleReason: z.string().min(1).nullable(),
+    authoringStage: literalUnion(ULTRAPLAN_AUTHORING_STAGES).nullable().optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanIndexSchema = Type.Object(
+export const UltraPlanIndexSchema = z.object(
   {
-    sessions: Type.Array(UltraPlanIndexEntrySchema),
+    sessions: z.array(UltraPlanIndexEntrySchema),
   },
-  { additionalProperties: false },
-);
+).strict();
 
 type UltraPlanTerminalProofRequirement = {
   phase: UltraPlanProof["phase"];
@@ -701,15 +667,15 @@ function getRequiredUltraPlanTerminalProofRequirements(
 
 function formatUltraPlanRequiredProofTypes(types: readonly UltraPlanProof["type"][]): string {
   return types.length === 1
-    ? `\"${types[0]}\"`
-    : types.map((type) => `\"${type}\"`).join(" or ");
+    ? `"${types[0]}"`
+    : types.map((type) => `"${type}"`).join(" or ");
 }
 
 function formatUltraPlanTerminalProofRequirements(
   requirements: readonly UltraPlanTerminalProofRequirement[],
 ): string {
   return requirements
-    .map((requirement) => `a \"${requirement.phase}\" proof of type ${formatUltraPlanRequiredProofTypes(requirement.types)}`)
+    .map((requirement) => `a "${requirement.phase}" proof of type ${formatUltraPlanRequiredProofTypes(requirement.types)}`)
     .join(" or ");
 }
 
@@ -733,7 +699,7 @@ function collectUltraPlanScenarioProofErrors(
     }
 
     errors.push(
-      `/stacks/${scenario.stack}/domains/${scenario.domainId}/${level}/${scenario.id} terminal scenario \"${scenario.id}\" with status \"${scenario.status}\" requires at least one terminal proof: ${formatUltraPlanTerminalProofRequirements(requirements)}`,
+      `/stacks/${scenario.stack}/domains/${scenario.domainId}/${level}/${scenario.id} terminal scenario "${scenario.id}" with status "${scenario.status}" requires at least one terminal proof: ${formatUltraPlanTerminalProofRequirements(requirements)}`,
     );
   }
 }
@@ -753,20 +719,21 @@ function getUltraPlanAuthoredArtifactSemanticErrors(authored: UltraPlanAuthoredA
 }
 
 
-export function getUltraPlanSchemaErrors(schema: TSchema, value: unknown): string[] {
-  return [...Value.Errors(schema, value)].map((error) => `${error.path || "/"} ${error.message}`);
+export function getUltraPlanSchemaErrors(schema: ZodType, value: unknown): string[] {
+  return collectSchemaValidationErrors(schema, value).map((error) => `${error.path === "(root)" ? "/" : error.path} ${error.message}`);
 }
 
-function buildValidationResult<T>(schema: TSchema, value: unknown):
+function buildValidationResult<T>(schema: ZodType<T>, value: unknown):
   | { ok: true; value: T }
   | { ok: false; errors: string[] } {
-  if (Value.Check(schema, value)) {
-    return { ok: true, value: value as T };
+  const result = parseSchema<T>(schema, value);
+  if (result.success) {
+    return { ok: true, value: result.data };
   }
 
   return {
     ok: false,
-    errors: getUltraPlanSchemaErrors(schema, value),
+    errors: result.errors.map((error) => `${error.path === "(root)" ? "/" : error.path} ${error.message}`),
   };
 }
 
@@ -813,53 +780,53 @@ export function validateUltraPlanAuthoredArtifact(value: unknown) {
 export function isUltraPlanAgentDefinitionFrontmatter(
   value: unknown,
  ): value is UltraPlanAgentDefinitionFrontmatter {
-  return Value.Check(UltraPlanAgentDefinitionFrontmatterSchema, value);
+  return checkSchema(UltraPlanAgentDefinitionFrontmatterSchema, value);
 }
 
 export function isResolvedUltraPlanSlotBinding(value: unknown): value is ResolvedUltraPlanSlotBinding {
-  return Value.Check(ResolvedUltraPlanSlotBindingSchema, value);
+  return checkSchema(ResolvedUltraPlanSlotBindingSchema, value);
 }
 
 export function isResolvedUltraPlanCatalog(value: unknown): value is ResolvedUltraPlanCatalog {
-  return Value.Check(ResolvedUltraPlanCatalogSchema, value);
+  return checkSchema(ResolvedUltraPlanCatalogSchema, value);
 }
 
 
 export function isUltraPlanProof(value: unknown): value is UltraPlanProof {
-  return Value.Check(UltraPlanProofSchema, value);
+  return checkSchema(UltraPlanProofSchema, value);
 }
 
 export function isUltraPlanBlocker(value: unknown): value is UltraPlanBlocker {
-  return Value.Check(UltraPlanBlockerSchema, value);
+  return checkSchema(UltraPlanBlockerSchema, value);
 }
 
 export function isUltraPlanScenario(value: unknown): value is UltraPlanScenario {
-  return Value.Check(UltraPlanScenarioSchema, value)
+  return checkSchema(UltraPlanScenarioSchema, value)
     && hasRequiredUltraPlanScenarioProof(value as UltraPlanScenario);
 }
 
 export function isUltraPlanDomain(value: unknown): value is UltraPlanDomain {
-  return Value.Check(UltraPlanDomainSchema, value);
+  return checkSchema(UltraPlanDomainSchema, value);
 }
 
 export function isUltraPlanAgentSlots(value: unknown): value is UltraPlanAgentSlots {
-  return Value.Check(UltraPlanAgentSlotsSchema, value);
+  return checkSchema(UltraPlanAgentSlotsSchema, value);
 }
 
 export function isUltraPlanStack(value: unknown): value is UltraPlanStack {
-  return Value.Check(UltraPlanStackSchema, value);
+  return checkSchema(UltraPlanStackSchema, value);
 }
 
 export function isUltraPlanCursor(value: unknown): value is UltraPlanCursor {
-  return Value.Check(UltraPlanCursorSchema, value);
+  return checkSchema(UltraPlanCursorSchema, value);
 }
 
 export function isUltraPlanDomainReview(value: unknown): value is UltraPlanDomainReview {
-  return Value.Check(UltraPlanDomainReviewSchema, value);
+  return checkSchema(UltraPlanDomainReviewSchema, value);
 }
 
 export function isUltraPlanStackReview(value: unknown): value is UltraPlanStackReview {
-  return Value.Check(UltraPlanStackReviewSchema, value);
+  return checkSchema(UltraPlanStackReviewSchema, value);
 }
 
 export function isUltraPlanAuthoredArtifact(value: unknown): value is UltraPlanAuthoredArtifact {
@@ -867,15 +834,15 @@ export function isUltraPlanAuthoredArtifact(value: unknown): value is UltraPlanA
 }
 
 export function isUltraPlanManifest(value: unknown): value is UltraPlanManifest {
-  return Value.Check(UltraPlanManifestSchema, value);
+  return checkSchema(UltraPlanManifestSchema, value);
 }
 
 export function isUltraPlanIndexEntry(value: unknown): value is UltraPlanIndexEntry {
-  return Value.Check(UltraPlanIndexEntrySchema, value);
+  return checkSchema(UltraPlanIndexEntrySchema, value);
 }
 
 export function isUltraPlanIndex(value: unknown): value is UltraPlanIndex {
-  return Value.Check(UltraPlanIndexSchema, value);
+  return checkSchema(UltraPlanIndexSchema, value);
 }
 
 
@@ -919,294 +886,266 @@ export const ULTRAPLAN_RUNTIME_BLOCKER_CODES = [
   "migration-conflict",
 ] as const;
 
-export const UltraPlanLaunchContextSchema = Type.Object(
+export const UltraPlanLaunchContextSchema = z.object(
   {
-    attemptId: Type.String({ minLength: 1 }),
-    attemptKey: Type.String({ minLength: 1 }),
+    attemptId: z.string().min(1),
+    attemptKey: z.string().min(1),
     sourceAgent: literalUnion(ULTRAPLAN_SOURCE_AGENTS),
-    launchedAt: Type.String({ minLength: 1 }),
+    launchedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanObservationTargetSchema = Type.Object(
+export const UltraPlanObservationTargetSchema = z.object(
   {
     targetType: literalUnion(ULTRAPLAN_CURSOR_TARGETS),
-    stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
-    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    level: Type.Union([literalUnion(ULTRAPLAN_LEVELS), Type.Null()]),
-    scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    stack: literalUnion(ULTRAPLAN_STACKS).nullable(),
+    domainId: z.string().min(1).nullable(),
+    level: literalUnion(ULTRAPLAN_LEVELS).nullable(),
+    scenarioId: z.string().min(1).nullable(),
     phase: literalUnion(ULTRAPLAN_EXECUTION_PHASES),
-    resolvedSlot: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    resolvedSlot: z.string().min(1).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanObservationCorrelationFailureSchema = Type.Object(
+export const UltraPlanObservationCorrelationFailureSchema = z.object(
   {
-    reason: Type.String({ minLength: 1 }),
-    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    reason: z.string().min(1),
+    details: z.record(z.string(), z.unknown()).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanHookObservationSchema = Type.Object(
+export const UltraPlanHookObservationSchema = z.object(
   {
-    sessionId: Type.String({ minLength: 1 }),
+    sessionId: z.string().min(1),
     hookEvent: literalUnion(ULTRAPLAN_HOOK_EVENT_NAMES),
     actorKind: literalUnion(ULTRAPLAN_ACTOR_KINDS),
-    attemptId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    attemptKey: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    attemptId: z.string().min(1).nullable(),
+    attemptKey: z.string().min(1).nullable(),
     sourceAgent: literalUnion(ULTRAPLAN_SOURCE_AGENTS),
-    occurredAt: Type.String({ minLength: 1 }),
-    causationId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    fingerprint: Type.String({ minLength: 1 }),
-    target: Type.Union([UltraPlanObservationTargetSchema, Type.Null()]),
-    correlationFailure: Type.Union([UltraPlanObservationCorrelationFailureSchema, Type.Null()]),
-    payloadSummary: Type.String(),
+    occurredAt: z.string().min(1),
+    causationId: z.string().min(1).nullable(),
+    fingerprint: z.string().min(1),
+    target: UltraPlanObservationTargetSchema.nullable(),
+    correlationFailure: UltraPlanObservationCorrelationFailureSchema.nullable(),
+    payloadSummary: z.string(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanProofCandidateTargetSchema = Type.Object(
+export const UltraPlanProofCandidateTargetSchema = z.object(
   {
     targetType: literalUnion(ULTRAPLAN_CURSOR_TARGETS),
-    stack: Type.Union([literalUnion(ULTRAPLAN_STACKS), Type.Null()]),
-    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    level: Type.Union([literalUnion(ULTRAPLAN_LEVELS), Type.Null()]),
-    scenarioId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    stack: literalUnion(ULTRAPLAN_STACKS).nullable(),
+    domainId: z.string().min(1).nullable(),
+    level: literalUnion(ULTRAPLAN_LEVELS).nullable(),
+    scenarioId: z.string().min(1).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanProofCandidateSchema = Type.Object(
+export const UltraPlanProofCandidateSchema = z.object(
   {
     phase: literalUnion(ULTRAPLAN_EXECUTION_PHASES),
     type: literalUnion(ULTRAPLAN_PROOF_TYPES),
     target: UltraPlanProofCandidateTargetSchema,
     evidence: UltraPlanProofEvidenceSchema,
-    artifactRef: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    observationFingerprint: Type.String({ minLength: 1 }),
-    fingerprint: Type.String({ minLength: 1 }),
+    artifactRef: z.string().min(1).nullable(),
+    observationFingerprint: z.string().min(1),
+    fingerprint: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanBlockerCandidateSchema = Type.Object(
+export const UltraPlanBlockerCandidateSchema = z.object(
   {
     blocker: UltraPlanBlockerSchema,
-    observationFingerprint: Type.String({ minLength: 1 }),
+    observationFingerprint: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanAttemptRecordSchema = Type.Object(
+export const UltraPlanAttemptRecordSchema = z.object(
   {
-    attemptId: Type.String({ minLength: 1 }),
-    attemptKey: Type.String({ minLength: 1 }),
+    attemptId: z.string().min(1),
+    attemptKey: z.string().min(1),
     launchContext: UltraPlanLaunchContextSchema,
-    cursorSnapshot: Type.Union([UltraPlanCursorSchema, Type.Null()]),
-    observations: Type.Array(UltraPlanHookObservationSchema),
-    proofCandidates: Type.Array(UltraPlanProofCandidateSchema),
-    blockerCandidates: Type.Array(UltraPlanBlockerCandidateSchema),
-    outcome: Type.Union([literalUnion(ULTRAPLAN_ATTEMPT_OUTCOMES), Type.Null()]),
-    startedAt: Type.String({ minLength: 1 }),
-    finalizedAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    cursorSnapshot: UltraPlanCursorSchema.nullable(),
+    observations: z.array(UltraPlanHookObservationSchema),
+    proofCandidates: z.array(UltraPlanProofCandidateSchema),
+    blockerCandidates: z.array(UltraPlanBlockerCandidateSchema),
+    outcome: literalUnion(ULTRAPLAN_ATTEMPT_OUTCOMES).nullable(),
+    startedAt: z.string().min(1),
+    finalizedAt: z.string().min(1).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanScenarioStatusUpdateSchema = Type.Object(
+export const UltraPlanScenarioStatusUpdateSchema = z.object(
   {
     stack: literalUnion(ULTRAPLAN_STACKS),
-    domainId: Type.String({ minLength: 1 }),
+    domainId: z.string().min(1),
     level: literalUnion(ULTRAPLAN_LEVELS),
-    scenarioId: Type.String({ minLength: 1 }),
+    scenarioId: z.string().min(1),
     nextStatus: literalUnion(ULTRAPLAN_SCENARIO_STATUSES),
-    appendProof: Type.Optional(UltraPlanProofSchema),
+    appendProof: UltraPlanProofSchema.optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanReviewStatusUpdateSchema = Type.Object(
+export const UltraPlanReviewStatusUpdateSchema = z.object(
   {
     type: literalUnion(["domain", "stack"] as const),
     stack: literalUnion(ULTRAPLAN_STACKS),
-    domainId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    domainId: z.string().min(1).nullable(),
     nextStatus: literalUnion(ULTRAPLAN_REVIEW_STATUSES),
-    artifactRef: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    artifactRef: z.string().min(1).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanBlockerUpdateSchema = Type.Object(
+export const UltraPlanBlockerUpdateSchema = z.object(
   {
     scope: literalUnion(ULTRAPLAN_BLOCKER_SCOPES),
-    nextValue: Type.Union([UltraPlanBlockerSchema, Type.Null()]),
-    clearedByObservationFingerprint: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    nextValue: UltraPlanBlockerSchema.nullable(),
+    clearedByObservationFingerprint: z.string().min(1).nullable(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanRepairActionSchema = Type.Union([
-  Type.Object(
+export const UltraPlanRepairActionSchema = z.union([
+  z.object(
     {
-      op: Type.Literal("recompute-cursor"),
-      reason: Type.String({ minLength: 1 }),
+      op: z.literal("recompute-cursor"),
+      reason: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      op: Type.Literal("recompute-progress"),
-      reason: Type.String({ minLength: 1 }),
+      op: z.literal("recompute-progress"),
+      reason: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      op: Type.Literal("clear-active-attempt"),
-      reason: Type.String({ minLength: 1 }),
+      op: z.literal("clear-active-attempt"),
+      reason: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      op: Type.Literal("convert-active-to-interrupted"),
-      attemptId: Type.String({ minLength: 1 }),
-      reason: Type.String({ minLength: 1 }),
+      op: z.literal("convert-active-to-interrupted"),
+      attemptId: z.string().min(1),
+      reason: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      op: Type.Literal("clear-blocker"),
+      op: z.literal("clear-blocker"),
       scope: literalUnion(ULTRAPLAN_BLOCKER_SCOPES),
-      clearedByObservationFingerprint: Type.String({ minLength: 1 }),
+      clearedByObservationFingerprint: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
+  ).strict(),
 ]);
 
-export const UltraPlanTrackerAttemptFinalizationSchema = Type.Object(
+export const UltraPlanTrackerAttemptFinalizationSchema = z.object(
   {
-    attemptId: Type.String({ minLength: 1 }),
+    attemptId: z.string().min(1),
     outcome: literalUnion(ULTRAPLAN_ATTEMPT_OUTCOMES),
-    finalizedAt: Type.String({ minLength: 1 }),
+    finalizedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanMutationPlanSchema = Type.Object(
+export const UltraPlanMutationPlanSchema = z.object(
   {
     kind: literalUnion(ULTRAPLAN_MUTATION_KINDS),
-    rationale: Type.String({ minLength: 1 }),
-    appendObservationFingerprint: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    scenarioStatusUpdate: Type.Union([UltraPlanScenarioStatusUpdateSchema, Type.Null()]),
-    reviewStatusUpdate: Type.Union([UltraPlanReviewStatusUpdateSchema, Type.Null()]),
-    blockerUpdate: Type.Union([UltraPlanBlockerUpdateSchema, Type.Null()]),
-    cursorUpdate: Type.Union([UltraPlanCursorSchema, Type.Null()]),
-    sessionStateUpdate: Type.Union([literalUnion(ULTRAPLAN_SESSION_STATES), Type.Null()]),
-    trackerAttemptFinalization: Type.Union([UltraPlanTrackerAttemptFinalizationSchema, Type.Null()]),
-    recomputeProgress: Type.Boolean(),
-    repairActions: Type.Array(UltraPlanRepairActionSchema),
-    notes: Type.Array(Type.String()),
+    rationale: z.string().min(1),
+    appendObservationFingerprint: z.string().min(1).nullable(),
+    scenarioStatusUpdate: UltraPlanScenarioStatusUpdateSchema.nullable(),
+    reviewStatusUpdate: UltraPlanReviewStatusUpdateSchema.nullable(),
+    blockerUpdate: UltraPlanBlockerUpdateSchema.nullable(),
+    cursorUpdate: UltraPlanCursorSchema.nullable(),
+    sessionStateUpdate: literalUnion(ULTRAPLAN_SESSION_STATES).nullable(),
+    trackerAttemptFinalization: UltraPlanTrackerAttemptFinalizationSchema.nullable(),
+    recomputeProgress: z.boolean(),
+    repairActions: z.array(UltraPlanRepairActionSchema),
+    notes: z.array(z.string()),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanPendingMutationSchema = Type.Object(
+export const UltraPlanPendingMutationSchema = z.object(
   {
-    attemptId: Type.String({ minLength: 1 }),
+    attemptId: z.string().min(1),
     mutationPlan: UltraPlanMutationPlanSchema,
-    expectedManifestFingerprint: Type.String({ minLength: 1 }),
-    stagedAt: Type.String({ minLength: 1 }),
+    expectedManifestFingerprint: z.string().min(1),
+    stagedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanRuntimeTrackerSchema = Type.Object(
+export const UltraPlanRuntimeTrackerSchema = z.object(
   {
-    version: Type.Literal(1),
-    sessionId: Type.String({ minLength: 1 }),
-    activeAttempt: Type.Union([UltraPlanAttemptRecordSchema, Type.Null()]),
-    finalizedAttempts: Type.Array(UltraPlanAttemptRecordSchema),
-    appliedFingerprints: Type.Array(Type.String({ minLength: 1 })),
-    pendingMutation: Type.Union([UltraPlanPendingMutationSchema, Type.Null()]),
-    updatedAt: Type.String({ minLength: 1 }),
+    version: z.literal(1),
+    sessionId: z.string().min(1),
+    activeAttempt: UltraPlanAttemptRecordSchema.nullable(),
+    finalizedAttempts: z.array(UltraPlanAttemptRecordSchema),
+    appliedFingerprints: z.array(z.string().min(1)),
+    pendingMutation: UltraPlanPendingMutationSchema.nullable(),
+    updatedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanRepairDetailsSchema = Type.Object(
+export const UltraPlanRepairDetailsSchema = z.object(
   {
-    reason: Type.String({ minLength: 1 }),
-    actions: Type.Array(UltraPlanRepairActionSchema),
+    reason: z.string().min(1),
+    actions: z.array(UltraPlanRepairActionSchema),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanReducerActionSchema = Type.Union([
-  Type.Object(
+export const UltraPlanReducerActionSchema = z.union([
+  z.object(
     {
-      kind: Type.Literal("session_started"),
+      kind: z.literal("session_started"),
       observation: UltraPlanHookObservationSchema,
-      nowIso: Type.String({ minLength: 1 }),
+      nowIso: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      kind: Type.Literal("attempt_started"),
+      kind: z.literal("attempt_started"),
       observation: UltraPlanHookObservationSchema,
       launchContext: UltraPlanLaunchContextSchema,
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      kind: Type.Literal("observation_staged"),
+      kind: z.literal("observation_staged"),
       observation: UltraPlanHookObservationSchema,
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      kind: Type.Literal("attempt_finalized"),
+      kind: z.literal("attempt_finalized"),
       observation: UltraPlanHookObservationSchema,
-      nowIso: Type.String({ minLength: 1 }),
+      nowIso: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      kind: Type.Literal("session_shutdown"),
+      kind: z.literal("session_shutdown"),
       observation: UltraPlanHookObservationSchema,
-      nowIso: Type.String({ minLength: 1 }),
+      nowIso: z.string().min(1),
     },
-    { additionalProperties: false },
-  ),
-  Type.Object(
+  ).strict(),
+  z.object(
     {
-      kind: Type.Literal("repair_applied"),
-      nowIso: Type.String({ minLength: 1 }),
+      kind: z.literal("repair_applied"),
+      nowIso: z.string().min(1),
       details: UltraPlanRepairDetailsSchema,
     },
-    { additionalProperties: false },
-  ),
+  ).strict(),
 ]);
 
-export const UltraPlanSessionMigrationRecordSchema = Type.Object(
+export const UltraPlanSessionMigrationRecordSchema = z.object(
   {
-    migratedAt: Type.String({ minLength: 1 }),
-    legacyPath: Type.String({ minLength: 1 }),
-    fingerprintBefore: Type.String({ minLength: 1 }),
-    fingerprintAfter: Type.String({ minLength: 1 }),
-    legacyRenamedTo: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    migratedAt: z.string().min(1),
+    legacyPath: z.string().min(1),
+    fingerprintBefore: z.string().min(1),
+    fingerprintAfter: z.string().min(1),
+    legacyRenamedTo: z.string().min(1).nullable(),
     kind: literalUnion(ULTRAPLAN_MIGRATION_KINDS),
   },
-  { additionalProperties: false },
-);
+).strict();
 
 // ---------------------------------------------------------------------------
 // Semantic validators for contracts that express invariants above schema.
@@ -1359,33 +1298,33 @@ export function validateUltraPlanSessionMigrationRecord(value: unknown) {
 }
 
 export function isUltraPlanLaunchContext(value: unknown): value is UltraPlanLaunchContext {
-  return Value.Check(UltraPlanLaunchContextSchema, value);
+  return checkSchema(UltraPlanLaunchContextSchema, value);
 }
 
 export function isUltraPlanHookObservation(value: unknown): value is UltraPlanHookObservation {
-  return Value.Check(UltraPlanHookObservationSchema, value);
+  return checkSchema(UltraPlanHookObservationSchema, value);
 }
 
 export function isUltraPlanProofCandidate(value: unknown): value is UltraPlanProofCandidate {
-  return Value.Check(UltraPlanProofCandidateSchema, value);
+  return checkSchema(UltraPlanProofCandidateSchema, value);
 }
 
 export function isUltraPlanBlockerCandidate(value: unknown): value is UltraPlanBlockerCandidate {
-  return Value.Check(UltraPlanBlockerCandidateSchema, value);
+  return checkSchema(UltraPlanBlockerCandidateSchema, value);
 }
 
 export function isUltraPlanAttemptRecord(value: unknown): value is UltraPlanAttemptRecord {
-  if (!Value.Check(UltraPlanAttemptRecordSchema, value)) return false;
+  if (!checkSchema(UltraPlanAttemptRecordSchema, value)) return false;
   return getUltraPlanAttemptRecordSemanticErrors(value as UltraPlanAttemptRecord).length === 0;
 }
 
 export function isUltraPlanMutationPlan(value: unknown): value is UltraPlanMutationPlan {
-  if (!Value.Check(UltraPlanMutationPlanSchema, value)) return false;
+  if (!checkSchema(UltraPlanMutationPlanSchema, value)) return false;
   return getUltraPlanMutationPlanSemanticErrors(value as UltraPlanMutationPlan).length === 0;
 }
 
 export function isUltraPlanPendingMutation(value: unknown): value is UltraPlanPendingMutation {
-  return Value.Check(UltraPlanPendingMutationSchema, value);
+  return checkSchema(UltraPlanPendingMutationSchema, value);
 }
 
 export function isUltraPlanRuntimeTracker(value: unknown): value is UltraPlanRuntimeTracker {
@@ -1393,7 +1332,7 @@ export function isUltraPlanRuntimeTracker(value: unknown): value is UltraPlanRun
 }
 
 export function isUltraPlanReducerAction(value: unknown): value is UltraPlanReducerAction {
-  return Value.Check(UltraPlanReducerActionSchema, value);
+  return checkSchema(UltraPlanReducerActionSchema, value);
 }
 
 export function isUltraPlanSessionMigrationRecord(value: unknown): value is UltraPlanSessionMigrationRecord {
@@ -1401,7 +1340,7 @@ export function isUltraPlanSessionMigrationRecord(value: unknown): value is Ultr
 }
 
 export function isUltraPlanRepairAction(value: unknown): value is UltraPlanRepairAction {
-  return Value.Check(UltraPlanRepairActionSchema, value);
+  return checkSchema(UltraPlanRepairActionSchema, value);
 }
 
 
@@ -1444,75 +1383,70 @@ export const ULTRAPLAN_BATCH_JOURNAL_EVENT_TYPES = [
   "cleanup-warning",
 ] as const;
 
-export const UltraPlanBatchWaveSchema = Type.Object(
+export const UltraPlanBatchWaveSchema = z.object(
   {
-    waveIndex: Type.Number({ minimum: 0 }),
-    sessionIds: Type.Array(Type.String({ minLength: 1 })),
+    waveIndex: z.number().min(0),
+    sessionIds: z.array(z.string().min(1)),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanBatchNodeSchema = Type.Object(
+export const UltraPlanBatchNodeSchema = z.object(
   {
-    nodeId: Type.String({ minLength: 1 }),
-    sessionId: Type.String({ minLength: 1 }),
-    title: Type.String({ minLength: 1 }),
-    waveIndex: Type.Number({ minimum: 0 }),
-    dependencies: Type.Array(Type.String({ minLength: 1 })),
+    nodeId: z.string().min(1),
+    sessionId: z.string().min(1),
+    title: z.string().min(1),
+    waveIndex: z.number().min(0),
+    dependencies: z.array(z.string().min(1)),
     state: literalUnion(ULTRAPLAN_BATCH_NODE_STATES),
-    blockerKind: Type.Union([literalUnion(ULTRAPLAN_BATCH_NODE_BLOCKER_KINDS), Type.Null()]),
-    blockerSummary: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    resumeRequestedAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    branchName: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    worktreePath: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    updatedAt: Type.String({ minLength: 1 }),
+    blockerKind: literalUnion(ULTRAPLAN_BATCH_NODE_BLOCKER_KINDS).nullable(),
+    blockerSummary: z.string().min(1).nullable(),
+    resumeRequestedAt: z.string().min(1).nullable(),
+    branchName: z.string().min(1).nullable(),
+    worktreePath: z.string().min(1).nullable(),
+    updatedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanBatchRunSchema = Type.Object(
+export const UltraPlanBatchRunSchema = z.object(
   {
-    runId: Type.String({ minLength: 1 }),
-    projectRoot: Type.String({ minLength: 1 }),
-    baseBranch: Type.String({ minLength: 1 }),
-    baseHead: Type.String({ minLength: 1 }),
-    currentBaseHead: Type.String({ minLength: 1 }),
-    createdAt: Type.String({ minLength: 1 }),
-    updatedAt: Type.String({ minLength: 1 }),
+    runId: z.string().min(1),
+    projectRoot: z.string().min(1),
+    baseBranch: z.string().min(1),
+    baseHead: z.string().min(1),
+    currentBaseHead: z.string().min(1),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
     state: literalUnion(ULTRAPLAN_BATCH_RUN_STATES),
-    maxParallelism: Type.Number({ minimum: 1 }),
-    batchBlockerCode: Type.Union([literalUnion(ULTRAPLAN_BATCH_BLOCKER_CODES), Type.Null()]),
-    batchBlockerSummary: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    batchResumeRequestedAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    supervisorWorktreePath: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    waves: Type.Array(UltraPlanBatchWaveSchema),
-    nodes: Type.Array(UltraPlanBatchNodeSchema),
+    maxParallelism: z.number().min(1),
+    batchBlockerCode: literalUnion(ULTRAPLAN_BATCH_BLOCKER_CODES).nullable(),
+    batchBlockerSummary: z.string().min(1).nullable(),
+    batchResumeRequestedAt: z.string().min(1).nullable(),
+    supervisorWorktreePath: z.string().min(1).nullable(),
+    waves: z.array(UltraPlanBatchWaveSchema),
+    nodes: z.array(UltraPlanBatchNodeSchema),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanBatchActiveRunLeaseSchema = Type.Object(
+export const UltraPlanBatchActiveRunLeaseSchema = z.object(
   {
-    runId: Type.String({ minLength: 1 }),
-    ownerSessionId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    leaseAcquiredAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    leaseExpiresAt: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    updatedAt: Type.String({ minLength: 1 }),
+    runId: z.string().min(1),
+    ownerSessionId: z.string().min(1).nullable(),
+    leaseAcquiredAt: z.string().min(1).nullable(),
+    leaseExpiresAt: z.string().min(1).nullable(),
+    updatedAt: z.string().min(1),
   },
-  { additionalProperties: false },
-);
+).strict();
 
-export const UltraPlanBatchJournalEventSchema = Type.Object(
+export const UltraPlanBatchJournalEventSchema = z.object(
   {
-    runId: Type.String({ minLength: 1 }),
-    sessionId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    runId: z.string().min(1),
+    sessionId: z.string().min(1).nullable(),
     type: literalUnion(ULTRAPLAN_BATCH_JOURNAL_EVENT_TYPES),
-    recordedAt: Type.String({ minLength: 1 }),
-    summary: Type.String({ minLength: 1 }),
-    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    recordedAt: z.string().min(1),
+    summary: z.string().min(1),
+    details: z.record(z.string(), z.unknown()).optional(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
 function parseBatchLeaseTimestamp(errors: string[], fieldName: string, value: string | null): number | null {
   if (value === null) {
@@ -1573,11 +1507,11 @@ export function validateUltraPlanBatchActiveRunLease(value: unknown) {
 }
 
 export function isUltraPlanBatchWave(value: unknown): value is UltraPlanBatchWave {
-  return Value.Check(UltraPlanBatchWaveSchema, value);
+  return checkSchema(UltraPlanBatchWaveSchema, value);
 }
 
 export function isUltraPlanBatchNode(value: unknown): value is UltraPlanBatchNode {
-  return Value.Check(UltraPlanBatchNodeSchema, value);
+  return checkSchema(UltraPlanBatchNodeSchema, value);
 }
 
 export function isUltraPlanBatchRun(value: unknown): value is UltraPlanBatchRun {
@@ -1589,5 +1523,5 @@ export function isUltraPlanBatchActiveRunLease(value: unknown): value is UltraPl
 }
 
 export function isUltraPlanBatchJournalEvent(value: unknown): value is UltraPlanBatchJournalEvent {
-  return Value.Check(UltraPlanBatchJournalEventSchema, value);
+  return checkSchema(UltraPlanBatchJournalEventSchema, value);
 }

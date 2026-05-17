@@ -1,5 +1,5 @@
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { z } from "zod/v4";
+import type { ZodType } from "zod/v4";
 import type {
   ConfiguredReviewAgent,
   ReviewAgentConfig,
@@ -18,6 +18,7 @@ import type {
   ReviewSessionArtifacts,
   ThinkingLevel,
 } from "../types.js";
+import { checkSchema } from "../ai/schema-validation.js";
 export type {
   ConfiguredReviewAgent,
   ReviewAgentConfig,
@@ -45,226 +46,181 @@ export const REVIEW_SESSION_STATUSES = ["running", "completed", "blocked", "canc
 export const REVIEW_POST_CONSOLIDATION_ACTIONS = ["fix-now", "document-only", "discuss-before-fixing"] as const;
 export const REVIEW_FIX_STATUSES = ["applied", "skipped", "failed"] as const;
 
-export const ReviewScopeFileSchema = Type.Object(
-  {
-    path: Type.String({ minLength: 1 }),
-    additions: Type.Number({ minimum: 0 }),
-    deletions: Type.Number({ minimum: 0 }),
-    diff: Type.String(),
-  },
-  { additionalProperties: false },
-);
+export const ReviewScopeFileSchema = z.object({
+  path: z.string().min(1),
+  additions: z.number().min(0),
+  deletions: z.number().min(0),
+  diff: z.string(),
+}).strict();
 
-export const ReviewScopeStatsSchema = Type.Object(
-  {
-    filesChanged: Type.Number({ minimum: 0 }),
-    excludedFiles: Type.Number({ minimum: 0 }),
-    additions: Type.Number({ minimum: 0 }),
-    deletions: Type.Number({ minimum: 0 }),
-  },
-  { additionalProperties: false },
-);
+export const ReviewScopeStatsSchema = z.object({
+  filesChanged: z.number().min(0),
+  excludedFiles: z.number().min(0),
+  additions: z.number().min(0),
+  deletions: z.number().min(0),
+}).strict();
 
-export const ReviewScopeSchema = Type.Object(
-  {
-    mode: Type.Union(REVIEW_SCOPE_MODES.map((mode) => Type.Literal(mode))),
-    description: Type.String({ minLength: 1 }),
-    diff: Type.String(),
-    files: Type.Array(ReviewScopeFileSchema),
-    stats: ReviewScopeStatsSchema,
-    baseBranch: Type.Optional(Type.String({ minLength: 1 })),
-    commit: Type.Optional(Type.String({ minLength: 1 })),
-    customInstructions: Type.Optional(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
+export const ReviewScopeSchema = z.object({
+  mode: z.enum(REVIEW_SCOPE_MODES),
+  description: z.string().min(1),
+  diff: z.string(),
+  files: z.array(ReviewScopeFileSchema),
+  stats: ReviewScopeStatsSchema,
+  baseBranch: z.string().min(1).optional(),
+  commit: z.string().min(1).optional(),
+  customInstructions: z.string().min(1).optional(),
+}).strict();
 
-export const ReviewFindingValidationSchema = Type.Object(
-  {
-    verdict: Type.Union(REVIEW_VALIDATION_VERDICTS.map((value) => Type.Literal(value))),
-    reasoning: Type.String({ minLength: 1 }),
-    validatedBy: Type.String({ minLength: 1 }),
-    validatedAt: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const ReviewFindingValidationSchema = z.object({
+  verdict: z.enum(REVIEW_VALIDATION_VERDICTS),
+  reasoning: z.string().min(1),
+  validatedBy: z.string().min(1),
+  validatedAt: z.string().min(1),
+}).strict();
 
-export const ReviewFindingSchema = Type.Object(
-  {
-    id: Type.String({ minLength: 1 }),
-    title: Type.String({ minLength: 1 }),
-    severity: Type.Union(REVIEW_FINDING_SEVERITIES.map((value) => Type.Literal(value))),
-    priority: Type.Union(REVIEW_FINDING_PRIORITIES.map((value) => Type.Literal(value))),
-    confidence: Type.Number({ minimum: 0, maximum: 1 }),
-    file: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    lineStart: Type.Union([Type.Number({ minimum: 1 }), Type.Null()]),
-    lineEnd: Type.Union([Type.Number({ minimum: 1 }), Type.Null()]),
-    body: Type.String({ minLength: 1 }),
-    suggestion: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    agent: Type.Optional(Type.String({ minLength: 1 })),
-    validation: Type.Optional(ReviewFindingValidationSchema),
-  },
-  { additionalProperties: false },
-);
+export const ReviewFindingSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  severity: z.enum(REVIEW_FINDING_SEVERITIES),
+  priority: z.enum(REVIEW_FINDING_PRIORITIES),
+  confidence: z.number().min(0).max(1),
+  file: z.string().min(1).nullable(),
+  lineStart: z.number().min(1).nullable(),
+  lineEnd: z.number().min(1).nullable(),
+  body: z.string().min(1),
+  suggestion: z.string().min(1).nullable(),
+  agent: z.string().min(1).optional(),
+  validation: ReviewFindingValidationSchema.optional(),
+}).strict();
 
-export const ReviewOutputSchema = Type.Object(
-  {
-    findings: Type.Array(ReviewFindingSchema),
-    summary: Type.String({ minLength: 1 }),
-    status: Type.Union(REVIEW_OUTPUT_STATUSES.map((value) => Type.Literal(value))),
-  },
-  { additionalProperties: false },
-);
+export const ReviewOutputSchema = z.object({
+  findings: z.array(ReviewFindingSchema),
+  summary: z.string().min(1),
+  status: z.enum(REVIEW_OUTPUT_STATUSES),
+}).strict();
 
-export const ReviewAgentConfigSchema = Type.Object(
-  {
-    name: Type.String({ minLength: 1 }),
-    enabled: Type.Boolean(),
-    data: Type.String({ minLength: 1 }),
-    model: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    thinkingLevel: Type.Optional(Type.Union([
-      Type.Literal("off"),
-      Type.Literal("minimal"),
-      Type.Literal("low"),
-      Type.Literal("medium"),
-      Type.Literal("high"),
-      Type.Literal("xhigh"),
-      Type.Null(),
-    ])),
-    peerCoordination: Type.Optional(Type.Boolean()),
-  },
-  { additionalProperties: false },
-);
+export const ReviewAgentConfigSchema = z.object({
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  data: z.string().min(1),
+  model: z.string().min(1).nullable(),
+  thinkingLevel: z.union([
+    z.literal("off"),
+    z.literal("minimal"),
+    z.literal("low"),
+    z.literal("medium"),
+    z.literal("high"),
+    z.literal("xhigh"),
+    z.null(),
+  ]).optional(),
+  peerCoordination: z.boolean().optional(),
+}).strict();
 
-export const ReviewAgentsConfigSchema = Type.Object(
-  {
-    agents: Type.Array(ReviewAgentConfigSchema),
-  },
-  { additionalProperties: false },
-);
+export const ReviewAgentsConfigSchema = z.object({
+  agents: z.array(ReviewAgentConfigSchema),
+}).strict();
 
-export const ReviewAgentFrontmatterSchema = Type.Object(
-  {
-    name: Type.String({ minLength: 1 }),
-    description: Type.String({ minLength: 1 }),
-    focus: Type.Optional(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
+export const ReviewAgentFrontmatterSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1),
+  focus: z.string().min(1).optional(),
+}).strict();
 
-export const ReviewIterationSummarySchema = Type.Object(
-  {
-    iteration: Type.Number({ minimum: 1 }),
-    findings: Type.Number({ minimum: 0 }),
-    status: Type.Union(REVIEW_OUTPUT_STATUSES.map((value) => Type.Literal(value))),
-    file: Type.String({ minLength: 1 }),
-    createdAt: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const ReviewIterationSummarySchema = z.object({
+  iteration: z.number().min(1),
+  findings: z.number().min(0),
+  status: z.enum(REVIEW_OUTPUT_STATUSES),
+  file: z.string().min(1),
+  createdAt: z.string().min(1),
+}).strict();
 
-export const ReviewFixRecordSchema = Type.Object(
-  {
-    findingIds: Type.Array(Type.String({ minLength: 1 })),
-    file: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-    status: Type.Union(REVIEW_FIX_STATUSES.map((value) => Type.Literal(value))),
-    summary: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const ReviewFixRecordSchema = z.object({
+  findingIds: z.array(z.string().min(1)),
+  file: z.string().min(1).nullable(),
+  status: z.enum(REVIEW_FIX_STATUSES),
+  summary: z.string().min(1),
+}).strict();
 
 export const REVIEW_FIX_OUTPUT_STATUSES = ["applied", "partial", "skipped", "blocked"] as const;
 
-export const ReviewFixOutputSchema = Type.Object(
-  {
-    fixes: Type.Array(ReviewFixRecordSchema),
-    summary: Type.String({ minLength: 1 }),
-    status: Type.Union(REVIEW_FIX_OUTPUT_STATUSES.map((value) => Type.Literal(value))),
-  },
-  { additionalProperties: false },
-);
+export const ReviewFixOutputSchema = z.object({
+  fixes: z.array(ReviewFixRecordSchema),
+  summary: z.string().min(1),
+  status: z.enum(REVIEW_FIX_OUTPUT_STATUSES),
+}).strict();
 
 
-export const ReviewSessionArtifactsSchema = Type.Object(
-  {
-    scope: Type.String({ minLength: 1 }),
-    iterationsDir: Type.String({ minLength: 1 }),
-    agentsDir: Type.String({ minLength: 1 }),
-    rawFindings: Type.Optional(Type.String({ minLength: 1 })),
-    validatedFindings: Type.Optional(Type.String({ minLength: 1 })),
-    consolidatedFindings: Type.Optional(Type.String({ minLength: 1 })),
-    findingsReport: Type.Optional(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
+export const ReviewSessionArtifactsSchema = z.object({
+  scope: z.string().min(1),
+  iterationsDir: z.string().min(1),
+  agentsDir: z.string().min(1),
+  rawFindings: z.string().min(1).optional(),
+  validatedFindings: z.string().min(1).optional(),
+  consolidatedFindings: z.string().min(1).optional(),
+  findingsReport: z.string().min(1).optional(),
+}).strict();
 
-export const ReviewSessionSchema = Type.Object(
-  {
-    id: Type.String({ minLength: 1 }),
-    createdAt: Type.String({ minLength: 1 }),
-    updatedAt: Type.String({ minLength: 1 }),
-    level: Type.Union(REVIEW_LEVELS.map((value) => Type.Literal(value))),
-    status: Type.Union(REVIEW_SESSION_STATUSES.map((value) => Type.Literal(value))),
-    scope: ReviewScopeSchema,
-    validateFindings: Type.Boolean(),
-    consolidate: Type.Boolean(),
-    postConsolidationAction: Type.Union([
-      Type.Union(REVIEW_POST_CONSOLIDATION_ACTIONS.map((value) => Type.Literal(value))),
-      Type.Null(),
-    ]),
-    maxIterations: Type.Number({ minimum: 0 }),
-    currentIteration: Type.Number({ minimum: 0 }),
-    iterations: Type.Array(ReviewIterationSummarySchema),
-    fixes: Type.Array(ReviewFixRecordSchema),
-    artifacts: ReviewSessionArtifactsSchema,
-    agents: Type.Array(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
+export const ReviewSessionSchema = z.object({
+  id: z.string().min(1),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  level: z.enum(REVIEW_LEVELS),
+  status: z.enum(REVIEW_SESSION_STATUSES),
+  scope: ReviewScopeSchema,
+  validateFindings: z.boolean(),
+  consolidate: z.boolean(),
+  postConsolidationAction: z.enum(REVIEW_POST_CONSOLIDATION_ACTIONS).nullable(),
+  maxIterations: z.number().min(0),
+  currentIteration: z.number().min(0),
+  iterations: z.array(ReviewIterationSummarySchema),
+  fixes: z.array(ReviewFixRecordSchema),
+  artifacts: ReviewSessionArtifactsSchema,
+  agents: z.array(z.string().min(1)),
+}).strict();
 
 
 export function isReviewScopeFile(value: unknown): value is ReviewScopeFile {
-  return Value.Check(ReviewScopeFileSchema, value);
+  return checkSchema(ReviewScopeFileSchema, value);
 }
 
 export function isReviewScopeStats(value: unknown): value is ReviewScopeStats {
-  return Value.Check(ReviewScopeStatsSchema, value);
+  return checkSchema(ReviewScopeStatsSchema, value);
 }
 
 export function isReviewScope(value: unknown): value is ReviewScope {
-  return Value.Check(ReviewScopeSchema, value);
+  return checkSchema(ReviewScopeSchema, value);
 }
 
 export function isReviewFinding(value: unknown): value is ReviewFinding {
-  return Value.Check(ReviewFindingSchema, value);
+  return checkSchema(ReviewFindingSchema, value);
 }
 
 export function isReviewOutput(value: unknown): value is ReviewOutput {
-  return Value.Check(ReviewOutputSchema, value);
+  return checkSchema(ReviewOutputSchema, value);
 }
 
 export function isReviewAgentConfig(value: unknown): value is ReviewAgentConfig {
-  return Value.Check(ReviewAgentConfigSchema, value);
+  return checkSchema(ReviewAgentConfigSchema, value);
 }
 
 export function isReviewAgentsConfig(value: unknown): value is ReviewAgentsConfig {
-  return Value.Check(ReviewAgentsConfigSchema, value);
+  return checkSchema(ReviewAgentsConfigSchema, value);
 }
 
 export function isReviewSessionArtifacts(value: unknown): value is ReviewSessionArtifacts {
-  return Value.Check(ReviewSessionArtifactsSchema, value);
+  return checkSchema(ReviewSessionArtifactsSchema, value);
 }
 
 export function isReviewIterationSummary(value: unknown): value is ReviewIterationSummary {
-  return Value.Check(ReviewIterationSummarySchema, value);
+  return checkSchema(ReviewIterationSummarySchema, value);
 }
 
 export function isReviewFixRecord(value: unknown): value is ReviewFixRecord {
-  return Value.Check(ReviewFixRecordSchema, value);
+  return checkSchema(ReviewFixRecordSchema, value);
 }
 
 export function isReviewSession(value: unknown): value is ReviewSession {
-  return Value.Check(ReviewSessionSchema, value);
+  return checkSchema(ReviewSessionSchema, value);
 }
 
 export function isReviewAgentDefinition(value: unknown): value is ReviewAgentDefinition {
