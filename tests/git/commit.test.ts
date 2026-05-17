@@ -53,6 +53,14 @@ function createMockExec(responses: Record<string, { stdout: string; stderr?: str
   });
 }
 
+function collectWidgetText(setWidget: any): string {
+  return setWidget.mock.calls
+    .map((call: any[]) => call[1])
+    .filter((renderer: unknown): renderer is () => { getText(): string } => typeof renderer === "function")
+    .map((renderer: () => { getText(): string }) => renderer().getText())
+    .join("\n");
+}
+
 function createMockCtx(overrides: Record<string, any> = {}) {
   const { ui: uiOverrides, ...rest } = overrides;
   return {
@@ -597,11 +605,13 @@ describe("analyzeAndCommit", () => {
       .mockResolvedValueOnce("commit — feat: add feature")
       .mockResolvedValueOnce("Yes — push to origin/feature/pr-flow")
       .mockResolvedValueOnce("Yes — open a Pull Request");
+    const setWidget = mock();
     const ctx = createMockCtx({
       ui: {
         select,
         notify: mock(),
         input: mock(),
+        setWidget,
       },
     });
 
@@ -613,6 +623,9 @@ describe("analyzeAndCommit", () => {
     expect(execCalls).toContain("gh pr create --fill --head feature/pr-flow");
     expect(select.mock.calls[1]?.[0]).toBe("Push commits?");
     expect(select.mock.calls[2]?.[0]).toBe("Open a Pull Request?");
+    const widgetText = collectWidgetText(setWidget);
+    expect(widgetText).toContain("Push commits");
+    expect(widgetText).toContain("Open pull request");
   });
 
   test("still offers a PR on feature branches when the initial push is skipped", async () => {

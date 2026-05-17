@@ -103,6 +103,8 @@ const COMMIT_STEPS = [
   { key: "ai-analysis", label: "AI analysis" },
   { key: "review-plan", label: "Review plan" },
   { key: "execute-commits", label: "Execute commits" },
+  { key: "push-commits", label: "Push commits" },
+  { key: "open-pr", label: "Open pull request" },
 ] as const;
 
 function createProgress(ctx: any) {
@@ -126,6 +128,9 @@ function createProgress(ctx: any) {
     },
     skip(stepIndex: number, detail?: string) {
       progress.skip(COMMIT_STEPS[stepIndex]!.key, detail);
+    },
+    fail(stepIndex: number, detail?: string) {
+      progress.fail(COMMIT_STEPS[stepIndex]!.key, detail);
     },
     dispose() {
       progress.dispose();
@@ -340,14 +345,11 @@ export async function analyzeAndCommit(
     }
 
     if (!plan) {
-      // Skip remaining tracked steps for the manual path
       progress.skip(5, "manual");
-      progress.skip(6, "manual");
-      progress.dispose();
       const reason = !platform.capabilities.agentSessions
         ? "no agent sessions"
         : agentReason;
-      return manualFallback(platform, ctx, cwd, fileList, platform.paths, agentAttempts, reason);
+      return manualFallback(platform, ctx, cwd, fileList, platform.paths, agentAttempts, progress, reason);
     }
 
     // 6. Present plan for approval
@@ -444,6 +446,7 @@ async function manualFallback(
   fileList: string[],
   paths: PlatformPaths,
   attempts: number,
+  progress: ReturnType<typeof createProgress>,
   reason?: string,
 ): Promise<CommitResult | null> {
   const exec = platform.exec.bind(platform);
@@ -467,24 +470,27 @@ async function manualFallback(
       ? `${reason} \u2014 enter a commit message manually`
       : "Enter a commit message manually",
   );
+  progress.activate(6, "manual");
 
   const message = await ctx.ui.input("Commit message (empty to abort)", {
     helpText: `${fileList.length} file(s) staged`,
   });
-
   if (!message?.trim()) {
     notifyInfo(ctx, "Commit cancelled", "No message provided");
+    progress.skip(6, "aborted");
     return null;
   }
 
   const commitResult = await commitStaged(exec, cwd, message);
   if (!commitResult.success) {
     notifyError(ctx, "Commit failed", commitResult.error);
+    progress.fail(6, "failed");
     return null;
   }
 
   notifySuccess(ctx, "Committed", message.split("\n")[0]);
-  await offerPostCommitActions(platform, ctx, cwd);
+  progress.complete(6, "1 done");
+  await offerPostCommitActions(platform, ctx, cwd, progress);
   return { committed: 1, messages: [message] };
 }
 
@@ -540,26 +546,36 @@ async function createPullRequest(
   ctx: any,
   cwd: string,
   branch: string,
-): Promise<void> {
+): Promise<boolean> {
   const result = await exec("gh", ["pr", "create", "--fill", "--head", branch], { cwd });
   if (result.code !== 0) {
     notifyError(ctx, "Pull request failed", formatCommandFailure(result));
-    return;
+    return false;
   }
 
   const detail = result.stdout.trim() || result.stderr.trim() || `Branch: ${branch}`;
   notifySuccess(ctx, "Pull request opened", detail);
+  return true;
 }
 
-async function offerPostCommitActions(platform: Platform, ctx: any, cwd: string): Promise<void> {
+async function offerPostCommitActions(
+  platform: Platform,
+  ctx: any,
+  cwd: string,
+  progress: ReturnType<typeof createProgress>,
+): Promise<void> {
   try {
     const exec = platform.exec.bind(platform);
+    progress.activate(7, "detect branch");
     const branch = await readCurrentBranch(exec, ctx, cwd);
     if (!branch) {
+      progress.skip(7, "no branch");
+      progress.skip(8, "no branch");
       return;
     }
 
     const yesPush = pushYesOption(branch);
+    progress.activate(7, "prompt");
     const pushSelection = await ctx.ui.select("Push commits?", [
       PUSH_NO_OPTION,
       yesPush,
@@ -567,21 +583,32 @@ async function offerPostCommitActions(platform: Platform, ctx: any, cwd: string)
       helpText: `Current branch: ${branch}`,
     });
 
-     if (!pushSelection) {
-       return;
-     }
-
-    let pushed = false;
-    let pushAttempted = false;
-    if (pushSelection === yesPush) {
-      pushAttempted = true;
-      pushed = await pushCurrentBranch(exec, ctx, cwd, branch);
-    }
-
-    if (isDefaultBranchName(branch) || (pushAttempted && !pushed)) {
+    if (!pushSelection) {
+      progress.skip(7, "cancelled");
+      progress.skip(8, "cancelled");
       return;
     }
 
+    let pushed = false;
+    if (pushSelection === yesPush) {
+      progress.activate(7, `origin/${branch}`);
+      pushed = await pushCurrentBranch(exec, ctx, cwd, branch);
+      if (!pushed) {
+        progress.fail(7, "failed");
+        progress.skip(8, "push failed");
+        return;
+      }
+      progress.complete(7, `origin/${branch}`);
+    } else {
+      progress.skip(7, "kept local");
+    }
+
+    if (isDefaultBranchName(branch)) {
+      progress.skip(8, "default branch");
+      return;
+    }
+
+    progress.activate(8, "prompt");
     const prSelection = await ctx.ui.select("Open a Pull Request?", [
       PR_NO_OPTION,
       PR_YES_OPTION,
@@ -590,17 +617,35 @@ async function offerPostCommitActions(platform: Platform, ctx: any, cwd: string)
         ? `Branch: ${branch}`
         : `Opening a PR will first push origin/${branch}.`,
     });
+    if (!prSelection) {
+      progress.skip(8, "cancelled");
+      return;
+    }
     if (prSelection !== PR_YES_OPTION) {
+      progress.skip(8, "not requested");
       return;
     }
 
-    if (!pushed && !await pushCurrentBranch(exec, ctx, cwd, branch)) {
-      return;
+    if (!pushed) {
+      progress.activate(7, `origin/${branch}`);
+      pushed = await pushCurrentBranch(exec, ctx, cwd, branch);
+      if (!pushed) {
+        progress.fail(7, "failed");
+        progress.skip(8, "push failed");
+        return;
+      }
+      progress.complete(7, `origin/${branch}`);
     }
 
-    await createPullRequest(exec, ctx, cwd, branch);
+    progress.activate(8, "gh pr create");
+    if (!await createPullRequest(exec, ctx, cwd, branch)) {
+      progress.fail(8, "failed");
+      return;
+    }
+    progress.complete(8, "created");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    progress.fail(8, "error");
     notifyError(ctx, "Post-commit action failed", message);
   }
 }
@@ -665,13 +710,12 @@ async function executeCommitPlan(
   await exec("git", ["read-tree", savedTree], { cwd });
 
   progress.complete(6, `${committedMessages.length} done`);
-  progress.dispose();
   notifySuccess(
     ctx,
     `${committedMessages.length} commit(s) created`,
     committedMessages.map((m) => m.split("\n")[0]).join(" | "),
   );
-  await offerPostCommitActions(platform, ctx, cwd);
+  await offerPostCommitActions(platform, ctx, cwd, progress);
 
   return { committed: committedMessages.length, messages: committedMessages };
 }
