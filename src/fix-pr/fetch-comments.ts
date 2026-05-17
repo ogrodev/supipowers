@@ -11,6 +11,30 @@ const INLINE_COMMENTS_JQ =
 const REVIEW_COMMENTS_JQ =
   '.[] | select(.body != null and .body != "") | {id, path: null, line: null, body, user: .user.login, userType: .user.type, createdAt: .submitted_at, updatedAt: .submitted_at, inReplyToId: null, diffHunk: null, state}';
 
+
+const RESOLVED_REVIEW_THREAD_COMMENT_IDS_QUERY = `
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        nodes {
+          isResolved
+          comments(first: 100) {
+            nodes {
+              databaseId
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+`;
+
 export interface ClusteredPrComments<TTarget extends WorkspaceTarget = WorkspaceTarget> {
   allComments: PrComment[];
   commentsByTargetId: Map<string, PrComment[]>;
@@ -25,6 +49,30 @@ function appendComment(commentsByTargetId: Map<string, PrComment[]>, targetId: s
   }
 
   commentsByTargetId.set(targetId, [comment]);
+}
+
+
+function parseRepoOwnerAndName(repo: string): { owner: string; name: string } | null {
+  const separator = repo.indexOf("/");
+  if (separator <= 0 || separator === repo.length - 1) {
+    return null;
+  }
+
+  return {
+    owner: repo.slice(0, separator),
+    name: repo.slice(separator + 1),
+  };
+}
+
+function parseResolvedCommentIds(output: string): Set<number> {
+  const ids = new Set<number>();
+  for (const line of output.split(/\r?\n/)) {
+    const id = Number.parseInt(line.trim(), 10);
+    if (Number.isInteger(id)) {
+      ids.add(id);
+    }
+  }
+  return ids;
 }
 
 export function parsePrCommentsJsonl(content: string): PrComment[] {
@@ -48,6 +96,68 @@ export function stringifyPrCommentsJsonl(comments: readonly PrComment[]): string
 
   return `${comments.map((comment) => JSON.stringify(comment)).join("\n")}\n`;
 }
+
+async function fetchResolvedReviewThreadCommentIds(
+  platform: Platform,
+  repo: string,
+  prNumber: number,
+  cwd: string,
+): Promise<Set<number> | string> {
+  const repoParts = parseRepoOwnerAndName(repo);
+  if (!repoParts) {
+    return `Invalid repository name: ${repo}`;
+  }
+
+  const result = await platform.exec(
+    "gh",
+    [
+      "api",
+      "graphql",
+      "--paginate",
+      "-f",
+      `query=${RESOLVED_REVIEW_THREAD_COMMENT_IDS_QUERY}`,
+      "-F",
+      `owner=${repoParts.owner}`,
+      "-F",
+      `name=${repoParts.name}`,
+      "-F",
+      `number=${prNumber}`,
+      "--jq",
+      ".data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == true) | .comments.nodes[].databaseId",
+    ],
+    { cwd },
+  );
+
+  if (result.code !== 0) {
+    return result.stderr || "gh api graphql failed while fetching resolved review threads";
+  }
+
+  return parseResolvedCommentIds(result.stdout);
+}
+
+function filterResolvedComments(content: string, resolvedCommentIds: ReadonlySet<number>): string {
+  if (!content.trim() || resolvedCommentIds.size === 0) {
+    return content;
+  }
+
+  const unresolvedLines = content
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return false;
+      }
+      try {
+        const comment = JSON.parse(trimmed) as Pick<PrComment, "id">;
+        return !resolvedCommentIds.has(comment.id);
+      } catch {
+        return true;
+      }
+    });
+
+  return unresolvedLines.length > 0 ? `${unresolvedLines.join("\n")}\n` : "";
+}
+
 
 export function clusterPrCommentsByTarget<TTarget extends WorkspaceTarget>(
   targets: readonly TTarget[],
@@ -142,5 +252,14 @@ export async function fetchPrComments(
   // Both calls failed — gh is broken, not just empty results
   if (inlineResult.code !== 0 && reviewResult.code !== 0) {
     return inlineResult.stderr || reviewResult.stderr || "gh api calls failed";
+  }
+
+  const resolvedCommentIds = await fetchResolvedReviewThreadCommentIds(platform, repo, prNumber, cwd);
+  if (typeof resolvedCommentIds === "string") {
+    return resolvedCommentIds;
+  }
+
+  if (resolvedCommentIds.size > 0) {
+    fs.writeFileSync(outputPath, filterResolvedComments(fs.readFileSync(outputPath, "utf-8"), resolvedCommentIds));
   }
 }

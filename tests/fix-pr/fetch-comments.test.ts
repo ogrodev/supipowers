@@ -14,6 +14,7 @@ function makePlatform(execResults: Record<string, { stdout: string; stderr: stri
   return {
     exec: mock((cmd: string, args: string[]) => {
       const endpoint = args.find((arg) => arg.startsWith("repos/"));
+      if (args.includes("graphql")) return Promise.resolve(execResults.graphql ?? { stdout: "", stderr: "", code: 0 });
       if (endpoint?.includes("/comments")) return Promise.resolve(execResults.comments);
       if (endpoint?.includes("/reviews")) return Promise.resolve(execResults.reviews);
       return Promise.resolve({ stdout: "", stderr: "unknown endpoint", code: 1, killed: false });
@@ -99,6 +100,25 @@ describe("fetchPrComments", () => {
     expect(content).toBe(`${inlineComment}\n${reviewComment}\n`);
   });
 
+  test("excludes comments from resolved GitHub review threads", async () => {
+    const activeComment = JSON.stringify({ id: 1, body: "still actionable", state: "COMMENTED" });
+    const resolvedComment = JSON.stringify({ id: 2, body: "already resolved", state: "COMMENTED" });
+
+    const platform = makePlatform({
+      comments: { stdout: `${activeComment}\n${resolvedComment}\n`, stderr: "", code: 0 },
+      reviews: { stdout: "", stderr: "", code: 0 },
+      graphql: { stdout: "2\n", stderr: "", code: 0 },
+    });
+
+    const outputPath = path.join(tmpDir, "comments.jsonl");
+    const error = await fetchPrComments(platform, "owner/repo", 42, outputPath, tmpDir);
+
+    expect(error).toBeUndefined();
+    const content = fs.readFileSync(outputPath, "utf-8");
+    expect(content).toBe(`${activeComment}\n`);
+    expect(content).not.toContain("already resolved");
+  });
+
   test("creates output directory recursively", async () => {
     const platform = makePlatform({
       comments: { stdout: "", stderr: "", code: 0 },
@@ -173,9 +193,9 @@ describe("fetchPrComments", () => {
     const outputPath = path.join(tmpDir, "comments.jsonl");
     await fetchPrComments(platform, "octocat/hello", 99, outputPath, "/work");
 
-    expect(platform.exec).toHaveBeenCalledTimes(2);
+    expect(platform.exec).toHaveBeenCalledTimes(3);
 
-    const [call1, call2] = platform.exec.mock.calls;
+    const [call1, call2, call3] = platform.exec.mock.calls;
     expect(call1[0]).toBe("gh");
     expect(call1[1]).toContain("repos/octocat/hello/pulls/99/comments");
     expect(call1[2]).toEqual({ cwd: "/work" });
@@ -183,6 +203,13 @@ describe("fetchPrComments", () => {
     expect(call2[0]).toBe("gh");
     expect(call2[1]).toContain("repos/octocat/hello/pulls/99/reviews");
     expect(call2[2]).toEqual({ cwd: "/work" });
+
+    expect(call3[0]).toBe("gh");
+    expect(call3[1]).toContain("graphql");
+    expect(call3[1]).toContain("owner=octocat");
+    expect(call3[1]).toContain("name=hello");
+    expect(call3[1]).toContain("number=99");
+    expect(call3[2]).toEqual({ cwd: "/work" });
   });
 
   test("clusters pathless review comments separately in monorepos", () => {
