@@ -119,9 +119,9 @@ Type.Boolean({ description: "Enable verbose output" })
 // Optional parameters
 Type.Optional(Type.String({ default: "hello" }))
 
-// Enums (use StringEnum from pi.pi for string enums)
-const { StringEnum } = pi.pi;
-StringEnum(["staging", "production"], { description: "Target environment" })
+// Enums (use `pi.zod` — the legacy `StringEnum` re-export from `pi.pi` was removed in OMP 15.1.3)
+const { z } = pi.zod;
+z.enum(["staging", "production"]).describe("Target environment")
 
 // Nested objects
 Type.Object({

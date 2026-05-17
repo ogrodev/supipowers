@@ -218,6 +218,20 @@ Supipowers ships runtime-loaded prompt skills that are also available to the age
 | `creating-supi-agents`  | Agent creation guidance  |
 | `harness`               | `/supi:harness`         |
 
+## Containerized deployments
+
+Supipowers runs unchanged inside containerized OMP installs (robomp slots, the swarm extension, CI runners). When the slot must stay credential-free, run a sidecar `omp auth-gateway` outside the container and pin the per-provider transport in `~/.omp/agent/models.yml`:
+
+```yaml
+providers:
+  anthropic:
+    transport: pi-native
+    baseUrl: http://llm-gateway.internal:4000
+    apiKey: <gateway-bearer>
+```
+
+The slot keeps resolving pricing, capabilities, and thinking config locally from its bundled `models.json`; only the streaming dispatch is redirected through the gateway, which holds the real provider tokens. Multi-host credential sync uses the matching `omp auth-broker` subcommand. Requires OMP ≥ 15.1.3.
+
 ## Development
 
 ```bash
