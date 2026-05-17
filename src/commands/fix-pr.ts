@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Platform } from "../platform/types.js";
 import type { WorkspaceTarget } from "../types.js";
-import { buildWorkspaceTargetOptionLabel, parseTargetArg, selectWorkspaceTarget, stripCliArg, tokenizeCliArgs } from "../workspace/selector.js";
+import { buildWorkspaceTargetOptionLabel, parseTargetArg, stripCliArg, tokenizeCliArgs } from "../workspace/selector.js";
 import { resolvePackageManager } from "../workspace/package-manager.js";
 import { resolveRepoRoot } from "../workspace/repo-root.js";
 import { discoverWorkspaceTargets } from "../workspace/targets.js";
@@ -46,6 +46,7 @@ modelRegistry.register({
   label: "Task (sub-agent)",
   harnessRoleHint: "default",
 });
+
 
 function getScriptsDir(): string {
   return path.join(moduleDir(import.meta.url), "..", "fix-pr", "scripts");
@@ -91,6 +92,12 @@ function formatUnscopedCommentCount(count: number): string {
   return `${formatCommentCount(count)} without file path`;
 }
 
+type FixPrSelectedTarget =
+  | { kind: "workspace"; target: WorkspaceTarget }
+  | { kind: "all"; target: WorkspaceTarget };
+
+const ALL_FIX_PR_TARGET_ID = "all";
+
 function buildCommentTargetOptions(
   targets: readonly WorkspaceTarget[],
   commentsByTargetId: ReadonlyMap<string, readonly PrComment[]>,
@@ -108,6 +115,43 @@ function buildCommentTargetOptions(
     }];
   });
 }
+
+function createAllCommentsTarget(repoRoot: string, packageManager: WorkspaceTarget["packageManager"]): WorkspaceTarget {
+  return {
+    id: ALL_FIX_PR_TARGET_ID,
+    name: "all",
+    kind: "workspace",
+    repoRoot,
+    packageDir: repoRoot,
+    manifestPath: path.join(repoRoot, "package.json"),
+    relativeDir: ALL_FIX_PR_TARGET_ID,
+    version: "0.0.0",
+    private: true,
+    packageManager,
+  };
+}
+
+function describeFixPrSelectedTarget(selected: FixPrSelectedTarget): string {
+  return selected.kind === "all" ? "all targets" : describeTarget(selected.target);
+}
+
+function getSelectedTargetComments(
+  selected: FixPrSelectedTarget,
+  commentsByTargetId: ReadonlyMap<string, readonly PrComment[]>,
+  unscopedComments: readonly PrComment[],
+): readonly PrComment[] {
+  if (selected.kind === "workspace") {
+    return commentsByTargetId.get(selected.target.id) ?? [];
+  }
+
+  const comments: PrComment[] = [];
+  for (const targetComments of commentsByTargetId.values()) {
+    comments.push(...targetComments);
+  }
+  comments.push(...unscopedComments);
+  return comments;
+}
+
 
 function countUnresolvedAssessments(assessment: FixPrAssessmentBatch): number {
   return assessment.assessments.filter((item: FixPrAssessmentBatch["assessments"][number]) => item.verdict !== "apply").length;
@@ -238,31 +282,63 @@ export function registerFixPrCommand(platform: Platform): void {
           clusteredComments.commentsByTargetId,
         );
 
-        if (targetOptions.length === 0) {
-          const detail = clusteredComments.unscopedComments.length > 0
-            ? `PR comments were fetched but only ${formatUnscopedCommentCount(clusteredComments.unscopedComments.length)} could not be assigned to a workspace target`
-            : "PR comments were fetched but could not be assigned to a package or root target";
-          notifyWarning(ctx, "No actionable comments found", detail);
+        const allTarget = createAllCommentsTarget(repoRoot, packageManager.id);
+        const allOption = {
+          target: allTarget,
+          changed: true,
+          label: buildWorkspaceTargetOptionLabel(
+            { target: allTarget, changed: true },
+            [formatCommentCount(parsedComments.length)],
+          ),
+        };
+
+        if (targetOptions.length === 0 && clusteredComments.unscopedComments.length === 0) {
+          notifyWarning(ctx, "No actionable comments found", "PR comments were fetched but could not be assigned to a package or root target");
           return;
         }
 
-        if (!requestedTarget && !ctx.hasUI && targetOptions.length > 1) {
-          notifyError(ctx, "Multiple comment targets found", buildAvailableTargetDetail(targetOptions, clusteredComments.unscopedComments.length));
-          return;
+        let selected: FixPrSelectedTarget | null = null;
+        if (requestedTarget === ALL_FIX_PR_TARGET_ID) {
+          selected = { kind: "all", target: allTarget };
+        } else if (requestedTarget) {
+          const target = targetOptions
+            .map((option) => option.target)
+            .find((optionTarget) => optionTarget.id === requestedTarget || optionTarget.name === requestedTarget);
+          selected = target ? { kind: "workspace", target } : null;
+        } else if (!ctx.hasUI) {
+          selected = { kind: "all", target: allTarget };
+        } else {
+          const labels = [
+            allOption.label,
+            ...targetOptions.map((option) => option.label ?? buildWorkspaceTargetOptionLabel(option)),
+          ];
+          const choice = await ctx.ui.select("Fix-PR target", labels, {
+            helpText: "Select all comments or one target to process for this run",
+          });
+          if (!choice) {
+            return;
+          }
+          const selectedIndex = labels.indexOf(choice);
+          selected = selectedIndex === 0
+            ? { kind: "all", target: allTarget }
+            : targetOptions[selectedIndex - 1]
+              ? { kind: "workspace", target: targetOptions[selectedIndex - 1].target }
+              : null;
         }
 
-        const selectedTarget = await selectWorkspaceTarget(ctx, targetOptions, requestedTarget, {
-          title: "Fix-PR target",
-          helpText: "Select one target to process for this run",
-        });
-        if (!selectedTarget) {
+        if (!selected) {
           if (requestedTarget) {
             notifyError(ctx, "Target has no review comments", buildAvailableTargetDetail(targetOptions, clusteredComments.unscopedComments.length));
           }
           return;
         }
 
-        const selectedComments = clusteredComments.commentsByTargetId.get(selectedTarget.id) ?? [];
+        const selectedTarget = selected.target;
+        const selectedComments = getSelectedTargetComments(
+          selected,
+          clusteredComments.commentsByTargetId,
+          clusteredComments.unscopedComments,
+        );
         if (selectedComments.length === 0) {
           notifyInfo(ctx, "No comments for selected target", `${selectedTarget.id} has no actionable comments in this PR snapshot`);
           return;
@@ -328,12 +404,14 @@ export function registerFixPrCommand(platform: Platform): void {
 
         const taskResolved = resolveModelForAction("task", modelRegistry, modelConfig, bridge);
         const taskModel = taskResolved.model ?? resolved.model ?? "claude-sonnet-4-6";
-        const deferredCommentsSummary = buildDeferredCommentsSummary(
-          targetOptions,
-          clusteredComments.commentsByTargetId,
-          selectedTarget,
-          clusteredComments.unscopedComments.length,
-        );
+        const deferredCommentsSummary = selected.kind === "all"
+          ? null
+          : buildDeferredCommentsSummary(
+            targetOptions,
+            clusteredComments.commentsByTargetId,
+            selectedTarget,
+            clusteredComments.unscopedComments.length,
+          );
 
         const assessmentResult = await runFixPrAssessment({
           createAgentSession: platform.createAgentSession,
@@ -342,7 +420,7 @@ export function registerFixPrCommand(platform: Platform): void {
           comments: selectedComments,
           repo,
           prNumber,
-          selectedTargetLabel: describeTarget(selectedTarget),
+          selectedTargetLabel: describeFixPrSelectedTarget(selected),
           model: resolved.model,
           thinkingLevel: resolved.thinkingLevel,
         });
@@ -360,7 +438,7 @@ export function registerFixPrCommand(platform: Platform): void {
           notifyWarning(
             ctx,
             "Unresolved comments remain",
-            `${formatCommentCount(unresolvedAssessmentCount)} for ${describeTarget(selectedTarget)} still need rejection or investigation handling before this run can be considered complete.`,
+            `${formatCommentCount(unresolvedAssessmentCount)} for ${describeFixPrSelectedTarget(selected)} still need rejection or investigation handling before this run can be considered complete.`,
           );
         }
 
@@ -374,7 +452,7 @@ export function registerFixPrCommand(platform: Platform): void {
           iteration: ledger.iteration,
           skillContent,
           taskModel,
-          selectedTargetLabel: describeTarget(selectedTarget),
+          selectedTargetLabel: describeFixPrSelectedTarget(selected),
           deferredCommentsSummary,
           assessment,
           workBatches,
@@ -389,7 +467,7 @@ export function registerFixPrCommand(platform: Platform): void {
           { deliverAs: "steer", triggerTurn: true },
         );
 
-        const detailParts = [`${formatCommentCount(selectedComments.length)} for ${describeTarget(selectedTarget)}`];
+        const detailParts = [`${formatCommentCount(selectedComments.length)} for ${describeFixPrSelectedTarget(selected)}`];
         if (deferredCommentsSummary) {
           detailParts.push(`deferred: ${deferredCommentsSummary}`);
         }
