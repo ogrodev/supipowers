@@ -1,7 +1,8 @@
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { createPaths } from "../../src/platform/types.js";
 import { getProjectStatePath } from "../../src/workspace/state-paths.js";
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import {
   startPlanTracking,
   cancelPlanTracking,
@@ -22,6 +23,26 @@ import { listPlans, readPlanFile } from "../../src/storage/plans.js";
 
 const mockListPlans = listPlans as unknown as ReturnType<typeof mock>;
 const mockReadPlanFile = readPlanFile as unknown as ReturnType<typeof mock>;
+
+function realListPlans(paths: any, cwd: string): string[] {
+  const dir = getProjectStatePath(paths, cwd, "plans");
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .sort()
+    .reverse();
+}
+
+function realReadPlanFile(paths: any, cwd: string, name: string): string | null {
+  const filePath = path.join(getProjectStatePath(paths, cwd, "plans"), name);
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : null;
+}
+
+function restoreRealPlanStorageMocks(): void {
+  mockListPlans.mockImplementation(realListPlans);
+  mockReadPlanFile.mockImplementation(realReadPlanFile);
+}
 
 type MockPlatform = {
   paths: any;
@@ -84,6 +105,11 @@ beforeEach(() => {
   cancelPlanTracking();
   mockListPlans.mockClear();
   mockReadPlanFile.mockClear();
+  restoreRealPlanStorageMocks();
+});
+
+afterEach(() => {
+  restoreRealPlanStorageMocks();
 });
 
 // ---------------------------------------------------------------------------
