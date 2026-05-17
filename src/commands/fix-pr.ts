@@ -31,6 +31,45 @@ import { loadModelConfig } from "../config/model-config.js";
 import { detectBotReviewers } from "../fix-pr/bot-detector.js";
 import { runFixPrAssessment, groupAssessmentsIntoBatches } from "../fix-pr/assessment.js";
 import { updateFixPrSession } from "../storage/fix-pr-sessions.js";
+import { createWorkflowProgress } from "../platform/progress.js";
+
+
+const FIX_PR_ASSESSMENT_TIMEOUT_MS = 5 * 60 * 1_000;
+const FIX_PR_ASSESSMENT_COMMENTS_PER_BATCH = 12;
+
+const FIX_PR_STEPS = [
+  { key: "fetch-comments", label: "Fetch PR comments" },
+  { key: "select-target", label: "Select target" },
+  { key: "prepare-session", label: "Prepare session" },
+  { key: "llm-assessment", label: "LLM assessment" },
+  { key: "send-prompt", label: "Send fix prompt" },
+] as const;
+
+function createFixPrProgress(ctx: any) {
+  const progress = createWorkflowProgress(ctx.ui, {
+    title: "supi:fix-pr",
+    statusKey: "supi-fix-pr",
+    statusLabel: "Fixing PR...",
+    widgetKey: "supi-fix-pr",
+    clearStatusKeys: ["supi-model"],
+    steps: [...FIX_PR_STEPS],
+  });
+
+  return {
+    activate(stepIndex: number, detail?: string): void {
+      progress.activate(FIX_PR_STEPS[stepIndex]!.key, detail);
+    },
+    complete(stepIndex: number, detail?: string): void {
+      progress.complete(FIX_PR_STEPS[stepIndex]!.key, detail);
+    },
+    fail(stepIndex: number, detail?: string): void {
+      progress.fail(FIX_PR_STEPS[stepIndex]!.key, detail);
+    },
+    dispose(): void {
+      progress.dispose();
+    },
+  };
+}
 
 modelRegistry.register({
   id: "fix-pr",
@@ -255,14 +294,18 @@ export function registerFixPrCommand(platform: Platform): void {
         return;
       }
 
+      const progress = createFixPrProgress(ctx);
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-fix-pr-"));
       try {
+        progress.activate(0, `PR #${prNumber}`);
         const fetchedCommentsPath = path.join(tempDir, "comments.jsonl");
         const fetchError = await fetchPrComments(platform, repo, prNumber, fetchedCommentsPath, repoRoot);
         if (fetchError) {
+          progress.fail(0, "failed");
           notifyError(ctx, "Failed to fetch PR comments", fetchError);
           return;
         }
+        progress.complete(0, `PR #${prNumber}`);
 
         const fetchedComments = fs.readFileSync(fetchedCommentsPath, "utf-8").trim();
         if (!fetchedComments) {
@@ -297,6 +340,7 @@ export function registerFixPrCommand(platform: Platform): void {
           return;
         }
 
+        progress.activate(1, `${formatCommentCount(parsedComments.length)}`);
         let selected: FixPrSelectedTarget | null = null;
         if (requestedTarget === ALL_FIX_PR_TARGET_ID) {
           selected = { kind: "all", target: allTarget };
@@ -316,6 +360,7 @@ export function registerFixPrCommand(platform: Platform): void {
             helpText: "Select all comments or one target to process for this run",
           });
           if (!choice) {
+            progress.fail(1, "cancelled");
             return;
           }
           const selectedIndex = labels.indexOf(choice);
@@ -330,8 +375,10 @@ export function registerFixPrCommand(platform: Platform): void {
           if (requestedTarget) {
             notifyError(ctx, "Target has no review comments", buildAvailableTargetDetail(targetOptions, clusteredComments.unscopedComments.length));
           }
+          progress.fail(1, "empty");
           return;
         }
+        progress.complete(1, describeFixPrSelectedTarget(selected));
 
         const selectedTarget = selected.target;
         const selectedComments = getSelectedTargetComments(
@@ -344,6 +391,8 @@ export function registerFixPrCommand(platform: Platform): void {
           return;
         }
 
+        progress.activate(2, `${formatCommentCount(selectedComments.length)}`);
+
         let activeSession = findActiveFixPrSession(platform.paths, selectedTarget, repo, prNumber);
         if (activeSession && ctx.hasUI) {
           const choice = await ctx.ui.select(
@@ -354,7 +403,10 @@ export function registerFixPrCommand(platform: Platform): void {
             ],
             { helpText: "Select session · Esc to cancel" },
           );
-          if (!choice) return;
+          if (!choice) {
+            progress.fail(2, "cancelled");
+            return;
+          }
           if (choice.startsWith("Start new")) activeSession = null;
         }
 
@@ -412,6 +464,9 @@ export function registerFixPrCommand(platform: Platform): void {
             selectedTarget,
             clusteredComments.unscopedComments.length,
           );
+        progress.complete(2, activeSession ? `resume ${ledger.id}` : `new ${ledger.id}`);
+
+        progress.activate(3, `${formatCommentCount(selectedComments.length)}`);
 
         const assessmentResult = await runFixPrAssessment({
           createAgentSession: platform.createAgentSession,
@@ -423,14 +478,19 @@ export function registerFixPrCommand(platform: Platform): void {
           selectedTargetLabel: describeFixPrSelectedTarget(selected),
           model: resolved.model,
           thinkingLevel: resolved.thinkingLevel,
+          timeoutMs: FIX_PR_ASSESSMENT_TIMEOUT_MS,
+          maxCommentsPerBatch: FIX_PR_ASSESSMENT_COMMENTS_PER_BATCH,
         });
         if (assessmentResult.status === "blocked") {
+          progress.fail(3, "blocked");
           notifyError(ctx, "Fix-PR assessment failed", assessmentResult.error);
           return;
         }
+        progress.complete(3, `${formatCommentCount(assessmentResult.output.assessments.length)} assessed`);
         const assessment = assessmentResult.output;
         const unresolvedAssessmentCount = countUnresolvedAssessments(assessment);
         const workBatches = groupAssessmentsIntoBatches(assessment);
+        progress.activate(4, `${workBatches.length} batch${workBatches.length === 1 ? "" : "es"}`);
         ledger.assessment = assessment;
         updateFixPrSession(platform.paths, selectedTarget, ledger);
 
@@ -466,6 +526,7 @@ export function registerFixPrCommand(platform: Platform): void {
           },
           { deliverAs: "steer", triggerTurn: true },
         );
+        progress.complete(4, "sent");
 
         const detailParts = [`${formatCommentCount(selectedComments.length)} for ${describeFixPrSelectedTarget(selected)}`];
         if (deferredCommentsSummary) {
@@ -474,6 +535,7 @@ export function registerFixPrCommand(platform: Platform): void {
         notifyInfo(ctx, `Fix-PR started: PR #${prNumber}`, `${detailParts.join(" | ")} | session ${ledger.id}`);
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
+        progress.dispose();
       }
     },
   });
