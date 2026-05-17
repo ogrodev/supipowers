@@ -129,7 +129,7 @@ function buildHardGate(options: UiDesignSystemPromptOptions): string[] {
     "",
     `- All file writes MUST happen inside \`${options.sessionDir}\`. Writing anywhere else is forbidden.`,
     "- You **MUST NOT** generate production code (`.ts`, `.tsx`, `.vue`, `.svelte`, `.py`) into the user's codebase.",
-    "- You **MUST NOT** call `exit_plan_mode` or `ExitPlanMode` — completion is driven by the agent_end approval hook.",
+    "- You **MUST NOT** call `resolve` with `extra.title` — completion is driven by the agent_end approval hook.",
     "- You **MUST NOT** use the `ask` tool. Use `planning_ask` for every user question.",
     "- You **MUST NOT** skip a phase. Each phase's precondition file MUST exist on disk before you advance.",
     "- You **MUST NOT** declare completion without updating `manifest.json`.",
@@ -256,7 +256,7 @@ function buildCriticalBlock(options: UiDesignSystemPromptOptions): string {
     "## Completion",
     "",
     "Completion is driven by `manifest.json`. Set `status: \"complete\"` + `approvedAt` only after the user approves via Phase 9's review gate.",
-    "You **MUST NOT** call `exit_plan_mode`, `ExitPlanMode`, or write to `local://PLAN.md`.",
+    "You **MUST NOT** call `resolve` with `extra.title`, or write to `local://PLAN.md`.",
     "After updating the manifest to a terminal state, stop and yield your turn — the approval UI handles teardown.",
     "</critical>",
   ].join("\n");
