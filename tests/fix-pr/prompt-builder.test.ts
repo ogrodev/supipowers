@@ -123,6 +123,14 @@ describe("buildFixPrOrchestratorPrompt", () => {
     expect(result).not.toContain("wait-and-check.sh");
   });
 
+  test("requires green CI monitoring and final full validation", () => {
+    const result = buildDefaultPrompt();
+    expect(result).toContain("/green");
+    expect(result).toContain("gh pr checks 42 --repo owner/repo --watch");
+    expect(result).toContain("bun ci");
+    expect(result).toContain("Full validation is mandatory");
+  });
+
   test("includes runner paths instead of shell script paths", () => {
     const result = buildDefaultPrompt();
     expect(result).toContain("/tmp/scripts");
