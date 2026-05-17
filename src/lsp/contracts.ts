@@ -4,32 +4,24 @@
 // ai/structured-output.ts to schema-check model output and by
 // ai/schema-text.ts to render the shape into the prompt.
 
-import { Type, type Static } from "@sinclair/typebox";
+import { z } from "zod/v4";
 
 const DIAGNOSTIC_SEVERITIES = ["error", "warning", "info", "hint"] as const;
 
-export const LspDiagnosticSchema = Type.Object(
-  {
-    severity: Type.Union(
-      DIAGNOSTIC_SEVERITIES.map((value) => Type.Literal(value)),
-    ),
-    message: Type.String(),
-    line: Type.Number(),
-    column: Type.Number(),
-  },
-  { additionalProperties: false },
-);
+export const LspDiagnosticSchema = z.object({
+  severity: z.enum(DIAGNOSTIC_SEVERITIES),
+  message: z.string(),
+  line: z.number(),
+  column: z.number(),
+}).strict();
 
-export const LspDiagnosticsResultSchema = Type.Object(
-  {
-    file: Type.String(),
-    diagnostics: Type.Array(LspDiagnosticSchema),
-  },
-  { additionalProperties: false },
-);
+export const LspDiagnosticsResultSchema = z.object({
+  file: z.string(),
+  diagnostics: z.array(LspDiagnosticSchema),
+}).strict();
 
-export const LspDiagnosticsResultsSchema = Type.Array(LspDiagnosticsResultSchema);
+export const LspDiagnosticsResultsSchema = z.array(LspDiagnosticsResultSchema);
 
-export type LspDiagnostic = Static<typeof LspDiagnosticSchema>;
-export type LspDiagnosticsResult = Static<typeof LspDiagnosticsResultSchema>;
-export type LspDiagnosticsResults = Static<typeof LspDiagnosticsResultsSchema>;
+export type LspDiagnostic = z.infer<typeof LspDiagnosticSchema>;
+export type LspDiagnosticsResult = z.infer<typeof LspDiagnosticsResultSchema>;
+export type LspDiagnosticsResults = z.infer<typeof LspDiagnosticsResultsSchema>;

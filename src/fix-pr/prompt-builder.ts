@@ -177,26 +177,37 @@ export function buildFixPrOrchestratorPrompt(options: FixPrPromptOptions): strin
   sections.push(buildReplyInstructions(config), "");
 
   sections.push(
-    "## Step 6: Push and Check for New Comments",
+    "## Step 6: Push, Monitor CI, and Check for New Comments",
     "",
-    `1. Stage and commit: \`git add -A && git commit -m \"fix: address PR review comments (iteration ${iteration})\"\``,
+    `1. Stage and commit: \`git add -A && git commit -m "fix: address PR review comments (iteration ${iteration})"\``,
     "2. Push: `git push`",
   );
 
   if (reviewer.type !== "none" && reviewer.triggerMethod) {
     sections.push(
-      `3. Trigger re-review: \`bun \"${scriptsDir}/trigger-review.ts\" \"${repo}\" ${prNumber} \"${reviewer.type}\" \"${reviewer.triggerMethod}\"\``,
+      `3. Trigger re-review: \`bun "${scriptsDir}/trigger-review.ts" "${repo}" ${prNumber} "${reviewer.type}" "${reviewer.triggerMethod}"\``,
+      `4. While the reviewer runs, start the green pipeline: invoke OMP \`/green\` if available; otherwise run \`gh pr checks ${prNumber} --repo ${repo} --watch\`.`,
+      "   - If CI turns red, stop waiting for review comments and focus on CI.",
+      "   - Diagnose the failed check from its logs, fix the root cause, push again, then restart green monitoring.",
+      "5. Run the wait-and-check runner:",
+    );
+  } else {
+    sections.push(
+      `3. Start the green pipeline: invoke OMP \`/green\` if available; otherwise run \`gh pr checks ${prNumber} --repo ${repo} --watch\`.`,
+      "   - If CI turns red, focus on CI before considering the PR complete.",
+      "   - Diagnose the failed check from its logs, fix the root cause, push again, then restart green monitoring.",
+      "4. Run the wait-and-check runner:",
     );
   }
 
   sections.push(
-    `${reviewer.type !== "none" ? "4" : "3"}. Run the wait-and-check runner:`,
     "```text",
-    `bun \"${scriptsDir}/wait-and-check.ts\" \"${sessionDir}\" ${delay} ${iteration + 1} \"${repo}\" ${prNumber}`,
+    `bun "${scriptsDir}/wait-and-check.ts" "${sessionDir}" ${delay} ${iteration + 1} "${repo}" ${prNumber}`,
     "```",
-    `${reviewer.type !== "none" ? "5" : "4"}. Read the last line of output:`,
-    `   - If \`hasNewComments: true\` and iteration < ${maxIter}: process the new comments (go back to Step 1)`,
-    `   - If \`hasNewComments: false\` or iteration >= ${maxIter}: report done`,
+    `${reviewer.type !== "none" ? "6" : "5"}. Read the last line of output:`,
+    `   - If \`hasNewComments: true\` and iteration < ${maxIter}: process the new comments (go back to Step 1), then repeat push, green monitoring, and final validation`,
+    `   - If \`hasNewComments: false\` or iteration >= ${maxIter}: continue only after CI is green`,
+    `${reviewer.type !== "none" ? "7" : "6"}. Full validation is mandatory at the end: run \`bun ci\` locally after comments are handled and CI is green. Do not report done until both remote CI and local full validation are green.`,
     "",
   );
 

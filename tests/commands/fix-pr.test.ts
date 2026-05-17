@@ -5,6 +5,8 @@ import * as path from "node:path";
 import type { Platform } from "../../src/platform/types.js";
 import { registerFixPrCommand } from "../../src/commands/fix-pr.js";
 import { DEFAULT_FIX_PR_CONFIG } from "../../src/fix-pr/config.js";
+import { createFixPrSession } from "../../src/storage/fix-pr-sessions.js";
+import { discoverWorkspaceTargets } from "../../src/workspace/targets.js";
 
 let tmpDir: string;
 
@@ -61,6 +63,15 @@ function createPlatform(exec: Platform["exec"], rootDir: string): Platform {
     },
   } as unknown as Platform;
 }
+
+function collectWidgetText(setWidget: any): string {
+  return setWidget.mock.calls
+    .map((call: any[]) => call[1])
+    .filter((renderer: unknown): renderer is () => { getText(): string } => typeof renderer === "function")
+    .map((renderer: () => { getText(): string }) => renderer().getText())
+    .join("\n");
+}
+
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "supi-fix-pr-cmd-"));
@@ -199,6 +210,9 @@ describe("registerFixPrCommand", () => {
       if (cmd === "gh" && args[0] === "api" && args[2] === "repos/owner/repo/pulls/123/reviews") {
         return { stdout: "", stderr: "", code: 0 };
       }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
       return { stdout: "", stderr: "unexpected", code: 1 };
     });
     const platform = createPlatform(exec as Platform["exec"], tmpDir);
@@ -249,5 +263,224 @@ describe("registerFixPrCommand", () => {
     expect(prompt).not.toContain("trigger-review.sh");
     expect(prompt).not.toContain('"id":2');
     expect(prompt).not.toContain('"id":3');
+  });
+
+  test("offers all comments as the default interactive fix-pr target", async () => {
+    const workspaceDir = setupWorkspaceRepo(tmpDir);
+    const commentsJsonl = [
+      JSON.stringify({
+        id: 1,
+        path: "packages/pkg-a/src/index.ts",
+        line: 1,
+        body: "package comment",
+        user: "reviewer",
+        userType: "User",
+        createdAt: "2026-04-16T00:00:00Z",
+        updatedAt: "2026-04-16T00:00:00Z",
+        inReplyToId: null,
+        diffHunk: null,
+        state: "COMMENTED",
+      }),
+      JSON.stringify({
+        id: 2,
+        path: "README.md",
+        line: 1,
+        body: "root comment",
+        user: "reviewer",
+        userType: "User",
+        createdAt: "2026-04-16T00:00:00Z",
+        updatedAt: "2026-04-16T00:00:00Z",
+        inReplyToId: null,
+        diffHunk: null,
+        state: "COMMENTED",
+      }),
+      JSON.stringify({
+        id: 3,
+        path: null,
+        line: null,
+        body: "review summary",
+        user: "reviewer",
+        userType: "User",
+        createdAt: "2026-04-16T00:00:00Z",
+        updatedAt: "2026-04-16T00:00:00Z",
+        inReplyToId: null,
+        diffHunk: null,
+        state: "COMMENTED",
+      }),
+    ].join("\n");
+    fs.mkdirSync(path.join(workspaceDir, ".omp", "supipowers"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, ".omp", "supipowers", "fix-pr.json"),
+      JSON.stringify(DEFAULT_FIX_PR_CONFIG),
+    );
+
+    const exec = mock(async (cmd: string, args: string[], opts?: { cwd?: string }) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "owner/repo\n", stderr: "", code: 0 };
+      }
+      if (cmd === "git" && args[0] === "rev-parse") {
+        expect(opts?.cwd).toBe(workspaceDir);
+        return { stdout: `${tmpDir}\n`, stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[2] === "repos/owner/repo/pulls/123/comments") {
+        return { stdout: `${commentsJsonl}\n`, stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[2] === "repos/owner/repo/pulls/123/reviews") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "unexpected", code: 1 };
+    });
+    const platform = createPlatform(exec as Platform["exec"], tmpDir);
+    const ctx = {
+      cwd: workspaceDir,
+      hasUI: true,
+      ui: {
+        notify: mock(),
+        select: mock(async (_title: string, options: string[]) => options[0] ?? null),
+        input: mock(),
+        setStatus: mock(),
+      },
+    } as any;
+    const assessmentJson = JSON.stringify({
+      assessments: [1, 2, 3].map((commentId) => ({
+        commentId,
+        verdict: "apply",
+        rationale: "Reviewer correctly flagged an issue.",
+        affectedFiles: [],
+        rippleEffects: [],
+        verificationPlan: "bun test",
+      })),
+    });
+    (platform as any).createAgentSession = mock(async () => {
+      const messages: any[] = [];
+      return {
+        state: { get messages() { return messages; } },
+        async prompt() { messages.push({ role: "assistant", content: assessmentJson }); },
+        async dispose() {},
+      };
+    });
+
+    registerFixPrCommand(platform);
+    const handler = (platform.registerCommand as any).mock.calls[0][1].handler;
+
+    await handler("#123", ctx);
+
+    expect(ctx.ui.select).toHaveBeenCalledWith(
+      "Fix-PR target",
+      expect.arrayContaining([expect.stringMatching(/^all — all — 3 comments$/)]),
+      expect.objectContaining({ helpText: expect.stringContaining("all comments") }),
+    );
+    const targetOptions = (ctx.ui.select as any).mock.calls[0][1];
+    expect(targetOptions[0]).toBe("all — all — 3 comments");
+    const prompt = (platform.sendMessage as any).mock.calls[0][0].content[0].text;
+    expect(prompt).toContain("Selected target: all targets");
+    expect(prompt).toContain('"id":1');
+    expect(prompt).toContain('"id":2');
+    expect(prompt).toContain('"id":3');
+    expect(prompt).toContain("Deferred comments outside this target: none");
+  });
+
+  test("shows the LLM assessment step when starting a new session over an existing run", async () => {
+    const workspaceDir = setupWorkspaceRepo(tmpDir);
+    const commentsJsonl = [1, 2, 3].map((id) => JSON.stringify({
+      id,
+      path: "packages/pkg-a/src/index.ts",
+      line: id,
+      body: `package comment ${id}`,
+      user: "reviewer",
+      userType: "User",
+      createdAt: "2026-04-16T00:00:00Z",
+      updatedAt: "2026-04-16T00:00:00Z",
+      inReplyToId: null,
+      diffHunk: null,
+      state: "COMMENTED",
+    })).join("\n");
+    fs.mkdirSync(path.join(workspaceDir, ".omp", "supipowers"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceDir, ".omp", "supipowers", "fix-pr.json"),
+      JSON.stringify(DEFAULT_FIX_PR_CONFIG),
+    );
+
+    const exec = mock(async (cmd: string, args: string[], opts?: { cwd?: string }) => {
+      if (cmd === "gh" && args[0] === "repo" && args[1] === "view") {
+        return { stdout: "owner/repo\n", stderr: "", code: 0 };
+      }
+      if (cmd === "git" && args[0] === "rev-parse") {
+        expect(opts?.cwd).toBe(workspaceDir);
+        return { stdout: `${tmpDir}\n`, stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[2] === "repos/owner/repo/pulls/123/comments") {
+        return { stdout: `${commentsJsonl}\n`, stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[2] === "repos/owner/repo/pulls/123/reviews") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (cmd === "gh" && args[0] === "api" && args[1] === "graphql") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "unexpected", code: 1 };
+    });
+    const platform = createPlatform(exec as Platform["exec"], tmpDir);
+    const target = discoverWorkspaceTargets(tmpDir, "bun").find((workspaceTarget) => workspaceTarget.id === "pkg-a");
+    expect(target).toBeTruthy();
+    createFixPrSession(platform.paths, target!, {
+      id: "fpr-20260517-120000-test",
+      createdAt: "2026-05-17T12:00:00.000Z",
+      updatedAt: "2026-05-17T12:00:00.000Z",
+      prNumber: 123,
+      repo: "owner/repo",
+      status: "running",
+      iteration: 0,
+      config: DEFAULT_FIX_PR_CONFIG,
+      commentsProcessed: [],
+    });
+    const setWidget = mock();
+    const ctx = {
+      cwd: workspaceDir,
+      hasUI: true,
+      ui: {
+        notify: mock(),
+        select: mock(async (title: string, options: string[]) => title === "Fix-PR Session" ? "Start new session" : options[0] ?? null),
+        input: mock(),
+        setStatus: mock(),
+        setWidget,
+      },
+    } as any;
+    const assessmentJson = JSON.stringify({
+      assessments: [1, 2, 3].map((commentId) => ({
+        commentId,
+        verdict: "apply",
+        rationale: "Reviewer correctly flagged an issue.",
+        affectedFiles: ["packages/pkg-a/src/index.ts"],
+        rippleEffects: [],
+        verificationPlan: "bun test",
+      })),
+    });
+    (platform as any).createAgentSession = mock(async () => {
+      const messages: any[] = [];
+      return {
+        state: { get messages() { return messages; } },
+        async prompt() { messages.push({ role: "assistant", content: assessmentJson }); },
+        async dispose() {},
+      };
+    });
+
+    registerFixPrCommand(platform);
+    const handler = (platform.registerCommand as any).mock.calls[0][1].handler;
+
+    await handler("--target pkg-a #123", ctx);
+
+    expect(ctx.ui.select).toHaveBeenCalledWith(
+      "Fix-PR Session",
+      expect.arrayContaining(["Start new session"]),
+      expect.any(Object),
+    );
+    const widgetText = collectWidgetText(setWidget);
+    expect(widgetText).toContain("LLM assessment");
+    expect(widgetText).toContain("3 comments");
+    expect(platform.sendMessage).toHaveBeenCalledTimes(1);
   });
 });

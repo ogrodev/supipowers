@@ -15,49 +15,40 @@
 // hands validation errors back to the model rather than letting the
 // release command publish on malformed output.
 
-import { Type, type Static } from "@sinclair/typebox";
+import { z } from "zod/v4";
 
 // ── Release-note polish ───────────────────────────────────────
 
 export const RELEASE_NOTE_STATUSES = ["ok", "empty"] as const;
 export type ReleaseNoteStatus = (typeof RELEASE_NOTE_STATUSES)[number];
 
-export const ReleaseNotePolishOutputSchema = Type.Object(
-  {
-    title: Type.String({ minLength: 1 }),
-    body: Type.String(),
-    highlights: Type.Array(Type.String({ minLength: 1 })),
-    status: Type.Union(RELEASE_NOTE_STATUSES.map((value) => Type.Literal(value))),
-  },
-  { additionalProperties: false },
-);
+export const ReleaseNotePolishOutputSchema = z.object({
+  title: z.string().min(1),
+  body: z.string(),
+  highlights: z.array(z.string().min(1)),
+  status: z.enum(RELEASE_NOTE_STATUSES),
+}).strict();
 
-export type ReleaseNotePolishOutput = Static<typeof ReleaseNotePolishOutputSchema>;
+export type ReleaseNotePolishOutput = z.infer<typeof ReleaseNotePolishOutputSchema>;
 
 // ── Release doc-fix ───────────────────────────────────────────
 
 export const RELEASE_DOC_FIX_STATUSES = ["ok", "blocked"] as const;
 export type ReleaseDocFixStatus = (typeof RELEASE_DOC_FIX_STATUSES)[number];
 
-export const ReleaseDocFixEditSchema = Type.Object(
-  {
-    file: Type.String({ minLength: 1 }),
-    instructions: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const ReleaseDocFixEditSchema = z.object({
+  file: z.string().min(1),
+  instructions: z.string().min(1),
+}).strict();
 
-export const ReleaseDocFixOutputSchema = Type.Object(
-  {
-    edits: Type.Array(ReleaseDocFixEditSchema),
-    summary: Type.String({ minLength: 1 }),
-    status: Type.Union(RELEASE_DOC_FIX_STATUSES.map((value) => Type.Literal(value))),
-  },
-  { additionalProperties: false },
-);
+export const ReleaseDocFixOutputSchema = z.object({
+  edits: z.array(ReleaseDocFixEditSchema),
+  summary: z.string().min(1),
+  status: z.enum(RELEASE_DOC_FIX_STATUSES),
+}).strict();
 
-export type ReleaseDocFixEdit = Static<typeof ReleaseDocFixEditSchema>;
-export type ReleaseDocFixOutput = Static<typeof ReleaseDocFixOutputSchema>;
+export type ReleaseDocFixEdit = z.infer<typeof ReleaseDocFixEditSchema>;
+export type ReleaseDocFixOutput = z.infer<typeof ReleaseDocFixOutputSchema>;
 
 /**
  * Render a polished release-note artifact as markdown suitable for

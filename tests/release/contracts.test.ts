@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Value } from "@sinclair/typebox/value";
+import { checkSchema } from "../helpers/schema.js";
 import {
   ReleaseNotePolishOutputSchema,
   ReleaseDocFixOutputSchema,
@@ -17,7 +17,7 @@ describe("ReleaseNotePolishOutputSchema", () => {
       highlights: ["Faster indexing", "Shutdown race fixed"],
       status: "ok",
     };
-    expect(Value.Check(ReleaseNotePolishOutputSchema, artifact)).toBe(true);
+    expect(checkSchema(ReleaseNotePolishOutputSchema, artifact)).toBe(true);
   });
 
   test("accepts empty-status with empty highlights", () => {
@@ -27,16 +27,16 @@ describe("ReleaseNotePolishOutputSchema", () => {
       highlights: [],
       status: "empty",
     };
-    expect(Value.Check(ReleaseNotePolishOutputSchema, artifact)).toBe(true);
+    expect(checkSchema(ReleaseNotePolishOutputSchema, artifact)).toBe(true);
   });
 
   test("rejects missing required fields", () => {
-    expect(Value.Check(ReleaseNotePolishOutputSchema, { title: "x", body: "" })).toBe(false);
+    expect(checkSchema(ReleaseNotePolishOutputSchema, { title: "x", body: "" })).toBe(false);
   });
 
   test("rejects unknown status", () => {
     expect(
-      Value.Check(ReleaseNotePolishOutputSchema, {
+      checkSchema(ReleaseNotePolishOutputSchema, {
         title: "x",
         body: "",
         highlights: [],
@@ -47,7 +47,7 @@ describe("ReleaseNotePolishOutputSchema", () => {
 
   test("rejects additional properties", () => {
     expect(
-      Value.Check(ReleaseNotePolishOutputSchema, {
+      checkSchema(ReleaseNotePolishOutputSchema, {
         title: "x",
         body: "",
         highlights: [],
@@ -81,7 +81,7 @@ describe("ReleaseDocFixOutputSchema", () => {
       summary: "Applied 2 doc fixes.",
       status: "ok",
     };
-    expect(Value.Check(ReleaseDocFixOutputSchema, artifact)).toBe(true);
+    expect(checkSchema(ReleaseDocFixOutputSchema, artifact)).toBe(true);
   });
 
   test("accepts a blocked artifact with empty edits", () => {
@@ -90,12 +90,12 @@ describe("ReleaseDocFixOutputSchema", () => {
       summary: "Could not locate the referenced API in the current codebase.",
       status: "blocked",
     };
-    expect(Value.Check(ReleaseDocFixOutputSchema, artifact)).toBe(true);
+    expect(checkSchema(ReleaseDocFixOutputSchema, artifact)).toBe(true);
   });
 
   test("rejects edits with empty file path", () => {
     expect(
-      Value.Check(ReleaseDocFixOutputSchema, {
+      checkSchema(ReleaseDocFixOutputSchema, {
         edits: [{ file: "", instructions: "x" }],
         summary: "s",
         status: "ok",
@@ -105,7 +105,7 @@ describe("ReleaseDocFixOutputSchema", () => {
 
   test("rejects unknown status", () => {
     expect(
-      Value.Check(ReleaseDocFixOutputSchema, {
+      checkSchema(ReleaseDocFixOutputSchema, {
         edits: [],
         summary: "s",
         status: "empty",
@@ -115,7 +115,7 @@ describe("ReleaseDocFixOutputSchema", () => {
 
   test("rejects additional properties on the edit entry", () => {
     expect(
-      Value.Check(ReleaseDocFixOutputSchema, {
+      checkSchema(ReleaseDocFixOutputSchema, {
         edits: [{ file: "a.md", instructions: "b", severity: "error" }],
         summary: "s",
         status: "ok",

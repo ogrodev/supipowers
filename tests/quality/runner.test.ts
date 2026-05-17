@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { Type } from "@sinclair/typebox";
+import { z } from "zod/v4";
 import { runQualityGates } from "../../src/quality/runner.js";
 import { lspDiagnosticsGate } from "../../src/quality/gates/lsp-diagnostics.js";
 import { FULL_LSP_SUPPORT } from "../../src/lsp/capabilities.js";
@@ -156,7 +156,7 @@ function createGate(gate: GateId, status: GateResult["status"] = "passed"): Gate
   return {
     id: gate,
     description: `Gate ${gate}`,
-    configSchema: Type.Any(),
+    configSchema: z.any(),
     detect: () => null,
     run: async () => ({
       gate,
@@ -284,7 +284,7 @@ describe("runQualityGates", () => {
         lint: {
           id: "lint",
           description: "captures scope",
-          configSchema: Type.Any(),
+          configSchema: z.any(),
           detect: () => null,
           run: async (context) => {
             capturedContexts.push(context);
@@ -367,7 +367,7 @@ describe("runQualityGates", () => {
         lint: {
           id: "lint",
           description: "uses execShell",
-          configSchema: Type.Any(),
+          configSchema: z.any(),
           detect: () => null,
           run: async (context) => {
             await context.execShell("eslint .");

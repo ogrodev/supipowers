@@ -267,7 +267,8 @@ pi.events.on("my-custom-event", (data) => { /* ... */ });
 | Property | Type | Description |
 |---|---|---|
 | `pi.typebox` | Module | `@sinclair/typebox` — access `Type.Object()`, `Type.String()`, etc. |
-| `pi.pi` | Module | `@oh-my-pi/pi-coding-agent` exports — `StringEnum`, `logger`, etc. |
+| `pi.zod` | Module | `zod/v4` — preferred schema builder (`z.object()`, `z.enum()`, …) |
+| `pi.pi` | Module | `@oh-my-pi/pi-coding-agent` exports — `logger`, lifecycle types, etc. |
 | `pi.logger` | Logger | Shared file logger — `pi.logger.debug()`, `.warn()`, `.error()` |
 
 ---

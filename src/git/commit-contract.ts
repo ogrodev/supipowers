@@ -6,30 +6,24 @@
 // (every staged file appears in exactly one commit) is a runtime rule that
 // can't live in the schema — see validateCommitPlanCoverage.
 
-import { type Static, Type } from "@sinclair/typebox";
+import { z } from "zod/v4"
 import { VALID_COMMIT_TYPES } from "../release/commit-types.js";
 import type { ValidationError } from "../types.js";
 
-export const CommitGroupSchema = Type.Object(
-  {
-    type: Type.Union(VALID_COMMIT_TYPES.map((value) => Type.Literal(value))),
-    scope: Type.Union([Type.String(), Type.Null()]),
-    summary: Type.String({ minLength: 1 }),
-    details: Type.Array(Type.String()),
-    files: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const CommitGroupSchema = z.object({
+  type: z.enum(VALID_COMMIT_TYPES),
+  scope: z.string().nullable(),
+  summary: z.string().min(1),
+  details: z.array(z.string()),
+  files: z.array(z.string().min(1)).min(1),
+}).strict();
 
-export const CommitPlanSchema = Type.Object(
-  {
-    commits: Type.Array(CommitGroupSchema, { minItems: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const CommitPlanSchema = z.object({
+  commits: z.array(CommitGroupSchema).min(1),
+}).strict();
 
-export type CommitGroup = Static<typeof CommitGroupSchema>;
-export type CommitPlan = Static<typeof CommitPlanSchema>;
+export type CommitGroup = z.infer<typeof CommitGroupSchema>;
+export type CommitPlan = z.infer<typeof CommitPlanSchema>;
 
 /**
  * Verify every staged file appears in exactly one commit and that no commit

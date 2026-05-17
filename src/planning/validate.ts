@@ -5,7 +5,6 @@
 // Everyone converges on the same path so validation errors surface in one
 // consistent shape with field-level paths.
 
-import { Value } from "@sinclair/typebox/value";
 import { collectValidationErrors, formatValidationErrors } from "../ai/structured-output.js";
 import type { ValidationError } from "../types.js";
 import { PlanSpecSchema, type PlanSpec } from "./spec.js";
@@ -22,14 +21,12 @@ export interface PlanSpecValidationResult {
  * human-readable summary and `errors` lists every field-level issue.
  */
 export function validatePlanSpec(data: unknown): PlanSpecValidationResult {
-  if (Value.Check(PlanSpecSchema, data)) {
+  const errors = collectValidationErrors(PlanSpecSchema, data);
+  if (errors.length === 0) {
     return { output: data as PlanSpec, error: null, errors: [] };
   }
 
-  const errors = collectValidationErrors(PlanSpecSchema, data);
-  const error = errors.length > 0
-    ? formatValidationErrors(errors).join("; ")
-    : "Plan does not match the PlanSpec schema.";
+  const error = formatValidationErrors(errors).join("; ") || "Plan does not match the PlanSpec schema.";
   return { output: null, error, errors };
 }
 
@@ -37,7 +34,7 @@ export function validatePlanSpec(data: unknown): PlanSpecValidationResult {
  * Narrowing predicate for PlanSpec. Use when you do not need error detail.
  */
 export function isPlanSpec(value: unknown): value is PlanSpec {
-  return Value.Check(PlanSpecSchema, value);
+  return collectValidationErrors(PlanSpecSchema, value).length === 0;
 }
 
 

@@ -1,7 +1,7 @@
 // src/ai/schema-text.ts
 //
-// Render a TypeBox schema as compact TS-like text suitable for embedding in
-// prompts. One canonical rendering means that adding a field to a TypeBox
+// Render a Zod schema as compact TS-like text suitable for embedding in
+// prompts. One canonical rendering means that adding a field to a Zod
 // contract automatically updates every prompt that references it through
 // this module — no hand-maintained schema prose to drift.
 //
@@ -10,16 +10,23 @@
 //     ReviewOutputSchema / ReviewFixOutputSchema for both the main prompt
 //     and the retry prompt produced by runWithOutputValidation.
 //
+// Implementation note:
+//   We don't walk Zod's internal `_zod.def` tree directly. Zod's JSON Schema
+//   accessor (`z.toJSONSchema`) already emits draft-2020-12 output for every
+//   shape we use; we walk that intermediate JSON Schema instead, which keeps
+//   this module independent of Zod's internal AST changes.
+//
 // Non-goals:
-//   - Produce standards-compliant JSON Schema output. Use TypeBox's own
-//     JSON Schema accessors for that. This renderer optimises for model
-//     readability, not spec compliance.
-//   - Capture every TypeBox modifier. Supported shapes cover the current
-//     contract surface; extend when a real consumer needs more.
+//   - Produce standards-compliant JSON Schema output. Call `z.toJSONSchema`
+//     directly for that. This renderer optimises for model readability.
+//   - Capture every modifier. Supported shapes cover the current contract
+//     surface; extend when a real consumer needs more.
 
-import type { TSchema } from "@sinclair/typebox";
+import { z, type ZodType } from "zod/v4";
 
 const INDENT = "  ";
+
+type JsonSchemaNode = Record<string, unknown>;
 
 export interface RenderSchemaOptions {
   /** Start indent (internal recursion use). */
@@ -36,33 +43,37 @@ function renderLiteral(value: unknown): string {
   return String(value);
 }
 
-function renderUnion(parts: readonly TSchema[], depth: number): string {
+function renderUnion(parts: readonly JsonSchemaNode[], depth: number): string {
   if (parts.length === 0) return "never";
-  return parts.map((p) => renderSchemaText(p, { depth })).join(" | ");
+  return parts.map((p) => renderJsonSchema(p, depth)).join(" | ");
 }
 
-function renderObject(schema: any, depth: number): string {
-  const props = schema.properties as Record<string, TSchema> | undefined;
+function renderObject(schema: JsonSchemaNode, depth: number): string {
+  const props = schema.properties as Record<string, JsonSchemaNode> | undefined;
   if (!props || Object.keys(props).length === 0) {
     return "{}";
   }
 
-  const required: string[] = Array.isArray(schema.required) ? schema.required : [];
+  const required: string[] = Array.isArray(schema.required)
+    ? (schema.required as string[])
+    : [];
   const lines: string[] = ["{"];
   const childDepth = depth + 1;
 
   for (const [key, child] of Object.entries(props)) {
     const isRequired = required.includes(key);
     const separator = isRequired ? ":" : "?:";
-    lines.push(`${indent(childDepth)}${key}${separator} ${renderSchemaText(child, { depth: childDepth })};`);
+    lines.push(`${indent(childDepth)}${key}${separator} ${renderJsonSchema(child, childDepth)};`);
   }
 
   lines.push(`${indent(depth)}}`);
   return lines.join("\n");
 }
 
-function renderArray(schema: any, depth: number): string {
-  const inner = renderSchemaText(schema.items as TSchema, { depth });
+function renderArray(schema: JsonSchemaNode, depth: number): string {
+  const items = schema.items as JsonSchemaNode | undefined;
+  if (!items) return "unknown[]";
+  const inner = renderJsonSchema(items, depth);
   // Wrap multiline object types as Array<...> for readability.
   if (inner.includes("\n")) {
     return `Array<${inner}>`;
@@ -70,44 +81,36 @@ function renderArray(schema: any, depth: number): string {
   return `${inner}[]`;
 }
 
-function hasKey(schema: any, key: string): boolean {
-  return schema != null && typeof schema === "object" && key in schema;
+function isZodSchema(value: unknown): value is ZodType {
+  return value !== null && typeof value === "object" && "_zod" in (value as Record<string, unknown>);
 }
 
-/**
- * Render a TypeBox schema as a compact TS-like type string. Safe to pass as
- * the `schema:` param to `runWithOutputValidation` and the `{{outputSchema}}`
- * placeholder inside review prompts.
- */
-export function renderSchemaText(schema: TSchema, options: RenderSchemaOptions = {}): string {
-  const depth = options.depth ?? 0;
-  const any = schema as any;
-
+function renderJsonSchema(schema: JsonSchemaNode, depth: number): string {
   // Literal / const
-  if (hasKey(any, "const")) {
-    return renderLiteral(any.const);
+  if ("const" in schema) {
+    return renderLiteral(schema.const);
   }
 
   // Explicit enum
-  if (Array.isArray(any.enum)) {
-    return any.enum.map(renderLiteral).join(" | ");
+  if (Array.isArray(schema.enum)) {
+    return schema.enum.map(renderLiteral).join(" | ");
   }
 
   // Union (anyOf / oneOf)
-  if (Array.isArray(any.anyOf)) {
-    return renderUnion(any.anyOf, depth);
+  if (Array.isArray(schema.anyOf)) {
+    return renderUnion(schema.anyOf as JsonSchemaNode[], depth);
   }
-  if (Array.isArray(any.oneOf)) {
-    return renderUnion(any.oneOf, depth);
+  if (Array.isArray(schema.oneOf)) {
+    return renderUnion(schema.oneOf as JsonSchemaNode[], depth);
   }
 
   // Primitive / structural by `type`
-  const type = any.type as string | undefined;
+  const type = typeof schema.type === "string" ? schema.type : undefined;
   switch (type) {
     case "object":
-      return renderObject(any, depth);
+      return renderObject(schema, depth);
     case "array":
-      return renderArray(any, depth);
+      return renderArray(schema, depth);
     case "string":
       return "string";
     case "integer":
@@ -119,11 +122,28 @@ export function renderSchemaText(schema: TSchema, options: RenderSchemaOptions =
     case "null":
       return "null";
     default:
-      // Fall through — unknown shape
       break;
   }
 
   // Nothing matched — render as `unknown` rather than throwing so prompts
-  // still get something readable if someone adds an exotic schema.
+  // still get something readable if someone adds an exotic shape.
   return "unknown";
+}
+
+/**
+ * Render a Zod schema as a compact TS-like type string. Safe to pass as
+ * the `schema:` param to `runWithOutputValidation` and the `{{outputSchema}}`
+ * placeholder inside review prompts.
+ *
+ * The OMP runtime injects a Zod-backed shim for any extension that still
+ * imports `@sinclair/typebox`, so even legacy callers reach this function
+ * with a Zod schema. Non-Zod inputs (legitimate JSON Schema literals) are
+ * walked as-is.
+ */
+export function renderSchemaText(schema: ZodType | JsonSchemaNode, options: RenderSchemaOptions = {}): string {
+  const depth = options.depth ?? 0;
+  const jsonSchema = isZodSchema(schema)
+    ? (z.toJSONSchema(schema, { target: "draft-2020-12" }) as JsonSchemaNode)
+    : schema;
+  return renderJsonSchema(jsonSchema, depth);
 }

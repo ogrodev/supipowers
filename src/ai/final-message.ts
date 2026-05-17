@@ -56,6 +56,13 @@ function extractTextFromContent(content: unknown): string {
   return "";
 }
 
+function createTimeoutPromise(timeoutMs: number): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Agent session timed out after ${timeoutMs}ms.`)), timeoutMs);
+  });
+}
+
+
 /**
  * Walk the message list backwards and return the last assistant message text.
  * Returns null when no assistant message contains usable text.
@@ -99,7 +106,14 @@ export async function runStructuredAgentSession(
   });
 
   try {
-    await session.prompt(options.prompt, { expandPromptTemplates: false });
+    if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
+      await Promise.race([
+        session.prompt(options.prompt, { expandPromptTemplates: false }),
+        createTimeoutPromise(options.timeoutMs),
+      ]);
+    } else {
+      await session.prompt(options.prompt, { expandPromptTemplates: false });
+    }
     const finalText = extractFinalAssistantText(session.state.messages);
 
     if (!finalText) {

@@ -37,4 +37,25 @@ describe("module resolution guardrails", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  // supipowers fully migrated from `@sinclair/typebox` to `zod/v4` in 2026-05.
+  // OMP's `omp:legacy-pi-shim` would silently rewrite any new typebox import
+  // to a Zod-backed compatibility shim, which is precisely the surface that
+  // caused two extension-load crashes during the migration. Authoring against
+  // Zod directly keeps dev/test/runtime shapes identical and lets us drop the
+  // legacy compat path entirely. Re-introducing typebox in production code
+  // would reopen that bug class.
+  test("production code does not import @sinclair/typebox", () => {
+    const importPattern = /from\s+(["'])(@sinclair\/typebox(?:\/[^"']+)?)\1/g;
+
+    const offenders = PRODUCTION_ROOTS.flatMap((root) => collectSourceFiles(root))
+      .flatMap((filePath) => {
+        const source = fs.readFileSync(filePath, "utf-8");
+        return [...source.matchAll(importPattern)].map(
+          (match) => `${filePath}:${match.index ?? 0}`,
+        );
+      });
+
+    expect(offenders).toEqual([]);
+  });
 });

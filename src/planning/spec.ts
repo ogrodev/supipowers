@@ -8,35 +8,29 @@
 // Phase 3 exit gate: PlanSpec is the canonical planning artifact; markdown
 // is rendered from it via render-markdown.ts, not the other way around.
 
-import { Type, type Static } from "@sinclair/typebox";
+import { z } from "zod/v4";
 
 export const TASK_COMPLEXITY_VALUES = ["small", "medium", "large"] as const;
 
-export const PlanSpecTaskSchema = Type.Object(
-  {
-    id: Type.Integer({ minimum: 1 }),
-    name: Type.String({ minLength: 1 }),
-    description: Type.String(),
-    files: Type.Array(Type.String({ minLength: 1 })),
-    criteria: Type.String(),
-    complexity: Type.Union(TASK_COMPLEXITY_VALUES.map((v) => Type.Literal(v))),
-    model: Type.Optional(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
+export const PlanSpecTaskSchema = z.object({
+  id: z.number().int().min(1),
+  name: z.string().min(1),
+  description: z.string(),
+  files: z.array(z.string().min(1)),
+  criteria: z.string(),
+  complexity: z.enum(TASK_COMPLEXITY_VALUES),
+  model: z.string().min(1).optional(),
+}).strict();
 
-export const PlanSpecSchema = Type.Object(
-  {
-    name: Type.String({ minLength: 1 }),
-    /** ISO date string, e.g. "2026-04-17". Empty string is tolerated for
-     * legacy plans produced before the field was required. */
-    created: Type.String(),
-    tags: Type.Array(Type.String()),
-    context: Type.String(),
-    tasks: Type.Array(PlanSpecTaskSchema),
-  },
-  { additionalProperties: false },
-);
+export const PlanSpecSchema = z.object({
+  name: z.string().min(1),
+  /** ISO date string, e.g. "2026-04-17". Empty string is tolerated for
+   * legacy plans produced before the field was required. */
+  created: z.string(),
+  tags: z.array(z.string()),
+  context: z.string(),
+  tasks: z.array(PlanSpecTaskSchema),
+}).strict();
 
-export type PlanSpec = Static<typeof PlanSpecSchema>;
-export type PlanSpecTask = Static<typeof PlanSpecTaskSchema>;
+export type PlanSpec = z.infer<typeof PlanSpecSchema>;
+export type PlanSpecTask = z.infer<typeof PlanSpecTaskSchema>;

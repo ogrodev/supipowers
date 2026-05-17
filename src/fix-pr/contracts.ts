@@ -5,35 +5,27 @@
 // against FixPrAssessmentBatchSchema; downstream work batches are derived
 // from this validated artifact, not from ad-hoc orchestration prose.
 
-import { Type, type Static } from "@sinclair/typebox";
+import { z } from "zod/v4"
 
 export const FIX_PR_ASSESSMENT_VERDICTS = ["apply", "reject", "investigate"] as const;
 export type FixPrAssessmentVerdict = (typeof FIX_PR_ASSESSMENT_VERDICTS)[number];
 
-export const FixPrCommentAssessmentSchema = Type.Object(
-  {
-    commentId: Type.Integer(),
-    verdict: Type.Union(
-      FIX_PR_ASSESSMENT_VERDICTS.map((value) => Type.Literal(value)),
-    ),
-    rationale: Type.String({ minLength: 1 }),
-    affectedFiles: Type.Array(Type.String({ minLength: 1 })),
-    rippleEffects: Type.Array(Type.String({ minLength: 1 })),
-    verificationPlan: Type.String({ minLength: 1 }),
-  },
-  { additionalProperties: false },
-);
+export const FixPrCommentAssessmentSchema = z.object({
+  commentId: z.number().int(),
+  verdict: z.enum(FIX_PR_ASSESSMENT_VERDICTS),
+  rationale: z.string().min(1),
+  affectedFiles: z.array(z.string().min(1)),
+  rippleEffects: z.array(z.string().min(1)),
+  verificationPlan: z.string().min(1),
+}).strict();
 
-export const FixPrAssessmentBatchSchema = Type.Object(
-  {
-    assessments: Type.Array(FixPrCommentAssessmentSchema),
-    summary: Type.Optional(Type.String()),
-  },
-  { additionalProperties: false },
-);
+export const FixPrAssessmentBatchSchema = z.object({
+  assessments: z.array(FixPrCommentAssessmentSchema),
+  summary: z.string().optional(),
+}).strict();
 
-export type FixPrCommentAssessment = Static<typeof FixPrCommentAssessmentSchema>;
-export type FixPrAssessmentBatch = Static<typeof FixPrAssessmentBatchSchema>;
+export type FixPrCommentAssessment = z.infer<typeof FixPrCommentAssessmentSchema>;
+export type FixPrAssessmentBatch = z.infer<typeof FixPrAssessmentBatchSchema>;
 
 /**
  * A deterministic execution unit derived from a validated FixPrAssessmentBatch.

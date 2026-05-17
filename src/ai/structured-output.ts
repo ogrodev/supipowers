@@ -12,8 +12,7 @@
 // One canonical renderer lives in `./template.ts`. Neither has a review-
 // specific name any more.
 
-import type { TSchema } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import type { ZodType } from "zod/v4";
 import invalidOutputRetryPrompt from "./prompts/invalid-output-retry.md" with { type: "text" };
 import { runStructuredAgentSession } from "./final-message.js";
 import { renderTemplate } from "./template.js";
@@ -21,6 +20,7 @@ import { stripMarkdownCodeFence } from "../text.js";
 import type { GateExecutionContext, ReliabilityOutcome, ValidationError } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
 import { appendReliabilityRecord } from "../storage/reliability-metrics.js";
+import { collectSchemaValidationErrors, parseSchema } from "./schema-validation.js";
 
 export interface StructuredParseResult<T> {
   output: T | null;
@@ -94,35 +94,34 @@ function truncateForPrompt(text: string, maxLength = 1200): string {
   return `${normalized.slice(0, maxLength - 1)}…`;
 }
 
-function normalizeErrorPath(path: string): string {
-  return path.replace(/^\//, "").replace(/\//g, ".") || "(root)";
-}
+
 
 /**
- * Collect schema validation errors for a TypeBox schema in a stable
- * {path, message} shape. Used by parseStructuredOutput and by any code that
- * needs to format schema-check failures for humans or prompts.
+ * Collect schema validation errors in a stable {path, message} shape. Used by
+ * parseStructuredOutput and by any code that needs to format schema-check
+ * failures for humans or prompts.
  */
-export function collectValidationErrors(schema: TSchema, data: unknown): ValidationError[] {
-  return [...Value.Errors(schema, data)].map((error) => ({
-    path: normalizeErrorPath(error.path),
-    message: error.message,
-  }));
+export function collectValidationErrors(schema: ZodType, data: unknown): ValidationError[] {
+  return collectSchemaValidationErrors(schema, data);
 }
 
 /**
  * Render validation errors as `path: message` lines.
  */
 export function formatValidationErrors(errors: ValidationError[]): string[] {
-  return errors.map((error) => `${error.path}: ${error.message}`);
+  return errors.map((error) => {
+    const code = error.code ? ` [${error.code}]` : "";
+    const expected = error.expected !== undefined ? ` Expected: ${JSON.stringify(error.expected)}.` : "";
+    return `${error.path}${code}: ${error.message}${expected}`;
+  });
 }
 
 /**
- * Strip markdown fences, JSON-parse, and schema-check against a TypeBox.
+ * Strip markdown fences, JSON-parse, and schema-check.
  * Returns {output: T, error: null} on success; {output: null, error: string}
  * on failure with a human-readable error suitable for retry prompts.
  */
-export function parseStructuredOutput<T>(raw: string, schema: TSchema): StructuredParseResult<T> {
+export function parseStructuredOutput<T>(raw: string, schema: ZodType<T>): StructuredParseResult<T> {
   let parsed: unknown;
 
   try {
@@ -134,8 +133,9 @@ export function parseStructuredOutput<T>(raw: string, schema: TSchema): Structur
     };
   }
 
-  if (!Value.Check(schema, parsed)) {
-    const errors = formatValidationErrors(collectValidationErrors(schema, parsed));
+  const result = parseSchema<T>(schema, parsed);
+  if (!result.success) {
+    const errors = formatValidationErrors(result.errors);
     return {
       output: null,
       error: errors.length > 0 ? errors.join("; ") : "Output does not match the required schema.",
@@ -143,7 +143,7 @@ export function parseStructuredOutput<T>(raw: string, schema: TSchema): Structur
   }
 
   return {
-    output: parsed as T,
+    output: result.data,
     error: null,
   };
 }

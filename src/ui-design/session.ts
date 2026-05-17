@@ -898,10 +898,10 @@ export function registerUiDesignToolGuard(platform: Platform): void {
     const session = activeSession;
     if (!session) return;
 
-    if (event.toolName === "exit_plan_mode") {
+    if (event.toolName === "resolve" && isUiDesignPlanApprovalResolveInput(event.input)) {
       return {
         block: true,
-        reason: "UI-design mode: completion is driven by the agent_end approval hook; do not call exit_plan_mode.",
+        reason: "UI-design mode: completion is driven by the agent_end approval hook; do not call `resolve` with `extra.title`.",
       };
     }
 
@@ -941,6 +941,17 @@ export function registerUiDesignToolGuard(platform: Platform): void {
       }
     }
   });
+}
+
+function isUiDesignPlanApprovalResolveInput(input: unknown): boolean {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return false;
+  const candidate = input as { action?: unknown; extra?: unknown };
+  if (candidate.action !== "apply") return false;
+  const extra = candidate.extra;
+  return extra !== null
+    && typeof extra === "object"
+    && !Array.isArray(extra)
+    && typeof (extra as { title?: unknown }).title === "string";
 }
 
 /**

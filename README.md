@@ -72,21 +72,24 @@ The installer scans for these and offers to install missing tooling where it can
 | `/supi:config`           | Interactive settings TUI                                      |
 | `/supi:status`           | Show project plans and configuration summary                  |
 | `/supi:doctor`           | Diagnose extension health and missing dependencies            |
-| `/supi:generate`        | Documentation drift detection                                |
+| `/supi:generate`        | Documentation drift checks via `docs` (default); use `--target <package>` to scope |
 | `/supi:update`           | Update supipowers to the latest version                       |
 | `/supi:agents`           | Manage review agents                                          |
 | `/supi:ultraplan`        | Multi-stage authoring pipeline (intake → scout → discover → research → synthesize → review → approve) |
 | `/supi:harness`          | Harness engineering pipeline and anti-slop guardrails         |
 | `/supi:memory`           | Manage native MemPalace memory integration (`status`, `setup`) |
+| `/runbook`              | Show registered OMP rules, TTSR conditions, and slash commands without an LLM turn |
 | `/supi:clear`            | Clear metrics, cache, session knowledge, and memory           |
 
-Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:review`, `/supi:update`, `/supi:doctor`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`, `/supi:release`, `/supi:checks`, `/supi:agents`, `/supi:ultraplan`, `/supi:harness`, `/supi:memory`, `/supi:clear`.
+Most commands steer the AI session. These are TUI-only — they open native dialogs without triggering the AI: `/supi`, `/supi:config`, `/supi:status`, `/supi:review`, `/supi:update`, `/supi:doctor`, `/supi:model`, `/supi:context`, `/supi:optimize-context`, `/supi:commit`, `/supi:release`, `/supi:checks`, `/supi:agents`, `/supi:ultraplan`, `/supi:harness`, `/supi:memory`, `/supi:clear`, `/runbook`.
 
 ## How it works
 
 **Planning.** `/supi:plan` steers the AI through planning phases (Explore → Clarify → Brainstorm → Design & Save → Review Loop → User Gate → Plan), saves the result to `.omp/supipowers/plans/`, and presents an approval UI. On approval, tasks execute in the same session.
 
 **Quality gates.** `/supi:checks` runs deterministic quality gates. Six gates are available: `lsp-diagnostics`, `lint`, `typecheck`, `format`, `test-suite`, and `build`. Each gate can be enabled independently via `/supi:config` or the shared repository config at `.omp/supipowers/config.json`. In monorepos, `/supi:checks` defaults to `All`, which runs the root target plus every workspace target sequentially; use `--target <package>` to narrow the run or `--target all` to request the batch mode explicitly. Gates report issues with severity levels.
+
+**Documentation drift.** `/supi:generate docs` checks tracked documentation for drift from the current codebase. `docs` is the default subcommand, and `--target <package>` scopes discovery and checking to a workspace/package target; the root target covers repository-level docs.
 
 **AI code review.** `/supi:review` runs a programmatic AI review pipeline with configurable depth (quick, deep, or multi-agent). It uses headless agent sessions with structured JSON validation, always validates findings before user action, writes the current validated findings to a session `findings.md` document, and then presents three next-step choices: `Fix now`, `Document only`, or `Discuss before fixing`.
 
@@ -101,7 +104,7 @@ Most commands steer the AI session. These are TUI-only — they open native dial
 
 Use `/supi:agents` to inspect the merged set that will actually run.
 
-**PR fixing.** `/supi:fix-pr` fetches PR review comments, critically assesses each one, checks for ripple effects, then fixes or rejects with evidence. Bot reviewers are auto-detected and filtered out.
+**PR fixing.** `/supi:fix-pr` fetches PR review comments, critically assesses each one, checks for ripple effects, then fixes or rejects with evidence. Known bot reviewers in the selected comment snapshot are auto-detected to configure re-review triggering; bot-authored comments are not filtered out solely because they are bots.
 
 **Context protection.** Supipowers always enables built-in context protection through native `ctx_*` tools and routing hooks. Search/find and web-fetch style operations are redirected to sandboxed execution or indexed storage, and oversized tool results are compressed before they reach the conversation.
 
@@ -131,16 +134,49 @@ Use `/supi:agents` to inspect the merged set that will actually run.
 
 `/supi:checks` runs deterministic quality gates. Each gate is independently configurable in `quality.gates` via `/supi:config` or the shared config JSON files:
 
-| Gate               | What it checks                  | Config type       |
-| ------------------ | ------------------------------- | ----------------- |
-| `lsp-diagnostics`  | Language server diagnostics     | enabled           |
-| `lint`             | Linter (e.g. `eslint`, `biome`) | enabled + command |
-| `typecheck`        | Type checker (e.g. `tsc`)       | enabled + command |
-| `format`           | Formatter check                 | enabled + command |
-| `test-suite`       | Test runner                     | enabled + command |
-| `build`            | Build verification              | enabled + command |
+| Gate               | What it checks                  | Config type                    |
+| ------------------ | ------------------------------- | ------------------------------ |
+| `lsp-diagnostics`  | Language server diagnostics     | `enabled`                      |
+| `lint`             | Linter (e.g. `eslint`, `biome`) | `enabled: true` + `runs[]`     |
+| `typecheck`        | Type checker (e.g. `tsc`)       | `enabled: true` + `runs[]`     |
+| `format`           | Formatter check                 | `enabled: true` + `runs[]`     |
+| `test-suite`       | Test runner                     | `enabled: true` + `runs[]`     |
+| `build`            | Build verification              | `enabled: true` + `runs[]`     |
 
 Gates default to disabled. Enable them globally in `~/.omp/supipowers/config.json` or per-repository in `.omp/supipowers/config.json`. In monorepos, the repository config is shared by the root target and every workspace, and `/supi:checks` defaults to `All` (root target + every workspace target).
+
+Enabled command gates require `runs: [{ command, target }]`. `target.scope` must be one of `all-targets`, `root`, `all-workspaces`, or `workspace`; `workspace` selectors also require `relativeDir`.
+
+```json
+{
+  "quality": {
+    "gates": {
+      "typecheck": {
+        "enabled": true,
+        "runs": [
+          {
+            "command": "bun run typecheck",
+            "target": { "scope": "all-targets" }
+          }
+        ]
+      },
+      "test-suite": {
+        "enabled": true,
+        "runs": [
+          {
+            "command": "bun test",
+            "target": { "scope": "root" }
+          },
+          {
+            "command": "bun --cwd packages/api test",
+            "target": { "scope": "workspace", "relativeDir": "packages/api" }
+          }
+        ]
+      }
+    }
+  }
+}
+```
 
 ## Configuration
 
@@ -215,8 +251,31 @@ Supipowers ships runtime-loaded prompt skills that are also available to the age
 | `receiving-code-review` | Agent sessions          |
 | `release`               | `/supi:release`         |
 | `context-mode`          | Context window guidance |
+| `ultraplan-intake`      | `/supi:ultraplan plan` intake stage |
+| `ultraplan-scout`       | `/supi:ultraplan plan` scout stage |
+| `ultraplan-discover`    | `/supi:ultraplan discover` |
+| `ultraplan-research`    | `/supi:ultraplan research` |
+| `ultraplan-synthesize`  | `/supi:ultraplan synthesize` |
+| `ultraplan-review`      | `/supi:ultraplan review` orchestration |
+| `ultraplan-review-structure` | `/supi:ultraplan review` structure checker |
+| `ultraplan-review-scope` | `/supi:ultraplan review` scope checker |
+| `ultraplan-review-tdd`  | `/supi:ultraplan review` TDD checker |
 | `creating-supi-agents`  | Agent creation guidance  |
 | `harness`               | `/supi:harness`         |
+
+## Containerized deployments
+
+Supipowers runs unchanged inside containerized OMP installs (robomp slots, the swarm extension, CI runners). When the slot must stay credential-free, run a sidecar `omp auth-gateway` outside the container and pin the per-provider transport in `~/.omp/agent/models.yml`:
+
+```yaml
+providers:
+  anthropic:
+    transport: pi-native
+    baseUrl: http://llm-gateway.internal:4000
+    apiKey: <gateway-bearer>
+```
+
+The slot keeps resolving pricing, capabilities, and thinking config locally from its bundled `models.json`; only the streaming dispatch is redirected through the gateway, which holds the real provider tokens. Multi-host credential sync uses the matching `omp auth-broker` subcommand. Requires OMP ≥ 15.1.3.
 
 ## Development
 
@@ -229,4 +288,4 @@ bun run build        # emit to dist/
 
 Tests live in `tests/`, mirroring `src/` one-to-one. The test runner is Bun's built-in `bun:test`.
 
-Peer dependencies (`@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-ai`, `@oh-my-pi/pi-tui`, `@sinclair/typebox`) are provided by the OMP host; they are devDependencies only for type-checking during development.
+Peer dependencies (`@oh-my-pi/pi-coding-agent`, `@oh-my-pi/pi-ai`, `@oh-my-pi/pi-tui`) are provided by the OMP host at runtime; matching devDependencies are installed for type-checking during development.

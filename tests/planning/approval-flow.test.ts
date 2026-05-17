@@ -24,7 +24,7 @@ import { listPlans, readPlanFile } from "../../src/storage/plans.js";
 const mockListPlans = listPlans as unknown as ReturnType<typeof mock>;
 const mockReadPlanFile = readPlanFile as unknown as ReturnType<typeof mock>;
 
-function listPlansFallback(paths: any, cwd: string): string[] {
+function realListPlans(paths: any, cwd: string): string[] {
   const dir = getProjectStatePath(paths, cwd, "plans");
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -34,17 +34,16 @@ function listPlansFallback(paths: any, cwd: string): string[] {
     .reverse();
 }
 
-function readPlanFileFallback(paths: any, cwd: string, name: string): string | null {
+function realReadPlanFile(paths: any, cwd: string, name: string): string | null {
   const filePath = path.join(getProjectStatePath(paths, cwd, "plans"), name);
-  if (!fs.existsSync(filePath)) return null;
-  return fs.readFileSync(filePath, "utf-8");
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : null;
 }
 
 function resetPlanStorageMocks(): void {
   mockListPlans.mockReset();
   mockReadPlanFile.mockReset();
-  mockListPlans.mockImplementation(listPlansFallback);
-  mockReadPlanFile.mockImplementation(readPlanFileFallback);
+  mockListPlans.mockImplementation(realListPlans);
+  mockReadPlanFile.mockImplementation(realReadPlanFile);
 }
 
 type MockPlatform = {

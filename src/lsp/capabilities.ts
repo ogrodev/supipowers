@@ -11,7 +11,7 @@
 // treated as fail-closed: NO_LSP_SUPPORT (gate skips rather than pretending
 // it ran).
 
-import { Type, type Static } from "@sinclair/typebox";
+import { z } from "zod/v4";
 import {
   parseStructuredOutput,
   runWithOutputValidation,
@@ -20,18 +20,15 @@ import {
 import { renderSchemaText } from "../ai/schema-text.js";
 import type { GateExecutionContext } from "../types.js";
 
-export const LspCapabilitiesSchema = Type.Object(
-  {
-    diagnostics: Type.Boolean(),
-    references: Type.Boolean(),
-    definition: Type.Boolean(),
-    hover: Type.Boolean(),
-    rename: Type.Boolean(),
-  },
-  { additionalProperties: false },
-);
+export const LspCapabilitiesSchema = z.object({
+  diagnostics: z.boolean(),
+  references: z.boolean(),
+  definition: z.boolean(),
+  hover: z.boolean(),
+  rename: z.boolean(),
+}).strict();
 
-export type LspCapabilities = Static<typeof LspCapabilitiesSchema>;
+export type LspCapabilities = z.infer<typeof LspCapabilitiesSchema>;
 
 const SCHEMA_TEXT = renderSchemaText(LspCapabilitiesSchema);
 

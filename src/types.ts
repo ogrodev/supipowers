@@ -1,4 +1,4 @@
-import type { TSchema } from "@sinclair/typebox";
+import type { ZodType } from "zod/v4";
 import type { AgentSession, AgentSessionOptions, ExecOptions, ExecResult } from "./platform/types.js";
 
 
@@ -6,6 +6,9 @@ import type { AgentSession, AgentSessionOptions, ExecOptions, ExecResult } from 
 export interface ValidationError {
   path: string;
   message: string;
+  code?: string;
+  expected?: unknown;
+  received?: unknown;
 }
 // src/types.ts — Shared type definitions for supipowers
 
@@ -365,7 +368,7 @@ export interface GateExecutionContext {
 export interface GateDefinition<TConfig> {
   id: GateId;
   description: string;
-  configSchema: TSchema;
+  configSchema: ZodType;
   detect(projectFacts: ProjectFacts): GateDetectionResult<TConfig> | null;
   run(context: GateExecutionContext, config: TConfig): Promise<GateResult>;
 }

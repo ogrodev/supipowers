@@ -274,6 +274,30 @@ describe("ui-design session — tool guard", () => {
     expect((fire("bash", { command: "touch surprise.txt" }) as { block: true }).block).toBe(true);
   });
 
+  test("blocks native resolve plan approval", () => {
+    const sessionDir = path.join(tmpDir, "guard-resolve-approval");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    startUiDesignTracking(makeSession(sessionDir), async () => {});
+
+    const { fire } = registerToolGuardPlatform();
+    const result = fire("resolve", { action: "apply", extra: { title: "native_plan" } }) as
+      | { block: true; reason: string }
+      | undefined;
+
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("agent_end approval hook");
+    expect(result?.reason).toContain("extra.title");
+  });
+
+  test("allows ordinary resolve calls", () => {
+    const sessionDir = path.join(tmpDir, "guard-resolve-ordinary");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    startUiDesignTracking(makeSession(sessionDir), async () => {});
+
+    const { fire } = registerToolGuardPlatform();
+    expect(fire("resolve", { action: "apply" })).toBeUndefined();
+  });
+
   test("validates every edit operation path under the active session dir", () => {
     const sessionDir = path.join(tmpDir, "guard-edit");
     fs.mkdirSync(sessionDir, { recursive: true });

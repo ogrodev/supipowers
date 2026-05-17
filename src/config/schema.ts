@@ -1,176 +1,142 @@
-import type { TSchema } from "@sinclair/typebox";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { z } from "zod/v4";
+import type { ZodType } from "zod/v4";
 import type { SupipowersConfig } from "../types.js";
 import { QualityGatesSchema } from "../quality/schemas.js";
 import { UltraPlanConfigSchema } from "../ultraplan/contracts.js";
+import { collectSchemaValidationErrors } from "../ai/schema-validation.js";
 
 const TAG_FORMAT_PATTERN = "^(?:(?!\\$\\{version\\}).)*\\$\\{version\\}(?:(?!\\$\\{version\\}).)*$";
 
 
-export const ConfigSchema = Type.Object(
+export const ConfigSchema = z.object(
   {
-    version: Type.String(),
-    quality: Type.Object(
+    version: z.string(),
+    quality: z.object(
       {
         gates: QualityGatesSchema,
       },
-      { additionalProperties: false },
-    ),
-    lsp: Type.Object(
+    ).strict(),
+    lsp: z.object(
       {
-        setupGuide: Type.Boolean(),
+        setupGuide: z.boolean(),
       },
-      { additionalProperties: false },
-    ),
-    qa: Type.Object(
+    ).strict(),
+    qa: z.object(
       {
-        framework: Type.Union([Type.String(), Type.Null()]),
-        e2e: Type.Boolean(),
+        framework: z.string().nullable(),
+        e2e: z.boolean(),
       },
-      { additionalProperties: false },
-    ),
-    release: Type.Object(
+    ).strict(),
+    release: z.object(
       {
-        channels: Type.Array(Type.String()),
-        tagFormat: Type.String({ pattern: TAG_FORMAT_PATTERN }),
-        customChannels: Type.Optional(
-          Type.Record(
-            Type.String(),
-            Type.Object({
-              label: Type.String(),
-              publishCommand: Type.String(),
-              detectCommand: Type.Optional(Type.String()),
-            }),
-          ),
-        ),
+        channels: z.array(z.string()),
+        tagFormat: z.string().regex(new RegExp(TAG_FORMAT_PATTERN)),
+        customChannels: z.record(
+          z.string(),
+          z.object({
+            label: z.string(),
+            publishCommand: z.string(),
+            detectCommand: z.string().optional(),
+          }),
+        ).optional(),
       },
-      { additionalProperties: false },
-    ),
+    ).strict(),
     ultraplan: UltraPlanConfigSchema,
-    contextMode: Type.Object(
+    contextMode: z.object(
       {
-        enabled: Type.Boolean(),
-        compressionThreshold: Type.Number({ minimum: 1024 }),
-        blockHttpCommands: Type.Boolean(),
-        routingInstructions: Type.Boolean(),
-        eventTracking: Type.Boolean(),
-        compaction: Type.Boolean(),
-        llmSummarization: Type.Boolean(),
-        llmThreshold: Type.Number({ minimum: 4096 }),
-        enforceRouting: Type.Boolean(),
-        lazyTools: Type.Object(
+        enabled: z.boolean(),
+        compressionThreshold: z.number().min(1024),
+        blockHttpCommands: z.boolean(),
+        routingInstructions: z.boolean(),
+        eventTracking: z.boolean(),
+        compaction: z.boolean(),
+        llmSummarization: z.boolean(),
+        llmThreshold: z.number().min(4096),
+        enforceRouting: z.boolean(),
+        lazyTools: z.object(
           {
-            enabled: Type.Boolean(),
-            mode: Type.Union([
-              Type.Literal("conservative"),
-              Type.Literal("balanced"),
-              Type.Literal("aggressive"),
-            ]),
-            alwaysKeep: Type.Array(Type.String()),
-            commandAllowlist: Type.Record(Type.String(), Type.Array(Type.String())),
-            keywordTools: Type.Record(Type.String(), Type.Array(Type.String())),
+            enabled: z.boolean(),
+            mode: z.enum(["conservative", "balanced", "aggressive"]),
+            alwaysKeep: z.array(z.string()),
+            commandAllowlist: z.record(z.string(), z.array(z.string())),
+            keywordTools: z.record(z.string(), z.array(z.string())),
           },
-          { additionalProperties: false },
-        ),
-        processors: Type.Object(
+        ).strict(),
+        processors: z.object(
           {
-            enabled: Type.Boolean(),
-            disable: Type.Array(
-              Type.Union([
-                Type.Literal("git"),
-                Type.Literal("test"),
-                Type.Literal("lint"),
-                Type.Literal("build"),
-                Type.Literal("k8s"),
-                Type.Literal("docker"),
-                Type.Literal("log"),
-                Type.Literal("json"),
-              ]),
+            enabled: z.boolean(),
+            disable: z.array(
+              z.enum(["git", "test", "lint", "build", "k8s", "docker", "log", "json"]),
             ),
           },
-          { additionalProperties: false },
-        ),
-        cacheHandles: Type.Object(
+        ).strict(),
+        cacheHandles: z.object(
           {
-            enabled: Type.Boolean(),
-            spillThresholdBytes: Type.Number({ minimum: 1024 }),
-            previewBytes: Type.Number({ minimum: 256 }),
+            enabled: z.boolean(),
+            spillThresholdBytes: z.number().min(1024),
+            previewBytes: z.number().min(256),
           },
-          { additionalProperties: false },
-        ),
-        repomap: Type.Object(
+        ).strict(),
+        repomap: z.object(
           {
-            enabled: Type.Boolean(),
-            tokenBudget: Type.Number({ minimum: 100 }),
-            maxFiles: Type.Number({ minimum: 1 }),
+            enabled: z.boolean(),
+            tokenBudget: z.number().min(100),
+            maxFiles: z.number().min(1),
           },
-          { additionalProperties: false },
-        ),
-        memory: Type.Object(
+        ).strict(),
+        memory: z.object(
           {
-            enabled: Type.Boolean(),
-            byteBudget: Type.Number({ minimum: 256 }),
-            maxRows: Type.Number({ minimum: 1 }),
-            retentionDays: Type.Number({ minimum: 1 }),
-            focusChainCadence: Type.Integer({ minimum: 1 }),
+            enabled: z.boolean(),
+            byteBudget: z.number().min(256),
+            maxRows: z.number().min(1),
+            retentionDays: z.number().min(1),
+            focusChainCadence: z.number().int().min(1),
           },
-          { additionalProperties: false },
-        ),
+        ).strict(),
       },
-      { additionalProperties: false },
-    ),
-    mempalace: Type.Object(
+    ).strict(),
+    mempalace: z.object(
       {
-        enabled: Type.Boolean(),
-        packageVersion: Type.String({ minLength: 1 }),
-        managedVenvPath: Type.String({ minLength: 1 }),
-        palacePath: Type.String({ minLength: 1 }),
-        defaultWingStrategy: Type.Union([
-          Type.Literal("repo-name"),
-          Type.Literal("project-slug"),
-          Type.Literal("explicit"),
-        ]),
-        explicitWing: Type.Union([Type.String(), Type.Null()]),
-        defaultAgentName: Type.String({ minLength: 1 }),
-        autoSetup: Type.Boolean(),
-        hooks: Type.Object(
+        enabled: z.boolean(),
+        packageVersion: z.string().min(1),
+        managedVenvPath: z.string().min(1),
+        palacePath: z.string().min(1),
+        defaultWingStrategy: z.enum(["repo-name", "project-slug", "explicit"]),
+        explicitWing: z.string().nullable(),
+        defaultAgentName: z.string().min(1),
+        autoSetup: z.boolean(),
+        hooks: z.object(
           {
-            wakeUp: Type.Boolean(),
-            searchGuidance: Type.Boolean(),
-            autoSearchOnPrompt: Type.Boolean(),
-            compactionCheckpoint: Type.Boolean(),
-            shutdownDiary: Type.Boolean(),
+            wakeUp: z.boolean(),
+            searchGuidance: z.boolean(),
+            autoSearchOnPrompt: z.boolean(),
+            compactionCheckpoint: z.boolean(),
+            shutdownDiary: z.boolean(),
           },
-          { additionalProperties: false },
-        ),
-        budgets: Type.Object(
+        ).strict(),
+        budgets: z.object(
           {
-            wakeUpTokens: Type.Integer({ minimum: 1 }),
-            searchResultChars: Type.Integer({ minimum: 1 }),
-            listResultChars: Type.Integer({ minimum: 1 }),
-            diaryChars: Type.Integer({ minimum: 1 }),
-            autoSearchTokens: Type.Integer({ minimum: 1 }),
-            wakeUpInjectionEvery: Type.Integer({ minimum: 1 }),
-            autoSearchSimilarityFloor: Type.Number({ minimum: 0, maximum: 1 }),
-            autoSearchBm25Floor: Type.Number({ minimum: 0 }),
+            wakeUpTokens: z.number().int().min(1),
+            searchResultChars: z.number().int().min(1),
+            listResultChars: z.number().int().min(1),
+            diaryChars: z.number().int().min(1),
+            autoSearchTokens: z.number().int().min(1),
+            wakeUpInjectionEvery: z.number().int().min(1),
+            autoSearchSimilarityFloor: z.number().min(0).max(1),
+            autoSearchBm25Floor: z.number().min(0),
           },
-          { additionalProperties: false },
-        ),
-        timeouts: Type.Object(
+        ).strict(),
+        timeouts: z.object(
           {
-            setupMs: Type.Integer({ minimum: 1 }),
-            bridgeMs: Type.Integer({ minimum: 1 }),
-            hookMs: Type.Integer({ minimum: 1 }),
+            setupMs: z.number().int().min(1),
+            bridgeMs: z.number().int().min(1),
+            hookMs: z.number().int().min(1),
           },
-          { additionalProperties: false },
-        ),
+        ).strict(),
       },
-      { additionalProperties: false },
-    ), 
+    ).strict(),
   },
-  { additionalProperties: false },
-);
+).strict();
 
 export interface ConfigParseError {
   source: "global" | "root";
@@ -190,13 +156,10 @@ export interface InspectionLoadResult {
   validationErrors: ConfigValidationError[];
 }
 
-function normalizeErrorPath(path: string): string {
-  return path.replace(/^\//, "").replace(/\//g, ".") || "(root)";
-}
 
-function collectValidationErrors(schema: TSchema, data: unknown): ConfigValidationError[] {
-  return [...Value.Errors(schema, data)].map((error) => ({
-    path: normalizeErrorPath(error.path),
+function collectValidationErrors(schema: ZodType, data: unknown): ConfigValidationError[] {
+  return collectSchemaValidationErrors(schema, data).map((error) => ({
+    path: error.path,
     message: error.message,
   }));
 }

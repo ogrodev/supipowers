@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Type } from "@sinclair/typebox";
+import { z } from "zod/v4";
 import {
   collectValidationErrors,
   formatValidationErrors,
@@ -9,13 +9,10 @@ import {
 } from "../../src/ai/structured-output.js";
 import type { AgentSession } from "../../src/platform/types.js";
 
-const PersonSchema = Type.Object(
-  {
-    name: Type.String({ minLength: 1 }),
-    age: Type.Integer(),
-  },
-  { additionalProperties: false },
-);
+const PersonSchema = z.object({
+  name: z.string().min(1),
+  age: z.number().int(),
+}).strict();
 
 interface Person {
   name: string;
@@ -223,6 +220,37 @@ describe("runWithOutputValidation", () => {
     })) as StructuredOutputResult<Person>;
 
     expect(result.status).toBe("ok");
+  });
+
+  test("returns blocked when the agent session exceeds timeout", async () => {
+    let disposed = false;
+    const factory = async (): Promise<AgentSession> => ({
+      state: {
+        get messages() {
+          return [];
+        },
+      },
+      async prompt() {
+        await new Promise(() => {});
+      },
+      async dispose() {
+        disposed = true;
+      },
+    } as unknown as AgentSession);
+
+    const result = await runWithOutputValidation<Person>(factory as any, {
+      cwd: "/tmp",
+      prompt: "give person",
+      schema: "Person",
+      parse: (raw) => parseStructuredOutput<Person>(raw, PersonSchema),
+      timeoutMs: 1,
+    });
+
+    expect(result.status).toBe("blocked");
+    if (result.status === "blocked") {
+      expect(result.error).toContain("timed out");
+    }
+    expect(disposed).toBe(true);
   });
 });
 
