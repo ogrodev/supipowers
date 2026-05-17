@@ -563,6 +563,241 @@ describe("analyzeAndCommit", () => {
     expect(result!.messages[0]).toContain("feat(auth): add login endpoint");
   });
 
+  test("pushes the current branch and opens a PR when selected", async () => {
+    const plan: CommitPlan = {
+      commits: [{
+        type: "feat",
+        scope: null,
+        summary: "add feature",
+        details: [],
+        files: ["src/feature.ts"],
+      }],
+    };
+
+    const exec = createMockExec({
+      "git status": { stdout: " M src/feature.ts", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "src/feature.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 1 file changed\n", code: 0 },
+      "git diff --cached": { stdout: "diff --git a/src/feature.ts\n+new code", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+      "git branch --show-current": { stdout: "feature/pr-flow\n", code: 0 },
+      "git push -u origin feature/pr-flow": { stdout: "", code: 0 },
+      "gh pr create": { stdout: "https://github.com/org/repo/pull/42\n", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mockAgentSession(plan),
+    });
+    const select = mock()
+      .mockResolvedValueOnce("commit — feat: add feature")
+      .mockResolvedValueOnce("Yes — push to origin/feature/pr-flow")
+      .mockResolvedValueOnce("Yes — open a Pull Request");
+    const ctx = createMockCtx({
+      ui: {
+        select,
+        notify: mock(),
+        input: mock(),
+      },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    expect(result).not.toBeNull();
+    const execCalls = exec.mock.calls.map((c: any[]) => `${c[0]} ${c[1].join(" ")}`);
+    expect(execCalls).toContain("git push -u origin feature/pr-flow");
+    expect(execCalls).toContain("gh pr create --fill --head feature/pr-flow");
+    expect(select.mock.calls[1]?.[0]).toBe("Push commits?");
+    expect(select.mock.calls[2]?.[0]).toBe("Open a Pull Request?");
+  });
+
+  test("still offers a PR on feature branches when the initial push is skipped", async () => {
+    const plan: CommitPlan = {
+      commits: [{
+        type: "feat",
+        scope: null,
+        summary: "add feature",
+        details: [],
+        files: ["src/feature.ts"],
+      }],
+    };
+
+    const exec = createMockExec({
+      "git status": { stdout: " M src/feature.ts", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "src/feature.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 1 file changed\n", code: 0 },
+      "git diff --cached": { stdout: "diff --git a/src/feature.ts\n+new code", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git write-tree": { stdout: "abc123\n", code: 0 },
+      "git read-tree": { stdout: "", code: 0 },
+      "git reset HEAD --": { stdout: "", code: 0 },
+      "git commit": { stdout: "", code: 0 },
+      "git branch --show-current": { stdout: "feature/pr-after-skip\n", code: 0 },
+      "git push -u origin feature/pr-after-skip": { stdout: "", code: 0 },
+      "gh pr create": { stdout: "https://github.com/org/repo/pull/43\n", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mockAgentSession(plan),
+    });
+    const select = mock()
+      .mockResolvedValueOnce("commit — feat: add feature")
+      .mockResolvedValueOnce("No — keep commits local")
+      .mockResolvedValueOnce("Yes — open a Pull Request");
+    const ctx = createMockCtx({
+      ui: {
+        select,
+        notify: mock(),
+        input: mock(),
+      },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    expect(result).not.toBeNull();
+    const execCalls = exec.mock.calls.map((c: any[]) => `${c[0]} ${c[1].join(" ")}`);
+    expect(select.mock.calls[1]?.[0]).toBe("Push commits?");
+    expect(select.mock.calls[2]?.[0]).toBe("Open a Pull Request?");
+    expect(execCalls).toContain("git push -u origin feature/pr-after-skip");
+    expect(execCalls).toContain("gh pr create --fill --head feature/pr-after-skip");
+  });
+
+   test("does not offer PR actions when the push prompt is cancelled", async () => {
+     const plan: CommitPlan = {
+       commits: [{
+         type: "feat",
+         scope: null,
+         summary: "add feature",
+         details: [],
+         files: ["src/feature.ts"],
+       }],
+     };
+
+     const exec = createMockExec({
+       "git status": { stdout: " M src/feature.ts", code: 0 },
+       "git add -A": { stdout: "", code: 0 },
+       "git diff --cached --name-only": { stdout: "src/feature.ts\n", code: 0 },
+       "git diff --cached --stat": { stdout: " 1 file changed\n", code: 0 },
+       "git diff --cached": { stdout: "diff --git a/src/feature.ts\n+new code", code: 0 },
+       "git config commit.template": { stdout: "", code: 1 },
+       "git write-tree": { stdout: "abc123\n", code: 0 },
+       "git read-tree": { stdout: "", code: 0 },
+       "git reset HEAD --": { stdout: "", code: 0 },
+       "git commit": { stdout: "", code: 0 },
+       "git branch --show-current": { stdout: "feature/cancel-push\n", code: 0 },
+     });
+     const platform = createMockPlatform({
+       exec,
+       createAgentSession: mockAgentSession(plan),
+     });
+     const select = mock()
+       .mockResolvedValueOnce("commit — feat: add feature")
+       .mockResolvedValueOnce(null);
+     const ctx = createMockCtx({
+       ui: {
+         select,
+         notify: mock(),
+         input: mock(),
+       },
+     });
+
+     const result = await analyzeAndCommit(platform, ctx);
+
+     expect(result).not.toBeNull();
+     expect(select.mock.calls.map((call: any[]) => call[0])).not.toContain("Open a Pull Request?");
+     expect(exec.mock.calls.some(
+       (call: any[]) => call[0] === "git" && call[1][0] === "push",
+     )).toBe(false);
+     expect(exec.mock.calls.some((call: any[]) => call[0] === "gh")).toBe(false);
+   });
+
+  for (const branch of ["main", "master"]) {
+    test(`does not offer to open a PR on ${branch}`, async () => {
+      const plan: CommitPlan = {
+        commits: [{
+          type: "fix",
+          scope: null,
+          summary: "fix bug",
+          details: [],
+          files: ["src/fix.ts"],
+        }],
+      };
+
+      const exec = createMockExec({
+        "git status": { stdout: " M src/fix.ts", code: 0 },
+        "git add -A": { stdout: "", code: 0 },
+        "git diff --cached --name-only": { stdout: "src/fix.ts\n", code: 0 },
+        "git diff --cached --stat": { stdout: " 1 file changed\n", code: 0 },
+        "git diff --cached": { stdout: "diff --git a/src/fix.ts\n+fix", code: 0 },
+        "git config commit.template": { stdout: "", code: 1 },
+        "git write-tree": { stdout: "abc123\n", code: 0 },
+        "git read-tree": { stdout: "", code: 0 },
+        "git reset HEAD --": { stdout: "", code: 0 },
+        "git commit": { stdout: "", code: 0 },
+        "git branch --show-current": { stdout: `${branch}\n`, code: 0 },
+        [`git push -u origin ${branch}`]: { stdout: "", code: 0 },
+      });
+      const platform = createMockPlatform({
+        exec,
+        createAgentSession: mockAgentSession(plan),
+      });
+      const select = mock()
+        .mockResolvedValueOnce("commit — fix: fix bug")
+        .mockResolvedValueOnce(`Yes — push to origin/${branch}`);
+      const ctx = createMockCtx({
+        ui: {
+          select,
+          notify: mock(),
+          input: mock(),
+        },
+      });
+
+      const result = await analyzeAndCommit(platform, ctx);
+
+      expect(result).not.toBeNull();
+      expect(select.mock.calls.map((call: any[]) => call[0])).not.toContain("Open a Pull Request?");
+      expect(exec.mock.calls.some((call: any[]) => call[0] === "gh")).toBe(false);
+    });
+  }
+
+  test("runs the post-commit push prompt after a manual fallback commit", async () => {
+    const exec = createMockExec({
+      "git status": { stdout: " M a.ts", code: 0 },
+      "git add -A": { stdout: "", code: 0 },
+      "git diff --cached --name-only": { stdout: "a.ts\n", code: 0 },
+      "git diff --cached --stat": { stdout: " 1 file\n", code: 0 },
+      "git diff --cached": { stdout: "diff", code: 0 },
+      "git config commit.template": { stdout: "", code: 1 },
+      "git commit": { stdout: "", code: 0 },
+      "git branch --show-current": { stdout: "feature/manual\n", code: 0 },
+      "git push -u origin feature/manual": { stdout: "", code: 0 },
+    });
+    const platform = createMockPlatform({
+      exec,
+      createAgentSession: mock().mockRejectedValue(new Error("no session")),
+    });
+    const select = mock().mockResolvedValue("Yes — push to origin/feature/manual");
+    const ctx = createMockCtx({
+      ui: {
+        select,
+        notify: mock(),
+        input: mock().mockResolvedValue("fix: manual commit"),
+      },
+    });
+
+    const result = await analyzeAndCommit(platform, ctx);
+
+    expect(result).not.toBeNull();
+    expect(exec.mock.calls.some(
+      (call: any[]) => call[0] === "git" && call[1].join(" ") === "push -u origin feature/manual",
+    )).toBe(true);
+  });
+
   test("executes split commits with file-level staging", async () => {
     const plan: CommitPlan = {
       commits: [
