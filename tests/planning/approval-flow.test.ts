@@ -1,8 +1,10 @@
-import * as path from "node:path";
 import * as fs from "node:fs";
+import * as path from "node:path";
+
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+
 import { createPaths } from "../../src/platform/types.js";
 import { getProjectStatePath } from "../../src/workspace/state-paths.js";
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import {
   startPlanTracking,
   cancelPlanTracking,
@@ -39,7 +41,9 @@ function realReadPlanFile(paths: any, cwd: string, name: string): string | null 
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : null;
 }
 
-function restoreRealPlanStorageMocks(): void {
+function resetPlanStorageMocks(): void {
+  mockListPlans.mockReset();
+  mockReadPlanFile.mockReset();
   mockListPlans.mockImplementation(realListPlans);
   mockReadPlanFile.mockImplementation(realReadPlanFile);
 }
@@ -103,13 +107,12 @@ function makeCtx(overrides: Partial<MockCtx> = {}): MockCtx {
 
 beforeEach(() => {
   cancelPlanTracking();
-  mockListPlans.mockClear();
-  mockReadPlanFile.mockClear();
-  restoreRealPlanStorageMocks();
+  resetPlanStorageMocks();
 });
 
 afterEach(() => {
-  restoreRealPlanStorageMocks();
+  cancelPlanTracking();
+  resetPlanStorageMocks();
 });
 
 // ---------------------------------------------------------------------------

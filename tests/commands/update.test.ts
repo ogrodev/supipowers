@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { resolveManagedVenvPaths } from "../../src/mempalace/runtime.js";
 import { detectUvPlatform, uvTargetFor } from "../../src/mempalace/uv.js";
 import { MEMPALACE_PACKAGE_VERSION } from "../../src/mempalace/upstream-limits.js";
+import { normalizeExecCall } from "../helpers/exec-calls.js";
 function makeDep(overrides: Partial<DependencyStatus> = {}): DependencyStatus {
   return {
     name: "test-tool",
@@ -104,7 +105,8 @@ describe("handleUpdate — dependency install", () => {
         global: (...s: string[]) => path.join(tmpDir, "global", ...s),
         agent: (...s: string[]) => path.join(tmpDir, "agent", ...s),
       },
-      exec: mock(async (cmd: string, args: string[], opts?: any) => {
+      exec: mock(async (cmdRaw: string, argsRaw: string[], opts?: any) => {
+        const { cmd, args } = normalizeExecCall({ cmd: cmdRaw, args: argsRaw });
         execCalls.push({ cmd, args, opts });
 
         // npm view → return a newer version to trigger update
@@ -171,7 +173,8 @@ describe("handleUpdate — dependency install", () => {
         global: (...s: string[]) => path.join(tmpDir, "global", ...s),
         agent: (...s: string[]) => path.join(tmpDir, "agent", ...s),
       },
-      exec: mock(async (cmd: string, args: string[], opts?: any) => {
+      exec: mock(async (cmdRaw: string, argsRaw: string[], opts?: any) => {
+        const { cmd, args } = normalizeExecCall({ cmd: cmdRaw, args: argsRaw });
         execCalls.push({ cmd, args, opts });
 
         if (cmd === "npm" && args[0] === "view") {
@@ -264,7 +267,8 @@ describe("handleUpdate — MemPalace prompt", () => {
 
   test("does not run MemPalace setup when the user picks Skip", async () => {
     const execCalls: Array<{ cmd: string; args: string[] }> = [];
-    const platform = platformWithExec(async (cmd, args) => {
+    const platform = platformWithExec(async (cmdRaw, argsRaw) => {
+      const { cmd, args } = normalizeExecCall({ cmd: cmdRaw, args: argsRaw });
       execCalls.push({ cmd, args });
       if (cmd === "npm" && args[0] === "view") return { stdout: "2.0.0\n", stderr: "", code: 0 };
       if (cmd === "npm" && args.includes("--prefix")) {
@@ -317,7 +321,8 @@ describe("handleUpdate — MemPalace prompt", () => {
     const venv = resolveManagedVenvPaths(venvRoot);
 
     const execCalls: Array<{ cmd: string; args: string[] }> = [];
-    const platform = platformWithExec(async (cmd, args) => {
+    const platform = platformWithExec(async (cmdRaw, argsRaw) => {
+      const { cmd, args } = normalizeExecCall({ cmd: cmdRaw, args: argsRaw });
       execCalls.push({ cmd, args });
       if (cmd === "npm" && args[0] === "view") return { stdout: "2.0.0\n", stderr: "", code: 0 };
       if (cmd === "npm" && args.includes("--prefix")) {

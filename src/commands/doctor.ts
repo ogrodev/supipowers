@@ -11,6 +11,7 @@ import { formatReliabilitySection, loadReliabilitySummaries } from "../storage/r
 import { getMetricsStore, getSessionId } from "../context-mode/hooks.js";
 import { getProjectStatePath, getProjectStateDir } from "../workspace/state-paths.js";
 import { basename } from "node:path";
+import { execCli } from "../utils/exec-cli.js";
 
 export interface CheckResult {
   name: string;
@@ -435,14 +436,14 @@ export function checkMetrics(
 
 export async function checkNpm(platform: Platform): Promise<CheckResult> {
   try {
-    const vResult = await platform.exec("npm", ["--version"]);
+    const vResult = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "npm", ["--version"]);
     if (vResult.code !== 0) {
       return { name: "npm", presence: { ok: false, detail: "npm not found" } };
     }
     const version = vResult.stdout.trim();
     const presence = { ok: true, detail: `v${version}` };
 
-    const pingResult = await platform.exec("npm", ["ping"]);
+    const pingResult = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "npm", ["ping"]);
     if (pingResult.code === 0) {
       return { name: "npm", presence, functional: { ok: true, detail: "Registry reachable" } };
     }

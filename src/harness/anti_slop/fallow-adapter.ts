@@ -25,6 +25,7 @@ import {
   type SlopBackendResult,
   type SlopFinding,
 } from "./backend.js";
+import { execCli } from "../../utils/exec-cli.js";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -149,7 +150,7 @@ async function resolveInvocation(
   }
 
   try {
-    const probe = await platform.exec("npx", ["--no-install", "fallow", "--version"], { timeout: 5000 });
+    const probe = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "npx", ["--no-install", "fallow", "--version"], { timeout: 5000 });
     if (probe.code === 0) {
       availabilityCache = { ok: true, via: "npx" };
       return { ok: true, cmd: "npx", baseArgs: ["--no-install", "fallow"], via: "npx" };
@@ -187,7 +188,7 @@ async function runFallow(
   const startedAt = Date.now();
   let result;
   try {
-    result = await platform.exec(invocation.cmd, args, {
+    result = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), invocation.cmd, args, {
       cwd: opts.cwd,
       timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
@@ -269,7 +270,7 @@ export class FallowAdapter implements SlopBackend {
     if (opts.subtree) args.push("--path", opts.subtree);
 
     try {
-      const result = await platform.exec(invocation.cmd, args, {
+      const result = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), invocation.cmd, args, {
         cwd: opts.cwd,
         timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       });

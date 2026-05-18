@@ -11,6 +11,7 @@ import {
   steerMempalaceInitialization,
 } from "../mempalace/installer-helper.js";
 import { loadConfig } from "../config/loader.js";
+import { execCli, wrapExecForCli } from "../utils/exec-cli.js";
 
 // ── Options builder ──────────────────────────────────────
 
@@ -59,7 +60,7 @@ async function updateSupipowers(
   ctx.ui.notify(`Current version: v${currentVersion}`, "info");
 
   // Check latest version on npm
-  const checkResult = await platform.exec("npm", ["view", "supipowers", "version"], { cwd: tmpdir() });
+  const checkResult = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "npm", ["view", "supipowers", "version"], { cwd: tmpdir() });
   if (checkResult.code !== 0) {
     ctx.ui.notify("Failed to check for updates — npm view failed", "error");
     return null;
@@ -78,7 +79,8 @@ async function updateSupipowers(
   mkdirSync(tempDir, { recursive: true });
 
   try {
-    const installResult = await platform.exec(
+    const installResult = await execCli(
+      (cmd, args, opts) => platform.exec(cmd, args, opts),
       "npm", ["install", "--prefix", tempDir, `supipowers@${latestVersion}`],
       { cwd: tempDir },
     );
@@ -130,10 +132,10 @@ async function updateSupipowers(
     // Install runtime dependencies (handlebars, etc.)
     // Without this, the extension fails to load because node_modules/ was deleted above.
     ctx.ui.notify("Installing dependencies...", "info");
-    const bunInstall = await platform.exec("bun", ["install", "--production"], { cwd: extDir });
+    const bunInstall = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "bun", ["install", "--production"], { cwd: extDir });
     if (bunInstall.code !== 0) {
       // Fallback to npm if bun is not available (e.g. Windows without global bun)
-      const npmInstall = await platform.exec("npm", ["install", "--omit=dev"], { cwd: extDir });
+      const npmInstall = await execCli((cmd, args, opts) => platform.exec(cmd, args, opts), "npm", ["install", "--omit=dev"], { cwd: extDir });
       if (npmInstall.code !== 0) {
         ctx.ui.notify(
           "Could not install extension dependencies.\n" +
@@ -177,7 +179,7 @@ async function updateSupipowers(
 
 export function handleUpdate(platform: Platform, ctx: PlatformContext): void {
   void (async () => {
-    const exec = (cmd: string, args: string[]) => platform.exec(cmd, args);
+    const exec = wrapExecForCli((cmd: string, args: string[]) => platform.exec(cmd, args));
 
     // 1. Scan all dependencies
     const allStatuses = await scanAll(exec);
