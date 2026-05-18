@@ -100,7 +100,7 @@ export function wrapExecForCli(exec: ExecFn): ExecFn {
   return (cmd, args, opts) => execCli(exec, cmd, args, opts);
 }
 
-/** Test-only: forget cached resolutions between unit-test runs. */
-export function _resetExecCliCacheForTesting(): void {
+/** Clears cached CLI resolutions after PATH or tooling changes. */
+export function clearExecCliResolutionCache(): void {
   resolutionCache.clear();
 }

@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+
 import { createPaths } from "../../src/platform/types.js";
 import { getProjectStatePath } from "../../src/workspace/state-paths.js";
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import {
   startPlanTracking,
   cancelPlanTracking,

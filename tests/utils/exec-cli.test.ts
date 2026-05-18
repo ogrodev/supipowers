@@ -1,11 +1,19 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { ExecOptions, ExecResult } from "../../src/platform/types.js";
 import {
-  _resetExecCliCacheForTesting,
+  clearExecCliResolutionCache,
   execCli,
   wrapExecForCli,
 } from "../../src/utils/exec-cli.js";
@@ -15,6 +23,8 @@ interface RecordedCall {
   args: string[];
   opts?: ExecOptions;
 }
+
+const FAKE_ROOT_PREFIX = `supi-exec-cli-test-${process.pid}-`;
 
 function makeRecorder(): {
   calls: RecordedCall[];
@@ -30,7 +40,7 @@ function makeRecorder(): {
 
 describe("execCli", () => {
   beforeEach(() => {
-    _resetExecCliCacheForTesting();
+    clearExecCliResolutionCache();
   });
 
   test("non-shim commands pass through unchanged on all platforms", async () => {
@@ -68,7 +78,7 @@ describe("execCli", () => {
     let originalPath: string | undefined;
 
     beforeEach(() => {
-      fakeRoot = mkdtempSync(join(tmpdir(), "supi-exec-cli-test-"));
+      fakeRoot = mkdtempSync(join(tmpdir(), FAKE_ROOT_PREFIX));
       fakeNodeDir = join(fakeRoot, "nodejs");
       fakeNode = join(fakeNodeDir, "node.exe");
       npmCli = join(fakeNodeDir, "node_modules", "npm", "bin", "npm-cli.js");
@@ -79,11 +89,12 @@ describe("execCli", () => {
       writeFileSync(npxCli, "// fake npx cli");
       originalPath = process.env.PATH;
       process.env.PATH = `${fakeNodeDir};${originalPath ?? ""}`;
-      _resetExecCliCacheForTesting();
+      clearExecCliResolutionCache();
     });
 
     afterEach(() => {
-      if (originalPath !== undefined) process.env.PATH = originalPath;
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
       rmSync(fakeRoot, { recursive: true, force: true });
     });
 
@@ -106,7 +117,7 @@ describe("execCli", () => {
 
     test("falls through when npm-cli.js is missing next to node", async () => {
       rmSync(npmCli);
-      _resetExecCliCacheForTesting();
+      clearExecCliResolutionCache();
 
       const { calls, exec } = makeRecorder();
       await execCli(exec, "npm", ["--version"]);
@@ -135,12 +146,11 @@ describe("execCli", () => {
   }
 });
 
-// Sanity-check that the helper does not leak fixtures.
 test("execCli fake-tree fixture is removed between cases", () => {
-  // existsSync is called outside any beforeEach context; if the windows fixture
-  // had leaked we'd flag it here.
-  const stragglers = Array.from({ length: 0 }, () => "");
-  expect(stragglers.length).toBe(0);
-  // Guard against accidental side-effects on tmpdir.
+  const stragglers = readdirSync(tmpdir()).filter((entry) =>
+    entry.startsWith(FAKE_ROOT_PREFIX),
+  );
+
+  expect(stragglers).toEqual([]);
   expect(existsSync(tmpdir())).toBe(true);
 });
