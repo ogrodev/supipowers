@@ -21,6 +21,7 @@
 import type { Platform, PlatformPaths } from "../platform/types.js";
 import type {
   HarnessGateMode,
+  HarnessPipelineProgressEvent,
   HarnessStage,
   HarnessStageStatus,
   ModelConfig,
@@ -47,7 +48,7 @@ export interface HarnessStageRunnerContext {
   /** Optional override for the agent session model. Tests use this to bypass resolution. */
   modelOverride?: { model: string; thinkingLevel: string | null };
   /** Live progress sink for long-running stage internals such as subagent turns. */
-  onProgress?: (event: { type: "stage-progress"; stage: HarnessStage; detail: string }) => void;
+  onProgress?: (event: HarnessPipelineProgressEvent) => void;
 }
 
 export type HarnessStageRunStatus =

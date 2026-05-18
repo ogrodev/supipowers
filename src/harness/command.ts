@@ -45,7 +45,6 @@ import {
 import { computeScore } from "./anti_slop/score.js";
 import {
   type BuildRunnerInput,
-  type HarnessPipelineProgressEvent,
   type PipelineRunOutcome,
   HARNESS_STAGE_ORDER,
   runHarnessPipelineUntilGate,
@@ -58,7 +57,7 @@ import { DEFAULT_HARNESS_CONFIG } from "./hooks/register.js";
 import { handlePrComment } from "./pr-comment/handler.js";
 import { runGitVerificationQa } from "./git-verify-qa.js";
 import { getHarnessSessionDir } from "./project-paths.js";
-import type { HarnessDesignSpec, HarnessGateMode, HarnessSession, HarnessStage } from "../types.js";
+import type { HarnessDesignSpec, HarnessGateMode, HarnessPipelineProgressEvent, HarnessSession, HarnessStage } from "../types.js";
 
 modelRegistry.register({
   id: "harness",

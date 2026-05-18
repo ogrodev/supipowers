@@ -278,7 +278,7 @@ async function executeApproveFlow(
       debugLogger?.log("execution_handoff_new_session_cancelled", {
         planPath,
       });
-      ctx.ui.notify("Session start cancelled. Plan saved; run /supi:plan again to execute.");
+      ctx.ui?.notify?.("Session start cancelled. Plan saved; run /supi:plan again to execute.");
       return;
     }
     platform.sendUserMessage(prompt);
@@ -298,7 +298,7 @@ async function executeApproveFlow(
     debugLogger?.log("execution_handoff_same_session_steer_sent", {
       planPath,
     });
-    ctx.ui.notify("Plan approved — starting execution");
+    ctx.ui?.notify?.("Plan approved — starting execution");
   }
 }
 

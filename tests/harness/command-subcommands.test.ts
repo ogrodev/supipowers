@@ -20,9 +20,9 @@ import {
 import { newHarnessSessionId } from "../../src/harness/stage-runner.js";
 import { savePlan } from "../../src/storage/plans.js";
 import { getProjectStatePath } from "../../src/workspace/state-paths.js";
-import type { HarnessPipelineProgressEvent, PipelineRunOutcome, runHarnessPipelineUntilGate } from "../../src/harness/pipeline.js";
+import type { PipelineRunOutcome, runHarnessPipelineUntilGate } from "../../src/harness/pipeline.js";
 import { createTestPaths, createTestRepo } from "../ultraplan/fixtures.js";
-import type { HarnessDesignSpec, HarnessDiscoverArtifact, HarnessSession } from "../../src/types.js";
+import type { HarnessDesignSpec, HarnessDiscoverArtifact, HarnessPipelineProgressEvent, HarnessSession } from "../../src/types.js";
 import type { Platform } from "../../src/platform/types.js";
 
 let tmpDir: string;

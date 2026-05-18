@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
+import { describe, expect, test } from "bun:test";
 
 interface NpmPackDryRunEntry {
   files: Array<{ path: string }>;

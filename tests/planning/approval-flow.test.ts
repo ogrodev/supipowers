@@ -394,6 +394,45 @@ describe("Approve and execute", () => {
     expect(msg.customType).toBe("supi-plan-execute");
     expect(ctx.sendUserMessage).not.toHaveBeenCalled();
   });
+
+  test("headless same-session fallback does not require a ui object", async () => {
+    mockListPlans
+      .mockReturnValueOnce([])
+      .mockReturnValue(["plan.md"]);
+    mockReadPlanFile.mockReturnValue("content");
+
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" });
+
+    const platform = makePlatform();
+    const ctx = { hasUI: false };
+    registerPlanApprovalHook(platform as any);
+
+    await expect(platform.fireAgentEnd(ctx)).resolves.toBeUndefined();
+
+    expect(platform.sendMessage).toHaveBeenCalledTimes(1);
+    const [msg] = platform.sendMessage.mock.calls[0];
+    expect(msg.customType).toBe("supi-plan-execute");
+  });
+
+  test("cancelled headless new session does not require a ui object", async () => {
+    mockListPlans
+      .mockReturnValueOnce([])
+      .mockReturnValue(["plan.md"]);
+    mockReadPlanFile.mockReturnValue("content");
+
+    const newSession = mock().mockResolvedValue({ cancelled: true });
+    startPlanTracking("/cwd", { dotDirDisplay: ".omp" }, newSession as any);
+
+    const platform = makePlatform();
+    const ctx = { hasUI: false };
+    registerPlanApprovalHook(platform as any);
+
+    await expect(platform.fireAgentEnd(ctx)).resolves.toBeUndefined();
+
+    expect(newSession).toHaveBeenCalledTimes(1);
+    expect(platform.sendUserMessage).not.toHaveBeenCalled();
+    expect(platform.sendMessage).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
