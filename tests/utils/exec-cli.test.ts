@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import type { ExecOptions, ExecResult } from "../../src/platform/types.js";
@@ -60,14 +60,19 @@ describe("execCli", () => {
     // Windows-only: verify the shim resolves to `node <cli.js>`. We synthesize
     // a fake Node tree on a PATH override so the test is deterministic and
     // independent of the host's real Node install.
-    const fakeRoot = join(tmpdir(), `supi-exec-cli-test-${process.pid}-${Date.now()}`);
-    const fakeNodeDir = join(fakeRoot, "nodejs");
-    const fakeNode = join(fakeNodeDir, "node.exe");
-    const npmCli = join(fakeNodeDir, "node_modules", "npm", "bin", "npm-cli.js");
-    const npxCli = join(fakeNodeDir, "node_modules", "npm", "bin", "npx-cli.js");
+    let fakeRoot: string;
+    let fakeNodeDir: string;
+    let fakeNode: string;
+    let npmCli: string;
+    let npxCli: string;
     let originalPath: string | undefined;
 
     beforeEach(() => {
+      fakeRoot = mkdtempSync(join(tmpdir(), "supi-exec-cli-test-"));
+      fakeNodeDir = join(fakeRoot, "nodejs");
+      fakeNode = join(fakeNodeDir, "node.exe");
+      npmCli = join(fakeNodeDir, "node_modules", "npm", "bin", "npm-cli.js");
+      npxCli = join(fakeNodeDir, "node_modules", "npm", "bin", "npx-cli.js");
       mkdirSync(dirname(npmCli), { recursive: true });
       writeFileSync(fakeNode, "");
       writeFileSync(npmCli, "// fake npm cli");
