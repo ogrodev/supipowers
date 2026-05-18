@@ -65,3 +65,8 @@ jobs:
         # `bun run test` carries --parallel (see package.json). Files run in
         # parallel worker processes (auto-isolated), one per CPU.
         run: bun run test
+
+      - name: MemPalace uv install smoke
+        env:
+          MEMPALACE_UV_INSTALL_SMOKE: "1"
+        run: bun test --timeout 180000 tests/mempalace/uv-install-smoke.test.ts

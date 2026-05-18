@@ -90,6 +90,7 @@ export interface DocsStageInput {
 }
 
 interface AgentSessionLike {
+  subscribe?: (handler: (event: unknown) => void) => () => void;
   prompt(text: string, opts?: { expandPromptTemplates?: boolean }): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -536,6 +537,60 @@ async function orchestrateLayerSubagent(input: OrchestrateLayerInput): Promise<O
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function nestedStringField(record: Record<string, unknown>, objectKey: string, fieldKey: string): string | null {
+  const nested = record[objectKey];
+  if (!isRecord(nested)) return null;
+  return stringField(nested, fieldKey);
+}
+
+function compactDetail(value: string, maxChars = 180): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function summarizeAgentSessionEvent(event: unknown): string | null {
+  if (!isRecord(event)) return null;
+  const type = stringField(event, "type") ?? stringField(event, "kind") ?? stringField(event, "event");
+  const lowerType = type?.toLowerCase() ?? "";
+  const toolName =
+    stringField(event, "toolName") ??
+    stringField(event, "tool") ??
+    stringField(event, "name") ??
+    nestedStringField(event, "toolCall", "name") ??
+    nestedStringField(event, "tool_call", "name");
+  if (toolName && (lowerType.includes("tool") || lowerType.includes("call"))) {
+    return `tool ${compactDetail(toolName, 80)}`;
+  }
+
+  const text =
+    stringField(event, "text") ??
+    stringField(event, "delta") ??
+    stringField(event, "thought") ??
+    stringField(event, "content") ??
+    nestedStringField(event, "message", "text") ??
+    nestedStringField(event, "message", "content");
+  if (text) {
+    const prefix = lowerType.includes("thought") || lowerType.includes("reason")
+      ? "thought"
+      : lowerType.includes("tool")
+        ? "tool"
+        : "agent";
+    return `${prefix} ${compactDetail(text)}`;
+  }
+
+  return type ? compactDetail(type, 80) : null;
+}
+
 async function dispatchSubagent(input: {
   platform: Platform;
   ctx: HarnessStageRunnerContext;
@@ -548,7 +603,13 @@ async function dispatchSubagent(input: {
   const agentDisplayName = buildHarnessAgentDisplayName("docs", input.entry.layer.layer);
 
   let session: AgentSessionLike | null = null;
+  let unsubscribe: (() => void) | null = null;
   try {
+    input.ctx.onProgress?.({
+      type: "stage-progress",
+      stage: "docs",
+      detail: `${agentDisplayName}: starting attempt ${input.attempt}`,
+    });
     if (input.factory) {
       session = await input.factory(input.platform, {
         cwd: input.ctx.cwd,
@@ -562,7 +623,21 @@ async function dispatchSubagent(input: {
         agentDisplayName,
       });
     }
+    unsubscribe = session.subscribe?.((event) => {
+      const summary = summarizeAgentSessionEvent(event);
+      if (!summary) return;
+      input.ctx.onProgress?.({
+        type: "stage-progress",
+        stage: "docs",
+        detail: `${agentDisplayName}: ${summary}`,
+      });
+    }) ?? null;
     await session.prompt(input.assignment, { expandPromptTemplates: false });
+    input.ctx.onProgress?.({
+      type: "stage-progress",
+      stage: "docs",
+      detail: `${agentDisplayName}: attempt ${input.attempt} complete`,
+    });
   } catch (error) {
     return {
       ok: false,
@@ -571,6 +646,13 @@ async function dispatchSubagent(input: {
       ],
     };
   } finally {
+    if (unsubscribe) {
+      try {
+        unsubscribe();
+      } catch {
+        /* best-effort */
+      }
+    }
     if (session) {
       try {
         await session.dispose();

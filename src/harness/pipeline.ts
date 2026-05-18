@@ -41,6 +41,7 @@ import { getProjectStatePath } from "../workspace/state-paths.js";
 /** Progress event emitted by the pipeline driver for UI feedback. */
 export type HarnessPipelineProgressEvent =
   | { type: "stage-started"; stage: HarnessStage }
+  | { type: "stage-progress"; stage: HarnessStage; detail: string }
   | { type: "stage-skipped"; stage: HarnessStage }
   | { type: "stage-completed"; stage: HarnessStage; detail?: string }
   | { type: "stage-blocked"; stage: HarnessStage; detail: string }
@@ -301,6 +302,7 @@ export async function runHarnessPipelineUntilGate(
       sessionId: input.sessionId,
       modelConfig: input.modelConfig,
       gateMode: input.gates,
+      onProgress: (event) => input.onProgress?.(event),
     };
 
     const result = await runner.run(ctx);

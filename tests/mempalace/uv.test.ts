@@ -104,6 +104,47 @@ describe("ensureUv", () => {
     expect(fs.existsSync(path.dirname(path.join(tmpDir, target.archiveBinaryRelativePath)))).toBe(false);
   });
 
+  test("downloads Windows uv zip whose executable extracts at archive root", async () => {
+    const target = uvTargetFor("win32-x64");
+    const archiveBytes = new TextEncoder().encode("FAKE_ZIP_PAYLOAD").buffer.slice(0);
+    const expectedSha = sha256Hex(archiveBytes);
+    const archiveUrl = `https://github.com/astral-sh/uv/releases/download/0.5.30/${target.archive}`;
+    const shaUrl = `${archiveUrl}.sha256`;
+
+    expect(target.archiveBinaryRelativePath).toBe(target.binary);
+
+    const responses = new Map([
+      [shaUrl, { status: 200, bytes: new TextEncoder().encode(`${expectedSha}  ${target.archive}\n`).buffer.slice(0) }],
+      [archiveUrl, { status: 200, bytes: archiveBytes }],
+    ]);
+    const { fetcher } = makeFetcher(responses);
+
+    const runner = mock(async (command: string, args: string[]) => {
+      expect(command).toBe("tar");
+      expect(args[0]).toBe("-xf");
+      expect(args[1]).toBe(path.join(tmpDir, target.archive));
+      const extractedBinary = path.join(tmpDir, target.archiveBinaryRelativePath);
+      fs.mkdirSync(path.dirname(extractedBinary), { recursive: true });
+      fs.writeFileSync(extractedBinary, "uv-windows-binary");
+      return { code: 0, stdout: "", stderr: "" };
+    });
+
+    const result = await ensureUv({
+      managedBinDir: tmpDir,
+      platform: "win32-x64",
+      version: "0.5.30",
+      fetcher,
+      runner,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.uvPath).toBe(path.join(tmpDir, target.binary));
+    expect(fs.readFileSync(result.uvPath, "utf8")).toBe("uv-windows-binary");
+    expect(fs.readFileSync(path.join(tmpDir, "uv.version"), "utf8").trim()).toBe("0.5.30");
+    expect(fs.existsSync(path.join(tmpDir, target.archive))).toBe(false);
+  });
+
   test("fails on SHA256 mismatch without writing the binary", async () => {
     const target = uvTargetFor("linux-x64");
     const archiveBytes = new TextEncoder().encode("REAL_BYTES").buffer.slice(0);

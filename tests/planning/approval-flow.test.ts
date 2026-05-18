@@ -185,7 +185,7 @@ describe("agent_end hook guards", () => {
   });
 });
 
-  test("valid plan in no-UI mode is surfaced without execution", async () => {
+  test("valid plan in no-UI mode auto-starts execution instead of manual handoff", async () => {
     mockListPlans
       .mockReturnValueOnce([])
       .mockReturnValue(["plan.md"]);
@@ -200,19 +200,15 @@ describe("agent_end hook guards", () => {
     await platform.fireAgentEnd(ctx);
 
     expect(ctx.ui.select).not.toHaveBeenCalled();
-    expect(ctx.newSession).not.toHaveBeenCalled();
-    expect(platform.sendUserMessage).not.toHaveBeenCalled();
-    expect(platform.sendMessage).toHaveBeenCalledTimes(1);
-    const [msg, opts] = platform.sendMessage.mock.calls[0];
-    expect(msg.customType).toBe("supi-plan-awaiting-interactive-approval");
-    expect(msg.display).toBe(true);
-    expect(msg.content[0].text).toContain("Interactive approval is unavailable");
-    expect(msg.content[0].text).toContain("Execute the saved plan");
-    expect(opts).toEqual({ deliverAs: "steer", triggerTurn: false });
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      "Plan saved; interactive approval is required before execution.",
-      "warning",
-    );
+    expect(ctx.newSession).toHaveBeenCalledTimes(1);
+    expect(platform.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(platform.sendMessage).not.toHaveBeenCalled();
+    const prompt: string = platform.sendUserMessage.mock.calls[0][0];
+    expect(prompt).toContain("Plan approved. You **MUST** execute it now.");
+    const legacyCommand = ["supi", "work"].join(":");
+    expect(prompt).not.toContain(legacyCommand);
+    expect(prompt).not.toContain(`/${legacyCommand}`);
+    expect(prompt).not.toMatch(/continue\\s+manually/i);
     expect(isPlanningActive()).toBe(false);
   });
 
