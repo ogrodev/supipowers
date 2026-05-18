@@ -278,7 +278,7 @@ async function executeApproveFlow(
       debugLogger?.log("execution_handoff_new_session_cancelled", {
         planPath,
       });
-      ctx.ui.notify("Session start cancelled. Plan saved; run /supi:plan again to execute.");
+      ctx.ui?.notify?.("Session start cancelled. Plan saved; run /supi:plan again to execute.");
       return;
     }
     platform.sendUserMessage(prompt);
@@ -298,7 +298,7 @@ async function executeApproveFlow(
     debugLogger?.log("execution_handoff_same_session_steer_sent", {
       planPath,
     });
-    ctx.ui.notify("Plan approved — starting execution");
+    ctx.ui?.notify?.("Plan approved — starting execution");
   }
 }
 
@@ -408,25 +408,23 @@ export function registerPlanApprovalHook(platform: Platform): void {
       });
     } catch {}
     if (!ctx?.hasUI) {
-      const message = [
-        `Plan saved to \`${planPath}\`.`,
-        "Interactive approval is unavailable in this runtime, so no execution was started.",
-        `To continue manually, explicitly send: \`Execute the saved plan at ${planPath} step by step; verify each step before proceeding.\``,
-      ].join("\n");
-      debugLogger?.log("approval_flow_no_ui", {
+      debugLogger?.log("approval_flow_no_ui_auto_execute", {
         planName,
         planPath,
       });
-      ctx?.ui?.notify?.("Plan saved; interactive approval is required before execution.", "warning");
-      platform.sendMessage(
-        {
-          customType: "supi-plan-awaiting-interactive-approval",
-          content: [{ type: "text", text: message }],
-          display: true,
-        },
-        { deliverAs: "steer", triggerTurn: false },
-      );
+      const executionNewSession = capturedNewSession;
+      const executionModel = capturedResolvedModel;
       cancelPlanTracking();
+      await executeApproveFlow(
+        platform,
+        ctx,
+        canonicalContent,
+        planPath,
+        executionNewSession,
+        executionModel,
+        debugLogger,
+        parsedPlan,
+      );
       return;
     }
 

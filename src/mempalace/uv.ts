@@ -49,17 +49,22 @@ export function uvTargetFor(uvPlatform: UvPlatform): UvTarget {
     case "linux-arm64":
       return target("aarch64-unknown-linux-gnu", ".tar.gz", "uv");
     case "win32-x64":
-      return target("x86_64-pc-windows-msvc", ".zip", "uv.exe");
+      return target("x86_64-pc-windows-msvc", ".zip", "uv.exe", "uv.exe");
   }
 }
 
-function target(triple: string, archiveSuffix: string, binary: string): UvTarget {
+function target(
+  triple: string,
+  archiveSuffix: string,
+  binary: string,
+  archiveBinaryRelativePath = path.join(`uv-${triple}`, binary),
+): UvTarget {
   const archive = `uv-${triple}${archiveSuffix}`;
   return {
     triple,
     archive,
     binary,
-    archiveBinaryRelativePath: path.join(`uv-${triple}`, binary),
+    archiveBinaryRelativePath,
   };
 }
 
@@ -226,11 +231,14 @@ export async function ensureUv(options: EnsureUvOptions): Promise<EnsureUvResult
     };
   }
 
-  // Replace any pre-existing managed binary atomically-ish.
-  if (fs.existsSync(managedPath)) {
-    try { fs.unlinkSync(managedPath); } catch { /* best effort */ }
+  // Replace any pre-existing managed binary atomically-ish. Windows uv zips place
+  // uv.exe at the archive root, which is already `managedPath` after extraction.
+  if (path.resolve(extractedBinary) !== path.resolve(managedPath)) {
+    if (fs.existsSync(managedPath)) {
+      try { fs.unlinkSync(managedPath); } catch { /* best effort */ }
+    }
+    fs.renameSync(extractedBinary, managedPath);
   }
-  fs.renameSync(extractedBinary, managedPath);
   if (process.platform !== "win32") {
     fs.chmodSync(managedPath, 0o755);
   }

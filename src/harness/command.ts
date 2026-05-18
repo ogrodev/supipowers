@@ -45,7 +45,6 @@ import {
 import { computeScore } from "./anti_slop/score.js";
 import {
   type BuildRunnerInput,
-  type HarnessPipelineProgressEvent,
   type PipelineRunOutcome,
   HARNESS_STAGE_ORDER,
   runHarnessPipelineUntilGate,
@@ -58,7 +57,7 @@ import { DEFAULT_HARNESS_CONFIG } from "./hooks/register.js";
 import { handlePrComment } from "./pr-comment/handler.js";
 import { runGitVerificationQa } from "./git-verify-qa.js";
 import { getHarnessSessionDir } from "./project-paths.js";
-import type { HarnessDesignSpec, HarnessGateMode, HarnessSession, HarnessStage } from "../types.js";
+import type { HarnessDesignSpec, HarnessGateMode, HarnessPipelineProgressEvent, HarnessSession, HarnessStage } from "../types.js";
 
 modelRegistry.register({
   id: "harness",
@@ -133,9 +132,11 @@ function createHarnessProgress(ctx: HarnessCommandContext) {
   let done = 0;
   let cur: HarnessStage | null = null;
   const completed: string[] = [];
+  let liveDetail: string | null = null;
 
   function refresh() {
-    const label = cur ? HARNESS_STAGE_LABELS[cur] : "Complete";
+    const baseLabel = cur ? HARNESS_STAGE_LABELS[cur] : "Complete";
+    const label = cur && liveDetail ? `${baseLabel} — ${liveDetail}` : baseLabel;
     const spinner = cur ? "\u25cc" : "\u2713";
     (ctx.ui as any).setStatus?.("supi-harness", `  ${spinner} harness: ${label} (${done}/${SO.length})`);
   }
@@ -147,22 +148,26 @@ function createHarnessProgress(ctx: HarnessCommandContext) {
         case "stage-started":
           cur = event.stage;
           break;
+        case "stage-progress":
+          cur = event.stage;
+          liveDetail = event.detail;
+          break;
         case "stage-completed": {
-          done += 1; cur = null;
+          done += 1; cur = null; liveDetail = null;
           const mark = "\u2713";
           completed.push(`${mark} ${HARNESS_STAGE_LABELS[event.stage]}: ${event.detail || "done"}`);
           break;
         }
         case "stage-skipped":
-          done += 1; cur = null;
+          done += 1; cur = null; liveDetail = null;
           completed.push(`\u2013 ${HARNESS_STAGE_LABELS[event.stage]}: skipped`);
           break;
         case "awaiting-user":
-          done += 1; cur = null;
+          done += 1; cur = null; liveDetail = null;
           completed.push(`\u25cb ${HARNESS_STAGE_LABELS[event.stage]}: ${event.detail || "awaiting review"}`);
           break;
         case "stage-failed": case "stage-blocked":
-          cur = null;
+          cur = null; liveDetail = null;
           completed.push(`\u2717 ${HARNESS_STAGE_LABELS[event.stage]}: ${event.detail || "failed"}`);
           break;
       }

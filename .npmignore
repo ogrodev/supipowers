@@ -4,10 +4,8 @@ dist/
 .omp/
 bin/.omp/
 
-# Visual companion server deps (private sub-package, not for distribution)
+# Visual companion server deps
 src/visual/scripts/node_modules/
-src/visual/scripts/package-lock.json
-
 # Test files
 tests/
 

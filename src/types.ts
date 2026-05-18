@@ -1550,6 +1550,16 @@ export type HarnessStage =
   | "docs"
   | "validate";
 
+/** Progress event emitted by harness pipeline drivers and long-running stages. */
+export type HarnessPipelineProgressEvent =
+  | { type: "stage-started"; stage: HarnessStage }
+  | { type: "stage-progress"; stage: HarnessStage; detail: string }
+  | { type: "stage-skipped"; stage: HarnessStage }
+  | { type: "stage-completed"; stage: HarnessStage; detail?: string }
+  | { type: "stage-blocked"; stage: HarnessStage; detail: string }
+  | { type: "stage-failed"; stage: HarnessStage; detail: string }
+  | { type: "awaiting-user"; stage: HarnessStage; detail?: string };
+
 /** Operational status of a harness stage. Mirrors UltraPlanAuthoringStageStatus. */
 export type HarnessStageStatus =
   | "pending"

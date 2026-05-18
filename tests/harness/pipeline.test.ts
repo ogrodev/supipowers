@@ -8,7 +8,6 @@ import {
   HARNESS_STAGE_ORDER,
   runHarnessPipelineUntilGate,
   type PipelineDriverInput,
-  type HarnessPipelineProgressEvent,
 } from "../../src/harness/pipeline.js";
 import { newHarnessSessionId } from "../../src/harness/stage-runner.js";
 import {
@@ -18,7 +17,7 @@ import {
 import { savePlan } from "../../src/storage/plans.js";
 import { createTestPaths, createTestRepo } from "../ultraplan/fixtures.js";
 import type { Platform } from "../../src/platform/types.js";
-import type { HarnessSession, ModelConfig } from "../../src/types.js";
+import type { HarnessPipelineProgressEvent, HarnessSession, ModelConfig } from "../../src/types.js";
 
 describe("harness pipeline", () => {
   test("stage order matches the contract", () => {

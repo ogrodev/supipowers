@@ -22,7 +22,7 @@ import { savePlan } from "../../src/storage/plans.js";
 import { getProjectStatePath } from "../../src/workspace/state-paths.js";
 import type { PipelineRunOutcome, runHarnessPipelineUntilGate } from "../../src/harness/pipeline.js";
 import { createTestPaths, createTestRepo } from "../ultraplan/fixtures.js";
-import type { HarnessDesignSpec, HarnessDiscoverArtifact, HarnessSession } from "../../src/types.js";
+import type { HarnessDesignSpec, HarnessDiscoverArtifact, HarnessPipelineProgressEvent, HarnessSession } from "../../src/types.js";
 import type { Platform } from "../../src/platform/types.js";
 
 let tmpDir: string;
@@ -456,6 +456,41 @@ describe("handleStageCommand — outcome surfacing", () => {
     expect(ctx._notifications.some((n) => n.type === "info" || n.type === undefined)).toBe(true);
   });
 });
+
+  test("surfaces live stage progress through the TUI status line", async () => {
+    const sid = newHarnessSessionId();
+    saveHarnessSession(paths, cwd, makeSession(sid));
+    const statuses: Array<{ key: string; text: string | undefined }> = [];
+    const driver = mock(async (input: Parameters<typeof runHarnessPipelineUntilGate>[0]): Promise<PipelineRunOutcome> => {
+      input.onProgress?.({ type: "stage-started", stage: "docs" });
+      input.onProgress?.({
+        type: "stage-progress",
+        stage: "docs",
+        detail: "harness-docs/lib: tool harness_docs_record",
+      } as HarnessPipelineProgressEvent);
+      input.onProgress?.({ type: "stage-completed", stage: "docs", detail: "1 regen" });
+      return {
+        stage: "docs",
+        status: "completed",
+        promoted: false,
+        trace: [{ stage: "docs", status: "completed" }],
+      };
+    });
+    setHarnessPipelineDriver(driver as never);
+
+    const ctx = makeCtx();
+    (ctx.ui as any).setStatus = (key: string, text: string | undefined) => {
+      statuses.push({ key, text });
+    };
+
+    await handleStageCommand(makePlatform(), ctx, "discover", []);
+
+    expect(statuses.some((entry) =>
+      entry.key === "supi-harness" &&
+      entry.text?.includes("harness-docs/lib: tool harness_docs_record"),
+    )).toBe(true);
+    expect(statuses.at(-1)).toEqual({ key: "supi-harness", text: undefined });
+  });
 
 // Cover the existing `loadHarnessDesignSpecJson` referenced by handlers — regression
 // safeguard so the import is exercised end-to-end.
