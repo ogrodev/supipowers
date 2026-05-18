@@ -116,7 +116,8 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
     } else {
       console.log(`[dry-run] Would git tag -a ${tagName}`);
     }
-    console.log(`[dry-run] Would git push origin HEAD --follow-tags`);
+    console.log(`[dry-run] Would git push origin HEAD`);
+    console.log(`[dry-run] Would git push origin ${tagName}`);
     for (const channel of channels) {
       console.log(`[dry-run] Would publish to channel: ${channel}`);
     }
@@ -199,8 +200,8 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
 
   let pushAttempt = 0;
   while (true) {
-    progress("git-push", "active", pushAttempt === 0 ? "Pushing to origin" : "Retrying push after rebase");
-    const gitPush = await exec("git", ["push", "origin", "HEAD", "--follow-tags"], { cwd });
+    progress("git-push", "active", pushAttempt === 0 ? "Pushing commit to origin" : "Retrying commit push after rebase");
+    const gitPush = await exec("git", ["push", "origin", "HEAD"], { cwd });
     if (gitPush.code === 0) {
       progress("git-push", "done");
       break;
@@ -227,6 +228,15 @@ export async function executeRelease(opts: ExecuteReleaseOptions): Promise<Relea
       return { version, tagCreated: true, pushed: false, channels: [], error: refreshTag.error };
     }
   }
+
+  progress("git-push-tags", "active", `Pushing ${tagName} to origin`);
+  const gitPushTag = await exec("git", ["push", "origin", tagName], { cwd });
+  if (gitPushTag.code !== 0) {
+    const detail = gitPushTag.stderr || gitPushTag.stdout || `exit code ${gitPushTag.code}`;
+    progress("git-push-tags", "error", detail);
+    return { version, tagCreated: true, pushed: false, channels: [], error: `git push tag: ${detail}` };
+  }
+  progress("git-push-tags", "done");
 
   const channelResults: ReleaseResult["channels"] = [];
   for (const channel of channels) {

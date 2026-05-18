@@ -89,7 +89,8 @@ describe("executeRelease", () => {
       ["git", ["commit", "-m", "chore(release): @repo/pkg@2.0.0"], { cwd: tmpDir }],
       ["git", ["pull", "--rebase", "origin"], { cwd: tmpDir }],
       ["git", ["tag", "-a", "@repo/pkg@2.0.0", "-m", "Release @repo/pkg@2.0.0\n\n- feat: workspace release"], { cwd: tmpDir }],
-      ["git", ["push", "origin", "HEAD", "--follow-tags"], { cwd: tmpDir }],
+      ["git", ["push", "origin", "HEAD"], { cwd: tmpDir }],
+      ["git", ["push", "origin", "@repo/pkg@2.0.0"], { cwd: tmpDir }],
       ["gh", ["release", "create", "@repo/pkg@2.0.0", "--title", "@repo/pkg@2.0.0", "--notes", "- feat: workspace release"], { cwd: tmpDir }],
     ]);
   });
@@ -182,7 +183,8 @@ describe("executeRelease", () => {
     expect(exec.mock.calls).toEqual([
       ["git", ["pull", "--rebase", "origin"], { cwd: tmpDir }],
       ["git", ["tag", "-a", "@repo/pkg@1.0.0", "-m", "Release @repo/pkg@1.0.0\n\nnotes"], { cwd: tmpDir }],
-      ["git", ["push", "origin", "HEAD", "--follow-tags"], { cwd: tmpDir }],
+      ["git", ["push", "origin", "HEAD"], { cwd: tmpDir }],
+      ["git", ["push", "origin", "@repo/pkg@1.0.0"], { cwd: tmpDir }],
     ]);
   });
 
@@ -208,6 +210,31 @@ describe("executeRelease", () => {
       pushed: false,
       channels: [],
       error: "git push: push rejected",
+    });
+  });
+
+  test("does not publish channels when tag push fails after the commit push succeeds", async () => {
+    writeJson(path.join(tmpDir, "packages/pkg/package.json"), { name: "@repo/pkg", version: "1.0.0" });
+    const target = createTarget("@repo/pkg", "packages/pkg");
+    const exec = failAt(5, "tag rejected");
+
+    const result = await executeRelease({
+      exec,
+      cwd: tmpDir,
+      target,
+      version: "1.2.0",
+      changelog: "",
+      channels: ["github"],
+      dryRun: false,
+      tagFormat: "@repo/pkg@${version}",
+    });
+
+    expect(result).toEqual({
+      version: "1.2.0",
+      tagCreated: true,
+      pushed: false,
+      channels: [],
+      error: "git push tag: tag rejected",
     });
   });
 
@@ -303,10 +330,11 @@ describe("push retry helpers", () => {
       ["git", ["commit", "-m", "chore(release): @repo/pkg@1.4.0"], { cwd: tmpDir }],
       ["git", ["pull", "--rebase", "origin"], { cwd: tmpDir }],
       ["git", ["tag", "-a", "@repo/pkg@1.4.0", "-m", "Release @repo/pkg@1.4.0\n\nnotes"], { cwd: tmpDir }],
-      ["git", ["push", "origin", "HEAD", "--follow-tags"], { cwd: tmpDir }],
+      ["git", ["push", "origin", "HEAD"], { cwd: tmpDir }],
       ["git", ["pull", "--rebase", "origin"], { cwd: tmpDir }],
       ["git", ["tag", "-a", "-f", "@repo/pkg@1.4.0", "-m", "Release @repo/pkg@1.4.0\n\nnotes"], { cwd: tmpDir }],
-      ["git", ["push", "origin", "HEAD", "--follow-tags"], { cwd: tmpDir }],
+      ["git", ["push", "origin", "HEAD"], { cwd: tmpDir }],
+      ["git", ["push", "origin", "@repo/pkg@1.4.0"], { cwd: tmpDir }],
       ["gh", ["release", "create", "@repo/pkg@1.4.0", "--title", "@repo/pkg@1.4.0", "--notes", "notes"], { cwd: tmpDir }],
     ]);
   });
