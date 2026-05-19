@@ -34,7 +34,6 @@ export class ShellUtils {
     if (stderr) console.error(stderr);
     return stdout.trim();
   }
-
   // Get platform-specific shell
   static getShell(): string {
     if (process.platform === "win32") {
