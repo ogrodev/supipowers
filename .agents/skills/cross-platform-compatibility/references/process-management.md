@@ -4,10 +4,13 @@
 
 ```typescript
 // process-utils.ts
-import { exec, spawn, ChildProcess } from "child_process";
+import { execFile, spawn, ChildProcess } from "child_process";
 import { promisify } from "util";
 
-const execAsync = promisify(exec);
+// Use execFile rather than exec so arguments are passed as argv and never
+// interpreted by a shell. This is the safe primitive for any value that
+// may originate from user input.
+const execFileAsync = promisify(execFile);
 
 export class ProcessUtils {
   // Kill process by PID with platform-specific signal
@@ -38,19 +41,33 @@ export class ProcessUtils {
 
   // Find process by name
   static async findProcess(name: string): Promise<number[]> {
+    // Defense in depth: reject names with shell-meta or whitespace before
+    // ever handing them to a subprocess.
+    if (!/^[\w.\-]+$/.test(name)) {
+      throw new Error(`Invalid process name: ${name}`);
+    }
+
     if (process.platform === "win32") {
-      const { stdout } = await execAsync(`tasklist /FI "IMAGENAME eq ${name}"`);
+      const { stdout } = await execFileAsync("tasklist", [
+        "/FI",
+        `IMAGENAME eq ${name}`,
+      ]);
       // Parse Windows tasklist output
       const pids: number[] = [];
-      const lines = stdout.split("\n");
-      for (const line of lines) {
+      for (const line of stdout.split("\n")) {
         const match = line.match(/\s+(\d+)\s+/);
         if (match) pids.push(parseInt(match[1]));
       }
       return pids;
-    } else {
-      const { stdout } = await execAsync(`pgrep ${name}`);
+    }
+
+    try {
+      const { stdout } = await execFileAsync("pgrep", ["--", name]);
       return stdout.split("\n").filter(Boolean).map(Number);
+    } catch (error) {
+      // pgrep exits 1 when nothing matches; treat that as an empty result.
+      if ((error as { code?: number }).code === 1) return [];
+      throw error;
     }
   }
 }
