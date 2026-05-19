@@ -16,8 +16,17 @@ export class ProcessUtils {
   // Kill process by PID with platform-specific signal
   static kill(pid: number, signal?: string): void {
     if (process.platform === "win32") {
-      // Windows doesn't support signals, use taskkill
-      spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"]);
+      // Windows doesn't support signals, use taskkill. Capture the child so
+      // spawn errors and non-zero exit codes surface instead of being lost.
+      const proc = spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"]);
+      proc.on("error", (err) => {
+        throw new Error(`Failed to kill process ${pid}: ${err.message}`);
+      });
+      proc.on("exit", (code) => {
+        if (code !== 0) {
+          throw new Error(`taskkill exited with code ${code} for pid ${pid}`);
+        }
+      });
     } else {
       process.kill(pid, signal || "SIGTERM");
     }
@@ -26,16 +35,20 @@ export class ProcessUtils {
   // Spawn process with platform-specific handling
   static spawnCommand(command: string, args: string[] = []): ChildProcess {
     if (process.platform === "win32") {
-      // Windows requires cmd.exe to run commands
+      // Windows requires cmd.exe to run commands. shell: false (the default)
+      // is mandatory whenever an argv array is used — Node emits DEP0190 and
+      // arguments are concatenated without shell escaping when shell: true is
+      // combined with args, which is an injection vector.
       return spawn("cmd", ["/c", command, ...args], {
         stdio: "inherit",
-        shell: true,
       });
     }
 
+    // shell: false (the default) — args are passed directly to execvp without
+    // shell interpretation. If shell semantics are required (e.g. globbing),
+    // build a properly escaped command string and pass it as a single argv[0].
     return spawn(command, args, {
       stdio: "inherit",
-      shell: true,
     });
   }
 
