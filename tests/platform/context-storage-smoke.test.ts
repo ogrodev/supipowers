@@ -8,6 +8,7 @@ import { EventStore, PRIORITY } from "../../src/context-mode/event-store.js";
 import { KnowledgeStore } from "../../src/context-mode/knowledge/store.js";
 import { MemoryStore } from "../../src/context-mode/memory-store.js";
 import { MetricsStore } from "../../src/context-mode/metrics-store.js";
+import { rmDirWithRetry } from "../helpers/fs.js";
 
 let tmpDir: string;
 
@@ -16,7 +17,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  rmDirWithRetry(tmpDir);
 });
 
 describe("context-mode storage portability", () => {
