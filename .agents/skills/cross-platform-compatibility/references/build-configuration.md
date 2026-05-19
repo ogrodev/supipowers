@@ -4,6 +4,7 @@
 
 ```typescript
 // rollup.config.js
+import replace from "@rollup/plugin-replace";
 export default {
   input: "src/index.ts",
   output: [
@@ -21,7 +22,10 @@ export default {
     "fsevents",
   ],
   plugins: [
-    // Replace platform checks at build time for better tree-shaking
+    // ⚠️  WARNING: Inlines the build machine's `process.platform` at build time.
+    // Only use when emitting separate platform-specific artifacts (per-target
+    // build pipeline). For a single cross-platform bundle, remove this plugin
+    // and rely on runtime `process.platform` checks instead.
     replace({
       "process.platform": JSON.stringify(process.platform),
       preventAssignment: true,

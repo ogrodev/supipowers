@@ -4,6 +4,7 @@
 
 ```typescript
 // encoding-utils.ts
+import fs from "fs";
 import iconv from "iconv-lite";
 
 export class EncodingUtils {

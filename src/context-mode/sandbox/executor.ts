@@ -21,8 +21,20 @@ export interface ExecuteResult {
 const DEFAULT_TIMEOUT = 30_000;
 
 const MISSING_BASH_EXIT_CODE = 127;
-const MISSING_BASH_MESSAGE =
-  "bash is required to execute shell snippets. Install Git for Windows or WSL, then retry.";
+function buildMissingBashMessage(platform: NodeJS.Platform): string {
+  const base = "bash is required to execute shell snippets.";
+  switch (platform) {
+    case "win32":
+      return `${base} Install Git for Windows or WSL, then retry.`;
+    case "darwin":
+      return `${base} Install bash via Homebrew (\`brew install bash\`) or Xcode Command Line Tools, then retry.`;
+    case "linux":
+      return `${base} Install bash via your distro's package manager (apt/yum/pacman), then retry.`;
+    default:
+      return `${base} Install bash for your platform and retry.`;
+  }
+}
+const MISSING_BASH_MESSAGE = buildMissingBashMessage(process.platform);
 
 function missingBashResult(startedAt: number): ExecuteResult {
   return {

@@ -50,6 +50,8 @@ jobs:
 
 ```typescript
 // tests/platform.test.ts
+import * as path from "path";
+import * as os from "os";
 import { Platform } from "../src/platform-utils";
 
 describe("Platform-specific tests", () => {

@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-SOURCE_FILE="${{1:?Usage: $0 <source_file> [--framework jest|pytest|mocha]}}"
-FRAMEWORK="${{2:-jest}}"
+SOURCE_FILE="${1:?Usage: $0 <source_file> [--framework jest|pytest|mocha]}"
+FRAMEWORK="${2:-jest}"
 
 echo "Scaffolding tests for: $SOURCE_FILE (framework: $FRAMEWORK)"
 

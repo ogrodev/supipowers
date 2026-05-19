@@ -4,7 +4,10 @@
 
 ```typescript
 // process-utils.ts
-import { spawn, ChildProcess } from "child_process";
+import { exec, spawn, ChildProcess } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 export class ProcessUtils {
   // Kill process by PID with platform-specific signal

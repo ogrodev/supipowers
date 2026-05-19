@@ -23,7 +23,15 @@ describe("executeCode", () => {
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("bash");
-      expect(result.stderr).toContain("Git for Windows");
+      const expectedHint =
+        process.platform === "win32"
+          ? "Git for Windows"
+          : process.platform === "darwin"
+            ? "Homebrew"
+            : process.platform === "linux"
+              ? "package manager"
+              : "Install bash";
+      expect(result.stderr).toContain(expectedHint);
     } finally {
       whichSpy.mockRestore();
     }
