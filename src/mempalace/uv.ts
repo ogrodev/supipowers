@@ -12,6 +12,10 @@ export const PINNED_UV_VERSION = "0.5.30";
 
 const UV_BASE_URL = "https://github.com/astral-sh/uv/releases/download";
 
+const TAR_PREFLIGHT_TIMEOUT_MS = 3_000;
+const TAR_REMEDIATION =
+  "Install GNU tar / BSD tar (built-in on macOS, Linux, and Windows 10+). On older Windows, install Git for Windows or run `/supi:memory setup` after adding tar to PATH.";
+
 export type UvPlatform =
   | "darwin-arm64"
   | "darwin-x64"
@@ -118,6 +122,34 @@ function writeVersionStamp(managedBinDir: string, version: string): void {
   fs.writeFileSync(versionStampPath(managedBinDir), `${version}\n`, "utf8");
 }
 
+function tarUnavailable(message: string): EnsureUvResult {
+  return {
+    ok: false,
+    error: {
+      code: "uv_extract_failed",
+      message,
+      remediation: TAR_REMEDIATION,
+    },
+  };
+}
+
+async function verifyTarAvailable(runner: ProcessRunner): Promise<EnsureUvResult | null> {
+  let result;
+  try {
+    result = await runner("tar", ["--version"], { timeoutMs: TAR_PREFLIGHT_TIMEOUT_MS });
+  } catch (error) {
+    return tarUnavailable(
+      `tar is required to extract the uv archive but could not be launched: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (result.code !== 0) {
+    return tarUnavailable("tar is required to extract the uv archive but is not on PATH.");
+  }
+
+  return null;
+}
+
 export async function ensureUv(options: EnsureUvOptions): Promise<EnsureUvResult> {
   const version = options.version ?? PINNED_UV_VERSION;
   const uvPlatform = options.platform === undefined ? detectUvPlatform() : options.platform;
@@ -138,6 +170,9 @@ export async function ensureUv(options: EnsureUvOptions): Promise<EnsureUvResult
   if (fs.existsSync(managedPath) && readVersionStamp(options.managedBinDir) === version) {
     return { ok: true, uvPath: managedPath, version, source: "cached" };
   }
+
+  const tarPreflight = await verifyTarAvailable(options.runner);
+  if (tarPreflight) return tarPreflight;
 
   const fetcher = options.fetcher ?? defaultFetcher;
   options.onProgress?.(`Downloading uv ${version} for ${targetSpec.triple}`);
@@ -215,7 +250,7 @@ export async function ensureUv(options: EnsureUvOptions): Promise<EnsureUvResult
         message: `tar failed to extract uv archive (code ${extract.code}): ${
           extract.stderr.trim() || extract.stdout.trim() || "no output"
         }`,
-        remediation: "Ensure tar is on PATH (built-in on macOS, Linux, and Windows 10+).",
+        remediation: TAR_REMEDIATION,
       },
     };
   }

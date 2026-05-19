@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 import os from "node:os";
 import { executeCode } from "../../../src/context-mode/sandbox/executor.js";
 import { getRunner } from "../../../src/context-mode/sandbox/runners.js";
@@ -9,6 +9,24 @@ describe("executeCode", () => {
     const result = await executeCode("shell", 'echo "hello"');
     expect(result.stdout.trim()).toBe("hello");
     expect(result.exitCode).toBe(0);
+  });
+
+  test("shell reports actionable error when bash is missing", async () => {
+    const realWhich = Bun.which.bind(Bun);
+    const whichSpy = spyOn(Bun, "which");
+    whichSpy.mockImplementation((binary: string) =>
+      binary === "bash" ? null : realWhich(binary)
+    );
+
+    try {
+      const result = await executeCode("shell", 'echo "hello"');
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("bash");
+      expect(result.stderr).toContain("Git for Windows");
+    } finally {
+      whichSpy.mockRestore();
+    }
   });
 
   test("javascript via bun: console.log(42)", async () => {

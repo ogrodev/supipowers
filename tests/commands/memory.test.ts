@@ -50,13 +50,15 @@ describe("/supi:memory command", () => {
     expect(typeof definition.getArgumentCompletions).toBe("function");
 
     const all = definition.getArgumentCompletions("");
-    expect(all?.map((entry: any) => entry.label)).toEqual(["status", "setup"]);
+    expect(all?.map((entry: any) => entry.label)).toEqual(["status", "setup", "git-hook"]);
     expect(all?.every((entry: any) => entry.value.endsWith(" "))).toBe(true);
 
     const setupOnly = definition.getArgumentCompletions("se");
     expect(setupOnly?.map((entry: any) => entry.label)).toEqual(["setup"]);
     expect(setupOnly?.[0].description).toContain("Install or repair");
 
+    const gitHookActions = definition.getArgumentCompletions("git-hook ");
+    expect(gitHookActions?.map((entry: any) => entry.label)).toEqual(["status", "install", "uninstall"]);
     expect(definition.getArgumentCompletions("nope")).toBeNull();
   });
 

@@ -7,6 +7,7 @@ import { resolveInstalledBridgeScriptPath } from "./runtime.js";
 import { getEventStore as getContextEventStore, getSessionId as getContextSessionId } from "../context-mode/hooks.js";
 import { buildCompactionCheckpoint, buildShutdownDiary } from "./session-summary.js";
 import { snapshotMempalaceInstall } from "./installer-helper.js";
+import { buildMempalaceGuidance } from "./contract.js";
 
 export interface MempalaceHooksDeps {
   createBridge?: (config: ResolvedMempalaceConfig, cwd: string) => MempalaceBridgeFacade;
@@ -162,12 +163,9 @@ function wakeUpBlock(resolved: ResolvedMempalaceConfig, wing: string, text: stri
     "# MemPalace memory",
     `- palace: ${resolved.palacePath}`,
     `- default wing: ${wing}`,
-  ];
-  if (resolved.hooks.searchGuidance) {
-    lines.push(
-      "- You **MUST** call `mempalace(action=\"search\", query=...)` before answering questions about prior decisions, people, projects, or past events. Skip only when the answer is fully derivable from the current turn or the active codebase.",
-    );
-  }
+    "",
+    ...buildMempalaceGuidance(resolved.hooks, "full"),
+  ].filter((line) => line.length > 0);
   if (excerpt.trim()) {
     lines.push("", "## Wake-up excerpt", excerpt.trim());
   }
@@ -175,19 +173,15 @@ function wakeUpBlock(resolved: ResolvedMempalaceConfig, wing: string, text: stri
 }
 
 /**
- * Compact one-line refresher injected on turns where we skip the full
- * wake-up dump. Keeps the model oriented (palace/wing) and re-asserts the
- * RFC-2119 search nudge in ~140 chars instead of ~870 tokens.
+ * Compact refresher injected on turns where we skip the full wake-up dump.
+ * Keeps the model oriented (palace/wing) and re-asserts the MemPalace
+ * read/write contract without paying for the wake-up excerpt.
  */
 function wakeUpRefresher(resolved: ResolvedMempalaceConfig, wing: string): string {
   const lines = [
     `# MemPalace memory: wing=${wing}`,
+    ...buildMempalaceGuidance(resolved.hooks, "refresher"),
   ];
-  if (resolved.hooks.searchGuidance) {
-    lines.push(
-      "- You **MUST** call `mempalace(action=\"search\", query=...)` before answering past-fact questions; per-turn search results appear below when relevant.",
-    );
-  }
   return lines.join("\n");
 }
 
@@ -326,7 +320,8 @@ export function registerMempalaceHooks(
     const wakeUpEnabled = config.mempalace.hooks.wakeUp;
     const guidanceEnabled = config.mempalace.hooks.searchGuidance;
     const autoSearchEnabled = config.mempalace.hooks.autoSearchOnPrompt;
-    if (!wakeUpEnabled && !guidanceEnabled && !autoSearchEnabled) return undefined;
+    const writeGuidanceEnabled = config.mempalace.hooks.writeGuidance;
+    if (!wakeUpEnabled && !guidanceEnabled && !writeGuidanceEnabled && !autoSearchEnabled) return undefined;
 
     const cwd = contextCwd(ctx);
     const resolved = resolveMempalaceConfig(config, cwd, platform.paths);

@@ -55,6 +55,32 @@ describe("ensureUv", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  test("fails before download when tar is unavailable", async () => {
+    const fetcher = mock(async () => {
+      throw new Error("should not fetch before tar preflight passes");
+    });
+    const runner = mock(async (command: string, args: string[]) => {
+      expect(command).toBe("tar");
+      expect(args).toEqual(["--version"]);
+      return { code: 127, stdout: "", stderr: "command not found" };
+    });
+
+    const result = await ensureUv({
+      managedBinDir: tmpDir,
+      platform: "darwin-arm64",
+      version: "0.5.30",
+      fetcher,
+      runner,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected tar preflight failure");
+    expect(result.error.code).toBe("uv_extract_failed");
+    expect(result.error.message).toContain("tar");
+    expect(result.error.remediation).toContain("Git for Windows");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   test("downloads, verifies SHA256, extracts, and stamps version", async () => {
     const target = uvTargetFor("darwin-arm64");
     const archiveBytes = new TextEncoder().encode("FAKE_TAR_PAYLOAD").buffer.slice(0);
@@ -70,6 +96,9 @@ describe("ensureUv", () => {
 
     const runner = mock(async (command: string, args: string[]) => {
       expect(command).toBe("tar");
+      if (args[0] === "--version") {
+        return { code: 0, stdout: "tar 1.0", stderr: "" };
+      }
       expect(args[0]).toBe("-xf");
       expect(args[1]).toBe(path.join(tmpDir, target.archive));
       // Simulate the tar extraction: place the binary at the expected nested path.
@@ -121,6 +150,9 @@ describe("ensureUv", () => {
 
     const runner = mock(async (command: string, args: string[]) => {
       expect(command).toBe("tar");
+      if (args[0] === "--version") {
+        return { code: 0, stdout: "tar 1.0", stderr: "" };
+      }
       expect(args[0]).toBe("-xf");
       expect(args[1]).toBe(path.join(tmpDir, target.archive));
       const extractedBinary = path.join(tmpDir, target.archiveBinaryRelativePath);
@@ -172,7 +204,7 @@ describe("ensureUv", () => {
     expect(result.error.code).toBe("uv_checksum_mismatch");
     expect(fs.existsSync(path.join(tmpDir, target.binary))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "uv.version"))).toBe(false);
-    expect(runner).not.toHaveBeenCalled();
+    expect(runner).toHaveBeenCalledTimes(1);
   });
 
   test("returns uv_unsupported_platform on unrecognized platform", async () => {

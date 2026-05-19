@@ -42,6 +42,7 @@ describe("registerMempalaceTool", () => {
     expect(definition.parameters.properties.action.enum).toContain("search");
     expect(definition.description).toContain("MemPalace memory dispatcher");
     expect(definition.description).toContain("**MUST** call `search`");
+    expect(definition.description).toContain("WRITE: **MUST NOT**");
   });
 
   test("validates params before dispatch", async () => {

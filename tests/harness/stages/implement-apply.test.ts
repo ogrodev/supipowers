@@ -262,6 +262,7 @@ describe("applyHarnessPlan — git verification wiring", () => {
     expect(workflow).toContain("pull_request.base.ref");
     expect(workflow).toContain("'main'");
     expect(workflow).toContain("'dev'");
+    expect(workflow).toContain("shell: bash");
   });
 
   test("omits verify-pr-source job when git block is absent", async () => {

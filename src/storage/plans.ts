@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { normalizeLineEndings } from "../text.js";
+import { ensureTrailingNewline, normalizeLineEndings } from "../text.js";
 import type { Plan, PlanTask, TaskComplexity, WorkspaceTarget } from "../types.js";
 import type { PlatformPaths } from "../platform/types.js";
 import { getProjectStatePath, getProjectTargetStatePath } from "../workspace/state-paths.js";
@@ -40,7 +40,7 @@ export function savePlan(paths: PlatformPaths, cwd: string, filename: string, co
   const dir = getPlansDir(paths, cwd);
   fs.mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, filename);
-  fs.writeFileSync(filePath, content);
+  fs.writeFileSync(filePath, ensureTrailingNewline(normalizeLineEndings(content)));
   return filePath;
 }
 

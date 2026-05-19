@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import type { PlatformPaths } from "../platform/types.js";
+import { ensureTrailingNewline, normalizeLineEndings } from "../text.js";
 import type {
   HarnessDesignSpec,
   HarnessDiscoverArtifact,
@@ -111,7 +112,7 @@ export function writeTextAtomic(
   try {
     ensureDir(filePath);
     const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(tmpPath, content.endsWith("\n") ? content : `${content}\n`);
+    fs.writeFileSync(tmpPath, ensureTrailingNewline(normalizeLineEndings(content)));
     fs.renameSync(tmpPath, filePath);
     return success(filePath);
   } catch (error) {

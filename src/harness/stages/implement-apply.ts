@@ -537,6 +537,7 @@ function renderGithubActionsWorkflow(spec: HarnessDesignSpec): string {
       "    runs-on: ubuntu-latest",
       "    steps:",
       "      - name: Reject PRs into main from non-dev branches",
+      "        shell: bash",
       "        run: |",
       `          if [ "${PR_HEAD_REF_EXPR}" != "${git.devBranch}" ]; then`,
       `            echo "PRs into '${git.mainBranch}' must come from '${git.devBranch}'." >&2`,

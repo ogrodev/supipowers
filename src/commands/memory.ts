@@ -6,17 +6,33 @@ import {
   snapshotMempalaceInstall,
   steerMempalaceInitialization,
 } from "../mempalace/installer-helper.js";
+import {
+  getMempalacePostCommitHookStatus,
+  installMempalacePostCommitHook,
+  uninstallMempalacePostCommitHook,
+  type MempalacePostCommitHookStatusResult,
+} from "../mempalace/git-hook.js";
 
 const SUBCOMMANDS = [
   { name: "status", description: "Show palace path, managed venv, and install status" },
   { name: "setup", description: "Install or repair the managed Python environment and MemPalace package" },
+  { name: "git-hook", description: "Manage the opt-in post-commit MemPalace reindex hook" },
+] as const;
+
+const GIT_HOOK_ACTIONS = [
+  { name: "status", description: "Show post-commit reindex hook status" },
+  { name: "install", description: "Install or update the post-commit reindex hook" },
+  { name: "uninstall", description: "Remove the managed hook and restore a chained user hook" },
 ] as const;
 
 const HELP = [
   "/supi:memory — native MemPalace integration",
   "",
   "Subcommands:",
-  ...SUBCOMMANDS.map((subcommand) => `  ${subcommand.name.padEnd(8)} ${subcommand.description}`),
+  ...SUBCOMMANDS.map((subcommand) => `  ${subcommand.name.padEnd(10)} ${subcommand.description}`),
+  "",
+  "Git hook:",
+  "  git-hook status|install|uninstall",
   "",
   "Memory APIs are exposed to the agent via the `mempalace` tool.",
 ].join("\n");
@@ -41,6 +57,80 @@ function statusReport(platform: Platform, cwd: string): string {
       : "Run `/supi:memory setup` to install the managed environment.",
   ];
   return lines.join("\n");
+}
+
+function gitHookStatusReport(result: MempalacePostCommitHookStatusResult): string {
+  if (!result.ok) {
+    return [
+      "/supi:memory git-hook status",
+      "",
+      `status: unavailable (${result.code})`,
+      result.message,
+    ].join("\n");
+  }
+
+  return [
+    "/supi:memory git-hook status",
+    "",
+    `repo root: ${result.repoRoot}`,
+    `hooks dir: ${result.hooksDir}`,
+    `core.hooksPath: ${result.coreHooksPath ?? "(default .git/hooks)"}`,
+    `post-commit hook: ${result.installed ? "present" : "missing"}`,
+    `managed by supipowers: ${result.managed}`,
+    `chained user hook: ${result.userHookPresent ? result.userHookPath : "none"}`,
+    `reindex runner: ${result.runnerPresent ? result.runnerPath : `${result.runnerPath} (missing)`}`,
+  ].join("\n");
+}
+
+async function handleGitHook(platform: Platform, ctx: PlatformContext, action: string): Promise<void> {
+  const config = loadConfig(platform.paths, ctx.cwd);
+  const command = action || "status";
+
+  if (command === "status") {
+    const status = await getMempalacePostCommitHookStatus({
+      paths: platform.paths,
+      cwd: ctx.cwd,
+      config,
+      exec: platform.exec,
+    });
+    ctx.ui.notify(gitHookStatusReport(status), status.ok ? "info" : "warning");
+    return;
+  }
+
+  if (command === "install") {
+    const result = await installMempalacePostCommitHook({
+      paths: platform.paths,
+      cwd: ctx.cwd,
+      config,
+      exec: platform.exec,
+    });
+    if (result.ok) {
+      ctx.ui.notify(
+        `MemPalace post-commit reindex hook ${result.action}: ${result.hookPath}`,
+        "info",
+      );
+    } else {
+      ctx.ui.notify(`MemPalace post-commit hook install failed (${result.code}): ${result.message}`, "warning");
+    }
+    return;
+  }
+
+  if (command === "uninstall") {
+    const result = await uninstallMempalacePostCommitHook({
+      paths: platform.paths,
+      cwd: ctx.cwd,
+      config,
+      exec: platform.exec,
+    });
+    if (result.ok) {
+      ctx.ui.notify(`MemPalace post-commit reindex hook ${result.action}.`, "info");
+    } else {
+      ctx.ui.notify(`MemPalace post-commit hook uninstall failed (${result.code}): ${result.message}`, "warning");
+    }
+    return;
+  }
+
+  ctx.ui.notify(`Unknown /supi:memory git-hook action: ${command}\n\n${HELP}`, "warning");
 }
 
 async function runSetup(platform: Platform, ctx: PlatformContext): Promise<void> {
@@ -105,6 +195,26 @@ async function runSetup(platform: Platform, ctx: PlatformContext): Promise<void>
     "info",
   );
 
+
+  if (config.mempalace.hooks.postCommitReindex) {
+    const hookResult = await installMempalacePostCommitHook({
+      paths: platform.paths,
+      cwd: ctx.cwd,
+      config,
+      exec: platform.exec,
+    });
+    if (hookResult.ok) {
+      ctx.ui.notify(
+        `MemPalace post-commit reindex hook ${hookResult.action}: ${hookResult.hookPath}`,
+        "info",
+      );
+    } else {
+      ctx.ui.notify(
+        `MemPalace setup completed, but post-commit hook install failed (${hookResult.code}): ${hookResult.message}`,
+        "warning",
+      );
+    }
+  }
   // Check if the current project's wing is already initialized; if not, steer
   // the model to run init + mine through the mempalace tool.
   const initState = await checkMempalaceProjectInitialized({
@@ -141,8 +251,8 @@ async function runSetup(platform: Platform, ctx: PlatformContext): Promise<void>
 export function handleMemory(platform: Platform, ctx: PlatformContext, args?: string): void {
   if (!ctx.hasUI) return;
 
-  const sub = (args ?? "").trim().split(/\s+/)[0] ?? "";
-
+  const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+  const sub = parts[0] ?? "";
   if (sub === "" || sub === "help" || sub === "--help" || sub === "-h") {
     ctx.ui.notify(HELP, "info");
     return;
@@ -168,14 +278,37 @@ export function handleMemory(platform: Platform, ctx: PlatformContext, args?: st
     return;
   }
 
+  if (sub === "git-hook") {
+    void (async () => {
+      try {
+        await handleGitHook(platform, ctx, parts[1] ?? "status");
+      } catch (err) {
+        ctx.ui.notify(`MemPalace git-hook command crashed: ${(err as Error).message}`, "error");
+      }
+    })();
+    return;
+  }
+
   ctx.ui.notify(`Unknown /supi:memory subcommand: ${sub}\n\n${HELP}`, "warning");
 }
 
 export function registerMemoryCommand(platform: Platform): void {
   platform.registerCommand("supi:memory", {
-    description: "Manage native MemPalace integration (status, setup)",
+    description: "Manage native MemPalace integration (status, setup, git-hook)",
     getArgumentCompletions(prefix: string) {
-      const lower = prefix.trim().toLowerCase();
+      const rawLower = prefix.toLowerCase();
+      const lower = rawLower.trim();
+      if (rawLower.startsWith("git-hook ")) {
+        const actionPrefix = rawLower.slice("git-hook ".length).trimStart();
+        const matches = GIT_HOOK_ACTIONS
+          .filter((action) => action.name.startsWith(actionPrefix))
+          .map((action) => ({
+            value: `git-hook ${action.name} `,
+            label: action.name,
+            description: action.description,
+          }));
+        return matches.length > 0 ? matches : null;
+      }
       const matches = SUBCOMMANDS
         .filter((subcommand) => subcommand.name.startsWith(lower))
         .map((subcommand) => ({
