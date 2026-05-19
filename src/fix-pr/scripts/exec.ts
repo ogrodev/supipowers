@@ -2,6 +2,35 @@ import { spawnSync } from "node:child_process";
 import type { ExecOptions, ExecResult, Platform } from "../../platform/types.js";
 import { findExecutable } from "../../utils/executable.js";
 
+export interface CliInvocation {
+  cmd: string;
+  args: string[];
+}
+
+function quoteCmdArgument(arg: string): string {
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+export function buildCliInvocation(
+  resolvedCommand: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): CliInvocation {
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(resolvedCommand)) {
+    return {
+      cmd: "cmd.exe",
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        `"${[resolvedCommand, ...args].map(quoteCmdArgument).join(" ")}"`,
+      ],
+    };
+  }
+
+  return { cmd: resolvedCommand, args };
+}
+
 export function runCliCommand(
   command: string,
   args: string[],
@@ -13,7 +42,9 @@ export function runCliCommand(
     pathext: env.PATHEXT,
   }) ?? command;
 
-  const result = spawnSync(resolvedCommand, args, {
+  const invocation = buildCliInvocation(resolvedCommand, args);
+
+  const result = spawnSync(invocation.cmd, invocation.args, {
     cwd: options?.cwd,
     env,
     encoding: "utf8",

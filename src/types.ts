@@ -572,9 +572,11 @@ export interface MempalaceConfig {
   hooks: {
     wakeUp: boolean;
     searchGuidance: boolean;
+    writeGuidance: boolean;
     autoSearchOnPrompt: boolean;
     compactionCheckpoint: boolean;
     shutdownDiary: boolean;
+    postCommitReindex: boolean;
   };
   budgets: {
     wakeUpTokens: number;

@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "bun test --timeout 60000 --parallel tests/",
+    "test:windows": "bun test --timeout 60000 --parallel tests/platform/ tests/utils/editor.test.ts tests/utils/exec-cli.test.ts tests/fix-pr/scripts/exec.test.ts tests/mempalace/uv.test.ts tests/mempalace/git-hook.test.ts",
     "typecheck": "tsc --noEmit",
     "test:watch": "bun test --timeout 60000 --parallel --watch tests/",
     "test:evals": "bun test --timeout 60000 --parallel tests/evals/",
     "build": "tsc -p tsconfig.build.json",
-    "ci": "bun run typecheck && bun run test",
+    "ci": "bun run src/ci.ts",
     "install:visual-server": "npm --prefix src/visual/scripts ci --ignore-scripts --no-audit --no-fund",
     "postinstall": "bun run install:visual-server",
     "prepare": "git config core.hooksPath hooks || true",

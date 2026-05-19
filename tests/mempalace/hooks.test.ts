@@ -122,7 +122,42 @@ describe("registerMempalaceHooks wake-up", () => {
     expect(prompt).toContain("# MemPalace memory");
     expect(prompt).toContain("default wing:");
     expect(prompt).toContain("**MUST** call `mempalace(action=\"search\"");
-    expect(prompt.length).toBeLessThan(1000);
+    expect(prompt).toContain("## WRITE");
+    expect(prompt).toContain("**MUST NOT** call write/mutation actions");
+    expect(prompt.length).toBeLessThan(1800);
+  });
+
+  test("injects write guidance when writeGuidance is the only prompt guidance enabled", async () => {
+    const { platform, handlers } = createHookPlatform();
+    registerMempalaceHooks(platform, config({
+      hooks: {
+        ...DEFAULT_CONFIG.mempalace.hooks,
+        wakeUp: false,
+        searchGuidance: false,
+        writeGuidance: true,
+        autoSearchOnPrompt: false,
+      },
+    }), readyDeps({
+      createBridge: () => ({
+        execute: async () => ({
+          ok: true,
+          action: "wake_up_and_search",
+          result: { wake: { text: "" }, search: null },
+          diagnostics: {},
+        }),
+      }),
+    }));
+
+    const result = await handlers.get("before_agent_start")![0](
+      { systemPrompt: ["base"], sessionId: "write-guidance-only" },
+      { cwd: process.cwd() },
+    );
+    const prompt = promptText(result);
+
+    expect(prompt).toContain("base");
+    expect(prompt).toContain("## WRITE");
+    expect(prompt).toContain("**MUST NOT** call write/mutation actions");
+    expect(prompt).not.toContain("## READ");
   });
 
   test("caches wake-up by session, wing, and palace path", async () => {

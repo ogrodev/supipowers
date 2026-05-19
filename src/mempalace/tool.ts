@@ -15,6 +15,7 @@ import {
   snapshotMempalaceInstall,
   type MempalaceInstallSnapshot,
 } from "./installer-helper.js";
+import { MEMPALACE_TOOL_DESCRIPTION } from "./contract.js";
 
 export interface MempalaceToolDeps {
   createBridge?: (config: ResolvedMempalaceConfig, cwd: string) => MempalaceBridgeFacade;
@@ -130,8 +131,7 @@ export function registerMempalaceTool(
   platform.registerTool({
     name: "mempalace",
     label: "MemPalace",
-    description:
-      "MemPalace memory dispatcher. **MUST** call `search` before answering past-fact questions; write only on explicit user request.",
+    description: MEMPALACE_TOOL_DESCRIPTION,
     parameters: mempalaceToolParameters,
     async execute(_toolCallId: string, rawParams: unknown, _signal: AbortSignal, onUpdate: unknown, toolCtx: unknown) {
       try {

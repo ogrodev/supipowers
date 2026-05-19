@@ -109,9 +109,11 @@ export const ConfigSchema = z.object(
           {
             wakeUp: z.boolean(),
             searchGuidance: z.boolean(),
+            writeGuidance: z.boolean(),
             autoSearchOnPrompt: z.boolean(),
             compactionCheckpoint: z.boolean(),
             shutdownDiary: z.boolean(),
+            postCommitReindex: z.boolean(),
           },
         ).strict(),
         budgets: z.object(

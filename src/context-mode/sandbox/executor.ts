@@ -20,6 +20,31 @@ export interface ExecuteResult {
 
 const DEFAULT_TIMEOUT = 30_000;
 
+const MISSING_BASH_EXIT_CODE = 127;
+function buildMissingBashMessage(platform: NodeJS.Platform): string {
+  const base = "bash is required to execute shell snippets.";
+  switch (platform) {
+    case "win32":
+      return `${base} Install Git for Windows or WSL, then retry.`;
+    case "darwin":
+      return `${base} Install bash via Homebrew (\`brew install bash\`) or Xcode Command Line Tools, then retry.`;
+    case "linux":
+      return `${base} Install bash via your distro's package manager (apt/yum/pacman), then retry.`;
+    default:
+      return `${base} Install bash for your platform and retry.`;
+  }
+}
+const MISSING_BASH_MESSAGE = buildMissingBashMessage(process.platform);
+
+function missingBashResult(startedAt: number): ExecuteResult {
+  return {
+    stdout: "",
+    stderr: MISSING_BASH_MESSAGE,
+    exitCode: MISSING_BASH_EXIT_CODE,
+    duration: performance.now() - startedAt,
+  };
+}
+
 export async function executeCode(
   language: string,
   code: string,
@@ -29,6 +54,11 @@ export async function executeCode(
   const opts = options ?? {};
   const timeout = opts.timeout ?? DEFAULT_TIMEOUT;
   const cwd = opts.cwd ?? process.cwd();
+  const start = performance.now();
+
+  if (language === "shell" && Bun.which("bash") === null) {
+    return missingBashResult(start);
+  }
 
   const id = randomUUID();
   const srcPath = path.join(os.tmpdir(), `ctx-exec-${id}${runner.fileExt}`);
@@ -37,7 +67,6 @@ export async function executeCode(
     : undefined;
 
   fs.writeFileSync(srcPath, code);
-  const start = performance.now();
 
   try {
     // Compile step for compiled languages

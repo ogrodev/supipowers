@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "cross-platform-compatibility": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "skillPath": "skills/cross-platform-compatibility/SKILL.md",
+      "computedHash": "a4cce642d2919910b5b6aa0eaab5798d64dafc1ad8923d87b2ec689efc8d4ace"
+    }
+  }
+}

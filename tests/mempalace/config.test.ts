@@ -27,9 +27,11 @@ describe("mempalace config defaults", () => {
       hooks: {
         wakeUp: true,
         searchGuidance: true,
+        writeGuidance: true,
         autoSearchOnPrompt: true,
         compactionCheckpoint: true,
         shutdownDiary: true,
+        postCommitReindex: false,
       },
       budgets: {
         wakeUpTokens: 1200,

@@ -1,6 +1,11 @@
-/** Normalizes Windows CRLF line endings to LF. */
+/** Normalizes CRLF and lone CR line endings to LF for deterministic artifacts. */
 export function normalizeLineEndings(text: string): string {
-  return text.replace(/\r\n/g, "\n");
+  return text.replace(/\r\n?/g, "\n");
+}
+
+/** Ensures text files have a trailing LF without changing already-terminated content. */
+export function ensureTrailingNewline(text: string): string {
+  return text.endsWith("\n") ? text : `${text}\n`;
 }
 
 /** Removes a single outer markdown code fence wrapper when present. */

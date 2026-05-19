@@ -112,10 +112,19 @@ describe("harness/storage atomic primitives", () => {
     expect(JSON.parse(fs.readFileSync(filePath, "utf8"))).toEqual({ a: 1, b: "two" });
   });
 
-  test("writeTextAtomic appends a trailing newline if missing", () => {
+  test("writeJsonAtomic emits LF-only formatted JSON with trailing newline", () => {
+    const filePath = path.join(tmpDir, "out.json");
+    writeJsonAtomic(filePath, { a: 1 });
+    const raw = fs.readFileSync(filePath, "utf8");
+
+    expect(raw).toBe('{\n  "a": 1\n}\n');
+    expect(raw).not.toContain("\r");
+  });
+
+  test("writeTextAtomic normalizes line endings and appends a trailing newline if missing", () => {
     const filePath = path.join(tmpDir, "out.txt");
-    writeTextAtomic(filePath, "hello");
-    expect(fs.readFileSync(filePath, "utf8")).toBe("hello\n");
+    writeTextAtomic(filePath, "hello\r\nworld");
+    expect(fs.readFileSync(filePath, "utf8")).toBe("hello\nworld\n");
   });
 
   test("appendJsonl writes one JSON record per line", () => {
