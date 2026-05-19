@@ -36,6 +36,9 @@ The installer detects Pi (`~/.pi`) and OMP (`~/.omp`) — when both are present 
 | [Bun](https://bun.sh)                                 | Runtime — required for installation and the built-in SQLite FTS index |
 | [Git](https://git-scm.com)                            | Used by the installer and git-based workflows                         |
 
+> [!TIP]
+> OMP ≥15.1.7 is recommended for best reliability with supipowers command-driven agent handoffs and accurate provider-scoped `/fast` status indicators. Older compatible OMP versions can run supipowers but lack those runtime fixes.
+
 ### Optional dependencies
 
 The installer scans for these and offers to install missing tooling where it can. Everything works without them, but each one unlocks additional capabilities.

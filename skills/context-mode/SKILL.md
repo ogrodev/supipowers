@@ -63,7 +63,7 @@ When OMP's `shellMinimizer` is active, large bash output ends with a `[raw outpu
 
 ### Read
 
-Reads are never blocked — OMP's native open/read tool preserves hashline anchors (e.g., `120th|content` after 14.4.1) for the edit contract. Large reads (>110 lines) are auto-compressed to head (80) + tail (30) with a `sel` hint.
+Reads are never blocked — OMP's native open/read tool preserves hashline anchors (e.g., `120th|content` after 14.4.1) for the edit contract. Copy edit anchors exactly, without the `|content` body, and never fabricate anchors. Edit payload lines must start with `~` immediately followed by intended file content; avoid a readability space after `~` unless that space is intentional file content. Large reads (>110 lines) are auto-compressed to head (80) + tail (30) with a `sel` hint.
 
 For analysis-only reads where anchors are not needed, prefer `ctx_execute_file(path, language, code)` — only your printed summary enters context.
 
