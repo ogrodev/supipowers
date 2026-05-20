@@ -14,22 +14,15 @@ const execFileAsync = promisify(execFile);
 
 export class ProcessUtils {
   // Kill process by PID with platform-specific signal
-  static kill(pid: number, signal?: string): void {
+  static async kill(pid: number, signal?: string): Promise<void> {
     if (process.platform === "win32") {
-      // Windows doesn't support signals, use taskkill. Capture the child so
-      // spawn errors and non-zero exit codes surface instead of being lost.
-      const proc = spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"]);
-      proc.on("error", (err) => {
-        throw new Error(`Failed to kill process ${pid}: ${err.message}`);
-      });
-      proc.on("exit", (code) => {
-        if (code !== 0) {
-          throw new Error(`taskkill exited with code ${code} for pid ${pid}`);
-        }
-      });
-    } else {
-      process.kill(pid, signal || "SIGTERM");
+      // Windows doesn't support POSIX signals. Await taskkill so spawn
+      // failures and non-zero exits reject this Promise and remain catchable.
+      await execFileAsync("taskkill", ["/pid", pid.toString(), "/f", "/t"]);
+      return;
     }
+
+    process.kill(pid, signal ?? "SIGTERM");
   }
 
   // Spawn process with platform-specific handling

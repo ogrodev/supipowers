@@ -5,6 +5,7 @@
 ```typescript
 // shell-utils.ts
 import { exec, execFile } from "child_process";
+import { readdir } from "fs/promises";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
@@ -42,32 +43,21 @@ export class ShellUtils {
     return process.env.SHELL || "/bin/sh";
   }
 
-  // Platform-specific commands — all use execFile so caller-supplied paths
-  // are passed as discrete argv entries and never interpolated into a shell.
+  // Prefer runtime APIs for filesystem work. Shell builtins like `dir` must
+  // go through cmd.exe, where caller-supplied paths are shell-parsed unless
+  // explicitly escaped.
   static async listFiles(directory: string): Promise<string> {
-    if (process.platform === "win32") {
-      // `dir` is a cmd.exe builtin; invoke it through `cmd /c` but keep the
-      // directory argument out of the shell-parsed command string.
-      const { stdout } = await execFileAsync("cmd", ["/c", "dir", directory]);
-      return stdout.trim();
-    }
-    const { stdout } = await execFileAsync("ls", ["-la", directory]);
-    return stdout.trim();
+    const entries = await readdir(directory, { withFileTypes: true });
+    return entries.map((entry) => entry.name).join("\n");
   }
 
   static async clearScreen(): Promise<void> {
-    if (process.platform === "win32") {
-      await execFileAsync("cmd", ["/c", "cls"]);
-    } else {
-      await execFileAsync("clear", []);
-    }
+    process.stdout.write("\x1Bc");
   }
 
   static async openFile(filepath: string): Promise<void> {
     if (process.platform === "win32") {
-      // `start` is a cmd builtin; the empty "" is the window title slot so
-      // a quoted filepath isn't mistaken for the title.
-      await execFileAsync("cmd", ["/c", "start", "", filepath]);
+      await execFileAsync("explorer.exe", [filepath]);
     } else if (process.platform === "darwin") {
       await execFileAsync("open", [filepath]);
     } else {
