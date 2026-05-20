@@ -14,28 +14,34 @@ const execFileAsync = promisify(execFile);
 
 export class ProcessUtils {
   // Kill process by PID with platform-specific signal
-  static kill(pid: number, signal?: string): void {
+  static async kill(pid: number, signal?: string): Promise<void> {
     if (process.platform === "win32") {
-      // Windows doesn't support signals, use taskkill
-      spawn("taskkill", ["/pid", pid.toString(), "/f", "/t"]);
-    } else {
-      process.kill(pid, signal || "SIGTERM");
+      // Windows doesn't support POSIX signals. Await taskkill so spawn
+      // failures and non-zero exits reject this Promise and remain catchable.
+      await execFileAsync("taskkill", ["/pid", pid.toString(), "/f", "/t"]);
+      return;
     }
+
+    process.kill(pid, signal ?? "SIGTERM");
   }
 
   // Spawn process with platform-specific handling
   static spawnCommand(command: string, args: string[] = []): ChildProcess {
     if (process.platform === "win32") {
-      // Windows requires cmd.exe to run commands
+      // Windows requires cmd.exe to run commands. shell: false (the default)
+      // is mandatory whenever an argv array is used — Node emits DEP0190 and
+      // arguments are concatenated without shell escaping when shell: true is
+      // combined with args, which is an injection vector.
       return spawn("cmd", ["/c", command, ...args], {
         stdio: "inherit",
-        shell: true,
       });
     }
 
+    // shell: false (the default) — args are passed directly to execvp without
+    // shell interpretation. If shell semantics are required (e.g. globbing),
+    // build a properly escaped command string and pass it as a single argv[0].
     return spawn(command, args, {
       stdio: "inherit",
-      shell: true,
     });
   }
 

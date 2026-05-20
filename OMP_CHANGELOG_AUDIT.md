@@ -1,195 +1,163 @@
-# OMP Changelog Audit — 15.1.0 → 15.1.3
+# OMP Changelog Audit — 15.1.3 → 15.1.7
 
 | Field | Value |
 | --- | --- |
-| OMP range analyzed | 15.1.0 → 15.1.3 (incl. 15.1.2) |
-| supipowers version | 2.2.0 |
-| Audit date | 2026-05-17 |
-| Previous audit | 15.0.1 → 15.1.0 (2026-05-15) |
+| OMP range analyzed | 15.1.3 → 15.1.7 |
+| supipowers version | 2.2.2 |
+| Audit date | 2026-05-19 |
+| Previous audit | 15.1.0 → 15.1.3 (2026-05-17) |
 
-> Evidence convention: every claim cites `file:line` ranges. Read with `read <path>:N-M` to verify in-place.
+> Evidence convention: every code claim cites `file:line` or `file:line-line` from the inspected source.
 
-> Scope: every breaking item in 15.1.2 and 15.1.3 was probed against `src/`, `tests/`, shipped `skills/`, shipped `.omp/rules/`, and shipped `.omp/skills/`. Auto-indexed batch search returned 0 in-repo hits for `pi://`, `PiProtocolHandler`, `StringEnum`, `*** Cell`, `*** End`, `*** Abort`, `pty: true`, and the SSH/YieldTool surfaces. All "no-impact" verdicts below cite the actual grep commands and their negative results.
+## Audit scope
 
----
+Primary OMP API surfaces inspected:
 
-## 1. Breaking changes that affect supipowers
+- Central adapter and type contract: `src/platform/omp.ts:48-150`, `src/platform/types.ts:45-160`.
+- Agent-session call paths: `src/ai/final-message.ts:96-136`, `src/context-mode/hooks.ts:251-298`, `src/ultraplan/execution/session-runner.ts:157-167`, `src/git/commit.ts:401-418`.
+- Message handoff call paths: `src/commands/qa.ts:398-405`, `src/commands/fix-pr.ts:521-528`, `src/commands/ultraplan.ts:1458-1465`, `src/harness/hooks/post-session-sweep.ts:111-119`, `src/ui-design/session.ts:754-799`.
+- Tool registration call paths: `src/planning/planning-ask-tool.ts:24-55`, `src/context-mode/tools.ts:453-500`, `src/harness/tools.ts:124-133`.
+- Exec call paths and wrappers: `src/platform/omp.ts:11-17`, `src/platform/omp.ts:56-57`, `src/utils/exec-cli.ts:7-30`, `src/commands/ultraplan.ts:710-729`, `src/fix-pr/fetch-comments.ts:111-129`, `src/fix-pr/fetch-comments.ts:220-246`.
+- Planning approval and ask isolation: `src/planning/system-prompt.ts:223-241`, `src/planning/approval-flow.ts:314-331`, `src/planning/approval-flow.ts:431-463`, `src/storage/plans.ts:12-24`.
 
-### 1.1 [NONE] `pi://` → `omp://` URL scheme + `OmpProtocolHandler` rename — no in-repo references
+## Breaking Changes
 
-**Changelog source (15.1.3):**
-> Renamed the embedded-documentation internal URL scheme from `pi://` to `omp://`. `OmpProtocolHandler` replaces `PiProtocolHandler`; update any external references accordingly.
+### Verdict: no hard breaking changes found
 
-**Evidence collected.** Searched the full repo (excluding `node_modules`, `.git`, `dist`, `omp_source/` upstream tree, and runtime data under `.omp/supipowers/`) for:
+No OMP 15.1.4–15.1.7 changelog entry removes or renames an API that supipowers 2.2.2 directly imports or calls. Two items are worth tracking as compatibility risks because they sit near critical workflows, but neither requires an immediate migration.
 
-- `grep -rn 'pi://' src tests skills global-config docs` → **0 matches**
-- `grep -rn 'PiProtocolHandler' src tests` → **0 matches**
-- `grep -rln 'pi://' .omp/rules .omp/skills` → **0 matches**
+### Compatibility risk: `/supi:plan` native `resolve` guard is narrower than the 15.1.6 malformed-title fix
 
-Stray hits all lived inside the upstream-vendored tree `omp_source/packages/coding-agent/` (`internal-urls/pi-protocol.ts` etc.), which we do not author or ship. The previous audit's reference to the embedded-doc scheme was hypothetical; the codebase has never consumed it.
+**Changelog entry:** 15.1.6 fixed native plan-mode `resolve` loops when `extra.title` is not a usable string.
 
-**Verdict.** No code, prompt, skill, rule, or doc in supipowers references the old scheme. The upstream rename is transparent.
+**Impact.** Supipowers intentionally does not use native OMP plan approval in `/supi:plan`; it relies on a file watcher, schema validation, reliability logging, and a custom approval UI. The planning prompt says this is not native OMP plan mode, forbids `resolve` with `extra.title`, forbids `local://PLAN.md`, and requires saving to the supipowers plan directory (`src/planning/system-prompt.ts:233-240`). The approval hook then detects new plan files by filename delta (`src/planning/approval-flow.ts:314-331`) and presents `ctx.ui.select` approval options (`src/planning/approval-flow.ts:431-443`).
 
-**Recommendation.** None.
+The runtime guard currently blocks only `resolve` calls whose input has `action: "apply"` and a string `extra.title` (`src/planning/planning-ask-tool.ts:130-138`, `src/planning/planning-ask-tool.ts:152-160`). Because OMP now accepts/falls back for malformed `extra.title`, a mistaken `resolve({ action: "apply", extra: { title: {} } })` would not match our guard. Normal `/supi:plan` should not have an OMP-native pending action to resolve, so this is not a confirmed break.
 
----
+**Recommendation.** Harden the guard in a follow-up: while `isPlanningActive()` is true, block every `resolve` call with `action: "apply"`, not just the string-title native shape. Add a narrow unit test for string, object, missing, and non-apply inputs.
 
-### 1.2 [LOW – DOCS DRIFT] `StringEnum` removed from `@oh-my-pi/pi-coding-agent`
+### Compatibility risk: ACP command/custom-tool argument preservation is now fixed upstream, but these paths depend on preserved raw inputs
 
-**Changelog source (15.1.3):**
-> Removed the `StringEnum` re-export from `@oh-my-pi/pi-coding-agent`. Custom tools and extensions should use `z.enum([...])` directly via the injected `pi.zod`.
+**Changelog entry:** 15.1.4 fixed ACP command and custom tool-call notifications to carry original tool arguments in replayed/final updates.
 
-**Runtime impact: none.** `grep -rln 'StringEnum' src tests` → **0 matches**. Supipowers never imported `StringEnum`; all our tool `parameters:` are plain JSON-Schema literals (`src/harness/tools.ts`, `src/ultraplan/authoring/authoring-tools.ts`, `src/ultraplan/authoring-tool.ts`, `src/context-mode/tools.ts`, `src/planning/planning-ask-tool.ts`, `src/mempalace/tool.ts`), as documented in the previous audit's §3.
+**Impact.** Supipowers command semantics use direct handler args, not ACP notification payloads. The OMP adapter forwards command registration unchanged (`src/platform/omp.ts:51-52`), `/supi:plan --quick` parses the raw command string (`src/commands/plan.ts:79-83`), and `planning_ask` receives structured params directly in its execute callback (`src/planning/planning-ask-tool.ts:56-63`). Custom tools are forwarded without local wrapping (`src/platform/omp.ts:135-135`). This is an upstream reliability fix, not a local API break.
 
-**Docs-side impact: shipped extension-dev reference is stale.** Two files under the tracked `.omp/skills/omp-extension-dev/references/` skill (loaded by `.omp/rules/omp-extension-dev.md:2`) instruct readers to import the now-removed symbol:
+**Recommendation.** Keep on the smoke-test list after OMP upgrades: `/supi:plan --quick <text with spaces/punctuation>` and one `planning_ask` call. No source change required.
 
-| File | Line | Snippet |
-| --- | --- | --- |
-| `.omp/skills/omp-extension-dev/references/custom_tools.md` | 122–124 | ``// Enums (use StringEnum from pi.pi for string enums)\nconst { StringEnum } = pi.pi;\nStringEnum(["staging", "production"], { description: "Target environment" })`` |
-| `.omp/skills/omp-extension-dev/references/api_reference.md` | 270 | ``\| `pi.pi` \| Module \| `@oh-my-pi/pi-coding-agent` exports — `StringEnum`, `logger`, etc. \|`` |
+### No-impact entries
 
-`.omp/skills/omp-extension-dev/SKILL.md:28,31` links both files from its "Custom Tools" and "Configuration" rows, and the rule is the `omp-extension-dev` rulebook entry the model loads whenever a user works on an OMP extension. The model will happily reproduce the dead pattern.
+| Changelog entry | Impact | Evidence | Recommendation |
+| --- | --- | --- | --- |
+| 15.1.7 `debug` launch/attach fixes and directory-valued launch rejection | Supipowers does not invoke OMP DAP launch/attach. Its own debug logger is `SUPI_DEBUG` file logging, not OMP `debug`. | `src/debug/logger.ts:19-24`, `src/debug/logger.ts:36-52`, `src/platform/types.ts:45-55`, `src/platform/omp.ts:101-133` | No migration. |
+| 15.1.7 hashline edit payload warning | Runtime code does not construct hashline `edit` payloads. Planning mode forbids implementation edits and only tells agents to save plan markdown. | `src/planning/system-prompt.ts:193-218`, `src/planning/system-prompt.ts:223-241`, `skills/context-mode/SKILL.md:64-68` | No runtime migration. Optional docs polish in Opportunities. |
+| 15.1.7 ACP bash permission metadata | `Platform.exec` exposes only `cwd`, `timeout`, and `env`; non-env calls delegate to `api.exec`, env calls use `Bun.spawn`. Supipowers does not read ACP permission metadata. | `src/platform/types.ts:66-77`, `src/platform/omp.ts:11-17`, `src/platform/omp.ts:56-57` | No migration. |
+| 15.1.7 fast-mode status-line predicate | Supipowers writes its own `supi-model` footer status for model overrides but does not inspect OMP fast-mode state. | `src/config/model-resolver.ts:172-185`, `src/config/model-resolver.ts:187-195`, `src/platform/types.ts:103-115` | Smoke-test status-line coexistence; no code migration unless `ctx.ui.setStatus` semantics change. |
+| 15.1.7 scoped `serviceTier` values | Supipowers model config has only `model` and `thinkingLevel`; no service-tier field is persisted or passed. | `src/types.ts:613-626`, `src/config/model-resolver.ts:10-55`, `src/config/model-resolver.ts:130-170`, `src/platform/omp.ts:67-78` | No migration. |
+| 15.1.7 provider-agnostic `/fast` | `/fast` remains OMP-owned. Supipowers controls only `setModel` and `setThinkingLevel`. | `src/platform/omp.ts:67-78`, `src/platform/types.ts:146-153`, `src/config/model-resolver.ts:142-170` | No migration. |
+| 15.1.5 `ast_grep` / `ast_edit` `parseErrors` cap | Supipowers does not post-process native AST tool `parseErrors`. Its `parseErrors` usage in doctor is config parsing, not OMP AST results. | `src/platform/omp.ts:135-148`, `src/context-mode/tools.ts:453-458`, `src/commands/doctor.ts:76-80` | No migration. |
+| 15.1.4 `normalizePlanTitle` spaces/punctuation | Supipowers does not use native plan title normalization. It watches `.md` files under its own plans directory. | `src/planning/system-prompt.ts:233-238`, `src/storage/plans.ts:12-24`, `src/planning/approval-flow.ts:318-331` | No migration. |
+| 15.1.4 built-in `ask` prompt example | `/supi:plan` uses a custom `planning_ask` schema and blocks generic `ask` while planning/UI-design is active. | `src/planning/planning-ask-tool.ts:24-55`, `src/planning/planning-ask-tool.ts:108-149`, `src/planning/system-prompt.ts:230-232` | No migration. |
+| 15.1.4 ACP async-job owner scoping/status/deferred turns | Supipowers does not implement ACP job draining. Its agent workers consume OMP agent sessions and dispose them normally. | `src/ultraplan/execution/session-runner.ts:157-167`, `src/ultraplan/batch/worker.ts:17-25`, `src/commands/ultraplan.ts:936-980` | No migration. See Opportunities for future status integration. |
+| 15.1.4 edit/write/ast_edit permission behavior | Supipowers prompts may instruct agents to write plan artifacts, but production code does not invoke OMP edit/write/ast_edit APIs directly. | `src/planning/system-prompt.ts:193-218`, `src/planning/system-prompt.ts:233-241`, `src/planning/approval-flow.ts:431-463` | No migration. |
+| 15.1.4 session tree selector readability | Supipowers only calls `ctx.newSession()` for plan execution handoff and checks cancellation. It does not use the session tree selector API. | `src/planning/approval-flow.ts:238-247`, `src/planning/approval-flow.ts:253-284`, `src/commands/plan.ts:183-192` | No migration. |
 
-`git ls-files .omp/skills/omp-extension-dev` confirms supipowers ships these files; they are not user-side state. The repo owns this drift.
+## Opportunities
 
-**Recommendation.** Replace both snippets with the `pi.zod` form named in the changelog:
+### P1 — Keep command-driven hidden steer handoffs on `sendMessage(..., triggerTurn: true)`
 
-```ts
-// .omp/skills/omp-extension-dev/references/custom_tools.md:122-124
-// Enums (use pi.zod for string enums)
-const { z } = pi.zod;
-z.enum(["staging", "production"]).describe("Target environment")
-```
+**Why.** OMP 15.1.4 fixed deferred agent-initiated turns during ACP async-job draining. Supipowers already uses the safer pattern for orchestration commands that persist state before dispatching an agent turn.
 
-```md
-<!-- .omp/skills/omp-extension-dev/references/api_reference.md:270 -->
-| `pi.zod` | Module | `zod/v4` — preferred schema builder (`z.object()`, `z.enum()`, …) |
-| `pi.pi`  | Module | `@oh-my-pi/pi-coding-agent` exports — `logger`, lifecycle types, etc. |
-```
+**Evidence.** `/supi:qa` creates the E2E ledger before dispatch (`src/commands/qa.ts:371-372`) and sends hidden `supi-qa` content with `{ deliverAs: "steer", triggerTurn: true }` (`src/commands/qa.ts:398-405`). `/supi:fix-pr` persists or initializes a running ledger (`src/commands/fix-pr.ts:413-427`) and sends `supi-fix-pr` the same way (`src/commands/fix-pr.ts:521-528`). UltraPlan authoring uses the same handoff (`src/commands/ultraplan.ts:1456-1465`). The adapter currently forwards `deliverAs` and `triggerTurn` (`src/platform/omp.ts:58-63`).
 
-No tests gate these docs; the change is content-only.
+**Effort.** S.
 
----
+**Guidance.** Do not replace these flows with `sendUserMessage`. Add a release/support note that OMP ≥15.1.4 is recommended for command-driven agent handoffs.
 
-### 1.3 [NONE] `eval` tool replaced LARK input with structured `cells` array — no in-repo callers
+### P2 — Harden the `/supi:plan` native `resolve` block
 
-**Changelog source (15.1.3):**
-> Replaced the `eval` tool's LARK-grammar `input` string with a structured `cells` array. Each cell is `{ language: "py" | "js", code, title?, timeout?, reset? }`. Removed the implicit/sniffed language path, the `*** Cell` / `*** End` / `*** Abort` markers, and the per-cell `t:<duration>` unit suffixes — `timeout` is now seconds (1-600).
+**Why.** The 15.1.6 fallback made malformed native plan-title resolution non-looping upstream. That is good for OMP, but our plan-mode policy is broader: native `resolve` should not be used at all during `/supi:plan`.
 
-**Evidence collected.**
+**Evidence.** Policy: `src/planning/system-prompt.ts:233-240`. Guard: `src/planning/planning-ask-tool.ts:130-138`. Narrow matcher: `src/planning/planning-ask-tool.ts:152-160`. Supipowers approval path: `src/planning/approval-flow.ts:314-331`, `src/planning/approval-flow.ts:431-463`.
 
-- `grep -rln -E '\*\*\* (Cell|End|Abort)' src tests skills global-config` → **0 matches**.
-- `grep -rn -E 'name:\s*"eval"|registerTool.*name.*eval' src tests` → **0 matches**.
-- `grep` for `"eval"` / `` `eval` `` / `eval tool` / `/eval` inside `src`, `tests`, `skills/`, `global-config/`, and `docs/`, after stripping the `evalua…` substring noise, returns only references to:
-  - our own behavior-test framework `tests/evals/` (`tests/evals/{harness,fixtures}.ts`, `tests/evals/README.md`, `docs/supipowers/failure-mining.md:35-90`) — unrelated to OMP's `eval` tool;
-  - `src/harness/artifacts/lint-configs.ts:2,125,130` and `src/harness/stages/implement-apply.ts:312,317,324,431,424` — these emit/consume `tooling.eval` config keys describing a *user project's* mutation-test/eval framework, not the OMP runtime `eval` tool.
-- No subagent prompt instructs the model to call the OMP `eval` tool (`grep "use the eval"|"run eval"|"\beval("` → 0 hits outside the items above).
+**Effort.** S.
 
-**Verdict.** Supipowers neither calls the OMP `eval` tool from TS code nor instructs subagents to use it through prompt text. The LARK→`cells` migration and the dropped `*** Cell` markers are transparent to us.
+**Guidance.** Replace `isPlanApprovalResolveInput` with an apply-shape check that returns true for any object where `action === "apply"`. Keep non-apply `resolve` inputs unaffected. Add unit tests for string title, object title, missing `extra`, missing `title`, and non-apply actions.
 
-**Recommendation.** None.
+### P2 — Future-proof `Platform.sendMessage` for new ACP messaging metadata
 
----
+**Why.** The 15.1.4 ACP fixes are about preserving command/custom-tool arguments in updates. Supipowers currently reconstructs the send options object and would silently drop future send metadata unless the type and adapter are updated together.
 
-### 1.4 [NONE] 15.1.2 fixed items audit
+**Evidence.** `SendMessageOptions` has only `deliverAs` and `triggerTurn` (`src/platform/types.ts:81-84`). `createOmpAdapter.sendMessage` forwards only those two keys (`src/platform/omp.ts:58-63`). High-value callers are QA, Fix-PR, and UltraPlan (`src/commands/qa.ts:398-405`, `src/commands/fix-pr.ts:521-528`, `src/commands/ultraplan.ts:1458-1465`).
 
-| Changelog item | Probe | Result |
-| --- | --- | --- |
-| SSH host add/remove not refreshing live `ssh` tool | `grep -rn -E '"ssh"\|/ssh add\|/ssh remove\|sshHost' src tests` → **0 matches** | We never drive the `ssh` tool. |
-| `YieldTool` loose object output schemas | `grep -rn -E 'YieldTool\|outputSchema:\s*(true\|\{\|\?)' src` → 0 *runtime* hits; existing `outputSchema:` matches in `src/review/{multi-agent-runner,runner,validator}.ts` and `src/quality/gates/ai-review.ts` are **prompt-template strings** (e.g. `REVIEW_OUTPUT_SCHEMA_TEXT` from `src/ai/schema-text.ts`), not OMP `YieldTool` config | We never configure OMP's `YieldTool`; schema validation flows through our own `parseStructuredOutput` (`src/ai/structured-output.ts:124`). |
-| Unconstrained `outputSchema` modes (`outputSchema: true` / absent) | Same as above | We never pass `outputSchema` to `createAgentSession`; `src/ai/final-message.ts:89-99` shows the full options surface we use. |
-| Bash `pty: true` hang on Windows | `grep -rn -E 'pty:\s*true' src tests` → **0 matches** | We never request a PTY. |
-| MCP/theme schema metadata → JSON Schema draft-2020-12 | `.omp/mcp.json:2` references the live raw GitHub URL; we already render our own schemas at draft-2020-12 (`src/ai/schema-text.ts:146`) | Nothing to migrate. |
+**Effort.** S when OMP exposes a stable field.
 
----
+**Guidance.** Do not blindly spread unknown options. When OMP exposes a typed metadata field, add it to `SendMessageOptions`, forward it explicitly, and add adapter unit coverage that the field reaches `api.sendMessage`.
 
-### 1.5 [NONE] Other 15.1.3 fixed items
+### P2 — Use future in-flight completion status to close orchestration ledgers on dispatch failure
 
-All other "Fixed" entries are scoped to subsystems we don't touch:
+**Why.** OMP 15.1.4 now reports in-flight completions more accurately internally. Supipowers ledgers currently mark work as started/running after dispatch but do not observe whether the triggered turn actually starts and completes.
 
-| Changelog item | Why we are unaffected |
-| --- | --- |
-| Streaming auth recovery (invalidate + retry on stale credentials) | We have no retry-on-401 wrapper around `createAgentSession`. The upstream improvement is a transparent reliability win for every supipowers AI gate; no code change required. |
-| `auth-broker migrate` / `auth-gateway` startup / `discoverAuthStorage` fast-fail on non-200 snapshot | `grep -rn -E 'auth-broker\|auth-gateway' src tests` → 0 matches; we don't operate the broker/gateway ourselves. |
-| `auth-broker migrate` skip `<authenticated>` placeholder credentials | Same — we never invoke broker migration. |
-| `auth-gateway` token-init race fix, protocol-control rejection, usage cached-token fix, abort-before-dispatch fix | Same. |
-| `/login` and `/logout` selector overflow → 10-item scroll window + PageUp/PageDown | OMP-internal TUI; our `src/commands/model-picker.ts:286-316` already implements its own scrolling window for the supipowers model picker. |
+**Evidence.** QA creates a session and immediately notifies started after `sendMessage` (`src/commands/qa.ts:371-372`, `src/commands/qa.ts:398-411`). Fix-PR initializes `status: "running"` before dispatch (`src/commands/fix-pr.ts:413-427`) and then notifies started (`src/commands/fix-pr.ts:521-535`). UltraPlan batch sets state to `running`, runs supervisor passes, and persists transitions (`src/commands/ultraplan.ts:979-993`). `Platform.sendMessage` has no completion/status hook today (`src/platform/types.ts:81-84`).
 
-### 1.6 [NONE] TTSR `interruptMode` semantics change
+**Effort.** M after public API support exists.
 
-**Changelog source (15.1.3):**
-> Changed TTSR `interruptMode` semantics so a non-interrupting decision on a tool-source match now folds the rule reminder into that specific tool's `toolResult` content instead of queuing a loop-wide deferred follow-up turn. Text/thinking matches keep the previous deferred-injection behavior.
+**Guidance.** Wait for a public OMP extension API; do not synthesize completion with timers. Once available, extend the platform abstraction and update QA/Fix-PR/UltraPlan ledgers to a blocked/error state if dispatch fails before the orchestrator starts.
 
-**Probe.** `src/commands/runbook.ts:30,145,345` and `src/context/runbook-extension-template.ts:7-179` reference TTSR rules by reading the `interruptMode` frontmatter field for display only — they do not implement or modify firing semantics. Our shipped rules at `.omp/rules/*.md` are 22 files (`acp.md`, `code-review.md`, …, `writing-skills.md`); a `grep -l 'interruptMode' .omp/rules/*.md` returns **0 matches**. None of them set `interruptMode`, so all of them inherit OMP's default. The behavior change only affects rules that combine `interruptMode: prose-only` (or similar non-interrupting modes) with tool-source matchers, neither of which any supipowers rule does.
+### P3 — Add optional exec-operation reason metadata only if OMP exposes it
 
-**Verdict.** No behavioral drift in our shipped rules. The `runbook` command continues to print `Interrupt: ${rule.interruptMode ?? "default"}` unchanged.
+**Why.** OMP 15.1.7 improves ACP bash permission prompts. Supipowers has several high-impact command paths where a reason string would help if OMP exposes a command metadata field.
 
-**Recommendation.** None. If we ever author a TTSR rule with `interruptMode: prose-only` *and* a `condition` that matches against tool output, the reminder will now appear inside that tool's `toolResult` instead of as a separate next-turn nudge — keep that in mind during future authoring.
+**Evidence.** `ExecOptions` currently supports only `cwd`, `timeout`, and `env` (`src/platform/types.ts:66-70`). Non-env exec delegates directly to OMP (`src/platform/omp.ts:56-57`). High-impact calls include `git worktree add` (`src/commands/ultraplan.ts:710-729`) and `gh api` review fetching (`src/fix-pr/fetch-comments.ts:111-129`, `src/fix-pr/fetch-comments.ts:220-246`).
 
----
+**Effort.** S if OMP exposes the field; none otherwise.
 
-## 2. Opportunities
+**Guidance.** If OMP adds a stable `description`/`reason`/metadata option for `api.exec`, thread it through `ExecOptions` and annotate destructive or networked operations. Do not add a parallel supipowers permission prompt.
 
-### 2.1 [P3, Trivial] Streaming-auth retry is a free reliability win
+### P3 — Decide deliberately before exposing provider-scoped `serviceTier` in supipowers model config
 
-**Changelog (15.1.3 Fixed):**
-> Fixed streaming API requests to recover from provider auth errors by invalidating stale credentials and retrying with a fresh key.
+**Why.** OMP 15.1.7 adds provider-scoped priority tiers and makes `/fast` provider-agnostic. Supipowers per-action model config cannot request those tiers today.
 
-Our AI gates (`src/quality/gates/ai-review.ts`, `src/lsp/{capabilities,bridge}.ts`, `src/fix-pr/assessment.ts`, `src/docs/drift.ts`, `src/review/*`, `src/commands/release.ts`, `src/git/commit.ts`, `src/ultraplan/authoring/stages/*`) all route through `runWithOutputValidation` (`src/ai/structured-output.ts:160-225`) which retries only on *parse / schema* failures, not on transport errors. Transient 401s from rotated OAuth tokens previously surfaced as `agent-error` outcomes in `src/storage/reliability-metrics.ts` (`"retry-exhausted"` / `"agent-error"`); after 15.1.3 they should self-heal inside OMP and the rate of `agent-error` records in the reliability log should drop. Worth noting in release-notes; no code change.
+**Evidence.** `ModelAssignment` has only `model` and `thinkingLevel` (`src/types.ts:613-619`), and `ModelConfig` has only `version`, `default`, and `actions` (`src/types.ts:621-626`). Resolution and application return/pass only `model`, `thinkingLevel`, and `source` (`src/config/model-resolver.ts:16-24`, `src/config/model-resolver.ts:142-185`). The OMP adapter exposes `setModel`, `setThinkingLevel`, `getCurrentModel`, and `getModelForRole`, not service-tier controls (`src/platform/omp.ts:67-78`).
 
-### 2.2 [P3, Trivial] Provider auth-broker / auth-gateway is a deployment story for container users
+**Effort.** M.
 
-**Changelog (15.1.3 Added):**
-> Added `omp auth-broker` subcommand … `omp auth-gateway` subcommand …  
-> Added `providers.<name>.transport: "pi-native"` to `models.yml`. … Use case: containerized omp installs (robomp slots, swarm extension) where the slot must stay credential-free and a sidecar gateway holds the real provider tokens.
+**Guidance.** Do nothing unless users ask for per-action fast/priority behavior. If they do, first confirm the public OMP API shape, then extend `ModelAssignment`, `resolveModelForAction`, `resolveAllCandidates`, and `applyModelOverride` together. Keep `/fast` itself documented as OMP-owned.
 
-Supipowers needs no code change — every credential we use is owned by OMP. The opportunity is **documentation-only**: users who run supipowers inside containers (robomp slot, swarm extension, CI runner) can now hide provider tokens behind a sidecar `omp auth-gateway` and pin `providers.<name>.transport: "pi-native"` plus `providers.<name>.apiKey: <gateway-bearer>` in `~/.omp/agent/models.yml`. Worth a paragraph in `README.md` under deployment guidance once we publish against an OMP version that includes 15.1.3.
+### P3 — Refresh hashline/edit reference docs if they mention edit payloads
 
-### 2.3 [P3, Trivial] `auth.broker.url` / `auth.broker.token` config tier closes a model-resolution edge case for us
+**Why.** OMP 15.1.7 now warns on separator-padding-shaped hashline payload mistakes. Supipowers does not generate edit payloads, but its agent-facing reference docs mention the edit contract.
 
-**Changelog (15.1.3 Added):**
-> `ModelRegistry` now promotes `models.yml` `providers.<name>.apiKey` entries to `AuthStorage`'s new config-override tier (above OAuth, below `--api-key`). Pinning a bearer in `models.yml` was previously a no-op when the broker had an OAuth credential for the same provider …
+**Evidence.** Context-mode docs mention OMP read anchors for the edit contract (`skills/context-mode/SKILL.md:64-68`). Runtime `ctx_open_cached` slices cached text and does not synthesize edit anchors (`src/context-mode/tools.ts:880-950`).
 
-`src/commands/model.ts:184-218` (`selectModelFromList`) calls `ctx.modelRegistry?.getAvailable?.()`, then renders a "no key" warning in `src/commands/model-picker.ts:303,306,323`. Pre-15.1.3, a user with OAuth credentials *and* a `models.yml`-pinned bearer for the same provider would see the OAuth resolution win silently and (post-redirect to a gateway) hit 401 — the picker would still show the model as "configured" even though dispatch was broken. 15.1.3 makes the `models.yml` bearer authoritative, so our picker's "configured" badge is now accurate end-to-end. No code change required.
+**Effort.** S.
 
-### 2.4 [N/A] `dev.autoqaPush.*` and `getInstallId()` — not applicable
+**Guidance.** If editing agent docs, add one sentence: do not include `|content` in anchors, do not fabricate anchors, and payload lines must start with `~` immediately followed by intended file content.
 
-- `dev.autoqaPush.enabled` / `endpoint` / `token` and the `report_tool_issue` push pipeline target OMP's tool-quality grievance database. `grep -rn 'report_tool_issue' src tests` → 0 hits. Supipowers does not emit grievances; nothing to wire up.
-- `getInstallId()` (new export from `@oh-my-pi/pi-utils`) provides a stable per-install UUID at `~/.omp/install-id`. Our project-scoped state already uses repo-identity slugs (`src/workspace/state-paths.ts:79-83`, `src/harness/project-paths.ts:81-82`, `src/ultraplan/project-paths.ts:73-81`) which deliberately key on repo, not host. Install-level identity is a different axis and we have no current consumer for it.
+### P3 — Update `/supi:doctor` recommendations after an OMP minimum-version bump
 
----
+**Why.** Doctor recommendations still mention OMP 14.7-era UX fixes only. If the project decides to require or recommend OMP ≥15.1.7, doctor can surface the high-value runtime fixes from this audit.
 
-## 3. Files not touched and why
+**Evidence.** Current doctor recommendations are static strings for OMP ≥14.7.0 and ≥14.7.2 (`src/commands/doctor.ts:493-505`).
 
-- `src/platform/omp.ts:101-133` — `createAgentSession` continues to extract `model` → `modelPattern`. No new option in 15.1.0–15.1.3 needs plumbing here.
-- `src/ai/structured-output.ts` — still the single canonical retry/parse path; no new schema-validation hook in 15.1.3.
-- `src/ai/final-message.ts:89-99` — verified that we do not pass an `outputSchema` to OMP's `createAgentSession`, so the 15.1.2 `YieldTool` loose/strict fix is irrelevant.
-- `src/commands/model-picker.ts:286-316` — our own scroll/window logic is independent of OMP's `/login` selector fix.
-- `src/commands/runbook.ts:25-345` — reads but does not enforce `interruptMode`; the 15.1.3 semantic change has nothing to update here.
-- `.omp/mcp.json:2` — `$schema` pulls the live OMP MCP schema URL; the draft-2020-12 metadata update is transparent.
+**Effort.** S.
 
----
+**Guidance.** After the minimum/recommended OMP version is bumped, add a non-failing tip for OMP ≥15.1.7 covering `/fast` status correctness and ACP command/permission prompt reliability. Do not make it a failing health check unless supipowers has a direct version detector.
 
-## 4. Summary table
+## Summary table
 
-| ID | Type | Severity / Priority | Effort | Surface |
-| --- | --- | --- | --- | --- |
-| 1.1 | Breaking | **None** — no in-repo references to `pi://` / `PiProtocolHandler` | — | — |
-| 1.2 | Breaking (docs only) | **Low** — model will keep reproducing dead `StringEnum` snippet | S (2 markdown edits) | `.omp/skills/omp-extension-dev/references/custom_tools.md:122-124`, `.omp/skills/omp-extension-dev/references/api_reference.md:270` |
-| 1.3 | Breaking | **None** — no caller invokes OMP `eval` tool | — | — |
-| 1.4 | Breaking (15.1.2 cluster) | **None** — every probed feature (SSH tool, YieldTool, PTY bash, MCP/theme schema) is unused by supipowers | — | — |
-| 1.5 | Breaking (15.1.3 fixed cluster) | **None** — all in `auth-broker` / `auth-gateway` / streaming retry / `/login` UI; out of our surface | — | — |
-| 1.6 | Breaking | **None** — no shipped rule sets `interruptMode` | — | — |
-| 2.1 | Opportunity (auto) | P3, Trivial | — | Reliability log; release-notes mention only |
-| 2.2 | Opportunity (deployment) | P3, Trivial | S (README paragraph) | Docs only |
-| 2.3 | Opportunity (auto) | P3, Trivial | — | `src/commands/model-picker.ts` "no key" badge accuracy |
-| 2.4 | N/A | — | — | `report_tool_issue` and install-id are not in use |
-
----
-
-## 5. Recommended landing order
-
-1. **§1.2 docs fix** — single-PR, 2 file edits in `.omp/skills/omp-extension-dev/references/`. Removes the only post-15.1.3 misdirection supipowers ships. No tests to update, no behaviour change.
-2. **§2.2 README paragraph** — fold into the next release that bumps the required OMP version past 15.1.3. Cite `transport: "pi-native"` + `omp auth-broker` + `omp auth-gateway` for container deployments.
-
-Everything else is no-op for supipowers (15.1.0 → 15.1.3 is the cleanest delta we've audited so far).
+| Changelog entry | Breaking impact | Opportunity | Priority | Effort | Primary evidence |
+| --- | --- | --- | --- | --- | --- |
+| 15.1.7 debug launch/attach fixes | None | None | — | — | `src/platform/omp.ts:101-133`, `src/debug/logger.ts:19-24` |
+| 15.1.7 hashline edit payload warning | None | Optional doc refresh | P3 | S | `src/planning/system-prompt.ts:223-241`, `skills/context-mode/SKILL.md:64-68` |
+| 15.1.7 ACP bash permission metadata | None | Future exec reason metadata | P3 | S if API exists | `src/platform/types.ts:66-70`, `src/platform/omp.ts:56-57` |
+| 15.1.7 fast-mode status-line predicate | Low UI coexistence risk only | Doctor note after version bump | P3 | S | `src/config/model-resolver.ts:172-195`, `src/commands/doctor.ts:493-505` |
+| 15.1.7 scoped `serviceTier` values | None | Per-action service tier only if requested | P3 | M | `src/types.ts:613-626`, `src/config/model-resolver.ts:16-24` |
+| 15.1.7 provider-agnostic `/fast` | None | Keep `/fast` OMP-owned | P3 | — | `src/platform/omp.ts:67-78` |
+| 15.1.6 `resolve.extra.title` fallback | No hard break; guard gap | Broaden `/supi:plan` `resolve` guard | P2 | S | `src/planning/planning-ask-tool.ts:130-160` |
+| 15.1.5 AST parse error cap | None | None | — | — | `src/platform/omp.ts:135-148`, `src/commands/doctor.ts:76-80` |
+| 15.1.4 `normalizePlanTitle` | None | None | — | — | `src/storage/plans.ts:12-24`, `src/planning/approval-flow.ts:318-331` |
+| 15.1.4 built-in `ask` prompt example | None | None | — | — | `src/planning/planning-ask-tool.ts:24-55`, `src/planning/planning-ask-tool.ts:108-149` |
+| 15.1.4 ACP command/custom notification args | None | Smoke-test command args/tool params | P2 | S | `src/commands/plan.ts:79-83`, `src/planning/planning-ask-tool.ts:56-63` |
+| 15.1.4 async job scoping/status/defer | None | Future ledger status integration | P2 | M | `src/commands/qa.ts:398-411`, `src/commands/fix-pr.ts:521-535`, `src/commands/ultraplan.ts:979-993` |
+| 15.1.4 edit/write/ast_edit permission behavior | None | None | — | — | `src/planning/system-prompt.ts:193-218`, `src/planning/approval-flow.ts:431-463` |
+| 15.1.4 session tree selector | None | None | — | — | `src/planning/approval-flow.ts:253-284` |

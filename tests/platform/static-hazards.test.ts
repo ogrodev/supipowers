@@ -4,6 +4,13 @@ import { describe, expect, test } from "bun:test";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 const SRC_ROOT = path.join(REPO_ROOT, "src");
+const CROSS_PLATFORM_SKILL_REFERENCES_ROOT = path.join(
+  REPO_ROOT,
+  ".agents",
+  "skills",
+  "cross-platform-compatibility",
+  "references",
+);
 const SKIPPED_DIRS = new Set(["node_modules"]);
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
 const CHILD_PROCESS_IMPORT_ALLOWLIST = new Set([
@@ -93,5 +100,31 @@ describe("cross-platform static hazards", () => {
       .map(([name, script]) => `${name}: ${script}`);
 
     expect(violations).toEqual([]);
+  });
+
+  test("cross-platform skill process docs expose taskkill failures to callers", () => {
+    const processManagement = fs.readFileSync(
+      path.join(CROSS_PLATFORM_SKILL_REFERENCES_ROOT, "process-management.md"),
+      "utf8",
+    );
+
+    expect(processManagement).toContain(
+      "static async kill(pid: number, signal?: string): Promise<void>",
+    );
+    expect(processManagement).toContain('await execFileAsync("taskkill"');
+    expect(processManagement).not.toContain('proc.on("error"');
+    expect(processManagement).not.toContain('proc.on("exit"');
+  });
+
+  test("cross-platform skill shell docs do not pass caller paths through cmd builtins", () => {
+    const shellCommands = fs.readFileSync(
+      path.join(CROSS_PLATFORM_SKILL_REFERENCES_ROOT, "shell-commands.md"),
+      "utf8",
+    );
+
+    expect(shellCommands).toContain('import { readdir } from "fs/promises";');
+    expect(shellCommands).toContain("const entries = await readdir(directory");
+    expect(shellCommands).not.toContain('execFileAsync("cmd", ["/c", "dir", directory]');
+    expect(shellCommands).not.toContain('execFileAsync("cmd", ["/c", "start"');
   });
 });

@@ -94,9 +94,15 @@ async function resolveHookContext(exec: ExecFn, cwd: string): Promise<MempalaceG
   }
 
   const coreHooksPathResult = await gitValue(exec, repoRoot, ["config", "--get", "core.hooksPath"]);
-  const coreHooksPath = coreHooksPathResult.ok && coreHooksPathResult.value.length > 0
-    ? coreHooksPathResult.value
-    : null;
+  let coreHooksPath: string | null = null;
+  if (coreHooksPathResult.ok) {
+    coreHooksPath = coreHooksPathResult.value.length > 0 ? coreHooksPathResult.value : null;
+  } else if (coreHooksPathResult.code !== 1) {
+    // git exits 1 when the config key is unset (expected). Any other code is
+    // a real failure (corrupt config, permission error) and must not silently
+    // fall back to the default hooks dir.
+    return { ok: false, code: "git_failed", message: coreHooksPathResult.message };
+  }
   const hooksDir = coreHooksPath !== null
     ? resolveMaybeRelative(repoRoot, coreHooksPath)
     : path.join(resolveMaybeRelative(repoRoot, commonDirResult.value), "hooks");
@@ -378,25 +384,30 @@ export async function installMempalacePostCommitHook(options: InstallMempalacePo
 
   const resolved = resolveMempalaceConfig(options.config, context.repoRoot, options.paths);
   const runnerPath = options.paths.global("bin", REINDEX_RUNNER_NAME);
-  writeExecutableFile(runnerPath, buildReindexRunnerScript());
 
   const desiredHook = buildPostCommitHookScript(snapshot, runnerPath, resolved.palacePath, resolved.defaultAgentName);
   const existingHook = readTextIfPresent(context.hookPath);
-  let action: MempalacePostCommitHookInstallAction = "installed";
+
+  // Refuse the install before writing any artifacts: when there is a
+  // non-managed active hook AND the chained user slot is already taken,
+  // we have nowhere to move the existing hook to.
+  if (existingHook !== null && !isManagedHook(existingHook) && fs.existsSync(context.userHookPath)) {
+    return {
+      ok: false,
+      code: "user_hook_conflict",
+      message: `Cannot install MemPalace post-commit hook because both ${context.hookPath} and ${context.userHookPath} already exist and the active hook is not managed by supipowers.`,
+    };
+  }
+
+  writeExecutableFile(runnerPath, buildReindexRunnerScript());
 
   if (existingHook === desiredHook) {
     return { ...buildStatus(context, runnerPath), action: "already-installed" };
   }
 
   fs.mkdirSync(context.hooksDir, { recursive: true });
+  let action: MempalacePostCommitHookInstallAction = "installed";
   if (existingHook !== null && !isManagedHook(existingHook)) {
-    if (fs.existsSync(context.userHookPath)) {
-      return {
-        ok: false,
-        code: "user_hook_conflict",
-        message: `Cannot install MemPalace post-commit hook because both ${context.hookPath} and ${context.userHookPath} already exist and the active hook is not managed by supipowers.`,
-      };
-    }
     fs.renameSync(context.hookPath, context.userHookPath);
     action = "chained-user-hook";
   } else if (existingHook !== null) {

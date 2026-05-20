@@ -33,7 +33,7 @@ function makePlatform() {
     registerTool: mock((def: any) => {
       toolDef = def;
     }),
-    fireToolCall: async (toolName: string, input: Record<string, unknown> = {}) => {
+    fireToolCall: async (toolName: string, input: unknown = {}) => {
       if (!toolCallHandler) return undefined;
       return await toolCallHandler({ toolName, input });
     },
@@ -177,11 +177,11 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
     expect(result).toBeDefined();
     expect(result?.block).toBe(true);
     expect(result?.reason).toContain("file-based approval hook");
-    expect(result?.reason).toContain("extra.title");
+    expect(result?.reason).toContain("Native OMP plan approval");
     expect(result?.reason).toContain("bypasses supipowers");
   });
 
-  test("leaves ordinary resolve calls alone while planning is active", async () => {
+  test("blocks native resolve apply inputs with missing or malformed titles while planning is active", async () => {
     const platform = makePlatform();
     registerPlanningAskToolGuard(platform as any);
 
@@ -191,7 +191,33 @@ describe("registerPlanningAskToolGuard — runtime ask redirect", () => {
       global: (..._parts: string[]) => "/tmp/does-not-exist-global",
     } as any);
 
-    expect(await platform.fireToolCall("resolve", { action: "apply" })).toBeUndefined();
+    for (const input of [
+      { action: "apply" },
+      { action: "apply", extra: {} },
+      { action: "apply", extra: { title: {} } },
+      { action: "apply", extra: { title: null } },
+    ]) {
+      const result = (await platform.fireToolCall("resolve", input)) as
+        | { block: true; reason: string }
+        | undefined;
+
+      expect(result?.block).toBe(true);
+      expect(result?.reason).toContain("Native OMP plan approval");
+    }
+  });
+
+  test("leaves non-apply resolve inputs alone while planning is active", async () => {
+    const platform = makePlatform();
+    registerPlanningAskToolGuard(platform as any);
+
+    startPlanTracking("/cwd", {
+      dotDirDisplay: ".omp",
+      project: (_cwd: string, ..._parts: string[]) => "/tmp/does-not-exist",
+      global: (..._parts: string[]) => "/tmp/does-not-exist-global",
+    } as any);
+
+    expect(await platform.fireToolCall("resolve", { action: "discard" })).toBeUndefined();
+    expect(await platform.fireToolCall("resolve", {})).toBeUndefined();
   });
 
   test("blocks the `ask` tool when ui-design is active", async () => {

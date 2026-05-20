@@ -163,6 +163,7 @@ describe("MemPalace post-commit git hook", () => {
     const hooksDir = path.join(repoDir, ".git", "hooks");
     fs.writeFileSync(path.join(hooksDir, "post-commit"), "#!/bin/sh\necho active\n");
     fs.writeFileSync(path.join(hooksDir, "post-commit.user"), "#!/bin/sh\necho backup\n");
+    const runnerPath = paths.global("bin", "supi-mempalace-reindex.py");
 
     const result = await installMempalacePostCommitHook({
       paths,
@@ -176,6 +177,35 @@ describe("MemPalace post-commit git hook", () => {
     if (result.ok) throw new Error("expected conflict");
     expect(result.code).toBe("user_hook_conflict");
     expect(fs.readFileSync(path.join(hooksDir, "post-commit"), "utf-8")).toContain("active");
+    // Reject the install before writing any artifacts — the runner must not
+    // exist after a failed install.
+    expect(fs.existsSync(runnerPath)).toBe(false);
+  });
+
+  test("surfaces git_failed when core.hooksPath lookup errors out (non-unset exit code)", async () => {
+    const exec = mock(async (_cmd: string, args: string[]) => {
+      const key = args.join(" ");
+      if (key === "rev-parse --show-toplevel") return { code: 0, stdout: `${repoDir}\n`, stderr: "" };
+      if (key === "rev-parse --git-common-dir") return { code: 0, stdout: ".git\n", stderr: "" };
+      if (key === "config --get core.hooksPath") {
+        // Exit code 128 is what git emits for a corrupt config or other real
+        // failures, distinct from the code 1 it returns for "key unset".
+        return { code: 128, stdout: "", stderr: "fatal: bad config line 1 in file .git/config\n" };
+      }
+      return { code: 1, stdout: "", stderr: `unexpected git args: ${key}` };
+    }) as Platform["exec"];
+
+    const status = await getMempalacePostCommitHookStatus({
+      paths,
+      cwd: repoDir,
+      config: DEFAULT_CONFIG,
+      exec,
+    });
+
+    expect(status.ok).toBe(false);
+    if (status.ok) throw new Error("expected git_failed");
+    expect(status.code).toBe("git_failed");
+    expect(status.message).toContain("bad config");
   });
 
   test("respects a configured core.hooksPath", async () => {

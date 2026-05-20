@@ -502,6 +502,7 @@ export function getDoctorRecommendations(): string[] {
   return [
     "Set `tools.elideFileMutationInputs: true` (OMP ≥14.7.0) — elides `write`/`edit`/`apply_patch` payloads from history after success. Saves significant context on long sessions like `/supi:ultraplan execute` and `/supi:harness implement`.",
     "Update to OMP ≥14.7.2 — fixes the `Working…` spinner staying active after read-only commands such as `/supi:status`, `/supi:doctor`, `/supi:context`, and `/supi:clear`. (oh-my-pi#927)",
+    "Use OMP ≥15.1.7 for best reliability — includes ACP fixes for command-driven agent handoffs and permission prompts, plus accurate provider-scoped `/fast` status-line indicators.",
   ];
 }
 

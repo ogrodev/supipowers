@@ -352,4 +352,14 @@ describe("getDoctorRecommendations", () => {
     expect(spinner!).toContain("14.7.2");
     expect(spinner!).toContain("927");
   });
+
+  test("recommends OMP ≥15.1.7 for ACP handoffs and scoped fast-mode status", () => {
+    const tips = getDoctorRecommendations();
+    const omp1517 = tips.find((t) => t.includes("15.1.7"));
+    expect(omp1517).toBeDefined();
+    expect(omp1517!).toContain("ACP");
+    expect(omp1517!).toContain("handoffs");
+    expect(omp1517!).toContain("permission prompts");
+    expect(omp1517!).toContain("/fast");
+  });
 });

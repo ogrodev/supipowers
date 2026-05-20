@@ -129,11 +129,11 @@ function getAskRedirectReason(): string | null {
  */
 export function registerPlanningAskToolGuard(platform: Platform): void {
   platform.on("tool_call", (event) => {
-    if (event.toolName === "resolve" && isPlanApprovalResolveInput(event.input) && isPlanningActive()) {
+    if (event.toolName === "resolve" && isResolveApplyInput(event.input) && isPlanningActive()) {
       return {
         block: true,
         reason:
-          "Planning mode: /supi:plan uses a file-based approval hook. Do not call `resolve` with `extra.title` because it is OMP's native approval path and bypasses supipowers plan tracking.",
+          "Planning mode: /supi:plan uses a file-based approval hook. Native OMP plan approval is blocked because it bypasses supipowers plan tracking.",
       };
     }
 
@@ -149,13 +149,7 @@ export function registerPlanningAskToolGuard(platform: Platform): void {
   });
 }
 
-function isPlanApprovalResolveInput(input: unknown): boolean {
+function isResolveApplyInput(input: unknown): boolean {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return false;
-  const candidate = input as { action?: unknown; extra?: unknown };
-  if (candidate.action !== "apply") return false;
-  const extra = candidate.extra;
-  return extra !== null
-    && typeof extra === "object"
-    && !Array.isArray(extra)
-    && typeof (extra as { title?: unknown }).title === "string";
+  return (input as { action?: unknown }).action === "apply";
 }

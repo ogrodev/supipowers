@@ -30,19 +30,25 @@ export async function loadPlatformModule() {
   }
 }
 
-// Graceful fallback for optional dependencies
-export function useFSEvents() {
+// Graceful fallback for optional dependencies. Uses dynamic `import()` so the
+// example works under ESM (`"type": "module"`) and degrades to native
+// `fs.watch` when neither `fsevents` nor `chokidar` is installed.
+export async function useFSEvents() {
   try {
     // fsevents is macOS only
     if (process.platform === "darwin") {
-      const fsevents = require("fsevents");
-      return fsevents;
+      return await import("fsevents");
     }
   } catch (error) {
     console.warn("fsevents not available, using fallback");
   }
 
-  // Fallback to chokidar or fs.watch
-  return require("chokidar");
+  // Fallback to chokidar, then to native fs.watch as a final safety net.
+  try {
+    return await import("chokidar");
+  } catch {
+    const { watch } = await import("node:fs/promises");
+    return { watch };
+  }
 }
 ```
