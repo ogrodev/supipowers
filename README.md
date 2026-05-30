@@ -1,3 +1,7 @@
+# Project DEPRECATED
+
+I will be supporting other projects of mine and OMP directly
+
 <img width="1584" height="672" alt="supipowers" src="https://github.com/user-attachments/assets/ec0f3658-54d7-4471-91ba-39297191f055" />
 
 <div align="center">
